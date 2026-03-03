@@ -1,6 +1,6 @@
 """Training API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -13,6 +13,29 @@ from app.services.training_service import (
 )
 
 router = APIRouter(prefix="/projects/{project_id}/training", tags=["Training"])
+
+
+@router.websocket("/experiments/{experiment_id}/metrics/ws")
+async def metrics_ws(
+    websocket: WebSocket,
+    project_id: int,
+    experiment_id: int,
+):
+    """WebSocket endpoint for real-time training metrics."""
+    from app.services.training_service import active_websockets
+    
+    await websocket.accept()
+    if experiment_id not in active_websockets:
+        active_websockets[experiment_id] = []
+    
+    active_websockets[experiment_id].append(websocket)
+    try:
+        while True:
+            # Keep connection open, client just listens
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        if websocket in active_websockets.get(experiment_id, []):
+            active_websockets[experiment_id].remove(websocket)
 
 
 @router.post("/experiments", response_model=ExperimentResponse, status_code=201)

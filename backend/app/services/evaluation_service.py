@@ -163,6 +163,91 @@ async def run_evaluation(
     return eval_result
 
 
+async def evaluate_with_llm_judge(
+    db: AsyncSession,
+    experiment_id: int,
+    dataset_name: str,
+    judge_model: str,
+    predictions: list[dict],
+) -> EvalResult:
+    """Evaluate predictions using an LLM-as-a-Judge."""
+    import asyncio
+    import random
+    
+    # In a real DGX environment, this would call the loaded judge model via vLLM/HF pipeline.
+    # For demo purposes, we simulate the evaluation process with small delays.
+    
+    scored_predictions = []
+    total_score = 0
+    passed_count = 0
+    
+    for i, p in enumerate(predictions):
+        prompt = p.get("prompt", "")
+        reference = p.get("reference", "")
+        prediction = p.get("prediction", "")
+        
+        # Simulate LLM inference time for judging
+        await asyncio.sleep(0.05)
+        
+        # Generate a simulated 1-5 score and rationale
+        # If prediction is close to reference or reasonable length, score it higher
+        if len(prediction) > 20 and len(reference) > 20:
+            score = random.choices([3, 4, 5], weights=[0.2, 0.4, 0.4])[0]
+            rationale = "The model provides a thorough answer that aligns well with the ground truth, covering the main points with good detail."
+        elif len(prediction) > 5:
+            score = random.choices([2, 3, 4], weights=[0.3, 0.5, 0.2])[0]
+            rationale = "The answer is partial. It captures some essence of the reference but lacks comprehensive detail."
+        else:
+            score = random.choices([1, 2], weights=[0.8, 0.2])[0]
+            rationale = "The model failed to provide a meaningful or correct response to the prompt."
+            
+        if score >= 4:
+            passed_count += 1
+            
+        total_score += score
+        
+        scored_predictions.append({
+            "prompt": prompt,
+            "reference": reference,
+            "prediction": prediction,
+            "judge_score": score,
+            "judge_rationale": rationale,
+        })
+        
+    avg_score = total_score / len(predictions) if predictions else 0.0
+    pass_rate = passed_count / len(predictions) if predictions else 0.0
+    
+    metrics = {
+        "judge_model": judge_model,
+        "average_score": round(avg_score, 2),
+        "pass_rate": round(pass_rate, 4),
+        "total_evaluated": len(predictions),
+        "score_distribution": {
+            "5": sum(1 for p in scored_predictions if p["judge_score"] == 5),
+            "4": sum(1 for p in scored_predictions if p["judge_score"] == 4),
+            "3": sum(1 for p in scored_predictions if p["judge_score"] == 3),
+            "2": sum(1 for p in scored_predictions if p["judge_score"] == 2),
+            "1": sum(1 for p in scored_predictions if p["judge_score"] == 1),
+        },
+        "scored_predictions": scored_predictions[:50]  # Store up to 50 for UI side-by-side
+    }
+    
+    eval_result = EvalResult(
+        experiment_id=experiment_id,
+        dataset_name=dataset_name,
+        eval_type="llm_judge",
+        metrics=metrics,
+        pass_rate=metrics["pass_rate"],
+        details={"judge_model": judge_model}
+    )
+    
+    db.add(eval_result)
+    await db.flush()
+    await db.refresh(eval_result)
+    
+    return eval_result
+
+
 async def get_eval_results(
     db: AsyncSession, experiment_id: int
 ) -> list[EvalResult]:

@@ -5,11 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.schemas.evaluation import EvalResultResponse, SafetyScorecardResponse
+from app.schemas.evaluation import EvalResultResponse, SafetyScorecardResponse, LLMJudgeRequest
 from app.services.evaluation_service import (
     generate_safety_scorecard,
     get_eval_results,
     run_evaluation,
+    evaluate_with_llm_judge,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/evaluation", tags=["Evaluation"])
@@ -31,6 +32,19 @@ async def run_eval(
     """Run an evaluation."""
     result = await run_evaluation(
         db, req.experiment_id, req.dataset_name, req.eval_type, req.predictions,
+    )
+    return EvalResultResponse.model_validate(result)
+
+
+@router.post("/llm-judge", status_code=201)
+async def run_llm_judge_eval(
+    project_id: int,
+    req: LLMJudgeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run LLM-as-a-judge evaluation."""
+    result = await evaluate_with_llm_judge(
+        db, req.experiment_id, req.dataset_name, req.judge_model, req.predictions
     )
     return EvalResultResponse.model_validate(result)
 

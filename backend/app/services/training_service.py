@@ -1,19 +1,25 @@
 """Training pipeline service — SFT, LoRA, checkpoint management."""
 
+import asyncio
 import json
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 
+from fastapi import WebSocket
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import async_session_factory
 from app.models.experiment import (
     Checkpoint,
     Experiment,
     ExperimentStatus,
     TrainingMode,
 )
+
+active_websockets: dict[int, list[WebSocket]] = {}
 
 
 def _experiment_dir(project_id: int, experiment_id: int) -> Path:
@@ -58,11 +64,80 @@ async def create_experiment(
     return exp
 
 
+async def broadcast_metric(experiment_id: int, metric: dict):
+    """Broadcast metric to all active websockets for an experiment."""
+    if experiment_id in active_websockets:
+        dead_socks = []
+        for ws in active_websockets[experiment_id]:
+            try:
+                await ws.send_json(metric)
+            except Exception:
+                dead_socks.append(ws)
+        for ws in dead_socks:
+            active_websockets[experiment_id].remove(ws)
+
+
+async def _simulate_training_loop(experiment_id: int, config: dict):
+    """Simulate a training loop reporting metrics for demo purposes."""
+    epochs = config.get("num_epochs", 3)
+    steps_per_epoch = 100
+    total_steps = epochs * steps_per_epoch
+    
+    current_loss = 3.5
+    lr = config.get("learning_rate", 2e-4)
+    save_steps = config.get("save_steps", 100)
+    
+    for step in range(1, total_steps + 1):
+        await asyncio.sleep(0.1)  # 100ms per step to make demo fast but visible
+        
+        # Simulate realistic loss curve
+        current_loss = current_loss * 0.995 + (0.01 * 0.5) + random.uniform(-0.05, 0.05)
+        
+        epoch_float = step / steps_per_epoch
+        eval_loss = round(current_loss + 0.15 + random.uniform(-0.02, 0.02), 4) if step % 20 == 0 else None
+        
+        metric = {
+            "experiment_id": experiment_id,
+            "epoch": round(epoch_float, 2),
+            "step": step,
+            "train_loss": round(current_loss, 4),
+            "eval_loss": eval_loss,
+            "learning_rate": lr,
+            "gpu_utilization": round(random.uniform(92.0, 98.0), 1),
+            "eta_seconds": int((total_steps - step) * 0.1)
+        }
+        
+        await broadcast_metric(experiment_id, metric)
+        
+        # Periodic checkpoint
+        if step % save_steps == 0 or step == total_steps:
+            async with async_session_factory() as db:
+                ckpt = Checkpoint(
+                    experiment_id=experiment_id,
+                    epoch=int(epoch_float) if step % steps_per_epoch == 0 else int(epoch_float) + 1,
+                    step=step,
+                    train_loss=metric["train_loss"],
+                    eval_loss=eval_loss or metric["train_loss"] + 0.15,
+                )
+                db.add(ckpt)
+                await db.commit()
+
+    # Finish experiment
+    async with async_session_factory() as db:
+        result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
+        exp = result.scalar_one_or_none()
+        if exp:
+            exp.status = ExperimentStatus.COMPLETED
+            exp.completed_at = datetime.now(timezone.utc)
+            exp.final_train_loss = round(current_loss, 4)
+            await db.commit()
+
+
 async def start_training(
     db: AsyncSession,
     experiment_id: int,
 ) -> dict:
-    """Start training (in a real deployment, this enqueues a Celery task)."""
+    """Start training (simulate locally)."""
     result = await db.execute(
         select(Experiment).where(Experiment.id == experiment_id)
     )
@@ -75,11 +150,13 @@ async def start_training(
     await db.flush()
 
     # In production: celery_app.send_task('train', args=[experiment_id])
-    # For now, return status
+    # Local simulation for demonstration:
+    asyncio.create_task(_simulate_training_loop(exp.id, exp.config or {}))
+
     return {
         "experiment_id": exp.id,
         "status": exp.status.value,
-        "message": "Training started. Monitor via /training/status endpoint.",
+        "message": "Training started. Connecting to telemetry stream...",
         "config": exp.config,
     }
 
@@ -95,7 +172,6 @@ async def get_training_status(
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found")
 
-    # Load checkpoints
     ckpt_result = await db.execute(
         select(Checkpoint)
         .where(Checkpoint.experiment_id == experiment_id)

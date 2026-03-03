@@ -18,10 +18,32 @@ def _prep_dir(project_id: int) -> Path:
     return d
 
 
+def apply_chat_template(entry: dict, template_name: str = "llama3") -> str:
+    """Format a Q&A pair into a chat template string."""
+    q = entry.get("question", "")
+    a = entry.get("answer", "")
+    
+    if not q or not a:
+        return ""
+        
+    if template_name == "llama3":
+        return f"<|start_header_id|>user<|end_header_id|>\n\n{q}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{a}<|eot_id|>"
+    elif template_name == "chatml":
+        return f"<|im_start|>user\n{q}<|im_end|>\n<|im_start|>assistant\n{a}<|im_end|>"
+    elif template_name == "zephyr":
+        return f"<|user|>\n{q}</s>\n<|assistant|>\n{a}</s>"
+    elif template_name == "phi3":
+        return f"<|user|>\n{q}<|end|>\n<|assistant|>\n{a}<|end|>"
+    else:
+        # Fallback to simple instruction format
+        return f"User: {q}\nAssistant: {a}"
+
+
 async def combine_datasets(
     db: AsyncSession,
     project_id: int,
     include_types: list[DatasetType] | None = None,
+    chat_template: str = "llama3",
 ) -> list[dict]:
     """Combine entries from cleaned, synthetic, and gold datasets."""
     if include_types is None:
@@ -43,6 +65,8 @@ async def combine_datasets(
                     line = line.strip()
                     if line:
                         entry = json.loads(line)
+                        if "text" not in entry and "question" in entry and "answer" in entry:
+                            entry["text"] = apply_chat_template(entry, chat_template)
                         entry["_source_dataset"] = ds.dataset_type.value
                         all_entries.append(entry)
 

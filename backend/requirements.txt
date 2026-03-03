@@ -1,42 +1,9 @@
-# Core
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
-
-# Database
-sqlalchemy==2.0.36
-alembic==1.14.1
-aiosqlite==0.20.0
-
-# Validation
-pydantic==2.10.4
-pydantic-settings==2.7.1
-
-# Task Queue
-celery==5.4.0
-redis==5.2.1
-
-# File Parsing
-python-docx==1.1.2
-PyPDF2==3.0.1
-chardet==5.2.0
-
-# ML (to be expanded in later phases)
-transformers==4.47.1
-torch>=2.1.0
-peft==0.14.0
-datasets==3.2.0
-tokenizers==0.21.0
-accelerate==1.2.1
-bitsandbytes==0.45.0
-sentencepiece==0.2.0
-
-# Evaluation
-rouge-score==0.1.2
-nltk==3.9.1
-
-# Utilities
-python-dotenv==1.0.1
-httpx==0.28.1
-tqdm==4.67.1
-loguru==0.7.3
+fastapi
+uvicorn
+sqlalchemy
+aiosqlite
+pydantic
+pydantic-settings
+python-multipart
+celery
+httpx

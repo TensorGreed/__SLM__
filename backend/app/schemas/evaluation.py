@@ -12,6 +12,13 @@ class EvalRunRequest(BaseModel):
     )
 
 
+class LLMJudgeRequest(BaseModel):
+    experiment_id: int
+    dataset_name: str
+    judge_model: str = Field(default="meta-llama/Meta-Llama-3-70B-Instruct")
+    predictions: list[dict] # list of {prompt, reference, prediction}
+
+
 class EvalMetricResponse(BaseModel):
     metric_name: str
     value: float
