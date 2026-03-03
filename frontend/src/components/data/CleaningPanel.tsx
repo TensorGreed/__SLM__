@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import api from '../../api/client';
+import StepFooter from '../shared/StepFooter';
 import './CleaningPanel.css';
 
 interface CleaningPanelProps {
     projectId: number;
+    onNextStep?: () => void;
 }
 
 interface DocToClean {
@@ -14,7 +16,7 @@ interface DocToClean {
     chunk_count: number;
 }
 
-export default function CleaningPanel({ projectId }: CleaningPanelProps) {
+export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelProps) {
     const [documents, setDocuments] = useState<DocToClean[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [chunkSize, setChunkSize] = useState(1000);
@@ -92,6 +94,17 @@ export default function CleaningPanel({ projectId }: CleaningPanelProps) {
                         ))}
                     </div>
                 </div>
+            )}
+
+            {onNextStep && (
+                <StepFooter
+                    currentStep="Data Cleaning"
+                    nextStep="Gold Dataset"
+                    nextStepIcon="🏆"
+                    isComplete={cleaningResults.length > 0}
+                    hint="Run cleaning on your documents to proceed"
+                    onNext={onNextStep}
+                />
             )}
         </div>
     );

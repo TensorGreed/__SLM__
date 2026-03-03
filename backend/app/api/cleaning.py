@@ -59,3 +59,39 @@ async def clean_batch(
             errors.append({"document_id": doc_id, "error": str(e)})
 
     return {"cleaned": len(results), "errors": errors, "results": results}
+
+
+@router.get("/chunks")
+async def get_cleaned_chunks(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all cleaned text chunks for a project (from .chunks.jsonl files)."""
+    import json as _json
+    from pathlib import Path
+    from sqlalchemy import select
+    from app.models.dataset import RawDocument
+
+    result = await db.execute(
+        select(RawDocument).where(RawDocument.dataset_id.in_(
+            select(RawDocument.dataset_id).where(RawDocument.dataset_id.isnot(None))
+        ))
+    )
+    docs = result.scalars().all()
+
+    all_chunks: list[dict] = []
+    for doc in docs:
+        if not doc.file_path:
+            continue
+        chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
+        if chunks_path.exists():
+            for line in chunks_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    try:
+                        chunk = _json.loads(line)
+                        chunk["document_id"] = doc.id
+                        all_chunks.append(chunk)
+                    except _json.JSONDecodeError:
+                        pass
+
+    return {"chunks": all_chunks, "total": len(all_chunks)}

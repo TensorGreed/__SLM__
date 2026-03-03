@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
+import StepFooter from '../shared/StepFooter';
 import './EvalPanel.css';
 
-interface EvalPanelProps { projectId: number; }
+interface EvalPanelProps { projectId: number; onNextStep?: () => void; }
 
-export default function EvalPanel({ projectId }: EvalPanelProps) {
+export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [experiments, setExperiments] = useState<any[]>([]);
     const [selectedExp, setSelectedExp] = useState<number | null>(null);
     const [evalResults, setEvalResults] = useState<any[]>([]);
@@ -14,9 +15,18 @@ export default function EvalPanel({ projectId }: EvalPanelProps) {
 
     // LLM Judge Form
     const [showJudgeForm, setShowJudgeForm] = useState(false);
+    type Provider = 'hf' | 'ollama' | 'openai';
+    const [provider, setProvider] = useState<Provider>('hf');
     const [judgeModel, setJudgeModel] = useState('meta-llama/Meta-Llama-3-70B-Instruct');
     const [benchmarkName, setBenchmarkName] = useState('MMLU-Subset');
     const [isEvaluating, setIsEvaluating] = useState(false);
+
+    const handleProviderChange = (p: Provider) => {
+        setProvider(p);
+        if (p === 'ollama') setJudgeModel('llama3');
+        else if (p === 'openai') setJudgeModel('gpt-4o');
+        else setJudgeModel('meta-llama/Meta-Llama-3-70B-Instruct');
+    };
 
     useEffect(() => {
         if (!loaded) {
@@ -103,10 +113,20 @@ export default function EvalPanel({ projectId }: EvalPanelProps) {
                     <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
                         The Judge Model will be loaded into DGX VRAM to automatically score the SLM's generations against the specified benchmark.
                     </p>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.5fr', gap: 'var(--space-lg)' }}>
                         <div className="form-group">
-                            <label className="form-label">Judge Model (HF Hub ID or Local Path)</label>
-                            <input className="input" value={judgeModel} onChange={e => setJudgeModel(e.target.value)} />
+                            <label className="form-label">Judge Provider</label>
+                            <select className="input" value={provider} onChange={e => handleProviderChange(e.target.value as Provider)}>
+                                <option value="hf">HuggingFace (vLLM)</option>
+                                <option value="ollama">Local (Ollama)</option>
+                                <option value="openai">Cloud (OpenAI)</option>
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">
+                                {provider === 'hf' ? 'HF Hub ID / Local Path' : 'Model Name'}
+                            </label>
+                            <input className="input" value={judgeModel} onChange={e => setJudgeModel(e.target.value)} placeholder={provider === 'openai' ? 'gpt-4o' : provider === 'ollama' ? 'llama3' : 'meta-llama/...'} />
                         </div>
                         <div className="form-group">
                             <label className="form-label">Benchmark Suite</label>
@@ -227,6 +247,17 @@ export default function EvalPanel({ projectId }: EvalPanelProps) {
                         </div>
                     )}
                 </div>
+            )}
+
+            {onNextStep && (
+                <StepFooter
+                    currentStep="Evaluation"
+                    nextStep="Compression"
+                    nextStepIcon="📦"
+                    isComplete={evalResults.length > 0}
+                    hint="Run at least one evaluation to continue"
+                    onNext={onNextStep}
+                />
             )}
 
         </div>

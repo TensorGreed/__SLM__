@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import api from '../../api/client';
+import StepFooter from '../shared/StepFooter';
 
-interface CompressionPanelProps { projectId: number; }
+interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 
-export default function CompressionPanel({ projectId }: CompressionPanelProps) {
+export default function CompressionPanel({ projectId, onNextStep }: CompressionPanelProps) {
     const [modelPath, setModelPath] = useState('');
     const [bits, setBits] = useState(4);
     const [format, setFormat] = useState('gguf');
@@ -58,6 +59,17 @@ export default function CompressionPanel({ projectId }: CompressionPanelProps) {
                         {JSON.stringify(result, null, 2)}
                     </pre>
                 </div>
+            )}
+
+            {onNextStep && (
+                <StepFooter
+                    currentStep="Compression"
+                    nextStep="Export"
+                    nextStepIcon="🚀"
+                    isComplete={result != null}
+                    hint="Quantize or merge your model to continue"
+                    onNext={onNextStep}
+                />
             )}
         </div>
     );

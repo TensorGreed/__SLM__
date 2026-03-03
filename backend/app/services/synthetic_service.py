@@ -51,6 +51,7 @@ async def call_teacher_model(
     system_prompt: str = "You are a helpful assistant that generates high-quality training data.",
     api_url: str = "",
     api_key: str = "",
+    model_name: str = "llama3",
     temperature: float = 0.7,
     max_tokens: int = 1024,
 ) -> dict[str, Any]:
@@ -70,6 +71,7 @@ async def call_teacher_model(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
+        "model": model_name,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
@@ -97,6 +99,7 @@ async def generate_qa_pairs(
     num_pairs: int = 5,
     api_url: str = "",
     api_key: str = "",
+    model_name: str = "llama3",
 ) -> list[dict]:
     """Generate Q&A pairs from source text using teacher model."""
     prompt = f"""Based on the following text, generate {num_pairs} question-answer pairs suitable for fine-tuning a small language model.
@@ -109,7 +112,7 @@ Text:
 
 Generate {num_pairs} Q&A pairs as JSON array:"""
 
-    result = await call_teacher_model(prompt, api_url=api_url, api_key=api_key)
+    result = await call_teacher_model(prompt, api_url=api_url, api_key=api_key, model_name=model_name)
 
     # Parse the JSON from the response
     content = result["content"]

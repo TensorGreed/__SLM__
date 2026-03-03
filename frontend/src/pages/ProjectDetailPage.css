@@ -13,3 +13,10 @@
     align-items: center;
     justify-content: center;
 }
+
+.tab.tab--locked {
+    opacity: 0.35;
+    cursor: not-allowed !important;
+    pointer-events: none;
+    filter: grayscale(0.6);
+}

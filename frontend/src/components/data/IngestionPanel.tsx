@@ -1,19 +1,31 @@
 import { useState, useCallback } from 'react';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
+import StepFooter from '../shared/StepFooter';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
     projectId: number;
+    onNextStep?: () => void;
 }
 
-export default function IngestionPanel({ projectId }: IngestionPanelProps) {
+type SourceTab = 'upload' | 'huggingface' | 'kaggle' | 'url';
+
+export default function IngestionPanel({ projectId, onNextStep }: IngestionPanelProps) {
     const [documents, setDocuments] = useState<RawDocument[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<string>('');
     const [loaded, setLoaded] = useState(false);
+
+    // Remote import state
+    const [activeTab, setActiveTab] = useState<SourceTab>('upload');
+    const [remoteId, setRemoteId] = useState('');
+    const [remoteSplit, setRemoteSplit] = useState('train');
+    const [remoteMaxSamples, setRemoteMaxSamples] = useState('');
+    const [isImporting, setIsImporting] = useState(false);
+    const [importStatus, setImportStatus] = useState('');
 
     const fetchDocs = useCallback(async () => {
         setIsLoading(true);
@@ -55,6 +67,29 @@ export default function IngestionPanel({ projectId }: IngestionPanelProps) {
         } finally {
             setIsUploading(false);
             setTimeout(() => setUploadProgress(''), 3000);
+        }
+    };
+
+    const handleRemoteImport = async () => {
+        if (!remoteId.trim()) return;
+        setIsImporting(true);
+        setImportStatus('Connecting to source...');
+        try {
+            const res = await api.post(`/projects/${projectId}/ingestion/import-remote`, {
+                source_type: activeTab,
+                identifier: remoteId,
+                split: remoteSplit,
+                max_samples: remoteMaxSamples ? parseInt(remoteMaxSamples) : null,
+            });
+            setImportStatus(`Imported ${res.data.samples_ingested} samples from ${res.data.source_type}:${res.data.identifier}`);
+            setRemoteId('');
+            fetchDocs();
+        } catch (err) {
+            setImportStatus('Import failed. Check identifier and try again.');
+            console.error(err);
+        } finally {
+            setIsImporting(false);
+            setTimeout(() => setImportStatus(''), 5000);
         }
     };
 
@@ -107,33 +142,119 @@ export default function IngestionPanel({ projectId }: IngestionPanelProps) {
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
+    const sourceTabConfig: Record<SourceTab, { icon: string; label: string; placeholder: string; help: string }> = {
+        upload: { icon: '📤', label: 'Local Files', placeholder: '', help: '' },
+        huggingface: { icon: '🤗', label: 'HuggingFace', placeholder: 'e.g. tatsu-lab/alpaca or squad', help: 'Enter a HuggingFace dataset ID. Public datasets are fetched instantly.' },
+        kaggle: { icon: '📊', label: 'Kaggle', placeholder: 'e.g. username/dataset-name', help: 'Enter a Kaggle dataset slug. Requires KAGGLE_USERNAME and KAGGLE_KEY env vars on the server.' },
+        url: { icon: '🔗', label: 'URL / S3 / GCS', placeholder: 'https://example.com/data.csv', help: 'Paste a direct link to a CSV, JSON, or JSONL file. Supports HTTP, S3, and GCS URIs.' },
+    };
+
     return (
         <div className="ingestion-panel animate-fade-in">
-            {/* Upload Zone */}
-            <div
-                className={`upload-zone glass-card ${dragOver ? 'drag-over' : ''}`}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-            >
-                <div className="upload-zone-content">
-                    <div className="upload-icon">📤</div>
-                    <h3 className="upload-title">Drop files here or click to browse</h3>
-                    <p className="upload-subtitle">Supports PDF, DOCX, TXT, Markdown, CSV</p>
-                    <input
-                        type="file"
-                        multiple
-                        accept=".pdf,.docx,.txt,.md,.csv,.markdown"
-                        onChange={handleFileInput}
-                        className="upload-input"
-                        id="file-upload"
-                    />
-                    <label htmlFor="file-upload" className="btn btn-primary upload-btn">
-                        {isUploading ? 'Uploading...' : 'Choose Files'}
-                    </label>
+            {/* Source Tabs */}
+            <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
+                    {(Object.keys(sourceTabConfig) as SourceTab[]).map(tab => (
+                        <button
+                            key={tab}
+                            className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setActiveTab(tab)}
+                            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                        >
+                            <span>{sourceTabConfig[tab].icon}</span>
+                            {sourceTabConfig[tab].label}
+                        </button>
+                    ))}
                 </div>
-                {uploadProgress && (
-                    <div className="upload-progress">{uploadProgress}</div>
+
+                {/* Local Upload Zone */}
+                {activeTab === 'upload' && (
+                    <div
+                        className={`upload-zone glass-card ${dragOver ? 'drag-over' : ''}`}
+                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={handleDrop}
+                    >
+                        <div className="upload-zone-content">
+                            <div className="upload-icon">📤</div>
+                            <h3 className="upload-title">Drop files here or click to browse</h3>
+                            <p className="upload-subtitle">Supports PDF, DOCX, TXT, Markdown, CSV, JSON, JSONL</p>
+                            <input
+                                type="file"
+                                multiple
+                                accept=".pdf,.docx,.txt,.md,.csv,.markdown,.json,.jsonl"
+                                onChange={handleFileInput}
+                                className="upload-input"
+                                id="file-upload"
+                            />
+                            <label htmlFor="file-upload" className="btn btn-primary upload-btn">
+                                {isUploading ? 'Uploading...' : 'Choose Files'}
+                            </label>
+                        </div>
+                        {uploadProgress && (
+                            <div className="upload-progress">{uploadProgress}</div>
+                        )}
+                    </div>
+                )}
+
+                {/* Remote Import Form */}
+                {activeTab !== 'upload' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: 0 }}>
+                            {sourceTabConfig[activeTab].help}
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 'var(--space-md)', alignItems: 'end' }}>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">Dataset Identifier</label>
+                                <input
+                                    className="input"
+                                    value={remoteId}
+                                    onChange={e => setRemoteId(e.target.value)}
+                                    placeholder={sourceTabConfig[activeTab].placeholder}
+                                />
+                            </div>
+                            {activeTab === 'huggingface' && (
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Split</label>
+                                    <select className="input" value={remoteSplit} onChange={e => setRemoteSplit(e.target.value)} style={{ width: 120 }}>
+                                        <option value="train">train</option>
+                                        <option value="test">test</option>
+                                        <option value="validation">validation</option>
+                                    </select>
+                                </div>
+                            )}
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">Max Samples</label>
+                                <input
+                                    className="input"
+                                    type="number"
+                                    value={remoteMaxSamples}
+                                    onChange={e => setRemoteMaxSamples(e.target.value)}
+                                    placeholder="All"
+                                    style={{ width: 100 }}
+                                />
+                            </div>
+                        </div>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleRemoteImport}
+                            disabled={isImporting || !remoteId.trim()}
+                            style={{ alignSelf: 'flex-start' }}
+                        >
+                            {isImporting ? 'Importing...' : `Import from ${sourceTabConfig[activeTab].label}`}
+                        </button>
+                        {importStatus && (
+                            <div style={{
+                                padding: 'var(--space-sm) var(--space-md)',
+                                borderRadius: 'var(--radius-md)',
+                                background: importStatus.includes('failed') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)',
+                                color: importStatus.includes('failed') ? 'var(--color-error)' : 'var(--color-success)',
+                                fontSize: 'var(--font-size-sm)',
+                            }}>
+                                {importStatus}
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
 
@@ -154,7 +275,7 @@ export default function IngestionPanel({ projectId }: IngestionPanelProps) {
                     <div className="empty-state" style={{ padding: '2rem' }}>
                         <div className="empty-state-icon">📂</div>
                         <div className="empty-state-title">No documents yet</div>
-                        <div className="empty-state-text">Upload files above to start building your dataset.</div>
+                        <div className="empty-state-text">Upload files or import from HuggingFace, Kaggle, or a URL above.</div>
                     </div>
                 ) : (
                     <div className="docs-table-container">
@@ -162,6 +283,7 @@ export default function IngestionPanel({ projectId }: IngestionPanelProps) {
                             <thead>
                                 <tr>
                                     <th>Filename</th>
+                                    <th>Source</th>
                                     <th>Type</th>
                                     <th>Size</th>
                                     <th>Status</th>
@@ -173,6 +295,7 @@ export default function IngestionPanel({ projectId }: IngestionPanelProps) {
                                 {documents.map((doc) => (
                                     <tr key={doc.id} className="doc-row">
                                         <td className="doc-name">{doc.filename}</td>
+                                        <td><span className="badge badge-info" style={{ fontSize: 10 }}>{(doc as any).source || 'upload'}</span></td>
                                         <td><span className="badge badge-accent">{doc.file_type}</span></td>
                                         <td className="doc-size">{formatSize(doc.file_size_bytes)}</td>
                                         <td><span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span></td>
@@ -194,6 +317,17 @@ export default function IngestionPanel({ projectId }: IngestionPanelProps) {
                     </div>
                 )}
             </div>
+
+            {onNextStep && (
+                <StepFooter
+                    currentStep="Data Ingestion"
+                    nextStep="Data Cleaning"
+                    nextStepIcon="🧹"
+                    isComplete={documents.length > 0}
+                    hint="Upload files or import a dataset to continue"
+                    onNext={onNextStep}
+                />
+            )}
         </div>
     );
 }

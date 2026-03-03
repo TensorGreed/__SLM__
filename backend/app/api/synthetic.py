@@ -18,6 +18,7 @@ class GenerateRequest(BaseModel):
     num_pairs: int = Field(5, ge=1, le=50)
     api_url: str = ""
     api_key: str = ""
+    model_name: str = "llama3"
 
 
 class SaveBatchRequest(BaseModel):
@@ -34,7 +35,7 @@ async def generate(
     """Generate synthetic Q&A pairs from source text using teacher model."""
     try:
         pairs = await generate_qa_pairs(
-            db, project_id, req.source_text, req.num_pairs, req.api_url, req.api_key,
+            db, project_id, req.source_text, req.num_pairs, req.api_url, req.api_key, req.model_name
         )
         return {"pairs": pairs, "count": len(pairs)}
     except ValueError as e:

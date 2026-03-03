@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
+import StepFooter from '../shared/StepFooter';
 import './TrainingPanel.css';
 
-interface TrainingPanelProps { projectId: number; }
+interface TrainingPanelProps { projectId: number; onNextStep?: () => void; }
 
-export default function TrainingPanel({ projectId }: TrainingPanelProps) {
+export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelProps) {
     const [experiments, setExperiments] = useState<any[]>([]);
     const [showCreate, setShowCreate] = useState(false);
     const [activeExperiment, setActiveExperiment] = useState<any | null>(null);
@@ -252,6 +253,17 @@ export default function TrainingPanel({ projectId }: TrainingPanelProps) {
                     </div>
                 )}
             </div>
+
+            {onNextStep && (
+                <StepFooter
+                    currentStep="Training"
+                    nextStep="Evaluation"
+                    nextStepIcon="📊"
+                    isComplete={experiments.some((e: any) => e.status === 'completed')}
+                    hint="Complete at least one training run first"
+                    onNext={onNextStep}
+                />
+            )}
         </div>
     );
 }

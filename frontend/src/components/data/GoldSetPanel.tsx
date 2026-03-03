@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/client';
+import StepFooter from '../shared/StepFooter';
 import './GoldSetPanel.css';
 
 interface GoldSetPanelProps {
     projectId: number;
+    onNextStep?: () => void;
 }
 
-export default function GoldSetPanel({ projectId }: GoldSetPanelProps) {
+export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProps) {
     const [entries, setEntries] = useState<any[]>([]);
     const [question, setQuestion] = useState('');
     const [answer, setAnswer] = useState('');
@@ -91,6 +93,17 @@ export default function GoldSetPanel({ projectId }: GoldSetPanelProps) {
                     {entries.length === 0 && <div className="empty-state"><div className="empty-state-text">No entries yet. Add Q&A pairs above.</div></div>}
                 </div>
             </div>
+
+            {onNextStep && (
+                <StepFooter
+                    currentStep="Gold Dataset"
+                    nextStep="Synthetic Generation"
+                    nextStepIcon="🧪"
+                    isComplete={entries.length >= 5}
+                    hint="Add at least 5 Q&A pairs for evaluation"
+                    onNext={onNextStep}
+                />
+            )}
         </div>
     );
 }

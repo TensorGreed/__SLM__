@@ -1,6 +1,7 @@
 """Data Ingestion API routes — file upload and document management."""
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -9,11 +10,20 @@ from app.schemas.dataset import DocumentResponse, DocumentUploadResponse
 from app.services.ingestion_service import (
     delete_document,
     ingest_file,
+    ingest_remote_dataset,
     list_documents,
     process_document,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/ingestion", tags=["Ingestion"])
+
+
+class RemoteImportRequest(BaseModel):
+    source_type: str  # 'huggingface', 'kaggle', or 'url'
+    identifier: str   # dataset ID, slug, or URL
+    split: str = "train"
+    max_samples: int | None = None
+    config_name: str | None = None
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
@@ -77,6 +87,28 @@ async def upload_batch(
             errors.append({"filename": f.filename, "error": str(e)})
 
     return {"uploaded": len(results), "errors": errors, "documents": results}
+
+
+@router.post("/import-remote", status_code=201)
+async def import_remote_dataset(
+    project_id: int,
+    req: RemoteImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Import a dataset from HuggingFace Hub, Kaggle, or a direct URL."""
+    try:
+        result = await ingest_remote_dataset(
+            db=db,
+            project_id=project_id,
+            source_type=req.source_type,
+            identifier=req.identifier,
+            split=req.split,
+            max_samples=req.max_samples,
+            config_name=req.config_name,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/documents", response_model=list[DocumentResponse])
