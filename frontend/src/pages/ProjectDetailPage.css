@@ -1,0 +1,15 @@
+/* ── Project Detail Page ────────────────────────────────────────────── */
+.progress-card {
+    margin-bottom: var(--space-xl);
+}
+
+.project-tabs-container {
+    animation: fadeIn 0.4s ease-out;
+}
+
+.tab-placeholder {
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}

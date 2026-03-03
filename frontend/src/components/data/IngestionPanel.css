@@ -1,0 +1,144 @@
+/* ── Ingestion Panel ────────────────────────────────────────────────── */
+
+.ingestion-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+}
+
+/* Upload Zone */
+.upload-zone {
+    padding: var(--space-2xl);
+    text-align: center;
+    border: 2px dashed var(--border-primary);
+    transition: all var(--transition-base);
+    position: relative;
+    overflow: hidden;
+}
+
+.upload-zone.drag-over {
+    border-color: var(--accent-primary);
+    background: rgba(99, 102, 241, 0.08);
+    box-shadow: 0 0 30px var(--accent-glow);
+}
+
+.upload-zone-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.upload-icon {
+    font-size: 2.5rem;
+    margin-bottom: var(--space-sm);
+}
+
+.upload-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+}
+
+.upload-subtitle {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.upload-input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.upload-btn {
+    margin-top: var(--space-md);
+    cursor: pointer;
+}
+
+.upload-progress {
+    margin-top: var(--space-md);
+    font-size: var(--font-size-sm);
+    color: var(--accent-primary-hover);
+    font-weight: 500;
+}
+
+/* Documents Section */
+.docs-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.docs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-lg);
+    border-bottom: 1px solid var(--border-secondary);
+}
+
+.docs-title {
+    font-size: var(--font-size-md);
+    font-weight: 600;
+}
+
+.docs-count {
+    min-width: 2rem;
+    text-align: center;
+}
+
+/* Table */
+.docs-table-container {
+    overflow-x: auto;
+}
+
+.docs-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.docs-table th {
+    text-align: left;
+    padding: 0.75rem var(--space-md);
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border-secondary);
+    background: var(--bg-tertiary);
+}
+
+.docs-table td {
+    padding: 0.625rem var(--space-md);
+    font-size: var(--font-size-sm);
+    border-bottom: 1px solid var(--border-secondary);
+}
+
+.doc-row {
+    transition: background var(--transition-fast);
+}
+
+.doc-row:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.doc-name {
+    font-weight: 500;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.doc-size,
+.doc-date {
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.doc-actions {
+    display: flex;
+    gap: var(--space-xs);
+}

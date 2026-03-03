@@ -1,0 +1,111 @@
+/* ── Pipeline Progress ──────────────────────────────────────────────── */
+.pipeline-progress {
+    padding: var(--space-lg);
+}
+
+.progress-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-sm);
+}
+
+.progress-label {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.progress-percent {
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    background: var(--accent-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.progress-bar-track {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    margin-bottom: var(--space-lg);
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--accent-gradient);
+    border-radius: var(--radius-full);
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.progress-stages {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-xs);
+}
+
+.progress-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.stage-dot-container {
+    margin-bottom: var(--space-xs);
+}
+
+.stage-dot {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    transition: all var(--transition-base);
+}
+
+.progress-stage.pending .stage-dot {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    border: 2px solid var(--border-secondary);
+}
+
+.progress-stage.active .stage-dot {
+    background: var(--accent-primary);
+    color: white;
+    box-shadow: 0 0 16px var(--accent-glow);
+    animation: pulse 2s infinite;
+}
+
+.progress-stage.completed .stage-dot {
+    background: var(--color-success);
+    color: white;
+    box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+}
+
+.stage-label {
+    font-size: 0.625rem;
+    color: var(--text-tertiary);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.progress-stage.active .stage-label {
+    color: var(--accent-primary-hover);
+    font-weight: 600;
+}
+
+.progress-stage.completed .stage-label {
+    color: var(--color-success);
+}
