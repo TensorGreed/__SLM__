@@ -3,6 +3,7 @@
 import hashlib
 import re
 import secrets
+import jwt
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -172,16 +173,32 @@ async def get_current_principal(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Principal | None:
-    """Resolve current principal from API key headers."""
+    """Resolve current principal from API key or JWT headers."""
     if not settings.AUTH_ENABLED:
         request.state.principal = None
         return None
 
-    api_key = _parse_api_key_from_headers(request)
-    if not api_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API key")
+    token = _parse_api_key_from_headers(request)
+    if not token:
+        return None
 
-    key_hash = hash_api_key(api_key)
+    # Try JWT first (stateless local auth session)
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+        principal = Principal(
+            user_id=int(payload["sub"]),
+            username=payload["username"],
+            role=GlobalRole(payload["role"]),
+            api_key_id=0,
+            api_key_prefix="jwt",
+        )
+        request.state.principal = principal
+        return principal
+    except (jwt.PyJWTError, KeyError, ValueError):
+        # Not a valid JWT or missing claims, fall back to API key lookup
+        pass
+
+    key_hash = hash_api_key(token)
     result = await db.execute(
         select(ApiKey, User)
         .join(User, User.id == ApiKey.user_id)
@@ -193,7 +210,7 @@ async def get_current_principal(
     )
     row = result.first()
     if not row:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        return None
 
     api_key_obj, user = row
     api_key_obj.last_used_at = datetime.now(timezone.utc)
@@ -257,20 +274,27 @@ async def authorize_request(
 
     Applied router-wide so every API request passes through role and project checks.
     """
-    project_id = extract_project_id_from_path(request.url.path)
+    path = request.url.path
+    method = request.method.upper()
+    project_id = extract_project_id_from_path(path)
     request.state.project_id = project_id
 
     if not settings.AUTH_ENABLED:
         return principal
 
+    # Pre-check public routes
+    if path in {
+        "/api/health",
+        "/api/auth/local/login",
+        "/api/auth/config",
+        "/api/auth/sso/login",
+        "/api/auth/sso/callback",
+        "/api/auth/callback",
+    }:
+        return principal
+
     if principal is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
-    path = request.url.path
-    method = request.method.upper()
-
-    if path == "/api/health":
-        return principal
 
     if path == "/api/projects" and method == "POST":
         _require_global_role(principal, {GlobalRole.ADMIN, GlobalRole.ENGINEER})

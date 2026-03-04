@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { Terminal } from 'lucide-react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
+import { TerminalConsole } from '../shared/TerminalConsole';
 
 interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -10,23 +12,58 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     const [format, setFormat] = useState('gguf');
     const [loraPath, setLoraPath] = useState('');
     const [result, setResult] = useState<any>(null);
+    const [isCompressing, setIsCompressing] = useState(false);
+    const [compressionLogs, setCompressionLogs] = useState<string[]>([]);
+
+    useEffect(() => {
+        if (!isCompressing) return;
+
+        const wsUrl = `ws://localhost:8000/api/projects/${projectId}/compression/ws/logs`;
+        const ws = new WebSocket(wsUrl);
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === "log") {
+                    setCompressionLogs((prev) => [...prev, data.text]);
+                }
+            } catch (err) {
+                console.error("WS Parse error", err);
+            }
+        };
+
+        return () => {
+            ws.close();
+        };
+    }, [isCompressing, projectId]);
+
+    const handleAction = async (actionFn: () => Promise<any>) => {
+        setIsCompressing(true);
+        setCompressionLogs([]);
+        setResult(null);
+        try {
+            const res = await actionFn();
+            setResult(res.data);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsCompressing(false);
+        }
+    };
 
     const handleQuantize = async () => {
         if (!modelPath) return;
-        const res = await api.post(`/projects/${projectId}/compression/quantize`, { model_path: modelPath, bits, output_format: format });
-        setResult(res.data);
+        await handleAction(() => api.post(`/projects/${projectId}/compression/quantize`, { model_path: modelPath, bits, output_format: format }));
     };
 
     const handleMerge = async () => {
         if (!modelPath || !loraPath) return;
-        const res = await api.post(`/projects/${projectId}/compression/merge-lora`, { base_model_path: modelPath, lora_adapter_path: loraPath });
-        setResult(res.data);
+        await handleAction(() => api.post(`/projects/${projectId}/compression/merge-lora`, { base_model_path: modelPath, lora_adapter_path: loraPath }));
     };
 
     const handleBenchmark = async () => {
         if (!modelPath) return;
-        const res = await api.post(`/projects/${projectId}/compression/benchmark`, { model_path: modelPath });
-        setResult(res.data);
+        await handleAction(() => api.post(`/projects/${projectId}/compression/benchmark`, { model_path: modelPath }));
     };
 
     return (
@@ -46,11 +83,20 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                 </div>
                 <div className="form-group"><label className="form-label">LoRA Adapter Path (for merge)</label><input className="input" value={loraPath} onChange={e => setLoraPath(e.target.value)} placeholder="Optional: path to LoRA adapter" /></div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-md)' }}>
-                    <button className="btn btn-primary" onClick={handleQuantize}>📦 Quantize</button>
-                    <button className="btn btn-secondary" onClick={handleMerge}>🔗 Merge LoRA</button>
-                    <button className="btn btn-secondary" onClick={handleBenchmark}>📐 Benchmark</button>
+                    <button className="btn btn-primary" onClick={handleQuantize} disabled={isCompressing}>📦 Quantize</button>
+                    <button className="btn btn-secondary" onClick={handleMerge} disabled={isCompressing}>🔗 Merge LoRA</button>
+                    <button className="btn btn-secondary" onClick={handleBenchmark} disabled={isCompressing}>📐 Benchmark</button>
                 </div>
             </div>
+
+            {(isCompressing || compressionLogs.length > 0) && (
+                <div className="card">
+                    <h3 className="section-title text-sm mb-3 flex items-center gap-2">
+                        <Terminal className="text-gray-500 w-4 h-4" /> Compression Logs
+                    </h3>
+                    <TerminalConsole logs={compressionLogs} height="300px" />
+                </div>
+            )}
 
             {result && (
                 <div className="card">

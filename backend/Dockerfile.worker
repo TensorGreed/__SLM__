@@ -1,0 +1,37 @@
+# Dockerfile for Celery Worker running ML workloads
+# We use the same base as the backend, but define a different entrypoint
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies (may need CUDA drivers if running on a GPU-enabled node)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Make sure celery is installed
+RUN pip install --no-cache-dir celery redis
+
+# Copy backend application
+COPY ./app ./app
+COPY ./scripts ./scripts
+COPY ./alembic ./alembic
+COPY ./alembic.ini ./alembic.ini
+
+# Default data dir will be a volume mount
+RUN mkdir -p /data
+
+# Default command starts the celery worker
+CMD ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=INFO", "--pool=threads", "--concurrency=2"]

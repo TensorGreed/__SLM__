@@ -74,6 +74,7 @@ __SLM__/
 
 ### 1. Auth, RBAC, and Audit
 - API-key based authentication with global roles: `admin`, `engineer`, `viewer`
+- **Local Fallback Auth**: If SSO/OIDC environment variables are not provided, the platform automatically falls back to a built-in Local Authentication mode using your API_KEY as the password.
 - Project-level memberships: `owner`, `editor`, `viewer`
 - Project-scoped authorization checks across API routes
 - HTTP audit logging for mutating API calls

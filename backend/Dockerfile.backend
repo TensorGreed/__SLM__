@@ -1,0 +1,37 @@
+# Dockerfile for FastAPI + Alembic Backend
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update and install OS dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy backend application
+COPY ./app ./app
+COPY ./scripts ./scripts
+COPY ./alembic ./alembic
+COPY ./alembic.ini ./alembic.ini
+
+# Default data dir will be a volume mount
+RUN mkdir -p /data
+
+# Expose API port
+EXPOSE 8000
+
+# Start script: run migrations and start server
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

@@ -1,8 +1,10 @@
 """Compression API routes."""
-
-from fastapi import APIRouter, HTTPException
+import asyncio
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.services.compression_service import (
     benchmark_model,
     merge_lora,

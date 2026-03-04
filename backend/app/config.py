@@ -1,6 +1,7 @@
 """Application configuration via environment variables and .env file."""
 
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # ── Auth / RBAC ─────────────────────────────────────────────────────
-    AUTH_ENABLED: bool = False
+    AUTH_ENABLED: bool = True
     AUTH_BOOTSTRAP_API_KEY: str = ""
     AUTH_BOOTSTRAP_USERNAME: str = "admin"
     AUTH_BOOTSTRAP_ROLE: str = "admin"
@@ -27,6 +28,19 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/slm_platform.db"
     DB_AUTO_CREATE: bool = False
     ALLOW_SQLITE_AUTOCREATE: bool = True
+    API_V1_STR: str = "/api"
+    PROJECT_NAME: str = "SLM Studio"
+
+    # API Keys & Auth
+    API_KEY: str = "sk-mock-admin-key"
+    JWT_SECRET: str = "super-secret-jwt-key-replace-in-prod"
+    
+    # OIDC (SSO) Configuration
+    OIDC_CLIENT_ID: Optional[str] = None
+    OIDC_CLIENT_SECRET: Optional[str] = None
+    OIDC_DISCOVERY_URL: Optional[str] = None
+
+    # Database Settings (Already defined above with defaults)
     DB_REQUIRE_ALEMBIC_HEAD: bool = True
     ALEMBIC_CONFIG_FILE: str = "alembic.ini"
 

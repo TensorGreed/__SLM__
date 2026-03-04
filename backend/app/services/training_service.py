@@ -22,8 +22,16 @@ from app.models.experiment import (
 from app.models.project import Project
 
 active_websockets: dict[int, list[WebSocket]] = {}
-active_training_tasks: dict[int, asyncio.Task] = {}
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
+def register_websocket(experiment_id: int, ws: WebSocket):
+    if experiment_id not in active_websockets:
+        active_websockets[experiment_id] = []
+    active_websockets[experiment_id].append(ws)
+
+def unregister_websocket(experiment_id: int, ws: WebSocket):
+    if experiment_id in active_websockets and ws in active_websockets[experiment_id]:
+        active_websockets[experiment_id].remove(ws)
 
 
 async def _get_experiment_for_project(
@@ -267,8 +275,6 @@ async def _monitor_external_training(
                 }
                 exp.config = config
                 await db.commit()
-    finally:
-        active_training_tasks.pop(experiment_id, None)
 
 
 async def _simulate_training_loop(experiment_id: int, config: dict):
@@ -365,8 +371,6 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                 }
                 exp.config = cfg
                 await db.commit()
-    finally:
-        active_training_tasks.pop(experiment_id, None)
 
 
 async def start_training(
@@ -445,40 +449,29 @@ async def start_training(
     await db.flush()
 
     if backend == "simulate":
-        task = asyncio.create_task(_simulate_training_loop(exp.id, exp.config or {}))
-        active_training_tasks[exp.id] = task
+        # Leave this as local simulation
+        asyncio.create_task(_simulate_training_loop(exp.id, exp.config or {}))
     else:
+        # Dispatch to Celery instead of manual subprocess
         try:
-            process = await asyncio.create_subprocess_shell(
-                external_command,
-                stdout=PIPE,
-                stderr=PIPE,
-                cwd=str(BACKEND_DIR),
+            from app.worker import celery_app
+            celery_app.send_task(
+                "run_training_job",
+                kwargs={
+                    "experiment_id": exp.id,
+                    "command": external_command,
+                    "log_path": str(output_dir / "external_training.log"),
+                    "output_dir": str(output_dir),
+                }
             )
         except Exception as e:
             exp.status = ExperimentStatus.FAILED
             exp.completed_at = datetime.now(timezone.utc)
             fail_cfg = dict(exp.config or {})
-            fail_cfg["_runtime"] = {
-                "backend": "external",
-                "command": external_command,
-                "error": str(e),
-            }
+            fail_cfg["_runtime"]["backend_dispatch_error"] = str(e)
             exp.config = fail_cfg
             await db.flush()
-            raise ValueError(f"Failed to start external training command: {e}")
-
-        log_path = output_dir / "external_training.log"
-        task = asyncio.create_task(
-            _monitor_external_training(
-                exp.id,
-                process=process,
-                command=external_command,
-                log_path=log_path,
-                output_dir=output_dir,
-            )
-        )
-        active_training_tasks[exp.id] = task
+            raise ValueError(f"Failed to dispatch external training command to Celery broker: {e}")
 
     return {
         "experiment_id": exp.id,

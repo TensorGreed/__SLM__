@@ -122,13 +122,14 @@ async def quantize_model(
             "backend_dir": str(BACKEND_DIR),
         },
     )
-    execution = await _run_external_command(command, cwd=BACKEND_DIR)
-    report_path = output_dir / "quantize_report.json"
-    report_path.write_text(json.dumps(execution, indent=2), encoding="utf-8")
-
-    if execution["returncode"] != 0:
-        stderr_tail = execution["stderr"][-500:]
-        raise ValueError(f"Quantization command failed (exit {execution['returncode']}): {stderr_tail}")
+    from app.worker import celery_app
+    celery_app.send_task(
+        "run_quantization_job",
+        kwargs={
+            "command": command,
+            "report_path": str(report_path),
+        }
+    )
 
     return {
         "project_id": project_id,
@@ -137,10 +138,9 @@ async def quantize_model(
         "output_format": output_format,
         "output_dir": str(output_dir),
         "output_model_path": str(output_model_path),
-        "status": "completed",
+        "status": "queued",
         "created_at": created_at,
         "report_path": str(report_path),
-        "duration_seconds": execution["duration_seconds"],
     }
 
 
@@ -187,13 +187,14 @@ async def merge_lora(
             "backend_dir": str(BACKEND_DIR),
         },
     )
-    execution = await _run_external_command(command, cwd=BACKEND_DIR)
-    report_path = output_dir / "merge_report.json"
-    report_path.write_text(json.dumps(execution, indent=2), encoding="utf-8")
-
-    if execution["returncode"] != 0:
-        stderr_tail = execution["stderr"][-500:]
-        raise ValueError(f"LoRA merge command failed (exit {execution['returncode']}): {stderr_tail}")
+    from app.worker import celery_app
+    celery_app.send_task(
+        "run_quantization_job",  # using same worker task, as merge is just quantization config
+        kwargs={
+            "command": command,
+            "report_path": str(report_path),
+        }
+    )
 
     return {
         "project_id": project_id,
@@ -201,10 +202,9 @@ async def merge_lora(
         "lora_adapter": lora_adapter_path,
         "output_dir": str(output_dir),
         "output_model_path": str(output_model_path),
-        "status": "completed",
+        "status": "queued",
         "created_at": created_at,
         "report_path": str(report_path),
-        "duration_seconds": execution["duration_seconds"],
     }
 
 
@@ -260,19 +260,21 @@ async def benchmark_model(
             "backend_dir": str(BACKEND_DIR),
         },
     )
-    execution = await _run_external_command(command, cwd=BACKEND_DIR)
     report_path = output_dir / "benchmark_report.json"
-    report_path.write_text(json.dumps(execution, indent=2), encoding="utf-8")
-
-    if execution["returncode"] != 0:
-        stderr_tail = execution["stderr"][-500:]
-        raise ValueError(f"Benchmark command failed (exit {execution['returncode']}): {stderr_tail}")
+    
+    from app.worker import celery_app
+    celery_app.send_task(
+        "run_benchmark_job",
+        kwargs={
+            "command": command,
+            "report_path": str(report_path),
+        }
+    )
 
     result.update(
         {
-            "status": "completed",
+            "status": "queued",
             "report_path": str(report_path),
-            "duration_seconds": execution["duration_seconds"],
         }
     )
     return result

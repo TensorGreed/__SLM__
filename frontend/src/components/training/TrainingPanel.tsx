@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Loader2, Play, CheckCircle, AlertTriangle, Terminal } from "lucide-react";
+
 import api from '../../api/client';
+import { TerminalConsole } from "../shared/TerminalConsole";
 import StepFooter from '../shared/StepFooter';
 import ExperimentCompare from './ExperimentCompare';
 import './TrainingPanel.css';
@@ -12,6 +15,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     const [showCreate, setShowCreate] = useState(false);
     const [activeExperiment, setActiveExperiment] = useState<any | null>(null);
     const [metrics, setMetrics] = useState<any[]>([]);
+    const [trainingLogs, setTrainingLogs] = useState<string[]>([]); // New state for training logs
     const [loaded, setLoaded] = useState(false);
 
     // Comparison State
@@ -41,6 +45,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         setExperiments([]);
         setActiveExperiment(null);
         setMetrics([]);
+        setTrainingLogs([]); // Reset logs on project change
     }, [projectId]);
 
     useEffect(() => {
@@ -79,12 +84,14 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         if (exp) {
             setActiveExperiment({ ...exp, status: 'running' });
             setMetrics([]);
+            setTrainingLogs([]); // Clear logs when starting a new experiment
         }
     };
 
     const viewDashboard = (exp: any) => {
         setActiveExperiment(exp);
         setMetrics([]);
+        setTrainingLogs([]); // Clear logs when viewing dashboard
     };
 
     const toggleCompareSelection = (expId: number) => {
@@ -93,7 +100,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         );
     };
 
-    // WebSocket for Live Metrics
+    // WebSocket for Live Metrics and Logs
     useEffect(() => {
         if (!activeExperiment || activeExperiment.status !== 'running') return;
 
@@ -104,7 +111,16 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                setMetrics(prev => [...prev.slice(-99), data]); // Keep last 100 points
+                if (data.type === "init") {
+                    setMetrics(data.metrics || []);
+                    setTrainingLogs(data.logs || []);
+                } else if (data.type === "metric") {
+                    setMetrics((prev) => [...prev.slice(-99), data.metric]); // Keep last 100 points
+                } else if (data.type === "log") {
+                    setTrainingLogs((prev) => [...prev, data.text]);
+                } else if (data.type === "status") {
+                    // Handle status updates if needed
+                }
             } catch (err) {
                 console.error("WS Parse error", err);
             }
@@ -119,6 +135,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
     if (activeExperiment) {
         const latestMetric = metrics[metrics.length - 1] || {};
+        const currentEpoch = latestMetric.epoch !== undefined ? latestMetric.epoch : '—';
+        const currentTrainLoss = latestMetric.train_loss !== undefined ? latestMetric.train_loss : null;
+        const currentEvalLoss = latestMetric.eval_loss !== undefined ? latestMetric.eval_loss : null;
+
         return (
             <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
                 <div className="card">
@@ -134,18 +154,22 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                         </span>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
-                        <div className="metric-box">
-                            <div className="metric-label">Epoch</div>
-                            <div className="metric-val">{latestMetric.epoch !== undefined ? latestMetric.epoch : '—'} / {activeExperiment.config?.num_epochs || 3}</div>
+                    <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
+                        <div className="metric-box box-blue">
+                            <span className="mb-label">Current Epoch</span>
+                            <span className="mb-value">{currentEpoch} / {activeExperiment.config?.num_epochs || 3}</span>
                         </div>
-                        <div className="metric-box">
-                            <div className="metric-label">Train Loss</div>
-                            <div className="metric-val" style={{ color: 'var(--color-warning)' }}>{latestMetric.train_loss !== undefined ? latestMetric.train_loss.toFixed(4) : '—'}</div>
+                        <div className="metric-box box-green">
+                            <span className="mb-label">Training Loss</span>
+                            <span className="mb-value">
+                                {currentTrainLoss !== null ? currentTrainLoss.toFixed(4) : "--"}
+                            </span>
                         </div>
-                        <div className="metric-box">
-                            <div className="metric-label">Eval Loss</div>
-                            <div className="metric-val" style={{ color: 'var(--color-success)' }}>{latestMetric.eval_loss !== undefined ? latestMetric.eval_loss.toFixed(4) : '—'}</div>
+                        <div className="metric-box box-purple">
+                            <span className="mb-label">Eval Loss</span>
+                            <span className="mb-value">
+                                {currentEvalLoss !== null ? currentEvalLoss.toFixed(4) : "--"}
+                            </span>
                         </div>
                         <div className="metric-box">
                             <div className="metric-label">GPU Util</div>
@@ -153,25 +177,6 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                         </div>
                     </div>
 
-                    <div style={{ height: 400, width: '100%', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)' }}>
-                        {metrics.length > 0 ? (
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={metrics} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                                    <XAxis dataKey="step" stroke="#888" tick={{ fontSize: 12 }} />
-                                    <YAxis stroke="#888" tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
-                                    <Tooltip contentStyle={{ backgroundColor: '#1a1b23', border: '1px solid #333', borderRadius: 8 }} />
-                                    <Legend />
-                                    <Line type="monotone" dataKey="train_loss" name="Train Loss" stroke="#eab308" strokeWidth={2} dot={false} isAnimationActive={false} />
-                                    <Line type="monotone" dataKey="eval_loss" name="Eval Loss" stroke="#22c55e" strokeWidth={2} dot={true} isAnimationActive={false} />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
-                                {activeExperiment.status === 'running' ? 'Connecting to telemetry stream...' : 'No telemetry data available for this experiment.'}
-                            </div>
-                        )}
-                    </div>
                 </div>
             </div>
         );
@@ -180,9 +185,9 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     if (showCompare && selectedForCompare.length > 0) {
         return (
             <ExperimentCompare
-                projectId={projectId}
-                experimentIds={selectedForCompare}
+                experiments={experiments.filter(e => selectedForCompare.includes(e.id))}
                 onClose={() => setShowCompare(false)}
+                projectId={projectId}
             />
         );
     }
@@ -290,6 +295,27 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                                         <div style={{ fontWeight: 600 }}>{exp.name}</div>
                                         <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>{exp.base_model} • {exp.training_mode}</div>
                                     </div>
+                                    {experiments.map(exp => (
+                                        <div key={exp.id} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedForCompare.includes(exp.id)}
+                                                    onChange={() => toggleCompareSelection(exp.id)}
+                                                    style={{ width: 16, height: 16, cursor: 'pointer' }}
+                                                />
+                                                <div>
+                                                    <div style={{ fontWeight: 600 }}>{exp.name}</div>
+                                                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>{exp.base_model} • {exp.training_mode}</div>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                                <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
+                                                {exp.status === 'pending' && <button className="btn btn-primary btn-sm" onClick={() => handleStart(exp.id)}>▶ Start</button>}
+                                                <button className="btn btn-secondary btn-sm" onClick={() => viewDashboard(exp)}>📊 Dashboard</button>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                                     <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
@@ -305,10 +331,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
             {onNextStep && (
                 <StepFooter
                     currentStep="Training"
-                    nextStep="Evaluation"
-                    nextStepIcon="📊"
-                    isComplete={experiments.some((e: any) => e.status === 'completed')}
-                    hint="Complete at least one training run first"
+                    nextStep="Compression"
+                    nextStepIcon="🗜️"
+                    isComplete={experiments.some(e => e.status === 'completed')}
+                    hint="Start an experiment to proceed"
                     onNext={onNextStep}
                 />
             )}
