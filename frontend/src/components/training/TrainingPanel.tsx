@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
+import ExperimentCompare from './ExperimentCompare';
 import './TrainingPanel.css';
 
 interface TrainingPanelProps { projectId: number; onNextStep?: () => void; }
@@ -12,6 +13,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     const [activeExperiment, setActiveExperiment] = useState<any | null>(null);
     const [metrics, setMetrics] = useState<any[]>([]);
     const [loaded, setLoaded] = useState(false);
+
+    // Comparison State
+    const [selectedForCompare, setSelectedForCompare] = useState<number[]>([]);
+    const [showCompare, setShowCompare] = useState(false);
 
     // Form State
     const [name, setName] = useState('');
@@ -80,6 +85,12 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     const viewDashboard = (exp: any) => {
         setActiveExperiment(exp);
         setMetrics([]);
+    };
+
+    const toggleCompareSelection = (expId: number) => {
+        setSelectedForCompare(prev =>
+            prev.includes(expId) ? prev.filter(id => id !== expId) : [...prev, expId]
+        );
     };
 
     // WebSocket for Live Metrics
@@ -166,6 +177,16 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         );
     }
 
+    if (showCompare && selectedForCompare.length > 0) {
+        return (
+            <ExperimentCompare
+                projectId={projectId}
+                experimentIds={selectedForCompare}
+                onClose={() => setShowCompare(false)}
+            />
+        );
+    }
+
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <div className="card">
@@ -249,11 +270,26 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {selectedForCompare.length > 1 && (
+                            <div style={{ padding: 'var(--space-sm) 0', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: 8 }}>
+                                <button className="btn btn-primary" onClick={() => setShowCompare(true)}>
+                                    📊 Compare Selected ({selectedForCompare.length})
+                                </button>
+                            </div>
+                        )}
                         {experiments.map(exp => (
                             <div key={exp.id} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div>
-                                    <div style={{ fontWeight: 600 }}>{exp.name}</div>
-                                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>{exp.base_model} • {exp.training_mode}</div>
+                                <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedForCompare.includes(exp.id)}
+                                        onChange={() => toggleCompareSelection(exp.id)}
+                                        style={{ width: 16, height: 16, cursor: 'pointer' }}
+                                    />
+                                    <div>
+                                        <div style={{ fontWeight: 600 }}>{exp.name}</div>
+                                        <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>{exp.base_model} • {exp.training_mode}</div>
+                                    </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                                     <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>

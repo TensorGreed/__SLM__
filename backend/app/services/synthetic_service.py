@@ -92,6 +92,57 @@ async def call_teacher_model(
     }
 
 
+def _generate_demo_pairs(source_text: str, num_pairs: int = 5) -> list[dict]:
+    """Heuristic QA extraction — works without any teacher API for demo/dev use."""
+    import re
+
+    # Split into sentences
+    sentences = re.split(r'(?<=[.!?])\s+', source_text.strip())
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 30]
+
+    # Question starters keyed by detected pattern
+    transformations = [
+        (r'\b(is|are|was|were)\b', 'What {}?'),
+        (r'\b(can|could|should|would|might)\b', 'How {}?'),
+        (r'\b(because|since|therefore)\b', 'Why {}?'),
+        (r'\b(when|after|before|during|until)\b', 'When {}?'),
+        (r'\b(where|location|place|region)\b', 'Where {}?'),
+    ]
+
+    pairs: list[dict] = []
+    used = set()
+    for sentence in sentences:
+        if len(pairs) >= num_pairs:
+            break
+        if sentence in used:
+            continue
+        used.add(sentence)
+
+        question = None
+        for pattern, template in transformations:
+            if re.search(pattern, sentence, re.IGNORECASE):
+                # Strip leading conjunctions/articles for cleaner questions
+                cleaned = re.sub(r'^(the |a |an |this |that |these |those )', '', sentence, flags=re.IGNORECASE)
+                question = template.format(cleaned.rstrip('.!?').lower())
+                break
+
+        if not question:
+            # Default: "What is described by: <sentence>?"
+            snippet = sentence[:80].rstrip('.!?')
+            question = f"What can you tell me about: {snippet}?"
+
+        pairs.append({
+            "question": question,
+            "answer": sentence,
+            "confidence": round(min(0.7, 0.4 + len(sentence) / 500), 3),
+            "source": "demo_heuristic",
+            "model": "heuristic",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    return pairs
+
+
 async def generate_qa_pairs(
     db: AsyncSession,
     project_id: int,
@@ -101,7 +152,15 @@ async def generate_qa_pairs(
     api_key: str = "",
     model_name: str = "llama3",
 ) -> list[dict]:
-    """Generate Q&A pairs from source text using teacher model."""
+    """Generate Q&A pairs from source text using teacher model, with demo fallback."""
+    url = api_url or settings.TEACHER_MODEL_API_URL
+
+    # ── Demo mode: no teacher API configured ──────────────────
+    if not url:
+        pairs = _generate_demo_pairs(source_text, num_pairs)
+        return pairs
+
+    # ── Production mode: call teacher model ───────────────────
     prompt = f"""Based on the following text, generate {num_pairs} question-answer pairs suitable for fine-tuning a small language model.
 
 Format your response as a JSON array of objects with "question" and "answer" keys.

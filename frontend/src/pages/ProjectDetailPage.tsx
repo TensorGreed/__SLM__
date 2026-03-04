@@ -8,6 +8,8 @@ import IngestionPanel from '../components/data/IngestionPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
+import DatasetPrepPanel from '../components/data/DatasetPrepPanel';
+import TokenizationPanel from '../components/training/TokenizationPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
@@ -19,7 +21,7 @@ import api from '../api/client';
 import './ProjectDetailPage.css';
 
 // Define tab order for next-step navigation
-const TAB_ORDER: TabKey[] = ['data', 'cleaning', 'goldset', 'synthetic', 'training', 'eval', 'compression', 'export'];
+const TAB_ORDER: TabKey[] = ['data', 'cleaning', 'goldset', 'synthetic', 'dataprep', 'tokenization', 'training', 'eval', 'compression', 'export'];
 
 // Define which pipeline stage index each tab requires to be unlocked
 // 0 = always available, 1 = needs ingestion done, etc.
@@ -28,10 +30,12 @@ const TAB_PREREQ_INDEX: Record<TabKey, number> = {
     cleaning: 1,
     goldset: 1,
     synthetic: 2,
-    training: 2,
-    eval: 3,
-    compression: 3,
-    export: 3,
+    dataprep: 2,
+    tokenization: 2,
+    training: 3,
+    eval: 4,
+    compression: 4,
+    export: 4,
 };
 
 // Pipeline stage order for comparison
@@ -41,6 +45,8 @@ const TAB_TARGET_STAGE: Record<TabKey, string> = {
     cleaning: 'cleaning',
     goldset: 'gold_set',
     synthetic: 'synthetic',
+    dataprep: 'dataset_prep',
+    tokenization: 'tokenization',
     training: 'training',
     eval: 'evaluation',
     compression: 'compression',
@@ -82,6 +88,38 @@ export default function ProjectDetailPage() {
         }
     }, [activeProject, pipelineStatus]);
 
+    const currentStageIndex = pipelineStatus ? getStageIndex(pipelineStatus.current_stage) : 0;
+
+    const isTabUnlocked = (tabKey: TabKey): boolean => {
+        const requiredIndex = TAB_PREREQ_INDEX[tabKey];
+        return currentStageIndex >= requiredIndex;
+    };
+
+    // Keyboard shortcuts for tab navigation
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                const currentIndex = TAB_ORDER.indexOf(activeTab);
+                let newIndex = currentIndex;
+
+                if (e.key === 'ArrowLeft' && currentIndex > 0) newIndex = currentIndex - 1;
+                if (e.key === 'ArrowRight' && currentIndex < TAB_ORDER.length - 1) newIndex = currentIndex + 1;
+
+                if (newIndex !== currentIndex) {
+                    const nextTab = TAB_ORDER[newIndex];
+                    if (isTabUnlocked(nextTab)) {
+                        setActiveTab(nextTab);
+                    }
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [activeTab, currentStageIndex]);
+
     if (!activeProject) {
         return (
             <div className="app-layout">
@@ -96,12 +134,6 @@ export default function ProjectDetailPage() {
     }
 
     const projectId = activeProject.id;
-    const currentStageIndex = pipelineStatus ? getStageIndex(pipelineStatus.current_stage) : 0;
-
-    const isTabUnlocked = (tabKey: TabKey): boolean => {
-        const requiredIndex = TAB_PREREQ_INDEX[tabKey];
-        return currentStageIndex >= requiredIndex;
-    };
 
     const handleTabClick = (tabKey: TabKey) => {
         if (isTabUnlocked(tabKey)) {
@@ -144,6 +176,8 @@ export default function ProjectDetailPage() {
             case 'cleaning': return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'goldset': return <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'synthetic': return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;
+            case 'dataprep': return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} />;
+            case 'tokenization': return <TokenizationPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'training': return <TrainingPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'eval': return <EvalPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'compression': return <CompressionPanel projectId={projectId} onNextStep={goToNextTab} />;

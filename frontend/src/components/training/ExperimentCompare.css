@@ -1,0 +1,78 @@
+.experiment-compare-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+}
+
+.compare-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.compare-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin: 0;
+}
+
+.compare-chart-container {
+    height: 400px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    border: 1px solid var(--border-color);
+}
+
+.compare-table-wrapper {
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+    text-align: left;
+}
+
+.compare-table th,
+.compare-table td {
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.compare-table th {
+    background: rgba(255, 255, 255, 0.03);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.05em;
+    width: 20%;
+}
+
+.compare-table td {
+    color: var(--text-primary);
+    width: 26%;
+    /* Distribute remainder among 3 columns */
+}
+
+.compare-table tr:last-child td,
+.compare-table tr:last-child th {
+    border-bottom: none;
+}
+
+.compare-metric-row {
+    background: rgba(255, 255, 255, 0.01);
+}
+
+.compare-legend-color {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    margin-right: 8px;
+    vertical-align: middle;
+}

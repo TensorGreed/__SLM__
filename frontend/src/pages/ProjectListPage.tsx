@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '../stores/projectStore';
 import TopBar from '../components/layout/TopBar';
 import ProjectCard from '../components/dashboard/ProjectCard';
+import EmptyState from '../components/shared/EmptyState';
+import Skeleton from '../components/shared/Skeleton';
 import './ProjectListPage.css';
 
 export default function ProjectListPage() {
@@ -13,6 +15,9 @@ export default function ProjectListPage() {
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
     const [newModel, setNewModel] = useState('');
+
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'active' | 'completed'>('all');
 
     useEffect(() => {
         fetchProjects();
@@ -45,34 +50,68 @@ export default function ProjectListPage() {
                     </button>
                 }
             />
+
             <div className="page-container" style={{ paddingTop: 'calc(var(--topbar-height) + var(--space-xl))' }}>
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                        className="input"
+                        placeholder="🔍 Search projects..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        style={{ maxWidth: 300, background: 'rgba(255 255 255 / .04)' }}
+                    />
+                    <div style={{ display: 'flex', gap: '.5rem' }}>
+                        {['all', 'draft', 'active', 'completed'].map(status => (
+                            <button
+                                key={status}
+                                onClick={() => setStatusFilter(status as any)}
+                                style={{
+                                    padding: '.4rem 1rem',
+                                    borderRadius: 999,
+                                    background: statusFilter === status ? 'rgba(168, 85, 247, .2)' : 'rgba(255 255 255 / .05)',
+                                    border: `1px solid ${statusFilter === status ? '#a855f7' : 'rgba(255 255 255 / .1)'}`,
+                                    color: statusFilter === status ? '#fff' : 'rgba(255 255 255 / .6)',
+                                    cursor: 'pointer',
+                                    textTransform: 'capitalize',
+                                    fontSize: '.85rem'
+                                }}
+                            >
+                                {status}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 {isLoadingProjects ? (
                     <div className="project-grid">
                         {[1, 2, 3].map((i) => (
-                            <div key={i} className="skeleton" style={{ height: 200, borderRadius: 16 }} />
+                            <Skeleton key={i} height={200} borderRadius={16} />
                         ))}
                     </div>
                 ) : projects.length === 0 ? (
-                    <div className="empty-state">
-                        <div className="empty-state-icon">◈</div>
-                        <div className="empty-state-title">No projects yet</div>
-                        <div className="empty-state-text">
-                            Create your first SLM project to start building, evaluating, and exporting domain-specific language models.
-                        </div>
-                        <button className="btn btn-primary" style={{ marginTop: 24 }} onClick={() => setShowModal(true)}>
-                            + Create First Project
-                        </button>
-                    </div>
+                    <EmptyState
+                        icon="◈"
+                        title="No projects yet"
+                        description="Create your first SLM project to start building, evaluating, and exporting domain-specific language models."
+                        action={
+                            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+                                + Create First Project
+                            </button>
+                        }
+                    />
                 ) : (
                     <div className="project-grid">
-                        {projects.map((p) => (
-                            <ProjectCard
-                                key={p.id}
-                                project={p}
-                                onClick={(id) => navigate(`/project/${id}`)}
-                                onDelete={handleDelete}
-                            />
-                        ))}
+                        {projects
+                            .filter(p => statusFilter === 'all' || p.status === statusFilter)
+                            .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.description?.toLowerCase().includes(searchQuery.toLowerCase()))
+                            .map((p) => (
+                                <ProjectCard
+                                    key={p.id}
+                                    project={p}
+                                    onClick={(id) => navigate(`/project/${id}`)}
+                                    onDelete={handleDelete}
+                                />
+                            ))}
                     </div>
                 )}
             </div>

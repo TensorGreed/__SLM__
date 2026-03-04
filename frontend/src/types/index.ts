@@ -124,6 +124,8 @@ export const PIPELINE_TABS = [
     { key: 'cleaning', label: 'Cleaning', icon: '🧹', stage: 'cleaning' },
     { key: 'goldset', label: 'Gold Set', icon: '🏆', stage: 'gold_set' },
     { key: 'synthetic', label: 'Synthetic', icon: '🧪', stage: 'synthetic' },
+    { key: 'dataprep', label: 'Dataset Prep', icon: '📋', stage: 'dataset_prep' },
+    { key: 'tokenization', label: 'Tokenization', icon: '🔤', stage: 'tokenization' },
     { key: 'training', label: 'Training', icon: '🔬', stage: 'training' },
     { key: 'eval', label: 'Evaluation', icon: '📊', stage: 'evaluation' },
     { key: 'compression', label: 'Compression', icon: '📦', stage: 'compression' },

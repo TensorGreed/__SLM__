@@ -1,0 +1,302 @@
+.dataprep-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* ── Section Cards ─────────────────────────────────────────── */
+.dp-section {
+    background: var(--card-bg, rgba(255 255 255 / .04));
+    border: 1px solid var(--border, rgba(255 255 255 / .08));
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+}
+
+.dp-section h3 {
+    margin: 0 0 1rem;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}
+
+.dp-section h3 .icon {
+    font-size: 1.2rem;
+}
+
+/* ── Action Row ────────────────────────────────────────────── */
+.dp-actions {
+    display: flex;
+    gap: .75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.dp-actions select,
+.dp-actions input {
+    background: rgba(255 255 255 / .06);
+    border: 1px solid rgba(255 255 255 / .12);
+    border-radius: 8px;
+    padding: .5rem .75rem;
+    color: inherit;
+    font-size: .85rem;
+}
+
+.dp-actions select {
+    min-width: 140px;
+}
+
+.dp-actions input[type="number"] {
+    width: 80px;
+}
+
+.dp-actions button {
+    padding: .5rem 1.25rem;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: .85rem;
+    transition: all .2s;
+}
+
+.dp-actions .btn-primary {
+    background: linear-gradient(135deg, #6c5ce7, #a855f7);
+    color: #fff;
+}
+
+.dp-actions .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(108, 92, 231, .4);
+}
+
+.dp-actions .btn-primary:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* ── Stats Grid ────────────────────────────────────────────── */
+.dp-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: .75rem;
+    margin-bottom: 1rem;
+}
+
+.dp-stat {
+    background: rgba(255 255 255 / .04);
+    border-radius: 8px;
+    padding: .75rem 1rem;
+    text-align: center;
+}
+
+.dp-stat .label {
+    font-size: .75rem;
+    color: rgba(255 255 255 / .5);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: .25rem;
+}
+
+.dp-stat .value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--accent, #a855f7);
+}
+
+/* ── Source Badges ──────────────────────────────────────────── */
+.dp-source-badge {
+    display: inline-block;
+    padding: .2rem .6rem;
+    border-radius: 999px;
+    font-size: .7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.dp-source-badge.cleaned {
+    background: rgba(46, 213, 115, .15);
+    color: #2ed573;
+}
+
+.dp-source-badge.synthetic {
+    background: rgba(168, 85, 247, .15);
+    color: #a855f7;
+}
+
+.dp-source-badge.gold_dev {
+    background: rgba(255, 193, 7, .15);
+    color: #ffc107;
+}
+
+.dp-source-badge.raw {
+    background: rgba(99, 179, 237, .15);
+    color: #63b3ed;
+}
+
+/* ── Preview Table ─────────────────────────────────────────── */
+.dp-table-wrap {
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    border-radius: 8px;
+    border: 1px solid rgba(255 255 255 / .06);
+}
+
+.dp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+}
+
+.dp-table th {
+    position: sticky;
+    top: 0;
+    background: rgba(30, 30, 60, .95);
+    padding: .6rem .75rem;
+    text-align: left;
+    font-weight: 600;
+    color: rgba(255 255 255 / .6);
+    text-transform: uppercase;
+    font-size: .7rem;
+    letter-spacing: .04em;
+    border-bottom: 1px solid rgba(255 255 255 / .08);
+}
+
+.dp-table td {
+    padding: .5rem .75rem;
+    border-bottom: 1px solid rgba(255 255 255 / .04);
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dp-table tr:hover td {
+    background: rgba(255 255 255 / .03);
+}
+
+/* ── Split Controls ────────────────────────────────────────── */
+.dp-split-row {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 1rem;
+}
+
+.dp-split-field {
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+}
+
+.dp-split-field label {
+    font-size: .75rem;
+    color: rgba(255 255 255 / .5);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.dp-split-field input,
+.dp-split-field select {
+    background: rgba(255 255 255 / .06);
+    border: 1px solid rgba(255 255 255 / .12);
+    border-radius: 8px;
+    padding: .5rem .75rem;
+    color: inherit;
+    font-size: .85rem;
+    width: 100px;
+}
+
+.dp-split-field select {
+    width: 140px;
+}
+
+/* ── Profile Bars ──────────────────────────────────────────── */
+.dp-field-bars {
+    display: flex;
+    flex-direction: column;
+    gap: .4rem;
+}
+
+.dp-field-bar {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+}
+
+.dp-field-bar .field-name {
+    min-width: 120px;
+    font-size: .82rem;
+    color: rgba(255 255 255 / .7);
+    text-align: right;
+}
+
+.dp-field-bar .bar-track {
+    flex: 1;
+    height: 18px;
+    background: rgba(255 255 255 / .04);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.dp-field-bar .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6c5ce7, #a855f7);
+    border-radius: 4px;
+    transition: width .4s ease;
+}
+
+.dp-field-bar .bar-count {
+    min-width: 50px;
+    font-size: .78rem;
+    color: rgba(255 255 255 / .45);
+}
+
+/* ── Manifest Result ───────────────────────────────────────── */
+.dp-manifest {
+    background: rgba(46, 213, 115, .06);
+    border: 1px solid rgba(46, 213, 115, .2);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+}
+
+.dp-manifest h4 {
+    margin: 0 0 .75rem;
+    color: #2ed573;
+    font-size: .95rem;
+}
+
+.dp-manifest pre {
+    background: rgba(0, 0, 0, .2);
+    padding: .75rem;
+    border-radius: 8px;
+    font-size: .78rem;
+    overflow-x: auto;
+    color: rgba(255 255 255 / .7);
+}
+
+/* ── Info Banner ───────────────────────────────────────────── */
+.dp-info {
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+    padding: .75rem 1rem;
+    background: rgba(99, 179, 237, .08);
+    border: 1px solid rgba(99, 179, 237, .2);
+    border-radius: 8px;
+    font-size: .82rem;
+    color: rgba(255 255 255 / .7);
+    margin-bottom: 1rem;
+}
+
+.dp-info .info-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+    margin-top: .1rem;
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
+import { toast } from '../../stores/toastStore';
 
 interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -55,7 +56,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             setChunks(loadedChunks);
             setShowChunkPicker(true);
         } catch (err) {
-            alert('No cleaned chunks found. Run Data Cleaning first.');
+            toast.error('No cleaned chunks found. Run Data Cleaning first.');
         } finally {
             setIsLoadingChunks(false);
         }
@@ -81,7 +82,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             });
             setGeneratedPairs(res.data.pairs || []);
         } catch (err: any) {
-            alert(err.response?.data?.detail || 'Generation failed. Check teacher model settings.');
+            toast.error(err.response?.data?.detail || 'Generation failed. Check teacher model settings.');
         } finally {
             setIsGenerating(false);
         }
@@ -93,6 +94,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     };
 
     const selectedCount = chunks.filter(c => c.selected).length;
+    const isDemoMode = generatedPairs.some(p => p.source === 'demo_heuristic');
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
@@ -207,6 +209,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                         <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>Generated Pairs <span className="badge badge-accent">{generatedPairs.length}</span></h3>
                         <button className="btn btn-primary" onClick={handleSave}>✅ Save Approved</button>
                     </div>
+
+                    {isDemoMode && (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '.5rem', padding: '.75rem 1rem', background: 'rgba(99, 179, 237, .08)', border: '1px solid rgba(99, 179, 237, .2)', borderRadius: '8px', fontSize: '.85rem', color: 'rgba(255, 255, 255, .8)', marginBottom: '1rem' }}>
+                            <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>ℹ️</span>
+                            <div>
+                                <strong>Demo mode</strong> — pairs generated via heuristic extraction. Connect a teacher model (Ollama, OpenAI, etc.) for production-quality generation.
+                            </div>
+                        </div>
+                    )}
+
                     {saveResult && (
                         <div style={{ background: 'var(--color-success-bg)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-md)', color: 'var(--color-success)', fontSize: 'var(--font-size-sm)' }}>
                             Saved {saveResult.accepted} pairs ({saveResult.rejected} rejected). Total: {saveResult.total}
@@ -231,8 +243,8 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             {onNextStep && (
                 <StepFooter
                     currentStep="Synthetic Generation"
-                    nextStep="Training"
-                    nextStepIcon="🔬"
+                    nextStep="Dataset Prep"
+                    nextStepIcon="📋"
                     isComplete={generatedPairs.length > 0}
                     hint="Generate and save synthetic Q&A pairs to continue"
                     onNext={onNextStep}

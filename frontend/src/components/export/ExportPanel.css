@@ -1,0 +1,108 @@
+.export-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+}
+
+.export-history-table th,
+.export-history-table td {
+    padding: var(--space-md);
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.export-history-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.05em;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.export-row {
+    transition: background-color 0.2s;
+}
+
+.export-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.export-row.expanded {
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: none;
+}
+
+.export-row.expanded td {
+    border-bottom: none;
+}
+
+.export-details-row {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.export-details-row td {
+    padding: 0 var(--space-md) var(--space-md) var(--space-md);
+}
+
+.manifest-viewer {
+    background: #0d1117;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    font-family: 'Fira Code', 'Courier New', Courier, monospace;
+    font-size: 0.75rem;
+    color: #c9d1d9;
+    overflow-x: auto;
+    position: relative;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.manifest-viewer pre {
+    margin: 0;
+    tab-size: 2;
+}
+
+.manifest-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-tertiary);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    margin-bottom: var(--space-sm);
+}
+
+.manifest-title {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.btn-icon:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.expand-icon {
+    transition: transform 0.2s;
+}
+
+.expanded .expand-icon {
+    transform: rotate(180deg);
+}
