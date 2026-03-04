@@ -1,7 +1,7 @@
 """Export & runtime packaging service."""
 
+import hashlib
 import json
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.experiment import Experiment
 from app.models.export import Export, ExportFormat, ExportStatus
 
 
@@ -16,6 +17,22 @@ def _export_dir(project_id: int, export_id: int) -> Path:
     d = settings.DATA_DIR / "exports" / str(project_id) / str(export_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _sha256_file(file_path: Path) -> str:
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def _artifact_manifest_entry(file_path: Path, root_dir: Path) -> dict:
+    return {
+        "path": str(file_path.relative_to(root_dir)),
+        "size_bytes": file_path.stat().st_size,
+        "sha256": _sha256_file(file_path),
+    }
 
 
 async def create_export(
@@ -26,6 +43,15 @@ async def create_export(
     quantization: str | None = None,
 ) -> Export:
     """Create a new export record."""
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    if not exp_result.scalar_one_or_none():
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
     export = Export(
         project_id=project_id,
         experiment_id=experiment_id,
@@ -46,62 +72,127 @@ async def create_export(
 
 async def run_export(
     db: AsyncSession,
+    project_id: int,
     export_id: int,
     eval_report: dict | None = None,
     safety_scorecard: dict | None = None,
 ) -> Export:
     """Execute the export process."""
-    result = await db.execute(select(Export).where(Export.id == export_id))
+    result = await db.execute(
+        select(Export).where(
+            Export.id == export_id,
+            Export.project_id == project_id,
+        )
+    )
     export = result.scalar_one_or_none()
     if not export:
-        raise ValueError(f"Export {export_id} not found")
+        raise ValueError(f"Export {export_id} not found in project {project_id}")
+
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == export.experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    experiment = exp_result.scalar_one_or_none()
+    if not experiment:
+        raise ValueError(f"Experiment {export.experiment_id} not found in project {project_id}")
 
     export.status = ExportStatus.IN_PROGRESS
     await db.flush()
 
     try:
-        output_dir = Path(export.output_path)
+        now = datetime.now(timezone.utc)
+        run_id = now.strftime("%Y%m%dT%H%M%SZ")
+
+        output_dir = Path(export.output_path or _export_dir(project_id, export.id))
         output_dir.mkdir(parents=True, exist_ok=True)
+        run_dir = output_dir / f"run-{run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        artifacts: list[dict] = []
+
+        # Save eval report
+        if eval_report:
+            export.eval_report = eval_report
+            eval_path = run_dir / "eval_report.json"
+            with open(eval_path, "w", encoding="utf-8") as f:
+                json.dump(eval_report, f, indent=2)
+            artifacts.append(_artifact_manifest_entry(eval_path, run_dir))
+
+        # Save safety scorecard
+        if safety_scorecard:
+            export.safety_scorecard = safety_scorecard
+            safety_path = run_dir / "safety_scorecard.json"
+            with open(safety_path, "w", encoding="utf-8") as f:
+                json.dump(safety_scorecard, f, indent=2)
+            artifacts.append(_artifact_manifest_entry(safety_path, run_dir))
+
+        # Generate Dockerfile template
+        dockerfile_content = _generate_dockerfile(export.export_format)
+        dockerfile_path = run_dir / "Dockerfile"
+        with open(dockerfile_path, "w", encoding="utf-8") as f:
+            f.write(dockerfile_content)
+        artifacts.append(_artifact_manifest_entry(dockerfile_path, run_dir))
+
+        # Generate inference script template
+        inference_script = _generate_inference_script(export.export_format)
+        serve_path = run_dir / "serve.py"
+        with open(serve_path, "w", encoding="utf-8") as f:
+            f.write(inference_script)
+        artifacts.append(_artifact_manifest_entry(serve_path, run_dir))
+
+        release_notes_path = run_dir / "RELEASE_NOTES.md"
+        release_notes_path.write_text(
+            (
+                f"# Export Release {run_id}\n\n"
+                f"- Export ID: {export.id}\n"
+                f"- Project ID: {project_id}\n"
+                f"- Experiment ID: {experiment.id}\n"
+                f"- Format: {export.export_format.value}\n"
+                f"- Quantization: {export.quantization or 'none'}\n"
+                f"- Generated at: {now.isoformat()}\n"
+                f"- Platform version: {settings.APP_VERSION}\n"
+            ),
+            encoding="utf-8",
+        )
+        artifacts.append(_artifact_manifest_entry(release_notes_path, run_dir))
 
         # Generate version manifest
         manifest = {
+            "run_id": run_id,
             "export_id": export.id,
             "project_id": export.project_id,
             "experiment_id": export.experiment_id,
             "format": export.export_format.value,
             "quantization": export.quantization,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": now.isoformat(),
             "platform_version": settings.APP_VERSION,
+            "run_dir": str(run_dir),
+            "experiment": {
+                "name": experiment.name,
+                "status": experiment.status.value,
+                "training_mode": experiment.training_mode.value,
+                "base_model": experiment.base_model,
+                "final_train_loss": experiment.final_train_loss,
+                "final_eval_loss": experiment.final_eval_loss,
+            },
+            "artifacts": artifacts,
         }
-        manifest_path = output_dir / "manifest.json"
-        with open(manifest_path, "w", encoding="utf-8") as f:
+
+        run_manifest_path = run_dir / "manifest.json"
+        with open(run_manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
 
-        # Save eval report
-        if eval_report:
-            export.eval_report = eval_report
-            with open(output_dir / "eval_report.json", "w", encoding="utf-8") as f:
-                json.dump(eval_report, f, indent=2)
-
-        # Save safety scorecard
-        if safety_scorecard:
-            export.safety_scorecard = safety_scorecard
-            with open(output_dir / "safety_scorecard.json", "w", encoding="utf-8") as f:
-                json.dump(safety_scorecard, f, indent=2)
-
-        # Generate Dockerfile template
-        dockerfile_content = _generate_dockerfile(export.export_format)
-        with open(output_dir / "Dockerfile", "w", encoding="utf-8") as f:
-            f.write(dockerfile_content)
-
-        # Generate inference script template
-        inference_script = _generate_inference_script(export.export_format)
-        with open(output_dir / "serve.py", "w", encoding="utf-8") as f:
-            f.write(inference_script)
+        # Keep root manifest as the latest export run for backward compatibility.
+        root_manifest_path = output_dir / "manifest.json"
+        with open(root_manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        (output_dir / "LATEST_RUN").write_text(run_id, encoding="utf-8")
 
         export.status = ExportStatus.COMPLETED
         export.manifest = manifest
-        export.completed_at = datetime.now(timezone.utc)
+        export.output_path = str(output_dir)
+        export.completed_at = now
 
     except Exception as e:
         export.status = ExportStatus.FAILED

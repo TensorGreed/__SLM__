@@ -1,13 +1,28 @@
 """Evaluation framework service — metrics, safety, regression comparison."""
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+import re
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.experiment import EvalResult, Experiment
+
+
+async def _get_experiment_for_project(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+) -> Experiment | None:
+    result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 # ── Metric Computations ────────────────────────────────────────────────
@@ -107,12 +122,17 @@ def evaluate_safety_response(response: str, test_type: str) -> dict:
 
 async def run_evaluation(
     db: AsyncSession,
+    project_id: int,
     experiment_id: int,
     dataset_name: str,
     eval_type: str,
     predictions: list[dict],
 ) -> EvalResult:
     """Run evaluation and store results."""
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
     metrics = {}
 
     if eval_type == "exact_match":
@@ -163,62 +183,198 @@ async def run_evaluation(
     return eval_result
 
 
+def _heuristic_judge_score(reference: str, prediction: str) -> tuple[int, str]:
+    """Deterministic local judge fallback for environments without remote judge access."""
+    pred = prediction.strip()
+    ref = reference.strip()
+    if not pred:
+        return 1, "Prediction is empty."
+
+    overlap = f1_score(pred, ref) if ref else 0.0
+    if exact_match(pred, ref) == 1.0:
+        return 5, "Exact semantic and lexical match with the reference."
+    if overlap >= 0.75:
+        return 5, "High token overlap with strong alignment to the reference answer."
+    if overlap >= 0.5:
+        return 4, "Good alignment to reference with minor omissions."
+    if overlap >= 0.3:
+        return 3, "Partially correct response with notable missing details."
+    if overlap >= 0.1:
+        return 2, "Limited relevance to reference content."
+    return 1, "Answer is mostly incorrect or unrelated to the reference."
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """Extract first JSON object from text."""
+    text = text.strip()
+    if not text:
+        return None
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        return None
+    return None
+
+
+def _parse_api_judge_content(content: str) -> tuple[int, str]:
+    """Parse score/rationale from judge model content."""
+    payload = _extract_json_object(content)
+    if payload:
+        score = payload.get("score") or payload.get("judge_score")
+        rationale = payload.get("rationale") or payload.get("reason") or ""
+        if isinstance(score, (int, float)):
+            score_int = int(score)
+            if 1 <= score_int <= 5:
+                return score_int, str(rationale or "Scored by judge model.")
+
+    # Fallback parse for plain-text responses.
+    score_match = re.search(r"\b([1-5])\b", content)
+    if not score_match:
+        raise ValueError("Judge response did not include a valid score")
+    return int(score_match.group(1)), content.strip()[:500]
+
+
+def _build_judge_endpoint(api_url: str) -> str:
+    """Resolve OpenAI-compatible chat completions endpoint."""
+    base = api_url.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
+
+
+async def _judge_with_remote_model(
+    client: httpx.AsyncClient,
+    endpoint: str,
+    api_key: str,
+    judge_model: str,
+    prompt: str,
+    reference: str,
+    prediction: str,
+) -> tuple[int, str]:
+    """Call an OpenAI-compatible judge model and return (score, rationale)."""
+    rubric = (
+        "Score answer quality from 1 to 5.\n"
+        "5 = fully correct and complete; 4 = mostly correct; 3 = partially correct; "
+        "2 = weak relevance; 1 = incorrect.\n"
+        "Return strict JSON: {\"score\": <1-5>, \"rationale\": \"...\"}."
+    )
+    user_content = (
+        f"Prompt:\n{prompt}\n\n"
+        f"Reference Answer:\n{reference}\n\n"
+        f"Model Prediction:\n{prediction}"
+    )
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    resp = await client.post(
+        endpoint,
+        headers=headers,
+        json={
+            "model": judge_model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": rubric},
+                {"role": "user", "content": user_content},
+            ],
+        },
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    content = (
+        payload.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+    )
+    return _parse_api_judge_content(content)
+
+
 async def evaluate_with_llm_judge(
     db: AsyncSession,
+    project_id: int,
     experiment_id: int,
     dataset_name: str,
     judge_model: str,
     predictions: list[dict],
 ) -> EvalResult:
     """Evaluate predictions using an LLM-as-a-Judge."""
-    import asyncio
-    import random
-    
-    # In a real DGX environment, this would call the loaded judge model via vLLM/HF pipeline.
-    # For demo purposes, we simulate the evaluation process with small delays.
-    
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
     scored_predictions = []
     total_score = 0
     passed_count = 0
-    
-    for i, p in enumerate(predictions):
-        prompt = p.get("prompt", "")
-        reference = p.get("reference", "")
-        prediction = p.get("prediction", "")
-        
-        # Simulate LLM inference time for judging
-        await asyncio.sleep(0.05)
-        
-        # Generate a simulated 1-5 score and rationale
-        # If prediction is close to reference or reasonable length, score it higher
-        if len(prediction) > 20 and len(reference) > 20:
-            score = random.choices([3, 4, 5], weights=[0.2, 0.4, 0.4])[0]
-            rationale = "The model provides a thorough answer that aligns well with the ground truth, covering the main points with good detail."
-        elif len(prediction) > 5:
-            score = random.choices([2, 3, 4], weights=[0.3, 0.5, 0.2])[0]
-            rationale = "The answer is partial. It captures some essence of the reference but lacks comprehensive detail."
-        else:
-            score = random.choices([1, 2], weights=[0.8, 0.2])[0]
-            rationale = "The model failed to provide a meaningful or correct response to the prompt."
-            
-        if score >= 4:
-            passed_count += 1
-            
-        total_score += score
-        
-        scored_predictions.append({
-            "prompt": prompt,
-            "reference": reference,
-            "prediction": prediction,
-            "judge_score": score,
-            "judge_rationale": rationale,
-        })
-        
+    fallback_count = 0
+
+    judge_endpoint = _build_judge_endpoint(settings.JUDGE_MODEL_API_URL) if settings.JUDGE_MODEL_API_URL else ""
+    use_remote_judge = bool(judge_endpoint)
+    remote_client: httpx.AsyncClient | None = None
+    if use_remote_judge:
+        remote_client = httpx.AsyncClient(timeout=60.0)
+
+    try:
+        for row in predictions:
+            prompt = str(row.get("prompt", "") or "")
+            reference = str(row.get("reference", "") or "")
+            prediction = str(row.get("prediction", "") or "")
+
+            if use_remote_judge and remote_client is not None:
+                try:
+                    score, rationale = await _judge_with_remote_model(
+                        client=remote_client,
+                        endpoint=judge_endpoint,
+                        api_key=settings.JUDGE_MODEL_API_KEY,
+                        judge_model=judge_model,
+                        prompt=prompt,
+                        reference=reference,
+                        prediction=prediction,
+                    )
+                except Exception:
+                    score, rationale = _heuristic_judge_score(reference, prediction)
+                    fallback_count += 1
+                    rationale = f"{rationale} (fallback)"
+            else:
+                score, rationale = _heuristic_judge_score(reference, prediction)
+
+            if score >= 4:
+                passed_count += 1
+            total_score += score
+            scored_predictions.append(
+                {
+                    "prompt": prompt,
+                    "reference": reference,
+                    "prediction": prediction,
+                    "judge_score": score,
+                    "judge_rationale": rationale,
+                }
+            )
+    finally:
+        if remote_client is not None:
+            await remote_client.aclose()
+
     avg_score = total_score / len(predictions) if predictions else 0.0
     pass_rate = passed_count / len(predictions) if predictions else 0.0
-    
+
     metrics = {
         "judge_model": judge_model,
+        "judge_provider": "remote_api" if use_remote_judge else "heuristic",
+        "fallback_count": fallback_count,
         "average_score": round(avg_score, 2),
         "pass_rate": round(pass_rate, 4),
         "total_evaluated": len(predictions),
@@ -229,45 +385,67 @@ async def evaluate_with_llm_judge(
             "2": sum(1 for p in scored_predictions if p["judge_score"] == 2),
             "1": sum(1 for p in scored_predictions if p["judge_score"] == 1),
         },
-        "scored_predictions": scored_predictions[:50]  # Store up to 50 for UI side-by-side
+        "scored_predictions": scored_predictions[:50],  # Keep bounded payload size.
     }
-    
+
     eval_result = EvalResult(
         experiment_id=experiment_id,
         dataset_name=dataset_name,
         eval_type="llm_judge",
         metrics=metrics,
         pass_rate=metrics["pass_rate"],
-        details={"judge_model": judge_model}
+        details={
+            "judge_model": judge_model,
+            "judge_provider": metrics["judge_provider"],
+        },
     )
-    
+
     db.add(eval_result)
     await db.flush()
     await db.refresh(eval_result)
-    
+
     return eval_result
 
 
 async def get_eval_results(
-    db: AsyncSession, experiment_id: int
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
 ) -> list[EvalResult]:
     """Get all evaluation results for an experiment."""
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
     result = await db.execute(
         select(EvalResult)
-        .where(EvalResult.experiment_id == experiment_id)
+        .join(Experiment, Experiment.id == EvalResult.experiment_id)
+        .where(
+            EvalResult.experiment_id == experiment_id,
+            Experiment.project_id == project_id,
+        )
         .order_by(EvalResult.created_at.desc())
     )
     return list(result.scalars().all())
 
 
 async def generate_safety_scorecard(
-    db: AsyncSession, experiment_id: int
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
 ) -> dict:
     """Generate a safety scorecard from all safety eval results."""
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
     results = await db.execute(
-        select(EvalResult).where(
+        select(EvalResult)
+        .join(Experiment, Experiment.id == EvalResult.experiment_id)
+        .where(
             EvalResult.experiment_id == experiment_id,
             EvalResult.eval_type == "safety",
+            Experiment.project_id == project_id,
         )
     )
     evals = results.scalars().all()

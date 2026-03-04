@@ -6,7 +6,7 @@ interface StepFooterProps {
     nextStepIcon: string;
     isComplete: boolean;
     hint?: string;
-    onNext: () => void;
+    onNext: () => void | Promise<void>;
 }
 
 export default function StepFooter({ currentStep, nextStep, nextStepIcon, isComplete, hint, onNext }: StepFooterProps) {

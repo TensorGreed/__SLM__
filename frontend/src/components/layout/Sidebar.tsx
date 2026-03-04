@@ -37,11 +37,16 @@ export default function Sidebar({ projectName, onNavigateHome }: SidebarProps) {
                 <div className="nav-section-label">Pipeline Stages</div>
                 {PIPELINE_TABS.map((tab) => {
                     const status = getStageStatus(tab.stage);
+                    const unlocked = status !== 'pending' || tab.key === 'data';
                     return (
                         <button
                             key={tab.key}
                             className={`nav-item ${activeTab === tab.key ? 'active' : ''} stage-${status}`}
-                            onClick={() => setActiveTab(tab.key as TabKey)}
+                            onClick={() => {
+                                if (unlocked) setActiveTab(tab.key as TabKey);
+                            }}
+                            disabled={!unlocked}
+                            title={unlocked ? tab.label : "Complete earlier steps first"}
                         >
                             <span className="nav-icon">{tab.icon}</span>
                             <span className="nav-label">{tab.label}</span>

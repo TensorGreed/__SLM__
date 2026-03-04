@@ -1,7 +1,7 @@
 """Data Cleaning API routes."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -16,12 +16,24 @@ class CleanRequest(BaseModel):
     chunk_overlap: int = Field(100, ge=0, le=500)
     redact_pii: bool = True
 
+    @model_validator(mode="after")
+    def validate_overlap(self):
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        return self
+
 
 class CleanBatchRequest(BaseModel):
     document_ids: list[int]
     chunk_size: int = Field(1000, ge=100, le=10000)
     chunk_overlap: int = Field(100, ge=0, le=500)
     redact_pii: bool = True
+
+    @model_validator(mode="after")
+    def validate_overlap(self):
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        return self
 
 
 @router.post("/clean")
@@ -33,7 +45,7 @@ async def clean_single(
     """Clean a single document."""
     try:
         result = await clean_document(
-            db, req.document_id, req.chunk_size, req.chunk_overlap, req.redact_pii
+            db, project_id, req.document_id, req.chunk_size, req.chunk_overlap, req.redact_pii
         )
         return result
     except ValueError as e:
@@ -52,7 +64,7 @@ async def clean_batch(
     for doc_id in req.document_ids:
         try:
             result = await clean_document(
-                db, doc_id, req.chunk_size, req.chunk_overlap, req.redact_pii
+                db, project_id, doc_id, req.chunk_size, req.chunk_overlap, req.redact_pii
             )
             results.append(result)
         except Exception as e:
@@ -70,12 +82,12 @@ async def get_cleaned_chunks(
     import json as _json
     from pathlib import Path
     from sqlalchemy import select
-    from app.models.dataset import RawDocument
+    from app.models.dataset import Dataset, RawDocument
 
     result = await db.execute(
-        select(RawDocument).where(RawDocument.dataset_id.in_(
-            select(RawDocument.dataset_id).where(RawDocument.dataset_id.isnot(None))
-        ))
+        select(RawDocument)
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(Dataset.project_id == project_id)
     )
     docs = result.scalars().all()
 

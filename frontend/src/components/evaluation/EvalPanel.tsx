@@ -21,6 +21,14 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [benchmarkName, setBenchmarkName] = useState('MMLU-Subset');
     const [isEvaluating, setIsEvaluating] = useState(false);
 
+    useEffect(() => {
+        setLoaded(false);
+        setExperiments([]);
+        setSelectedExp(null);
+        setEvalResults([]);
+        setScorecard(null);
+    }, [projectId]);
+
     const handleProviderChange = (p: Provider) => {
         setProvider(p);
         if (p === 'ollama') setJudgeModel('llama3');

@@ -1,15 +1,23 @@
-"""Dataset preparation service — combine, split, and freeze datasets."""
+"""Dataset preparation service — combine, profile, split, and freeze datasets."""
 
+from __future__ import annotations
+
+import csv
 import json
 import random
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType, DatasetVersion
+from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+from app.services.record_normalization import (
+    build_schema_profile,
+    canonicalize_record,
+)
 
 
 def _prep_dir(project_id: int) -> Path:
@@ -22,21 +30,103 @@ def apply_chat_template(entry: dict, template_name: str = "llama3") -> str:
     """Format a Q&A pair into a chat template string."""
     q = entry.get("question", "")
     a = entry.get("answer", "")
-    
+
     if not q or not a:
         return ""
-        
+
     if template_name == "llama3":
         return f"<|start_header_id|>user<|end_header_id|>\n\n{q}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{a}<|eot_id|>"
-    elif template_name == "chatml":
+    if template_name == "chatml":
         return f"<|im_start|>user\n{q}<|im_end|>\n<|im_start|>assistant\n{a}<|im_end|>"
-    elif template_name == "zephyr":
+    if template_name == "zephyr":
         return f"<|user|>\n{q}</s>\n<|assistant|>\n{a}</s>"
-    elif template_name == "phi3":
+    if template_name == "phi3":
         return f"<|user|>\n{q}<|end|>\n<|assistant|>\n{a}<|end|>"
-    else:
-        # Fallback to simple instruction format
-        return f"User: {q}\nAssistant: {a}"
+    return f"User: {q}\nAssistant: {a}"
+
+
+def _load_records_from_file(file_path: Path, max_records: int | None = None) -> list[dict[str, Any]]:
+    """Load structured rows from JSON/JSONL/CSV/text into a list of dict records."""
+    if not file_path.exists():
+        return []
+
+    ext = file_path.suffix.lower()
+    records: list[dict[str, Any]] = []
+
+    if ext == ".jsonl":
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    records.append(row)
+                else:
+                    records.append({"value": row})
+                if max_records and len(records) >= max_records:
+                    break
+        return records
+
+    if ext == ".json":
+        raw = json.loads(file_path.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            for row in raw:
+                if isinstance(row, dict):
+                    records.append(row)
+                else:
+                    records.append({"value": row})
+                if max_records and len(records) >= max_records:
+                    break
+            return records
+        if isinstance(raw, dict):
+            return [raw]
+        return [{"value": raw}]
+
+    if ext == ".csv":
+        with open(file_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                records.append(dict(row))
+                if max_records and len(records) >= max_records:
+                    break
+        return records
+
+    # Generic text fallback.
+    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            records.append({"text": line})
+            if max_records and len(records) >= max_records:
+                break
+    return records
+
+
+def _normalize_rows_for_training(
+    rows: list[dict[str, Any]],
+    source_dataset: DatasetType,
+    chat_template: str,
+) -> list[dict[str, Any]]:
+    normalized_entries: list[dict[str, Any]] = []
+    for row in rows:
+        canonical = canonicalize_record(row)
+        if not canonical:
+            continue
+
+        # Preserve original fields while ensuring canonical keys exist.
+        merged = {**row, **canonical}
+        if "question" in merged and "answer" in merged:
+            rendered = apply_chat_template(merged, chat_template)
+            if rendered:
+                merged["text"] = rendered
+        merged["_source_dataset"] = source_dataset.value
+        normalized_entries.append(merged)
+    return normalized_entries
 
 
 async def combine_datasets(
@@ -45,30 +135,63 @@ async def combine_datasets(
     include_types: list[DatasetType] | None = None,
     chat_template: str = "llama3",
 ) -> list[dict]:
-    """Combine entries from cleaned, synthetic, and gold datasets."""
-    if include_types is None:
-        include_types = [DatasetType.CLEANED, DatasetType.SYNTHETIC, DatasetType.GOLD_DEV]
+    """
+    Combine entries from cleaned/synthetic/gold datasets.
 
-    all_entries = []
+    Also supports `raw` datasets, which enables generic pipelines for remote imports
+    and direct structured data sources without a mandatory cleaning step.
+    """
+    default_types = [DatasetType.CLEANED, DatasetType.SYNTHETIC, DatasetType.GOLD_DEV]
+    if include_types is None:
+        include_types = default_types
+
+    all_entries: list[dict[str, Any]] = []
+
     result = await db.execute(
         select(Dataset).where(
             Dataset.project_id == project_id,
             Dataset.dataset_type.in_(include_types),
         )
     )
-    datasets = result.scalars().all()
+    datasets = list(result.scalars().all())
+
+    # Fallback: if default sources are empty, use RAW so users can still continue.
+    if not datasets and include_types == default_types:
+        result = await db.execute(
+            select(Dataset).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type == DatasetType.RAW,
+            )
+        )
+        datasets = list(result.scalars().all())
 
     for ds in datasets:
-        if ds.file_path and Path(ds.file_path).exists():
-            with open(ds.file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        entry = json.loads(line)
-                        if "text" not in entry and "question" in entry and "answer" in entry:
-                            entry["text"] = apply_chat_template(entry, chat_template)
-                        entry["_source_dataset"] = ds.dataset_type.value
-                        all_entries.append(entry)
+        if ds.dataset_type == DatasetType.RAW:
+            docs_result = await db.execute(
+                select(RawDocument)
+                .where(
+                    RawDocument.dataset_id == ds.id,
+                    RawDocument.status == DocumentStatus.ACCEPTED,
+                )
+                .order_by(RawDocument.ingested_at.desc())
+            )
+            docs = docs_result.scalars().all()
+            for doc in docs:
+                doc_path = Path(doc.file_path)
+                rows = _load_records_from_file(doc_path)
+                normalized = _normalize_rows_for_training(rows, ds.dataset_type, chat_template)
+                for entry in normalized:
+                    entry["_source_document_id"] = doc.id
+                    entry["_source_document"] = doc.filename
+                    all_entries.append(entry)
+            continue
+
+        if not ds.file_path:
+            continue
+        path = Path(ds.file_path)
+        rows = _load_records_from_file(path)
+        normalized = _normalize_rows_for_training(rows, ds.dataset_type, chat_template)
+        all_entries.extend(normalized)
 
     return all_entries
 
@@ -81,18 +204,22 @@ async def split_dataset(
     test_ratio: float = 0.1,
     seed: int = 42,
     include_types: list[str] | None = None,
+    chat_template: str = "llama3",
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL."""
-    # Resolve types
+    if train_ratio <= 0 or val_ratio < 0 or test_ratio < 0:
+        raise ValueError("Invalid split ratios. train must be > 0 and val/test must be >= 0.")
+    if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-6:
+        raise ValueError("Split ratios must sum to 1.0")
+
     types = None
     if include_types:
         types = [DatasetType(t) for t in include_types]
 
-    entries = await combine_datasets(db, project_id, types)
+    entries = await combine_datasets(db, project_id, types, chat_template)
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
 
-    # Shuffle with seed
     random.seed(seed)
     random.shuffle(entries)
 
@@ -107,16 +234,15 @@ async def split_dataset(
     }
 
     prep_dir = _prep_dir(project_id)
-    file_paths = {}
+    file_paths: dict[str, str] = {}
 
     for split_name, split_data in splits.items():
         file_path = prep_dir / f"{split_name}.jsonl"
         with open(file_path, "w", encoding="utf-8") as f:
             for entry in split_data:
-                f.write(json.dumps(entry) + "\n")
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         file_paths[split_name] = str(file_path)
 
-        # Create or update dataset record
         ds_type = {
             "train": DatasetType.TRAIN,
             "val": DatasetType.VALIDATION,
@@ -143,7 +269,6 @@ async def split_dataset(
         ds.file_path = str(file_path)
         await db.flush()
 
-    # Generate manifest
     manifest = {
         "project_id": project_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -158,3 +283,90 @@ async def split_dataset(
         json.dump(manifest, f, indent=2)
 
     return manifest
+
+
+async def profile_project_dataset(
+    db: AsyncSession,
+    project_id: int,
+    dataset_type: DatasetType,
+    sample_size: int = 500,
+    document_id: int | None = None,
+    field_mapping: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Create schema/profile diagnostics for a project dataset."""
+    if dataset_type == DatasetType.RAW:
+        records: list[dict[str, Any]] = []
+        source: dict[str, Any] = {"dataset_type": dataset_type.value}
+
+        if document_id is not None:
+            doc_result = await db.execute(
+                select(RawDocument)
+                .join(Dataset, Dataset.id == RawDocument.dataset_id)
+                .where(
+                    RawDocument.id == document_id,
+                    Dataset.project_id == project_id,
+                    Dataset.dataset_type == DatasetType.RAW,
+                )
+            )
+            doc = doc_result.scalar_one_or_none()
+            if not doc:
+                raise ValueError(f"Raw document {document_id} not found in project {project_id}")
+            path = Path(doc.file_path)
+            records = _load_records_from_file(path, sample_size)
+            source.update(
+                {
+                    "document_id": doc.id,
+                    "filename": doc.filename,
+                    "file_path": str(path),
+                }
+            )
+        else:
+            docs_result = await db.execute(
+                select(RawDocument)
+                .join(Dataset, Dataset.id == RawDocument.dataset_id)
+                .where(
+                    Dataset.project_id == project_id,
+                    Dataset.dataset_type == DatasetType.RAW,
+                    RawDocument.status == DocumentStatus.ACCEPTED,
+                )
+                .order_by(RawDocument.ingested_at.desc())
+            )
+            docs = docs_result.scalars().all()
+            for doc in docs:
+                rows = _load_records_from_file(Path(doc.file_path))
+                for row in rows:
+                    records.append(row)
+                    if len(records) >= sample_size:
+                        break
+                if len(records) >= sample_size:
+                    break
+            source["documents_scanned"] = len(docs)
+    else:
+        dataset_result = await db.execute(
+            select(Dataset).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type == dataset_type,
+            )
+        )
+        dataset = dataset_result.scalar_one_or_none()
+        if not dataset or not dataset.file_path:
+            raise ValueError(f"No dataset found for type '{dataset_type.value}' in project {project_id}")
+
+        path = Path(dataset.file_path)
+        records = _load_records_from_file(path, sample_size)
+        source = {
+            "dataset_type": dataset_type.value,
+            "dataset_id": dataset.id,
+            "dataset_name": dataset.name,
+            "file_path": str(path),
+        }
+
+    profile = build_schema_profile(records, field_mapping=field_mapping)
+    normalized_preview = _normalize_rows_for_training(records[:20], dataset_type, chat_template="llama3")
+
+    return {
+        "source": source,
+        "profile": profile,
+        "sample_records": records[:5],
+        "normalized_preview": normalized_preview[:5],
+    }

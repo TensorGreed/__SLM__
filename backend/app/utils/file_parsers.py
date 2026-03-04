@@ -62,6 +62,8 @@ PARSERS: dict[str, Any] = {
     ".md": parse_markdown,
     ".markdown": parse_markdown,
     ".csv": parse_csv,
+    ".json": parse_text,
+    ".jsonl": parse_text,
     ".pdf": parse_pdf,
     ".docx": parse_docx,
 }

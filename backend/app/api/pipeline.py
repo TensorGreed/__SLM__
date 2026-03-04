@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.project import PipelineStage, Project
 from app.pipeline.orchestrator import (
-    can_advance,
     can_rollback,
     get_next_stage,
     get_pipeline_status,
@@ -45,13 +44,14 @@ async def advance_pipeline(project_id: int, db: AsyncSession = Depends(get_db)):
     if next_stage is None:
         raise HTTPException(400, "Pipeline already completed")
 
+    previous_stage = project.pipeline_stage
     project.pipeline_stage = next_stage
     await db.flush()
     await db.refresh(project)
 
     return {
         "project_id": project.id,
-        "previous_stage": project.pipeline_stage.value,
+        "previous_stage": previous_stage.value,
         "current_stage": next_stage.value,
         "progress_percent": get_progress_percent(next_stage),
     }

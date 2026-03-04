@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node / frontend artifacts
+node_modules/
+dist/
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+backend/data/*.db
+backend/data/*.sqlite*
+data/projects/
+data/exports/
+data/models/
+
+# Misc
+*.log
+.DS_Store

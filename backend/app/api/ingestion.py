@@ -1,7 +1,9 @@
 """Data Ingestion API routes — file upload and document management."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -19,11 +21,13 @@ router = APIRouter(prefix="/projects/{project_id}/ingestion", tags=["Ingestion"]
 
 
 class RemoteImportRequest(BaseModel):
-    source_type: str  # 'huggingface', 'kaggle', or 'url'
-    identifier: str   # dataset ID, slug, or URL
+    source_type: Literal["huggingface", "kaggle", "url"]
+    identifier: str = Field(..., min_length=1)   # dataset ID, slug, or URL
     split: str = "train"
-    max_samples: int | None = None
+    max_samples: int | None = Field(default=None, ge=1, le=100000)
     config_name: str | None = None
+    field_mapping: dict[str, str] | None = None
+    normalize_for_training: bool = True
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
@@ -105,6 +109,8 @@ async def import_remote_dataset(
             split=req.split,
             max_samples=req.max_samples,
             config_name=req.config_name,
+            field_mapping=req.field_mapping,
+            normalize_for_training=req.normalize_for_training,
         )
         return result
     except ValueError as e:
@@ -118,8 +124,11 @@ async def get_documents(
     db: AsyncSession = Depends(get_db),
 ):
     """List all ingested documents for a project."""
-    docs = await list_documents(db, project_id, status)
-    return [DocumentResponse.model_validate(d) for d in docs]
+    try:
+        docs = await list_documents(db, project_id, status)
+        return [DocumentResponse.model_validate(d) for d in docs]
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post("/documents/{document_id}/process", response_model=DocumentResponse)
@@ -130,7 +139,7 @@ async def process_doc(
 ):
     """Process (parse) an ingested document to extract text."""
     try:
-        doc = await process_document(db, document_id)
+        doc = await process_document(db, project_id, document_id)
         return DocumentResponse.model_validate(doc)
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -144,6 +153,6 @@ async def remove_document(
 ):
     """Delete a document."""
     try:
-        await delete_document(db, document_id)
+        await delete_document(db, project_id, document_id)
     except ValueError as e:
         raise HTTPException(404, str(e))

@@ -18,8 +18,23 @@ from app.models.experiment import (
     ExperimentStatus,
     TrainingMode,
 )
+from app.models.project import Project
 
 active_websockets: dict[int, list[WebSocket]] = {}
+
+
+async def _get_experiment_for_project(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+) -> Experiment | None:
+    result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 def _experiment_dir(project_id: int, experiment_id: int) -> Path:
@@ -38,6 +53,10 @@ async def create_experiment(
     training_mode: TrainingMode = TrainingMode.SFT,
 ) -> Experiment:
     """Create a new training experiment."""
+    project = await db.execute(select(Project).where(Project.id == project_id))
+    if not project.scalar_one_or_none():
+        raise ValueError(f"Project {project_id} not found")
+
     exp = Experiment(
         project_id=project_id,
         name=name,
@@ -112,12 +131,37 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
         # Periodic checkpoint
         if step % save_steps == 0 or step == total_steps:
             async with async_session_factory() as db:
+                exp_result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
+                exp = exp_result.scalar_one_or_none()
+                if not exp:
+                    continue
+
+                output_dir = Path(exp.output_dir) if exp.output_dir else _experiment_dir(exp.project_id, exp.id)
+                checkpoints_dir = output_dir / "checkpoints"
+                checkpoints_dir.mkdir(parents=True, exist_ok=True)
+                epoch_num = max(1, ((step - 1) // steps_per_epoch) + 1)
+                checkpoint_file = checkpoints_dir / f"checkpoint-step-{step}.json"
+                checkpoint_payload = {
+                    "experiment_id": experiment_id,
+                    "epoch": epoch_num,
+                    "step": step,
+                    "train_loss": metric["train_loss"],
+                    "eval_loss": eval_loss or round(metric["train_loss"] + 0.15, 4),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                checkpoint_file.write_text(
+                    json.dumps(checkpoint_payload, indent=2),
+                    encoding="utf-8",
+                )
+
                 ckpt = Checkpoint(
                     experiment_id=experiment_id,
-                    epoch=int(epoch_float) if step % steps_per_epoch == 0 else int(epoch_float) + 1,
+                    epoch=epoch_num,
                     step=step,
                     train_loss=metric["train_loss"],
                     eval_loss=eval_loss or metric["train_loss"] + 0.15,
+                    file_path=str(checkpoint_file),
+                    metrics=checkpoint_payload,
                 )
                 db.add(ckpt)
                 await db.commit()
@@ -135,18 +179,25 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
 
 async def start_training(
     db: AsyncSession,
+    project_id: int,
     experiment_id: int,
 ) -> dict:
     """Start training (simulate locally)."""
-    result = await db.execute(
-        select(Experiment).where(Experiment.id == experiment_id)
-    )
-    exp = result.scalar_one_or_none()
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
-        raise ValueError(f"Experiment {experiment_id} not found")
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+    if exp.status == ExperimentStatus.RUNNING:
+        raise ValueError(f"Experiment {experiment_id} is already running")
+    if exp.status == ExperimentStatus.COMPLETED:
+        raise ValueError(f"Experiment {experiment_id} is already completed")
 
+    epochs = int((exp.config or {}).get("num_epochs", 3))
+    steps_per_epoch = 100
     exp.status = ExperimentStatus.RUNNING
     exp.started_at = datetime.now(timezone.utc)
+    exp.completed_at = None
+    exp.total_epochs = epochs
+    exp.total_steps = epochs * steps_per_epoch
     await db.flush()
 
     # In production: celery_app.send_task('train', args=[experiment_id])
@@ -162,15 +213,14 @@ async def start_training(
 
 
 async def get_training_status(
-    db: AsyncSession, experiment_id: int
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
 ) -> dict:
     """Get current training status and metrics."""
-    result = await db.execute(
-        select(Experiment).where(Experiment.id == experiment_id)
-    )
-    exp = result.scalar_one_or_none()
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
-        raise ValueError(f"Experiment {experiment_id} not found")
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
 
     ckpt_result = await db.execute(
         select(Checkpoint)

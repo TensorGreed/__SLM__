@@ -1,9 +1,11 @@
 """Training API routes."""
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import async_session_factory, get_db
+from app.models.experiment import Experiment
 from app.schemas.training import ExperimentCreate, ExperimentResponse
 from app.services.training_service import (
     create_experiment,
@@ -23,11 +25,23 @@ async def metrics_ws(
 ):
     """WebSocket endpoint for real-time training metrics."""
     from app.services.training_service import active_websockets
-    
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(Experiment.id).where(
+                Experiment.id == experiment_id,
+                Experiment.project_id == project_id,
+            )
+        )
+        if not result.scalar_one_or_none():
+            await websocket.accept()
+            await websocket.close(code=1008)
+            return
+
     await websocket.accept()
     if experiment_id not in active_websockets:
         active_websockets[experiment_id] = []
-    
+
     active_websockets[experiment_id].append(websocket)
     try:
         while True:
@@ -45,11 +59,14 @@ async def create(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new training experiment."""
-    exp = await create_experiment(
-        db, project_id, data.name, data.config.base_model,
-        data.config.model_dump(), data.description, data.config.training_mode,
-    )
-    return ExperimentResponse.model_validate(exp)
+    try:
+        exp = await create_experiment(
+            db, project_id, data.name, data.config.base_model,
+            data.config.model_dump(), data.description, data.config.training_mode,
+        )
+        return ExperimentResponse.model_validate(exp)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post("/experiments/{experiment_id}/start")
@@ -60,9 +77,12 @@ async def start(
 ):
     """Start training for an experiment."""
     try:
-        return await start_training(db, experiment_id)
+        return await start_training(db, project_id, experiment_id)
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        detail = str(e)
+        if "already running" in detail or "already completed" in detail:
+            raise HTTPException(409, detail)
+        raise HTTPException(404, detail)
 
 
 @router.get("/experiments/{experiment_id}/status")
@@ -73,7 +93,7 @@ async def status(
 ):
     """Get training status and metrics."""
     try:
-        return await get_training_status(db, experiment_id)
+        return await get_training_status(db, project_id, experiment_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
 

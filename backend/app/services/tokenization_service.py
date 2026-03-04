@@ -16,13 +16,12 @@ def _tokenizer_dir(project_id: int) -> Path:
 def load_tokenizer(model_name: str):
     """Load a HuggingFace tokenizer."""
     try:
-        try:
-            from transformers import AutoTokenizer
-        except ImportError:
-            AutoTokenizer = None
-        return AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        from transformers import AutoTokenizer
     except ImportError:
         raise ValueError("transformers not installed")
+
+    try:
+        return AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     except Exception as e:
         raise ValueError(f"Failed to load tokenizer for {model_name}: {e}")
 

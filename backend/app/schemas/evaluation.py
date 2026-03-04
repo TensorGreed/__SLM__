@@ -11,12 +11,17 @@ class EvalRunRequest(BaseModel):
         default=["exact_match", "f1", "hallucination", "safety"]
     )
 
+class JudgePrediction(BaseModel):
+    prompt: str = ""
+    reference: str = Field(default="", min_length=0, max_length=20000)
+    prediction: str = Field(..., min_length=1, max_length=20000)
+
 
 class LLMJudgeRequest(BaseModel):
     experiment_id: int
-    dataset_name: str
-    judge_model: str = Field(default="meta-llama/Meta-Llama-3-70B-Instruct")
-    predictions: list[dict] # list of {prompt, reference, prediction}
+    dataset_name: str = Field(..., min_length=1, max_length=255)
+    judge_model: str = Field(default="meta-llama/Meta-Llama-3-70B-Instruct", min_length=1, max_length=255)
+    predictions: list[JudgePrediction] = Field(..., min_length=1, max_length=5000)
 
 
 class EvalMetricResponse(BaseModel):

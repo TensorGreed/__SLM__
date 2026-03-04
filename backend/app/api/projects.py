@@ -1,11 +1,14 @@
 """Project CRUD API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
+from app.models.auth import GlobalRole, ProjectMembership, ProjectRole
+from app.models.dataset import Dataset, RawDocument
 from app.models.project import Project, ProjectStatus
 from app.schemas.project import (
     ProjectCreate,
@@ -14,29 +17,41 @@ from app.schemas.project import (
     ProjectStatsResponse,
     ProjectUpdate,
 )
+from app.security import get_request_principal, upsert_project_membership
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 @router.get("", response_model=ProjectListResponse)
 async def list_projects(
+    request: Request,
     skip: int = 0,
     limit: int = 50,
     status: ProjectStatus | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """List all projects with optional filtering."""
+    principal = get_request_principal(request)
+
     query = select(Project)
+    count_query = select(func.count(Project.id))
+
+    if settings.AUTH_ENABLED and principal and principal.role != GlobalRole.ADMIN:
+        query = query.join(ProjectMembership, ProjectMembership.project_id == Project.id).where(
+            ProjectMembership.user_id == principal.user_id
+        )
+        count_query = count_query.join(
+            ProjectMembership, ProjectMembership.project_id == Project.id
+        ).where(ProjectMembership.user_id == principal.user_id)
+
     if status:
         query = query.where(Project.status == status)
-    query = query.order_by(Project.updated_at.desc()).offset(skip).limit(limit)
+        count_query = count_query.where(Project.status == status)
 
+    query = query.order_by(Project.updated_at.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
     projects = result.scalars().all()
 
-    count_query = select(func.count(Project.id))
-    if status:
-        count_query = count_query.where(Project.status == status)
     total = (await db.execute(count_query)).scalar() or 0
 
     return ProjectListResponse(
@@ -48,6 +63,7 @@ async def list_projects(
 @router.post("", response_model=ProjectResponse, status_code=201)
 async def create_project(
     data: ProjectCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new SLM project."""
@@ -63,6 +79,16 @@ async def create_project(
     db.add(project)
     await db.flush()
     await db.refresh(project)
+
+    principal = get_request_principal(request)
+    if settings.AUTH_ENABLED and principal:
+        await upsert_project_membership(
+            db,
+            project_id=project.id,
+            user_id=principal.user_id,
+            role=ProjectRole.OWNER,
+        )
+
     return ProjectResponse.model_validate(project)
 
 
@@ -119,7 +145,12 @@ async def get_project_stats(project_id: int, db: AsyncSession = Depends(get_db))
     if not project:
         raise HTTPException(404, "Project not found")
 
-    total_docs = sum(len(ds.documents) for ds in project.datasets) if project.datasets else 0
+    docs_count_result = await db.execute(
+        select(func.count(RawDocument.id))
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(Dataset.project_id == project_id)
+    )
+    total_docs = docs_count_result.scalar() or 0
 
     return ProjectStatsResponse(
         id=project.id,

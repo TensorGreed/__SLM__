@@ -1,6 +1,7 @@
 """Data Cleaning service — deduplication, PII detection, quality scoring, chunking."""
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+from app.models.dataset import Dataset, DatasetType, RawDocument
 
 
 # ── PII / Secret Patterns ──────────────────────────────────────────────
@@ -103,6 +104,13 @@ def compute_text_hash(text: str) -> str:
 
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 100) -> list[str]:
     """Split text into overlapping chunks by character count."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    if overlap < 0:
+        raise ValueError("chunk_overlap must be >= 0")
+    if overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be smaller than chunk_size")
+
     if len(text) <= chunk_size:
         return [text]
     chunks = []
@@ -139,10 +147,44 @@ def remove_boilerplate(text: str) -> str:
     return text.strip()
 
 
+def _cleaned_dir(project_id: int) -> Path:
+    d = settings.DATA_DIR / "projects" / str(project_id) / "cleaned"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+async def get_or_create_cleaned_dataset(
+    db: AsyncSession,
+    project_id: int,
+) -> Dataset:
+    """Get or create the cleaned dataset for a project."""
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type == DatasetType.CLEANED,
+        )
+    )
+    ds = result.scalar_one_or_none()
+    if ds:
+        return ds
+
+    ds = Dataset(
+        project_id=project_id,
+        name="Cleaned Dataset",
+        dataset_type=DatasetType.CLEANED,
+        description="Cleaned and chunked text data",
+    )
+    db.add(ds)
+    await db.flush()
+    await db.refresh(ds)
+    return ds
+
+
 # ── Main Cleaning Pipeline ─────────────────────────────────────────────
 
 async def clean_document(
     db: AsyncSession,
+    project_id: int,
     document_id: int,
     chunk_size: int = 1000,
     chunk_overlap: int = 100,
@@ -150,7 +192,12 @@ async def clean_document(
 ) -> dict:
     """Run full cleaning pipeline on a document."""
     result = await db.execute(
-        select(RawDocument).where(RawDocument.id == document_id)
+        select(RawDocument)
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(
+            RawDocument.id == document_id,
+            Dataset.project_id == project_id,
+        )
     )
     doc = result.scalar_one_or_none()
     if not doc:
@@ -188,10 +235,46 @@ async def clean_document(
 
     # Save chunks
     chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
-    import json
     with open(chunks_path, "w", encoding="utf-8") as f:
         for i, chunk in enumerate(chunks):
             f.write(json.dumps({"chunk_id": i, "text": chunk, "source_doc": doc.filename}) + "\n")
+
+    # Upsert project-level cleaned dataset so dataset prep can consume cleaned data.
+    cleaned_ds = await get_or_create_cleaned_dataset(db, project_id)
+    cleaned_file_path = _cleaned_dir(project_id) / "cleaned.jsonl"
+
+    existing_entries: list[dict] = []
+    if cleaned_file_path.exists():
+        with open(cleaned_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("source_document_id") != doc.id:
+                    existing_entries.append(entry)
+
+    new_entries = [
+        {
+            "source_document_id": doc.id,
+            "source_doc": doc.filename,
+            "chunk_id": i,
+            "text": chunk,
+        }
+        for i, chunk in enumerate(chunks)
+    ]
+    merged_entries = existing_entries + new_entries
+
+    with open(cleaned_file_path, "w", encoding="utf-8") as f:
+        for idx, entry in enumerate(merged_entries, start=1):
+            entry["id"] = idx
+            f.write(json.dumps(entry) + "\n")
+
+    cleaned_ds.file_path = str(cleaned_file_path)
+    cleaned_ds.record_count = len(merged_entries)
 
     # Update document record
     doc.quality_score = quality
@@ -200,6 +283,7 @@ async def clean_document(
         **(doc.metadata_ or {}),
         "cleaned_path": str(cleaned_path),
         "chunks_path": str(chunks_path),
+        "cleaned_dataset_path": str(cleaned_file_path),
         "text_hash": text_hash,
         "pii_count": len(pii_findings),
         "pii_types": list(set(f["type"] for f in pii_findings)),

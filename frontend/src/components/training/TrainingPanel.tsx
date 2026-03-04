@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
@@ -31,9 +31,21 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     // Compute State
     const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
 
-    if (!loaded) {
-        api.get(`/projects/${projectId}/training/experiments`).then(r => { setExperiments(r.data); setLoaded(true); });
-    }
+    useEffect(() => {
+        setLoaded(false);
+        setExperiments([]);
+        setActiveExperiment(null);
+        setMetrics([]);
+    }, [projectId]);
+
+    useEffect(() => {
+        if (!loaded) {
+            api.get(`/projects/${projectId}/training/experiments`).then((r) => {
+                setExperiments(r.data);
+                setLoaded(true);
+            });
+        }
+    }, [loaded, projectId]);
 
     const handleCreate = async () => {
         if (!name.trim()) return;
@@ -45,7 +57,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
             batch_size: batchSize,
             optimizer,
             use_lora: useLora,
-            lora_rank: loraR,
+            lora_r: loraR,
             lora_alpha: loraAlpha,
             target_modules: targetModules.split(',').map(s => s.trim()),
             gradient_checkpointing: gradientCheckpointing,

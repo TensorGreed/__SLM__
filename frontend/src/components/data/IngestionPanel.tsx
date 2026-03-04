@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
@@ -17,7 +17,6 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [isUploading, setIsUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<string>('');
-    const [loaded, setLoaded] = useState(false);
 
     // Remote import state
     const [activeTab, setActiveTab] = useState<SourceTab>('upload');
@@ -36,14 +35,12 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
             console.error('Failed to fetch documents', err);
         } finally {
             setIsLoading(false);
-            setLoaded(true);
         }
     }, [projectId]);
 
-    // Load on first render
-    if (!loaded && !isLoading) {
+    useEffect(() => {
         fetchDocs();
-    }
+    }, [fetchDocs]);
 
     const handleUpload = async (files: FileList | File[]) => {
         if (!files.length) return;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../../api/client';
 
 interface ExportPanelProps { projectId: number; }
@@ -11,16 +11,25 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [quantization, setQuantization] = useState('4-bit');
     const [loaded, setLoaded] = useState(false);
 
-    if (!loaded) {
-        Promise.all([
-            api.get(`/projects/${projectId}/training/experiments`),
-            api.get(`/projects/${projectId}/export/list`),
-        ]).then(([exps, expts]) => {
-            setExperiments(exps.data);
-            setExports(expts.data);
-            setLoaded(true);
-        });
-    }
+    useEffect(() => {
+        setLoaded(false);
+        setExperiments([]);
+        setExports([]);
+        setSelectedExp('');
+    }, [projectId]);
+
+    useEffect(() => {
+        if (!loaded) {
+            Promise.all([
+                api.get(`/projects/${projectId}/training/experiments`),
+                api.get(`/projects/${projectId}/export/list`),
+            ]).then(([exps, expts]) => {
+                setExperiments(exps.data);
+                setExports(expts.data);
+                setLoaded(true);
+            });
+        }
+    }, [loaded, projectId]);
 
     const handleCreate = async () => {
         if (!selectedExp) return;

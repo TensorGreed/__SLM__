@@ -1,9 +1,15 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 aiosqlite
 pydantic
 pydantic-settings
 python-multipart
 celery
+redis
 httpx
+PyPDF2
+python-docx
+datasets
+kaggle
+transformers

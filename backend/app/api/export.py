@@ -29,31 +29,36 @@ async def create(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new export."""
-    export = await create_export(
-        db, project_id, req.experiment_id, req.export_format, req.quantization,
-    )
-    return {
-        "id": export.id,
-        "format": export.export_format.value,
-        "status": export.status.value,
-        "output_path": export.output_path,
-    }
+    try:
+        export = await create_export(
+            db, project_id, req.experiment_id, req.export_format, req.quantization,
+        )
+        return {
+            "id": export.id,
+            "format": export.export_format.value,
+            "status": export.status.value,
+            "output_path": export.output_path,
+        }
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post("/{export_id}/run")
 async def run(
     project_id: int,
     export_id: int,
-    req: ExportRunRequest = ExportRunRequest(),
+    req: ExportRunRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Execute the export process."""
+    payload = req or ExportRunRequest()
     try:
-        export = await run_export(db, export_id, req.eval_report, req.safety_scorecard)
+        export = await run_export(db, project_id, export_id, payload.eval_report, payload.safety_scorecard)
         return {
             "id": export.id,
             "status": export.status.value,
             "output_path": export.output_path,
+            "run_id": (export.manifest or {}).get("run_id"),
             "manifest": export.manifest,
         }
     except ValueError as e:
@@ -74,7 +79,9 @@ async def list_all(
             "status": e.status.value,
             "quantization": e.quantization,
             "output_path": e.output_path,
+            "run_id": (e.manifest or {}).get("run_id"),
             "created_at": e.created_at.isoformat(),
+            "completed_at": e.completed_at.isoformat() if e.completed_at else None,
         }
         for e in exports
     ]

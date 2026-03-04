@@ -15,6 +15,7 @@ import ExportPanel from '../components/export/ExportPanel';
 import GettingStartedWizard from '../components/shared/GettingStartedWizard';
 import { PIPELINE_TABS } from '../types';
 import type { TabKey } from '../types';
+import api from '../api/client';
 import './ProjectDetailPage.css';
 
 // Define tab order for next-step navigation
@@ -35,6 +36,16 @@ const TAB_PREREQ_INDEX: Record<TabKey, number> = {
 
 // Pipeline stage order for comparison
 const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_prep', 'tokenization', 'training', 'evaluation', 'compression', 'export', 'completed'];
+const TAB_TARGET_STAGE: Record<TabKey, string> = {
+    data: 'ingestion',
+    cleaning: 'cleaning',
+    goldset: 'gold_set',
+    synthetic: 'synthetic',
+    training: 'training',
+    eval: 'evaluation',
+    compression: 'compression',
+    export: 'export',
+};
 
 function getStageIndex(stage: string): number {
     const idx = STAGE_ORDER.indexOf(stage);
@@ -98,10 +109,26 @@ export default function ProjectDetailPage() {
         }
     };
 
-    const goToNextTab = () => {
+    const goToNextTab = async () => {
         const currentIndex = TAB_ORDER.indexOf(activeTab);
         if (currentIndex < TAB_ORDER.length - 1) {
             const nextTab = TAB_ORDER[currentIndex + 1];
+            const targetStage = TAB_TARGET_STAGE[nextTab];
+
+            // Keep backend pipeline stage aligned with the visible tab flow.
+            let currentStage = pipelineStatus?.current_stage;
+            let guard = 0;
+            while (currentStage && currentStage !== targetStage && guard < 12) {
+                try {
+                    const res = await api.post(`/projects/${projectId}/pipeline/advance`);
+                    currentStage = res.data.current_stage;
+                    guard += 1;
+                } catch {
+                    break;
+                }
+            }
+
+            await fetchPipelineStatus(projectId);
             setActiveTab(nextTab);
         }
     };

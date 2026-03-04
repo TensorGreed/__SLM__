@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
 
+    # ── Auth / RBAC ─────────────────────────────────────────────────────
+    AUTH_ENABLED: bool = False
+    AUTH_BOOTSTRAP_API_KEY: str = ""
+    AUTH_BOOTSTRAP_USERNAME: str = "admin"
+    AUTH_BOOTSTRAP_ROLE: str = "admin"
+    AUDIT_LOG_ENABLED: bool = True
+
     # ── Paths ───────────────────────────────────────────────────────────
     DATA_DIR: Path = Path(__file__).resolve().parent.parent.parent / "data"
     MODEL_CACHE_DIR: Path = Path(__file__).resolve().parent.parent.parent / "data" / "models"
@@ -30,6 +37,10 @@ class Settings(BaseSettings):
     # ── Teacher Model (for synthetic generation) ────────────────────────
     TEACHER_MODEL_API_URL: str = ""
     TEACHER_MODEL_API_KEY: str = ""
+
+    # ── Judge Model (for evaluation) ────────────────────────────────────
+    JUDGE_MODEL_API_URL: str = ""
+    JUDGE_MODEL_API_KEY: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

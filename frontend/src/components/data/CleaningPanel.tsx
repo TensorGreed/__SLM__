@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import './CleaningPanel.css';
@@ -22,7 +22,6 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
     const [chunkSize, setChunkSize] = useState(1000);
     const [redactPii, setRedactPii] = useState(true);
     const [cleaningResults, setCleaningResults] = useState<any[]>([]);
-    const [loaded, setLoaded] = useState(false);
 
     const fetchDocs = useCallback(async () => {
         setIsLoading(true);
@@ -31,11 +30,12 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
             setDocuments(res.data);
         } finally {
             setIsLoading(false);
-            setLoaded(true);
         }
     }, [projectId]);
 
-    if (!loaded && !isLoading) fetchDocs();
+    useEffect(() => {
+        fetchDocs();
+    }, [fetchDocs]);
 
     const handleCleanAll = async () => {
         const pendingDocs = documents.filter(d => d.status === 'accepted' || d.status === 'pending');
