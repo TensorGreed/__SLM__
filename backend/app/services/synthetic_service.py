@@ -157,6 +157,11 @@ async def generate_qa_pairs(
 
     # ── Demo mode: no teacher API configured ──────────────────
     if not url:
+        if not settings.ALLOW_SYNTHETIC_DEMO_FALLBACK:
+            raise ValueError(
+                "Teacher model API URL is not configured. Set TEACHER_MODEL_API_URL "
+                "or enable ALLOW_SYNTHETIC_DEMO_FALLBACK=true for demo-only mode."
+            )
         pairs = _generate_demo_pairs(source_text, num_pairs)
         return pairs
 
@@ -184,19 +189,33 @@ Generate {num_pairs} Q&A pairs as JSON array:"""
         else:
             pairs = json.loads(content)
     except json.JSONDecodeError:
-        pairs = [{"question": "Generation failed", "answer": content}]
+        raise ValueError("Teacher model response was not valid JSON for Q&A extraction")
+
+    if not isinstance(pairs, list):
+        raise ValueError("Teacher model response must be a JSON array of {question, answer}")
 
     # Score each pair
     scored_pairs = []
     for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        question = str(pair.get("question", "")).strip()
+        answer = str(pair.get("answer", "")).strip()
+        if not question or not answer:
+            continue
+
         confidence = _compute_confidence(pair)
         scored_pairs.append({
-            **pair,
+            "question": question,
+            "answer": answer,
             "confidence": confidence,
             "source": "teacher_model",
             "model": result.get("model", "unknown"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         })
+
+    if not scored_pairs:
+        raise ValueError("No valid synthetic Q&A pairs were returned by the teacher model")
 
     return scored_pairs
 

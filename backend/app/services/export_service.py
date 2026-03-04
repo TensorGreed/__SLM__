@@ -245,37 +245,197 @@ CMD ["python", "serve.py"]
 
 
 def _generate_inference_script(export_format: ExportFormat) -> str:
-    """Generate a minimal inference server script."""
-    return '''"""Auto-generated inference server for exported SLM model."""
+    """Generate an inference server script tailored to export format."""
+    if export_format in {ExportFormat.HUGGINGFACE, ExportFormat.DOCKER}:
+        return '''"""Auto-generated inference server for exported SLM model."""
 import json
-from fastapi import FastAPI
+import os
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
 app = FastAPI(title="SLM Inference Server")
+MODEL_PATH = os.getenv("MODEL_PATH", "./model")
+model = None
+tokenizer = None
+load_error = None
 
-# Load model on startup
-# TODO: Replace with actual model loading based on export format
 
 class InferenceRequest(BaseModel):
     prompt: str
     max_tokens: int = 256
     temperature: float = 0.7
 
+
 class InferenceResponse(BaseModel):
     text: str
     tokens_used: int
 
+
+@app.on_event("startup")
+async def startup():
+    global model, tokenizer, load_error
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH,
+            trust_remote_code=True,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        )
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+        model.eval()
+    except Exception as e:
+        load_error = str(e)
+
+
 @app.post("/generate", response_model=InferenceResponse)
 async def generate(req: InferenceRequest):
-    # TODO: Replace with actual inference
-    return InferenceResponse(text="[Model not loaded]", tokens_used=0)
+    if model is None or tokenizer is None:
+        raise HTTPException(status_code=503, detail=f"Model not ready: {load_error}")
+    import torch
+
+    inputs = tokenizer(req.prompt, return_tensors="pt")
+    if torch.cuda.is_available():
+        inputs = {k: v.to("cuda") for k, v in inputs.items()}
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens=req.max_tokens,
+            temperature=req.temperature,
+            do_sample=req.temperature > 0,
+        )
+    prompt_tokens = inputs["input_ids"].shape[-1]
+    generated_tokens = output_ids[0][prompt_tokens:]
+    text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    return InferenceResponse(text=text, tokens_used=int(generated_tokens.shape[-1]))
+
 
 @app.get("/health")
 async def health():
     with open("manifest.json") as f:
         manifest = json.load(f)
-    return {"status": "ok", "manifest": manifest}
+    return {
+        "status": "ok" if model is not None else "degraded",
+        "format": "huggingface",
+        "model_path": MODEL_PATH,
+        "load_error": load_error,
+        "manifest": manifest,
+    }
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+'''
+
+    if export_format == ExportFormat.GGUF:
+        return '''"""Auto-generated GGUF inference server."""
+import json
+import os
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
+
+app = FastAPI(title="SLM Inference Server")
+MODEL_PATH = os.getenv("MODEL_PATH", "./model.gguf")
+llm = None
+load_error = None
+
+
+class InferenceRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 256
+    temperature: float = 0.7
+
+
+class InferenceResponse(BaseModel):
+    text: str
+    tokens_used: int
+
+
+@app.on_event("startup")
+async def startup():
+    global llm, load_error
+    try:
+        from llama_cpp import Llama
+        llm = Llama(model_path=MODEL_PATH, n_ctx=4096)
+    except Exception as e:
+        load_error = str(e)
+
+
+@app.post("/generate", response_model=InferenceResponse)
+async def generate(req: InferenceRequest):
+    if llm is None:
+        raise HTTPException(status_code=503, detail=f"Model not ready: {load_error}")
+    out = llm(
+        req.prompt,
+        max_tokens=req.max_tokens,
+        temperature=req.temperature,
+    )
+    choice = out.get("choices", [{}])[0]
+    usage = out.get("usage", {})
+    return InferenceResponse(
+        text=choice.get("text", ""),
+        tokens_used=int(usage.get("total_tokens", 0)),
+    )
+
+
+@app.get("/health")
+async def health():
+    with open("manifest.json") as f:
+        manifest = json.load(f)
+    return {
+        "status": "ok" if llm is not None else "degraded",
+        "format": "gguf",
+        "model_path": MODEL_PATH,
+        "load_error": load_error,
+        "manifest": manifest,
+    }
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+'''
+
+    return '''"""Auto-generated inference server (manual runtime integration required)."""
+import json
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
+
+app = FastAPI(title="SLM Inference Server")
+
+
+class InferenceRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 256
+    temperature: float = 0.7
+
+
+class InferenceResponse(BaseModel):
+    text: str
+    tokens_used: int
+
+
+@app.post("/generate", response_model=InferenceResponse)
+async def generate(req: InferenceRequest):
+    raise HTTPException(
+        status_code=501,
+        detail="Inference runtime not auto-generated for this export format. Integrate your runtime engine in serve.py.",
+    )
+
+
+@app.get("/health")
+async def health():
+    with open("manifest.json") as f:
+        manifest = json.load(f)
+    return {"status": "degraded", "manifest": manifest}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)

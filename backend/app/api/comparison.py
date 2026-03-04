@@ -63,7 +63,7 @@ async def compare_experiments(
                 "epoch": ckpt.epoch,
                 "train_loss": ckpt.train_loss,
                 "eval_loss": ckpt.eval_loss,
-                **ckpt.metrics  # Include any other tracked metrics (lr, gpu, etc.)
+                **(ckpt.metrics or {}),  # Include any other tracked metrics (lr, gpu, etc.)
             })
             
         duration_seconds = None

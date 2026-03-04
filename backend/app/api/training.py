@@ -82,7 +82,9 @@ async def start(
         detail = str(e)
         if "already running" in detail or "already completed" in detail:
             raise HTTPException(409, detail)
-        raise HTTPException(404, detail)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.get("/experiments/{experiment_id}/status")

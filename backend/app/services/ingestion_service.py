@@ -240,6 +240,7 @@ async def ingest_remote_dataset(
     import json
     import random
     import re
+    import tempfile
 
     import httpx
 
@@ -251,6 +252,52 @@ async def ingest_remote_dataset(
 
     def _safe_remote_name(value: str) -> str:
         return re.sub(r"[^a-zA-Z0-9._-]+", "_", value).strip("_")[:80] or "dataset"
+
+    def _append_records_from_text(raw_text: str, ext: str, target_count: int) -> None:
+        ext = ext.lower()
+        remaining = max(0, target_count - len(raw_samples))
+        if remaining == 0:
+            return
+
+        if ext == ".jsonl":
+            for line in raw_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                raw_samples.append(record if isinstance(record, dict) else {"value": record})
+                if len(raw_samples) >= target_count:
+                    break
+            return
+
+        if ext == ".json":
+            data = json.loads(raw_text)
+            if isinstance(data, list):
+                for row in data[:remaining]:
+                    raw_samples.append(row if isinstance(row, dict) else {"value": row})
+            elif isinstance(data, dict):
+                raw_samples.append(data)
+            else:
+                raw_samples.append({"value": data})
+            return
+
+        if ext == ".csv":
+            reader = csv.DictReader(raw_text.splitlines())
+            for row in reader:
+                raw_samples.append(dict(row))
+                if len(raw_samples) >= target_count:
+                    break
+            return
+
+        for i, line in enumerate(raw_text.splitlines()):
+            if i >= remaining:
+                break
+            line = line.strip()
+            if line:
+                raw_samples.append({"content": line})
 
     if source_type == "huggingface":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))
@@ -270,8 +317,13 @@ async def ingest_remote_dataset(
                 else:
                     raw_samples.append({"value": row})
             source_mode = "live"
-        except Exception:
-            # Fallback to simulation so the UI flow remains usable even without deps/auth.
+        except Exception as e:
+            if not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
+                raise ValueError(
+                    "HuggingFace import failed. Configure dependencies/network/auth and retry "
+                    "(or set ALLOW_SIMULATED_INGESTION_FALLBACK=true for demo fallback). "
+                    f"Details: {e}"
+                )
             for i in range(target_samples):
                 raw_samples.append({
                     "instruction": f"Sample instruction #{i+1} from {identifier}",
@@ -284,12 +336,44 @@ async def ingest_remote_dataset(
     elif source_type == "kaggle":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))
         filename = f"kaggle_{safe_name}.jsonl"
-        for i in range(target_samples):
-            raw_samples.append({
-                "text": f"Row {i+1} from Kaggle dataset {identifier}.",
-                "label": random.choice(["positive", "negative", "neutral"]),
-                "source": f"kaggle/{identifier}",
-            })
+        try:
+            from kaggle.api.kaggle_api_extended import KaggleApi
+
+            with tempfile.TemporaryDirectory(prefix="slm_kaggle_") as tmp_dir:
+                api = KaggleApi()
+                api.authenticate()
+                api.dataset_download_files(identifier, path=tmp_dir, unzip=True, quiet=True)
+
+                candidate_files = [
+                    p
+                    for p in Path(tmp_dir).rglob("*")
+                    if p.is_file() and p.suffix.lower() in {".jsonl", ".json", ".csv", ".txt", ".md"}
+                ]
+                if not candidate_files:
+                    raise ValueError("No supported files found in downloaded Kaggle dataset")
+
+                for fpath in candidate_files:
+                    raw_text = fpath.read_text(encoding="utf-8", errors="replace")
+                    _append_records_from_text(raw_text, fpath.suffix.lower(), target_samples)
+                    if len(raw_samples) >= target_samples:
+                        break
+
+            if not raw_samples:
+                raise ValueError("No records parsed from Kaggle dataset")
+            source_mode = "live"
+        except Exception as e:
+            if not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
+                raise ValueError(
+                    "Kaggle import failed. Configure kaggle API credentials/dependency and retry "
+                    "(or set ALLOW_SIMULATED_INGESTION_FALLBACK=true for demo fallback). "
+                    f"Details: {e}"
+                )
+            for i in range(target_samples):
+                raw_samples.append({
+                    "text": f"Row {i+1} from Kaggle dataset {identifier}.",
+                    "label": random.choice(["positive", "negative", "neutral"]),
+                    "source": f"kaggle/{identifier}",
+                })
 
     elif source_type == "url":
         safe_name = _safe_remote_name(Path(identifier).stem or "download")
@@ -301,41 +385,7 @@ async def ingest_remote_dataset(
                 raw_text = resp.text
 
             ext = Path(identifier).suffix.lower()
-            if ext == ".jsonl":
-                for line in raw_text.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                        if isinstance(record, dict):
-                            raw_samples.append(record)
-                        else:
-                            raw_samples.append({"value": record})
-                    except json.JSONDecodeError:
-                        continue
-                    if len(raw_samples) >= target_samples:
-                        break
-            elif ext == ".json":
-                data = json.loads(raw_text)
-                if isinstance(data, list):
-                    raw_samples = [d if isinstance(d, dict) else {"value": d} for d in data[:target_samples]]
-                elif isinstance(data, dict):
-                    raw_samples = [data]
-                else:
-                    raw_samples = [{"value": data}]
-            elif ext == ".csv":
-                reader = csv.DictReader(raw_text.splitlines())
-                for row in reader:
-                    raw_samples.append(dict(row))
-                    if len(raw_samples) >= target_samples:
-                        break
-            else:
-                for i, line in enumerate(raw_text.splitlines()):
-                    if i >= target_samples:
-                        break
-                    if line.strip():
-                        raw_samples.append({"content": line.strip()})
+            _append_records_from_text(raw_text, ext, target_samples)
 
             if not raw_samples:
                 raise ValueError("No records parsed from URL response")

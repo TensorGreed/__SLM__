@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
+alembic
 aiosqlite
 pydantic
 pydantic-settings
@@ -13,3 +14,6 @@ python-docx
 datasets
 kaggle
 transformers
+torch
+accelerate
+peft

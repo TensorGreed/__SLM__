@@ -31,16 +31,25 @@ class BenchmarkRequest(BaseModel):
 @router.post("/quantize")
 async def quantize(project_id: int, req: QuantizeRequest):
     """Quantize a model."""
-    return await quantize_model(project_id, req.model_path, req.bits, req.output_format)
+    try:
+        return await quantize_model(project_id, req.model_path, req.bits, req.output_format)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/merge-lora")
 async def merge(project_id: int, req: MergeLoRARequest):
     """Merge LoRA adapter with base model."""
-    return await merge_lora(project_id, req.base_model_path, req.lora_adapter_path)
+    try:
+        return await merge_lora(project_id, req.base_model_path, req.lora_adapter_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/benchmark")
 async def benchmark(project_id: int, req: BenchmarkRequest):
     """Benchmark model size and performance."""
-    return await benchmark_model(project_id, req.model_path, req.num_samples)
+    try:
+        return await benchmark_model(project_id, req.model_path, req.num_samples)
+    except ValueError as e:
+        raise HTTPException(400, str(e))

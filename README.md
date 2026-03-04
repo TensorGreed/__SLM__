@@ -16,6 +16,7 @@ python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
 # .venv\Scripts\activate         # Windows PowerShell
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -94,7 +95,14 @@ __SLM__/
   - optional OpenAI-compatible remote judge endpoint via env config
 - Bounded prediction payload handling and explicit request schema validation
 
-### 5. Export Run Manifests for Release
+### 5. Strict Runtime Modes (No Silent Demo Fallbacks)
+- Ingestion and synthetic generation can be configured to fail fast instead of silently simulating data
+- Training runtime supports explicit backends: `simulate` (opt-in) and `external` command execution
+- Compression runtime supports explicit backends: `external` and `stub` (opt-in)
+- Startup schema checks fail when required tables are missing (unless local auto-create is enabled)
+- Optional startup migration gate verifies DB revision is at Alembic head
+
+### 6. Export Run Manifests for Release
 - Each export run produces a versioned `run-<timestamp>` directory
 - Manifest includes:
   - run metadata
@@ -109,6 +117,10 @@ __SLM__/
 Common backend environment variables:
 
 - `DATABASE_URL` (default: `sqlite+aiosqlite:///./data/slm_platform.db`)
+- `DB_AUTO_CREATE` (`true`/`false`, default `false`)
+- `ALLOW_SQLITE_AUTOCREATE` (`true`/`false`, default `true`)
+- `DB_REQUIRE_ALEMBIC_HEAD` (`true`/`false`, default `true`)
+- `ALEMBIC_CONFIG_FILE` (default `alembic.ini`)
 - `AUTH_ENABLED` (`true`/`false`)
 - `AUTH_BOOTSTRAP_API_KEY`
 - `AUTH_BOOTSTRAP_USERNAME` (default: `admin`)
@@ -116,9 +128,60 @@ Common backend environment variables:
 - `AUDIT_LOG_ENABLED` (`true`/`false`)
 - `JUDGE_MODEL_API_URL` (optional, OpenAI-compatible endpoint)
 - `JUDGE_MODEL_API_KEY` (optional bearer token)
+- `ALLOW_SIMULATED_INGESTION_FALLBACK` (`true`/`false`, default `false`)
+- `ALLOW_SYNTHETIC_DEMO_FALLBACK` (`true`/`false`, default `false`)
+- `TRAINING_BACKEND` (`simulate` or `external`)
+- `ALLOW_SIMULATED_TRAINING` (`true`/`false`, default `false`)
+- `TRAINING_EXTERNAL_CMD` (required when `TRAINING_BACKEND=external`)
+- `COMPRESSION_BACKEND` (`external` or `stub`)
+- `ALLOW_STUB_COMPRESSION` (`true`/`false`, default `false`)
+- `QUANTIZE_EXTERNAL_CMD`, `MERGE_LORA_EXTERNAL_CMD`, `BENCHMARK_EXTERNAL_CMD`
+- `EXTERNAL_COMMAND_TIMEOUT_SECONDS` (default `21600`)
 
 When `AUTH_ENABLED=true`, set a bootstrap API key and call secured APIs with:
 - `x-api-key: <your-key>`
+
+Example external training command template:
+
+```bash
+TRAINING_BACKEND=external
+TRAINING_EXTERNAL_CMD="python scripts/train.py --project {project_id} --experiment {experiment_id} --output {output_dir} --base-model {base_model} --config {config_path} --train-file {train_file} --val-file {val_file}"
+```
+
+`scripts/train.py` now performs real HuggingFace finetuning (not simulated) and expects:
+- `train.jsonl` from dataset split
+- `torch`, `transformers`, `datasets`, `accelerate`
+- optional `peft` for LoRA and `bitsandbytes` for 8-bit optimizer modes
+
+Example external quantization command template:
+
+```bash
+COMPRESSION_BACKEND=external
+QUANTIZE_EXTERNAL_CMD="python scripts/quantize.py --model {model_path} --bits {bits} --format {output_format} --out {output_model_path}"
+```
+
+## Database Migrations (Alembic)
+
+Use Alembic for production schema management:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
+Create a new migration after model changes:
+
+```bash
+cd backend
+alembic revision --autogenerate -m "describe change"
+alembic upgrade head
+```
+
+From repo root, equivalent command:
+
+```bash
+alembic -c backend/alembic.ini upgrade head
+```
 
 ---
 
@@ -135,6 +198,17 @@ cd backend
 
 With backend running, visit:
 - **http://localhost:8000/docs**
+
+---
+
+## CI
+
+GitHub Actions workflow is included at:
+- `.github/workflows/ci.yml`
+
+It validates:
+- backend unit tests
+- frontend production build (`npm run build`)
 
 ---
 
