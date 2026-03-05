@@ -2,17 +2,41 @@
 
 from pathlib import Path
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    future=True,
-)
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+
+_engine_kwargs: dict = {
+    "echo": settings.DEBUG,
+    "future": True,
+}
+
+if _is_sqlite:
+    # SQLite needs NullPool with async or StaticPool for single-connection use.
+    # We use connect_args to disable the same-thread check and set a busy timeout.
+    from sqlalchemy.pool import StaticPool
+
+    _engine_kwargs.update(
+        connect_args={"check_same_thread": False, "timeout": 30},
+        poolclass=StaticPool,
+    )
+
+engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    """Enable WAL journal mode and other performance pragmas for SQLite."""
+    if _is_sqlite:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 async_session_factory = async_sessionmaker(
     engine,

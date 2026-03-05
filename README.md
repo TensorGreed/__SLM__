@@ -6,21 +6,32 @@ A modular platform for ML engineers to go from arbitrary source data to releasab
 
 ---
 
-## Quick Start
+## Getting Started
 
-### Backend
+### Prerequisites
+- **Python 3.11+** with `pip`
+- **Node.js 18+** with `npm`
+- **Redis** (optional — needed only for Celery background jobs)
+- **GPU + CUDA** (optional — needed only for real training/inference)
+
+### 1. Backend Setup
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows PowerShell
+# macOS/Linux:
+source .venv/bin/activate
+# Windows PowerShell:
+# .venv\Scripts\activate
+
 pip install -r requirements.txt
-alembic upgrade head
+cp .env.example .env          # adjust values as needed
 uvicorn app.main:app --reload --port 8000
 ```
 
-### Frontend
+The backend auto-creates SQLite tables on first run (when `ALLOW_SQLITE_AUTOCREATE=true`).
+
+### 2. Frontend Setup
 
 ```bash
 cd frontend
@@ -28,9 +39,20 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser.
+### 3. Login & First Project
+
+1. Open **http://localhost:5173** → you'll see the login page
+2. Enter any username and the API key from `.env` as the password (default: `sk-mock-admin-key`)
+3. Click **Sign in** → you'll be redirected to the dashboard
+4. Click **New Project**, give it a name and base model (e.g. `TinyLlama/TinyLlama-1.1B-Chat-v1.0`)
+5. Walk through each pipeline tab: **Ingest → Clean → Gold → Synthetic → Dataset Prep → Tokenize → Train → Evaluate → Compress → Export**
+
+### 4. API Docs
+
+With the backend running, visit **http://localhost:8000/docs** for the full interactive API reference.
 
 ---
+
 
 ## Architecture
 
