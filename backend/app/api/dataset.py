@@ -7,6 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.dataset import DatasetType
 from app.services.dataset_service import combine_datasets, profile_project_dataset, split_dataset
+from app.services.domain_profile_service import (
+    get_dataset_split_defaults,
+    get_project_domain_profile_contract,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/dataset", tags=["Dataset Prep"])
 
@@ -41,16 +45,62 @@ async def split(
 ):
     """Split combined data into train/validation/test JSONL datasets."""
     try:
+        profile_contract = await get_project_domain_profile_contract(db, project_id)
+        profile_defaults = get_dataset_split_defaults(profile_contract)
+        provided = set(req.model_fields_set)
+        profile_defaults_applied: list[str] = []
+
+        train_ratio = req.train_ratio if "train_ratio" in provided else float(
+            profile_defaults.get("train_ratio", req.train_ratio)
+        )
+        if "train_ratio" not in provided and "train_ratio" in profile_defaults:
+            profile_defaults_applied.append("train_ratio")
+        val_ratio = req.val_ratio if "val_ratio" in provided else float(
+            profile_defaults.get("val_ratio", req.val_ratio)
+        )
+        if "val_ratio" not in provided and "val_ratio" in profile_defaults:
+            profile_defaults_applied.append("val_ratio")
+        test_ratio = req.test_ratio if "test_ratio" in provided else float(
+            profile_defaults.get("test_ratio", req.test_ratio)
+        )
+        if "test_ratio" not in provided and "test_ratio" in profile_defaults:
+            profile_defaults_applied.append("test_ratio")
+        seed = req.seed if "seed" in provided else int(profile_defaults.get("seed", req.seed))
+        if "seed" not in provided and "seed" in profile_defaults:
+            profile_defaults_applied.append("seed")
+        chat_template = req.chat_template if "chat_template" in provided else str(
+            profile_defaults.get("chat_template", req.chat_template)
+        )
+        if "chat_template" not in provided and "chat_template" in profile_defaults:
+            profile_defaults_applied.append("chat_template")
+
+        if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-6:
+            raise HTTPException(400, "train_ratio + val_ratio + test_ratio must equal 1.0")
+
         manifest = await split_dataset(
             db=db,
             project_id=project_id,
-            train_ratio=req.train_ratio,
-            val_ratio=req.val_ratio,
-            test_ratio=req.test_ratio,
-            seed=req.seed,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            test_ratio=test_ratio,
+            seed=seed,
             include_types=[t.value for t in req.include_types] if req.include_types else None,
-            chat_template=req.chat_template,
+            chat_template=chat_template,
         )
+        manifest["domain_profile_applied"] = (
+            profile_contract.get("profile_id")
+            if isinstance(profile_contract, dict)
+            else None
+        )
+        manifest["profile_split_defaults"] = profile_defaults or None
+        manifest["resolved_split_config"] = {
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
+            "seed": seed,
+            "chat_template": chat_template,
+        }
+        manifest["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
         return manifest
     except ValueError as e:
         raise HTTPException(400, str(e))

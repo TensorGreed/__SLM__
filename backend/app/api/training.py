@@ -11,6 +11,10 @@ from app.database import get_db
 from app.models.experiment import Checkpoint, Experiment
 from app.schemas.training import ExperimentCreate, ExperimentResponse
 from app.services.job_service import get_task_status
+from app.services.domain_profile_service import (
+    get_project_domain_profile_contract,
+    get_training_defaults,
+)
 from app.services.training_service import (
     cancel_training,
     create_experiment,
@@ -112,11 +116,54 @@ async def create(
 ):
     """Create a new training experiment."""
     try:
+        config_payload = data.config.model_dump()
+        provided_config_fields = set(data.config.model_fields_set)
+        profile_defaults_applied: list[str] = []
+
+        profile_contract = await get_project_domain_profile_contract(db, project_id)
+        profile_training_defaults = get_training_defaults(profile_contract)
+        if profile_training_defaults:
+            for key, value in profile_training_defaults.items():
+                if key == "training_mode":
+                    continue
+                if key not in provided_config_fields:
+                    config_payload[key] = value
+                    profile_defaults_applied.append(key)
+
+        resolved_training_mode = data.config.training_mode
+        if (
+            "training_mode" not in provided_config_fields
+            and isinstance(profile_training_defaults.get("training_mode"), str)
+        ):
+            candidate_mode = str(profile_training_defaults["training_mode"]).strip().lower()
+            try:
+                resolved_training_mode = type(data.config.training_mode)(candidate_mode)
+                config_payload["training_mode"] = resolved_training_mode.value
+                profile_defaults_applied.append("training_mode")
+            except ValueError:
+                pass
+
         exp = await create_experiment(
-            db, project_id, data.name, data.config.base_model,
-            data.config.model_dump(), data.description, data.config.training_mode,
+            db,
+            project_id,
+            data.name,
+            str(config_payload.get("base_model", data.config.base_model)),
+            config_payload,
+            data.description,
+            resolved_training_mode,
         )
-        return ExperimentResponse.model_validate(exp)
+        response_payload = ExperimentResponse.model_validate(exp).model_dump()
+        response_payload["domain_profile_applied"] = (
+            profile_contract.get("profile_id")
+            if isinstance(profile_contract, dict)
+            else None
+        )
+        response_payload["profile_training_defaults"] = (
+            dict(profile_training_defaults) if profile_training_defaults else None
+        )
+        response_payload["resolved_training_config"] = dict(config_payload)
+        response_payload["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
+        return ExperimentResponse.model_validate(response_payload)
     except ValueError as e:
         raise HTTPException(404, str(e))
 

@@ -28,6 +28,8 @@ from app.api.export import router as export_router
 from app.api.comparison import router as comparison_router
 from app.api.registry import router as registry_router
 from app.api.secrets import router as secrets_router
+from app.api.domain_profiles import router as domain_profiles_router
+from app.services.domain_profile_service import ensure_default_domain_profile
 
 
 @asynccontextmanager
@@ -36,6 +38,9 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
     await ensure_bootstrap_auth()
+    async with async_session_factory() as db:
+        await ensure_default_domain_profile(db)
+        await db.commit()
     yield
 
 
@@ -75,6 +80,7 @@ app.include_router(export_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(comparison_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(registry_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(secrets_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(domain_profiles_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

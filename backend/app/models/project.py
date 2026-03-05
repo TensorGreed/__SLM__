@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -50,6 +50,10 @@ class Project(Base):
         Enum(PipelineStage), default=PipelineStage.INGESTION
     )
     base_model_name: Mapped[str | None] = mapped_column(String(255), default="")
+    domain_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("domain_profiles.id"),
+        default=None,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -60,6 +64,7 @@ class Project(Base):
     # Relationships
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
     experiments = relationship("Experiment", back_populates="project", cascade="all, delete-orphan")
+    domain_profile = relationship("DomainProfile", back_populates="projects")
 
     def __repr__(self) -> str:
         return f"<Project {self.id}: {self.name} [{self.pipeline_stage.value}]>"

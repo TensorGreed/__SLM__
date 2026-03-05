@@ -16,8 +16,9 @@ import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
 import GettingStartedWizard from '../components/shared/GettingStartedWizard';
 import { PIPELINE_TABS } from '../types';
-import type { TabKey } from '../types';
+import type { Project, TabKey } from '../types';
 import api from '../api/client';
+import DomainProfileManager from '../components/domain/DomainProfileManager';
 import './ProjectDetailPage.css';
 
 // Define tab order for next-step navigation
@@ -66,6 +67,7 @@ export default function ProjectDetailPage() {
         pipelineStatus,
         activeTab,
         setActiveTab,
+        setActiveProject,
         fetchProject,
         fetchPipelineStatus,
     } = useProjectStore();
@@ -200,6 +202,11 @@ export default function ProjectDetailPage() {
                     }
                 />
                 <div className="page-container">
+                    <DomainProfileManager
+                        projectId={projectId}
+                        activeDomainProfileId={activeProject.domain_profile_id}
+                        onAssigned={(project: Project) => setActiveProject(project)}
+                    />
                     {pipelineStatus && (
                         <div className="card progress-card">
                             <PipelineProgress stages={pipelineStatus.stages} progressPercent={pipelineStatus.progress_percent} />

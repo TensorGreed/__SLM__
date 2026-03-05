@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.domain_profile_service import (
+    get_project_domain_profile_contract,
+    get_registry_gate_defaults,
+)
 from app.models.experiment import EvalResult, Experiment
 from app.models.export import Export
 from app.models.registry import (
@@ -79,7 +83,10 @@ async def build_readiness_snapshot(db: AsyncSession, experiment_id: int) -> dict
     }
 
 
-def _effective_gates(gates: dict | None) -> dict:
+def _effective_gates(
+    gates: dict | None,
+    profile_gates: dict | None = None,
+) -> dict:
     default_gates = {
         "min_exact_match": 0.5,
         "min_f1": 0.5,
@@ -88,10 +95,20 @@ def _effective_gates(gates: dict | None) -> dict:
         "max_exact_match_regression": 0.05,
         "max_f1_regression": 0.05,
     }
-    if not gates:
-        return default_gates
-
     merged = dict(default_gates)
+    if isinstance(profile_gates, dict):
+        for key, value in profile_gates.items():
+            if value is None:
+                merged[key] = None
+                continue
+            try:
+                merged[key] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    if not gates:
+        return merged
+
     for key, value in gates.items():
         if value is None:
             merged[key] = None
@@ -160,7 +177,9 @@ async def evaluate_promotion_gates(
     target_stage: RegistryStage,
     gates: dict | None = None,
 ) -> dict:
-    effective = _effective_gates(gates)
+    profile_contract = await get_project_domain_profile_contract(db, project_id)
+    profile_defaults = get_registry_gate_defaults(profile_contract, target_stage.value)
+    effective = _effective_gates(gates, profile_defaults)
     readiness = await build_readiness_snapshot(db, entry.experiment_id)
     metrics = readiness.get("metrics", {})
 
@@ -216,7 +235,9 @@ async def evaluate_promotion_gates(
     return {
         "evaluated_at": _utcnow().isoformat(),
         "target_stage": target_stage.value,
+        "domain_profile_id": profile_contract.get("profile_id") if isinstance(profile_contract, dict) else None,
         "gates": effective,
+        "profile_gate_defaults": profile_defaults,
         "readiness": readiness,
         "checks": checks,
         "passed": passed,

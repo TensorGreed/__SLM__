@@ -1,0 +1,266 @@
+"""Phase 11 tests: domain profile contracts and project assignment."""
+
+from __future__ import annotations
+
+import os
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+TEST_DB_PATH = Path(__file__).resolve().parent / "phase11_test.db"
+
+os.environ["AUTH_ENABLED"] = "true"
+os.environ["AUTH_BOOTSTRAP_API_KEY"] = "phase11-admin-key"
+os.environ["AUTH_BOOTSTRAP_USERNAME"] = "phase11-admin"
+os.environ["AUTH_BOOTSTRAP_ROLE"] = "admin"
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}"
+os.environ["DEBUG"] = "false"
+
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
+def _sample_contract(profile_id: str, display_name: str) -> dict:
+    return {
+        "$schema": "slm.domain-profile/v1",
+        "profile_id": profile_id,
+        "version": "1.0.0",
+        "display_name": display_name,
+        "description": "Domain profile for testing",
+        "owner": "qa",
+        "status": "active",
+        "tasks": [
+            {
+                "task_id": "qa",
+                "output_mode": "text",
+                "required_fields": ["question", "answer"],
+            }
+        ],
+        "canonical_schema": {
+            "required": ["input_text", "target_text"],
+            "aliases": {
+                "input_text": ["question"],
+                "target_text": ["answer"],
+            },
+        },
+        "normalization": {
+            "trim_whitespace": True,
+            "drop_empty_records": True,
+        },
+        "data_quality": {
+            "min_records": 20,
+            "max_null_ratio": 0.1,
+            "max_duplicate_ratio": 0.2,
+            "required_coverage": {"input_text": 0.95, "target_text": 0.95},
+        },
+        "dataset_split": {"train": 0.8, "val": 0.1, "test": 0.1},
+        "training_defaults": {
+            "training_mode": "sft",
+            "chat_template": "llama3",
+            "num_epochs": 1,
+            "batch_size": 2,
+            "learning_rate": 0.0001,
+            "use_lora": True,
+        },
+        "evaluation": {
+            "metrics": [
+                {"metric_id": "f1", "weight": 0.5, "threshold": 0.6},
+                {"metric_id": "safety_pass_rate", "weight": 0.5, "threshold": 0.9},
+            ],
+            "required_metrics_for_promotion": ["f1", "safety_pass_rate"],
+        },
+        "tools": {
+            "retrieval": {"enabled": False, "adapter": None},
+            "function_calling": {"enabled": False, "adapter": None},
+            "required_secrets": [],
+        },
+        "registry_gates": {
+            "to_staging": {"min_metrics": {"f1": 0.6}},
+            "to_production": {"min_metrics": {"f1": 0.7, "safety_pass_rate": 0.92}},
+        },
+        "audit": {
+            "require_human_approval_for_production": True,
+            "notes_required_on_force_promotion": True,
+        },
+    }
+
+
+class Phase11DomainProfileTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if TEST_DB_PATH.exists():
+            TEST_DB_PATH.unlink()
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+        cls.admin_headers = {"x-api-key": "phase11-admin-key"}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+        if TEST_DB_PATH.exists():
+            TEST_DB_PATH.unlink()
+
+    def test_default_profile_is_bootstrapped(self):
+        unauthorized = self.client.get("/api/domain-profiles")
+        self.assertEqual(unauthorized.status_code, 401)
+
+        listed = self.client.get("/api/domain-profiles", headers=self.admin_headers)
+        self.assertEqual(listed.status_code, 200, listed.text)
+        payload = listed.json()
+        self.assertGreaterEqual(payload.get("count", 0), 1)
+        ids = {item["profile_id"] for item in payload.get("profiles", [])}
+        self.assertIn("generic-domain-v1", ids)
+
+    def test_create_and_assign_domain_profile(self):
+        create_profile = self.client.post(
+            "/api/domain-profiles",
+            headers=self.admin_headers,
+            json=_sample_contract("finance-risk-v1", "Finance Risk"),
+        )
+        self.assertEqual(create_profile.status_code, 201, create_profile.text)
+        profile_payload = create_profile.json()
+        self.assertEqual(profile_payload["profile_id"], "finance-risk-v1")
+
+        create_project = self.client.post(
+            "/api/projects",
+            headers=self.admin_headers,
+            json={"name": "phase11-project", "description": "phase11"},
+        )
+        self.assertEqual(create_project.status_code, 201, create_project.text)
+        project_id = create_project.json()["id"]
+
+        assign = self.client.put(
+            f"/api/projects/{project_id}/domain-profile",
+            headers=self.admin_headers,
+            json={"profile_id": "finance-risk-v1"},
+        )
+        self.assertEqual(assign.status_code, 200, assign.text)
+        assigned = assign.json()
+        self.assertIsNotNone(assigned.get("domain_profile_id"))
+
+        fetched = self.client.get(f"/api/projects/{project_id}", headers=self.admin_headers)
+        self.assertEqual(fetched.status_code, 200, fetched.text)
+        self.assertEqual(fetched.json()["domain_profile_id"], assigned["domain_profile_id"])
+
+    def test_dataset_split_uses_domain_profile_defaults(self):
+        create_profile = self.client.post(
+            "/api/domain-profiles",
+            headers=self.admin_headers,
+            json={
+                **_sample_contract("ops-domain-v1", "Ops Domain"),
+                "dataset_split": {"train": 0.7, "val": 0.2, "test": 0.1, "seed": 99},
+                "training_defaults": {"chat_template": "chatml"},
+            },
+        )
+        self.assertEqual(create_profile.status_code, 201, create_profile.text)
+
+        create_project = self.client.post(
+            "/api/projects",
+            headers=self.admin_headers,
+            json={"name": "phase11-project-split", "description": "phase11"},
+        )
+        self.assertEqual(create_project.status_code, 201, create_project.text)
+        project_id = create_project.json()["id"]
+
+        assign = self.client.put(
+            f"/api/projects/{project_id}/domain-profile",
+            headers=self.admin_headers,
+            json={"profile_id": "ops-domain-v1"},
+        )
+        self.assertEqual(assign.status_code, 200, assign.text)
+
+        mocked_split = AsyncMock(
+            return_value={"status": "ok", "splits": {"train": 7, "val": 2, "test": 1}}
+        )
+        with patch("app.api.dataset.split_dataset", mocked_split):
+            resp = self.client.post(
+                f"/api/projects/{project_id}/dataset/split",
+                headers=self.admin_headers,
+                json={},
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload.get("domain_profile_applied"), "ops-domain-v1")
+        self.assertEqual(payload.get("resolved_split_config", {}).get("train_ratio"), 0.7)
+        self.assertEqual(payload.get("resolved_split_config", {}).get("val_ratio"), 0.2)
+        self.assertEqual(payload.get("resolved_split_config", {}).get("test_ratio"), 0.1)
+        self.assertEqual(payload.get("resolved_split_config", {}).get("seed"), 99)
+        self.assertEqual(payload.get("resolved_split_config", {}).get("chat_template"), "chatml")
+        self.assertEqual(payload.get("profile_split_defaults", {}).get("train_ratio"), 0.7)
+        self.assertEqual(payload.get("profile_split_defaults", {}).get("chat_template"), "chatml")
+        self.assertCountEqual(
+            payload.get("profile_defaults_applied", []),
+            ["train_ratio", "val_ratio", "test_ratio", "seed", "chat_template"],
+        )
+        self.assertEqual(mocked_split.await_count, 1)
+        kwargs = mocked_split.await_args.kwargs
+        self.assertAlmostEqual(kwargs["train_ratio"], 0.7, places=6)
+        self.assertAlmostEqual(kwargs["val_ratio"], 0.2, places=6)
+        self.assertAlmostEqual(kwargs["test_ratio"], 0.1, places=6)
+        self.assertEqual(kwargs["seed"], 99)
+        self.assertEqual(kwargs["chat_template"], "chatml")
+
+    def test_training_experiment_uses_domain_profile_defaults(self):
+        create_profile = self.client.post(
+            "/api/domain-profiles",
+            headers=self.admin_headers,
+            json={
+                **_sample_contract("training-domain-v1", "Training Domain"),
+                "training_defaults": {
+                    "training_mode": "orpo",
+                    "chat_template": "phi3",
+                    "num_epochs": 5,
+                    "batch_size": 12,
+                    "learning_rate": 0.0005,
+                    "use_lora": False,
+                },
+            },
+        )
+        self.assertEqual(create_profile.status_code, 201, create_profile.text)
+
+        create_project = self.client.post(
+            "/api/projects",
+            headers=self.admin_headers,
+            json={"name": "phase11-project-training", "description": "phase11"},
+        )
+        self.assertEqual(create_project.status_code, 201, create_project.text)
+        project_id = create_project.json()["id"]
+
+        assign = self.client.put(
+            f"/api/projects/{project_id}/domain-profile",
+            headers=self.admin_headers,
+            json={"profile_id": "training-domain-v1"},
+        )
+        self.assertEqual(assign.status_code, 200, assign.text)
+
+        create_exp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            headers=self.admin_headers,
+            json={
+                "name": "phase11-exp",
+                "config": {
+                    "base_model": "microsoft/phi-2"
+                },
+            },
+        )
+        self.assertEqual(create_exp.status_code, 201, create_exp.text)
+        exp_payload = create_exp.json()
+        self.assertEqual(exp_payload["training_mode"], "orpo")
+        self.assertEqual(exp_payload["config"]["chat_template"], "phi3")
+        self.assertEqual(exp_payload["config"]["num_epochs"], 5)
+        self.assertEqual(exp_payload["config"]["batch_size"], 12)
+        self.assertAlmostEqual(float(exp_payload["config"]["learning_rate"]), 0.0005, places=8)
+        self.assertFalse(exp_payload["config"]["use_lora"])
+        self.assertEqual(exp_payload.get("domain_profile_applied"), "training-domain-v1")
+        self.assertEqual(exp_payload.get("profile_training_defaults", {}).get("chat_template"), "phi3")
+        self.assertEqual(exp_payload.get("resolved_training_config", {}).get("chat_template"), "phi3")
+        self.assertEqual(exp_payload.get("resolved_training_config", {}).get("training_mode"), "orpo")
+        self.assertCountEqual(
+            exp_payload.get("profile_defaults_applied", []),
+            ["training_mode", "chat_template", "num_epochs", "batch_size", "learning_rate", "use_lora"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

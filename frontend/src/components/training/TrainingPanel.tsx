@@ -27,6 +27,10 @@ interface Experiment {
   training_mode: string;
   base_model: string;
   config?: ExperimentConfig;
+  domain_profile_applied?: string | null;
+  profile_training_defaults?: Record<string, unknown> | null;
+  resolved_training_config?: Record<string, unknown> | null;
+  profile_defaults_applied?: string[];
 }
 
 interface TrainingMetric {
@@ -37,6 +41,18 @@ interface TrainingMetric {
   eval_loss?: number | null;
   [key: string]: unknown;
 }
+
+type ConfigFieldKey =
+  | 'chat_template'
+  | 'learning_rate'
+  | 'num_epochs'
+  | 'batch_size'
+  | 'optimizer'
+  | 'use_lora'
+  | 'lora_r'
+  | 'lora_alpha'
+  | 'target_modules'
+  | 'gradient_checkpointing';
 
 export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelProps) {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
@@ -61,6 +77,24 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const [loraAlpha, setLoraAlpha] = useState(32);
   const [targetModules, setTargetModules] = useState('q_proj, v_proj');
   const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
+  const [useProfileDefaults, setUseProfileDefaults] = useState(true);
+  const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
+    chat_template: false,
+    learning_rate: false,
+    num_epochs: false,
+    batch_size: false,
+    optimizer: false,
+    use_lora: false,
+    lora_r: false,
+    lora_alpha: false,
+    target_modules: false,
+    gradient_checkpointing: false,
+  });
+  const [lastCreateSummary, setLastCreateSummary] = useState<{
+    domainProfileApplied: string | null;
+    defaultsApplied: string[];
+    resolvedConfig: Record<string, unknown> | null;
+  } | null>(null);
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -92,6 +126,20 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setShowCreate(false);
     setTaskState('');
     setTrainingError('');
+    setUseProfileDefaults(true);
+    setTouchedConfig({
+      chat_template: false,
+      learning_rate: false,
+      num_epochs: false,
+      batch_size: false,
+      optimizer: false,
+      use_lora: false,
+      lora_r: false,
+      lora_alpha: false,
+      target_modules: false,
+      gradient_checkpointing: false,
+    });
+    setLastCreateSummary(null);
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -165,23 +213,59 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
   const handleCreate = async () => {
     if (!name.trim()) return;
-    const config = {
+    setTrainingError('');
+
+    const learningRate = Number.parseFloat(lr);
+    const parsedTargetModules = targetModules
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const config: Record<string, unknown> = {
       base_model: baseModel,
-      chat_template: chatTemplate,
-      learning_rate: parseFloat(lr),
-      num_epochs: epochs,
-      batch_size: batchSize,
-      optimizer,
-      use_lora: useLora,
-      lora_r: loraR,
-      lora_alpha: loraAlpha,
-      target_modules: targetModules.split(',').map((s) => s.trim()),
-      gradient_checkpointing: gradientCheckpointing,
     };
-    const res = await api.post(`/projects/${projectId}/training/experiments`, { name, config });
-    setExperiments((prev) => [res.data, ...prev]);
-    setShowCreate(false);
-    setName('');
+
+    const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
+    if (includeField('chat_template')) config.chat_template = chatTemplate;
+    if (includeField('learning_rate')) config.learning_rate = learningRate;
+    if (includeField('num_epochs')) config.num_epochs = epochs;
+    if (includeField('batch_size')) config.batch_size = batchSize;
+    if (includeField('optimizer')) config.optimizer = optimizer;
+    if (includeField('use_lora')) config.use_lora = useLora;
+    if (includeField('lora_r')) config.lora_r = loraR;
+    if (includeField('lora_alpha')) config.lora_alpha = loraAlpha;
+    if (includeField('target_modules')) config.target_modules = parsedTargetModules;
+    if (includeField('gradient_checkpointing')) config.gradient_checkpointing = gradientCheckpointing;
+
+    try {
+      const res = await api.post<Experiment>(`/projects/${projectId}/training/experiments`, { name, config });
+      const created = res.data;
+      setExperiments((prev) => [created, ...prev]);
+      setLastCreateSummary({
+        domainProfileApplied: created.domain_profile_applied ?? null,
+        defaultsApplied: created.profile_defaults_applied || [],
+        resolvedConfig:
+          created.resolved_training_config && typeof created.resolved_training_config === 'object'
+            ? created.resolved_training_config
+            : null,
+      });
+      setShowCreate(false);
+      setName('');
+      setTouchedConfig({
+        chat_template: false,
+        learning_rate: false,
+        num_epochs: false,
+        batch_size: false,
+        optimizer: false,
+        use_lora: false,
+        lora_r: false,
+        lora_alpha: false,
+        target_modules: false,
+        gradient_checkpointing: false,
+      });
+    } catch (err: any) {
+      setTrainingError(err?.response?.data?.detail || 'Failed to create experiment');
+    }
   };
 
   const handleStart = async (experimentId: number) => {
@@ -265,6 +349,11 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
                 {activeExperiment.base_model} • {activeExperiment.training_mode}
               </div>
+              {activeExperiment.domain_profile_applied && (
+                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                  Profile: {activeExperiment.domain_profile_applied}
+                </div>
+              )}
               {taskState && (
                 <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
                   Worker task state: {taskState}
@@ -327,6 +416,19 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <label className="form-label">Experiment Name</label>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. llama3-sft-v1" />
             </div>
+            <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
+              <label className="form-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={useProfileDefaults}
+                  onChange={(e) => setUseProfileDefaults(e.target.checked)}
+                />
+                Use domain profile defaults for untouched fields
+              </label>
+              <div className="form-hint">
+                Base model is always sent. Other fields are only sent after you edit them.
+              </div>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
               <div>
@@ -337,7 +439,14 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                 </div>
                 <div className="form-group">
                   <label className="form-label">Chat Template</label>
-                  <select className="input" value={chatTemplate} onChange={(e) => setChatTemplate(e.target.value)}>
+                  <select
+                    className="input"
+                    value={chatTemplate}
+                    onChange={(e) => {
+                      setChatTemplate(e.target.value);
+                      setTouchedConfig((prev) => ({ ...prev, chat_template: true }));
+                    }}
+                  >
                     <option value="llama3">Llama-3</option>
                     <option value="chatml">ChatML</option>
                     <option value="zephyr">Zephyr</option>
@@ -347,21 +456,51 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div className="form-group">
                     <label className="form-label">Epochs</label>
-                    <input className="input" type="number" value={epochs} onChange={(e) => setEpochs(Number(e.target.value) || 1)} />
+                    <input
+                      className="input"
+                      type="number"
+                      value={epochs}
+                      onChange={(e) => {
+                        setEpochs(Number(e.target.value) || 1);
+                        setTouchedConfig((prev) => ({ ...prev, num_epochs: true }));
+                      }}
+                    />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Batch Size</label>
-                    <input className="input" type="number" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value) || 1)} />
+                    <input
+                      className="input"
+                      type="number"
+                      value={batchSize}
+                      onChange={(e) => {
+                        setBatchSize(Number(e.target.value) || 1);
+                        setTouchedConfig((prev) => ({ ...prev, batch_size: true }));
+                      }}
+                    />
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div className="form-group">
                     <label className="form-label">Learning Rate</label>
-                    <input className="input" value={lr} onChange={(e) => setLr(e.target.value)} />
+                    <input
+                      className="input"
+                      value={lr}
+                      onChange={(e) => {
+                        setLr(e.target.value);
+                        setTouchedConfig((prev) => ({ ...prev, learning_rate: true }));
+                      }}
+                    />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Optimizer</label>
-                    <select className="input" value={optimizer} onChange={(e) => setOptimizer(e.target.value)}>
+                    <select
+                      className="input"
+                      value={optimizer}
+                      onChange={(e) => {
+                        setOptimizer(e.target.value);
+                        setTouchedConfig((prev) => ({ ...prev, optimizer: true }));
+                      }}
+                    >
                       <option value="paged_adamw_8bit">Paged AdamW (8-bit)</option>
                       <option value="adamw_torch">AdamW</option>
                     </select>
@@ -372,7 +511,14 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <div>
                 <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Advanced & PEFT</h4>
                 <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type="checkbox" checked={useLora} onChange={(e) => setUseLora(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={useLora}
+                    onChange={(e) => {
+                      setUseLora(e.target.checked);
+                      setTouchedConfig((prev) => ({ ...prev, use_lora: true }));
+                    }}
+                  />
                   <label className="form-label" style={{ margin: 0 }}>Enable LoRA</label>
                 </div>
                 {useLora && (
@@ -380,21 +526,51 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <div className="form-group">
                         <label className="form-label">Rank (r)</label>
-                        <input className="input" type="number" value={loraR} onChange={(e) => setLoraR(Number(e.target.value) || 1)} />
+                        <input
+                          className="input"
+                          type="number"
+                          value={loraR}
+                          onChange={(e) => {
+                            setLoraR(Number(e.target.value) || 1);
+                            setTouchedConfig((prev) => ({ ...prev, lora_r: true }));
+                          }}
+                        />
                       </div>
                       <div className="form-group">
                         <label className="form-label">Alpha</label>
-                        <input className="input" type="number" value={loraAlpha} onChange={(e) => setLoraAlpha(Number(e.target.value) || 1)} />
+                        <input
+                          className="input"
+                          type="number"
+                          value={loraAlpha}
+                          onChange={(e) => {
+                            setLoraAlpha(Number(e.target.value) || 1);
+                            setTouchedConfig((prev) => ({ ...prev, lora_alpha: true }));
+                          }}
+                        />
                       </div>
                     </div>
                     <div className="form-group">
                       <label className="form-label">Target Modules (comma-separated)</label>
-                      <input className="input" value={targetModules} onChange={(e) => setTargetModules(e.target.value)} />
+                      <input
+                        className="input"
+                        value={targetModules}
+                        onChange={(e) => {
+                          setTargetModules(e.target.value);
+                          setTouchedConfig((prev) => ({ ...prev, target_modules: true }));
+                        }}
+                      />
                     </div>
                   </div>
                 )}
                 <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type="checkbox" checked={gradientCheckpointing} onChange={(e) => setGradientCheckpointing(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={gradientCheckpointing}
+                    onChange={(e) => {
+                      setGradientCheckpointing(e.target.checked);
+                      setTouchedConfig((prev) => ({ ...prev, gradient_checkpointing: true }));
+                    }}
+                  />
                   <label className="form-label" style={{ margin: 0 }}>Use Gradient Checkpointing</label>
                 </div>
               </div>
@@ -410,6 +586,19 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         {trainingError && (
           <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
             {trainingError}
+          </div>
+        )}
+
+        {lastCreateSummary && (
+          <div style={{ marginBottom: 'var(--space-md)', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
+            <div style={{ fontSize: 'var(--font-size-sm)', marginBottom: 6 }}>
+              Applied profile: <strong>{lastCreateSummary.domainProfileApplied || 'none'}</strong>
+            </div>
+            {lastCreateSummary.defaultsApplied.length > 0 && (
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
+                Profile defaults used: {lastCreateSummary.defaultsApplied.join(', ')}
+              </div>
+            )}
           </div>
         )}
 
@@ -452,6 +641,11 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
                       {exp.base_model} • {exp.training_mode}
                     </div>
+                    {exp.domain_profile_applied && (
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                        Profile: {exp.domain_profile_applied}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>

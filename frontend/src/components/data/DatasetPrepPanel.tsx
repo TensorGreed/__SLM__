@@ -27,9 +27,20 @@ interface SplitManifest {
     project_id: number;
     total_entries: number;
     splits: Record<string, number>;
-    files: Record<string, string>;
+    file_paths?: Record<string, string>;
+    files?: Record<string, string>;
     chat_template: string;
     created_at: string;
+    domain_profile_applied?: string | null;
+    profile_split_defaults?: Record<string, unknown> | null;
+    resolved_split_config?: {
+        train_ratio?: number;
+        val_ratio?: number;
+        test_ratio?: number;
+        seed?: number;
+        chat_template?: string;
+    } | null;
+    profile_defaults_applied?: string[];
 }
 
 const CHAT_TEMPLATES = [
@@ -57,6 +68,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [testRatio, setTestRatio] = useState(0.1);
     const [splitSeed, setSplitSeed] = useState(42);
     const [splitTemplate, setSplitTemplate] = useState('llama3');
+    const [useProfileDefaults, setUseProfileDefaults] = useState(true);
+    const [splitTouched, setSplitTouched] = useState({
+        train_ratio: false,
+        val_ratio: false,
+        test_ratio: false,
+        seed: false,
+        chat_template: false,
+    });
     const [splitLoading, setSplitLoading] = useState(false);
     const [splitManifest, setSplitManifest] = useState<SplitManifest | null>(null);
 
@@ -97,14 +116,40 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const runSplit = async () => {
         setSplitLoading(true);
         try {
-            const res = await api.post(`/projects/${projectId}/dataset/split`, {
-                train_ratio: trainRatio,
-                val_ratio: valRatio,
-                test_ratio: testRatio,
-                seed: splitSeed,
-                chat_template: splitTemplate,
+            const payload: Record<string, unknown> = {};
+            if (!useProfileDefaults || splitTouched.train_ratio) payload.train_ratio = trainRatio;
+            if (!useProfileDefaults || splitTouched.val_ratio) payload.val_ratio = valRatio;
+            if (!useProfileDefaults || splitTouched.test_ratio) payload.test_ratio = testRatio;
+            if (!useProfileDefaults || splitTouched.seed) payload.seed = splitSeed;
+            if (!useProfileDefaults || splitTouched.chat_template) payload.chat_template = splitTemplate;
+
+            const res = await api.post<SplitManifest>(`/projects/${projectId}/dataset/split`, payload);
+            const manifest = res.data;
+            setSplitManifest(manifest);
+
+            const resolved = manifest.resolved_split_config || {};
+            if (typeof resolved.train_ratio === 'number') {
+                setTrainRatio(resolved.train_ratio);
+            }
+            if (typeof resolved.val_ratio === 'number') {
+                setValRatio(resolved.val_ratio);
+            }
+            if (typeof resolved.test_ratio === 'number') {
+                setTestRatio(resolved.test_ratio);
+            }
+            if (typeof resolved.seed === 'number') {
+                setSplitSeed(resolved.seed);
+            }
+            if (typeof resolved.chat_template === 'string') {
+                setSplitTemplate(resolved.chat_template);
+            }
+            setSplitTouched({
+                train_ratio: false,
+                val_ratio: false,
+                test_ratio: false,
+                seed: false,
+                chat_template: false,
             });
-            setSplitManifest(res.data);
         } catch (err: any) {
             const msg = err?.response?.data?.detail || 'Split failed. Make sure you have ingested and processed data.';
             setSplitManifest(null);
@@ -272,29 +317,61 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     <span className="info-icon">💡</span>
                     Splits your combined dataset into training, validation, and test JSONL files. Ratios must sum to 1.0.
                 </div>
+                <div className="dp-split-default-toggle">
+                    <label>
+                        <input
+                            type="checkbox"
+                            checked={useProfileDefaults}
+                            onChange={(e) => setUseProfileDefaults(e.target.checked)}
+                        />
+                        Use active domain profile defaults for fields left untouched
+                    </label>
+                </div>
                 <div className="dp-split-row">
                     <div className="dp-split-field">
                         <label>Train Ratio</label>
                         <input type="number" step="0.05" min="0.1" max="0.95" value={trainRatio}
-                            onChange={e => setTrainRatio(+e.target.value)} />
+                            onChange={e => {
+                                setTrainRatio(+e.target.value);
+                                setSplitTouched((prev) => ({ ...prev, train_ratio: true }));
+                            }} />
                     </div>
                     <div className="dp-split-field">
                         <label>Val Ratio</label>
                         <input type="number" step="0.05" min="0" max="0.5" value={valRatio}
-                            onChange={e => setValRatio(+e.target.value)} />
+                            onChange={e => {
+                                setValRatio(+e.target.value);
+                                setSplitTouched((prev) => ({ ...prev, val_ratio: true }));
+                            }} />
                     </div>
                     <div className="dp-split-field">
                         <label>Test Ratio</label>
                         <input type="number" step="0.05" min="0" max="0.5" value={testRatio}
-                            onChange={e => setTestRatio(+e.target.value)} />
+                            onChange={e => {
+                                setTestRatio(+e.target.value);
+                                setSplitTouched((prev) => ({ ...prev, test_ratio: true }));
+                            }} />
                     </div>
                     <div className="dp-split-field">
                         <label>Seed</label>
-                        <input type="number" value={splitSeed} onChange={e => setSplitSeed(+e.target.value)} />
+                        <input
+                            type="number"
+                            value={splitSeed}
+                            onChange={e => {
+                                setSplitSeed(+e.target.value);
+                                setSplitTouched((prev) => ({ ...prev, seed: true }));
+                            }}
+                        />
                     </div>
                     <div className="dp-split-field">
                         <label>Chat Template</label>
-                        <select value={splitTemplate} onChange={e => setSplitTemplate(e.target.value)}>
+                        <select
+                            value={splitTemplate}
+                            onChange={e => {
+                                setSplitTemplate(e.target.value);
+                                setSplitTouched((prev) => ({ ...prev, chat_template: true }));
+                            }}
+                        >
                             {CHAT_TEMPLATES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                     </div>
@@ -314,6 +391,16 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 {splitManifest && (
                     <div className="dp-manifest">
                         <h4>✅ Split Complete</h4>
+                        {splitManifest.domain_profile_applied && (
+                            <p className="dp-resolved-line">
+                                Applied profile: <strong>{splitManifest.domain_profile_applied}</strong>
+                            </p>
+                        )}
+                        {splitManifest.profile_defaults_applied && splitManifest.profile_defaults_applied.length > 0 && (
+                            <p className="dp-resolved-line">
+                                Profile defaults used: <code>{splitManifest.profile_defaults_applied.join(', ')}</code>
+                            </p>
+                        )}
                         <div className="dp-stats-grid">
                             <div className="dp-stat">
                                 <div className="label">Total</div>

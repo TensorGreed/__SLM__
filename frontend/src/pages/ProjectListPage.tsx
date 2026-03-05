@@ -5,6 +5,8 @@ import TopBar from '../components/layout/TopBar';
 import ProjectCard from '../components/dashboard/ProjectCard';
 import EmptyState from '../components/shared/EmptyState';
 import Skeleton from '../components/shared/Skeleton';
+import api from '../api/client';
+import type { DomainProfileSummary } from '../types';
 import './ProjectListPage.css';
 
 export default function ProjectListPage() {
@@ -15,6 +17,8 @@ export default function ProjectListPage() {
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
     const [newModel, setNewModel] = useState('');
+    const [newDomainProfileId, setNewDomainProfileId] = useState('');
+    const [domainProfiles, setDomainProfiles] = useState<DomainProfileSummary[]>([]);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'active' | 'completed'>('all');
@@ -23,13 +27,21 @@ export default function ProjectListPage() {
         fetchProjects();
     }, [fetchProjects]);
 
+    useEffect(() => {
+        api.get<{ profiles: DomainProfileSummary[] }>('/domain-profiles')
+            .then((res) => setDomainProfiles(res.data.profiles || []))
+            .catch(() => setDomainProfiles([]));
+    }, []);
+
     const handleCreate = async () => {
         if (!newName.trim()) return;
-        const project = await createProject(newName.trim(), newDesc.trim(), newModel.trim());
+        const domainProfileId = newDomainProfileId ? Number(newDomainProfileId) : null;
+        const project = await createProject(newName.trim(), newDesc.trim(), newModel.trim(), domainProfileId);
         setShowModal(false);
         setNewName('');
         setNewDesc('');
         setNewModel('');
+        setNewDomainProfileId('');
         navigate(`/project/${project.id}`);
     };
 
@@ -154,6 +166,22 @@ export default function ProjectListPage() {
                                     onChange={(e) => setNewModel(e.target.value)}
                                 />
                                 <div className="form-hint">HuggingFace model ID (1B–8B recommended)</div>
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Domain Profile</label>
+                                <select
+                                    className="input"
+                                    value={newDomainProfileId}
+                                    onChange={(e) => setNewDomainProfileId(e.target.value)}
+                                >
+                                    <option value="">Auto-assign default</option>
+                                    {domainProfiles.map((profile) => (
+                                        <option key={profile.id} value={profile.id}>
+                                            {profile.display_name} ({profile.profile_id})
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="form-hint">Can be reassigned later in project settings.</div>
                             </div>
                         </div>
                         <div className="modal-footer">

@@ -12,6 +12,7 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     base_model_name: str = ""
+    domain_profile_id: int | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -20,6 +21,11 @@ class ProjectUpdate(BaseModel):
     status: ProjectStatus | None = None
     pipeline_stage: PipelineStage | None = None
     base_model_name: str | None = None
+    domain_profile_id: int | None = None
+
+
+class ProjectDomainProfileAssignRequest(BaseModel):
+    profile_id: str = Field(..., min_length=3, max_length=128)
 
 
 # ── Response schemas ────────────────────────────────────────────────────
@@ -31,6 +37,7 @@ class ProjectResponse(BaseModel):
     status: ProjectStatus
     pipeline_stage: PipelineStage
     base_model_name: str | None
+    domain_profile_id: int | None = None
     created_at: datetime
     updated_at: datetime
 

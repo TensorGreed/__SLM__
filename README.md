@@ -8,11 +8,16 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 
 - Added **Model Registry** lifecycle with readiness snapshots, promotion gates, and deploy tracking.
 - Added **Project Secrets** APIs with masked listing and encrypted-at-rest values.
+- Added **Domain Profiles** with a typed contract and project-level assignment.
+- Added **Domain Profile Manager UI** (list/create/edit/assign) in project detail and profile selection during project creation.
+- Added runtime transparency in split/training responses (applied profile + resolved defaults).
 - Added queued **remote ingestion** jobs with task status/cancel APIs and WebSocket log streaming.
 - Added queued **compression** jobs (quantize/merge/benchmark) with task status/cancel APIs and WebSocket logs.
 - Added **experiment comparison** API/UI for side-by-side metrics and loss-history visualization.
 - Added auth UX updates for **SSO + local login** flow.
-- Added Alembic revision `20260305_0002` for registry + secrets tables.
+- Added Alembic revisions:
+  - `20260305_0002` for registry + secrets tables
+  - `20260305_0003` for domain profiles + project binding
 
 ---
 
@@ -120,24 +125,62 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Domain | Route Prefix | Key Capabilities |
 |---|---|---|
 | Projects | `/projects` | CRUD, stats, base model metadata |
+| Domain Profiles | `/domain-profiles` | Create/list/get/update contract profiles |
 | Pipeline | `/projects/{id}/pipeline` | Stage status, advance, rollback |
 | Ingestion | `/projects/{id}/ingestion` | Upload/batch upload, remote import (sync + queued), document lifecycle, job status/cancel, WS logs |
 | Cleaning | `/projects/{id}/cleaning` | Clean, clean-batch, chunk inspection |
 | Gold Set | `/projects/{id}/gold` | Add/import/list/lock evaluation gold data |
 | Synthetic | `/projects/{id}/synthetic` | Teacher-model generation + save workflow |
-| Dataset Prep | `/projects/{id}/dataset` | Split, preview, schema/profile diagnostics |
+| Dataset Prep | `/projects/{id}/dataset` | Split, preview, schema/profile diagnostics (profile-aware defaults) |
 | Tokenization | `/projects/{id}/tokenization` | Token stats + vocab sample |
-| Training | `/projects/{id}/training` | Experiments, start/cancel, status, task status, WS telemetry/logs |
+| Training | `/projects/{id}/training` | Experiments, start/cancel, status, task status, WS telemetry/logs (profile-aware defaults) |
 | Comparison | `/projects/{id}/training/compare` | Compare up to 5 experiments side by side |
 | Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards |
 | Compression | `/projects/{id}/compression` | Quantize/merge/benchmark queue, report status, task status/cancel, WS logs |
 | Export | `/projects/{id}/export` | Create/run/list exports with manifests |
-| Registry | `/projects/{id}/registry` | Register, readiness snapshot, promote with gates, deploy metadata |
+| Registry | `/projects/{id}/registry` | Register, readiness snapshot, promote with gates, deploy metadata (profile-aware gate defaults) |
 | Secrets | `/projects/{id}/secrets` | Upsert/list/delete project secrets with encrypted storage |
 | Auth | `/auth` | Config, me, SSO flow, local login, user/member management |
 | Audit | `/audit` | Audit log listing |
 
 ---
+
+## Domain Profile Runtime Wiring
+
+Domain profiles are not just metadata; they are applied during runtime.
+
+- Default bootstrap profile: `generic-domain-v1`
+- New projects auto-attach to `generic-domain-v1` when available.
+- You can re-assign profile per project:
+  - `PUT /api/projects/{project_id}/domain-profile` with `{ "profile_id": "..." }`
+- Frontend wiring:
+  - Project detail page exposes Domain Profile Manager to list/create/edit/assign contracts.
+  - New project modal allows selecting a profile (or auto-assign default).
+  - Dataset split and training forms can omit untouched fields so profile defaults are actually applied.
+
+Current enforced behavior:
+
+- Dataset split defaults:
+  - `POST /api/projects/{project_id}/dataset/split`
+  - If omitted in request body, `train_ratio`, `val_ratio`, `test_ratio`, `seed` are pulled from profile `dataset_split`.
+  - If `chat_template` is omitted, it is taken from profile `training_defaults.chat_template`.
+  - Response now includes:
+    - `domain_profile_applied`
+    - `profile_split_defaults`
+    - `resolved_split_config`
+    - `profile_defaults_applied`
+- Training experiment defaults:
+  - `POST /api/projects/{project_id}/training/experiments`
+  - For omitted config fields, defaults come from profile `training_defaults` (e.g. `batch_size`, `num_epochs`, `learning_rate`, `chat_template`, `use_lora`, `training_mode`).
+  - Response now includes:
+    - `domain_profile_applied`
+    - `profile_training_defaults`
+    - `resolved_training_config`
+    - `profile_defaults_applied`
+- Registry promotion gates:
+  - `POST /api/projects/{project_id}/registry/models/{model_id}/promote`
+  - Gate defaults are pulled from profile `registry_gates.to_staging` / `registry_gates.to_production`.
+  - Explicit request `gates` still override profile/default values.
 
 ## Production-Oriented Capabilities
 
@@ -148,6 +191,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 - Dataset normalization for heterogeneous schemas
 - Export run packaging with checksums + versioned run directories
 - Model registry governance with promotion gating and regression checks
+- Domain profile-driven runtime defaults and policy gates
 - Project-level encrypted secret storage for connectors/providers
 
 ---
@@ -249,6 +293,7 @@ alembic upgrade head
 Current revisions:
 - `20260304_0001` baseline schema
 - `20260305_0002` model registry + project secrets
+- `20260305_0003` domain profiles + project binding
 
 From repo root:
 

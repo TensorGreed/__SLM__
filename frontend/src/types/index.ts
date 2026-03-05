@@ -18,6 +18,7 @@ export type DatasetType = 'raw' | 'cleaned' | 'gold_dev' | 'gold_test' | 'synthe
 export type DocumentStatus = 'pending' | 'processing' | 'accepted' | 'rejected' | 'error';
 export type ExperimentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type TrainingMode = 'sft' | 'domain_pretrain' | 'dpo' | 'orpo';
+export type DomainProfileStatus = 'draft' | 'active' | 'deprecated';
 
 /* ── API Response Types ─────────────────────────────────────────────── */
 
@@ -28,6 +29,7 @@ export interface Project {
     status: ProjectStatus;
     pipeline_stage: PipelineStage;
     base_model_name: string | null;
+    domain_profile_id: number | null;
     created_at: string;
     updated_at: string;
 }
@@ -91,6 +93,10 @@ export interface Experiment {
     started_at: string | null;
     completed_at: string | null;
     created_at: string;
+    domain_profile_applied?: string | null;
+    profile_training_defaults?: Record<string, unknown> | null;
+    resolved_training_config?: Record<string, unknown> | null;
+    profile_defaults_applied?: string[];
 }
 
 export interface PipelineStageInfo {
@@ -116,6 +122,22 @@ export interface EvalResult {
     pass_rate: number | null;
     risk_severity: string | null;
     created_at: string;
+}
+
+export interface DomainProfileSummary {
+    id: number;
+    profile_id: string;
+    version: string;
+    display_name: string;
+    description: string;
+    owner: string;
+    status: DomainProfileStatus;
+    schema_ref: string;
+    is_system: boolean;
+}
+
+export interface DomainProfileResponse extends DomainProfileSummary {
+    contract: Record<string, unknown>;
 }
 
 /* ── Display Tabs ───────────────────────────────────────────────────── */

@@ -189,6 +189,22 @@
     margin-bottom: 1rem;
 }
 
+.dp-split-default-toggle {
+    margin: 0 0 .85rem;
+}
+
+.dp-split-default-toggle label {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: .82rem;
+    color: rgba(255 255 255 / .72);
+}
+
+.dp-split-default-toggle input {
+    accent-color: #6c5ce7;
+}
+
 .dp-split-field {
     display: flex;
     flex-direction: column;
@@ -256,6 +272,12 @@
     min-width: 50px;
     font-size: .78rem;
     color: rgba(255 255 255 / .45);
+}
+
+.dp-resolved-line {
+    margin: 0 0 .7rem;
+    color: rgba(255 255 255 / .74);
+    font-size: .82rem;
 }
 
 /* ── Manifest Result ───────────────────────────────────────── */

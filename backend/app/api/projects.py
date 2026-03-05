@@ -9,8 +9,10 @@ from app.config import settings
 from app.database import get_db
 from app.models.auth import GlobalRole, ProjectMembership, ProjectRole
 from app.models.dataset import Dataset, RawDocument
+from app.models.domain_profile import DomainProfile
 from app.models.project import Project, ProjectStatus
 from app.schemas.project import (
+    ProjectDomainProfileAssignRequest,
     ProjectCreate,
     ProjectListResponse,
     ProjectResponse,
@@ -18,6 +20,7 @@ from app.schemas.project import (
     ProjectUpdate,
 )
 from app.security import get_request_principal, upsert_project_membership
+from app.services.domain_profile_service import assign_project_domain_profile, get_domain_profile
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -71,10 +74,23 @@ async def create_project(
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"Project '{data.name}' already exists")
 
+    resolved_domain_profile_id = data.domain_profile_id
+    if data.domain_profile_id is not None:
+        profile_result = await db.execute(
+            select(DomainProfile.id).where(DomainProfile.id == data.domain_profile_id)
+        )
+        if profile_result.scalar_one_or_none() is None:
+            raise HTTPException(400, f"Domain profile id {data.domain_profile_id} not found")
+    else:
+        default_profile = await get_domain_profile(db, "generic-domain-v1")
+        if default_profile is not None:
+            resolved_domain_profile_id = default_profile.id
+
     project = Project(
         name=data.name,
         description=data.description,
         base_model_name=data.base_model_name,
+        domain_profile_id=resolved_domain_profile_id,
     )
     db.add(project)
     await db.flush()
@@ -115,12 +131,36 @@ async def update_project(
         raise HTTPException(404, "Project not found")
 
     update_data = data.model_dump(exclude_unset=True)
+    if "domain_profile_id" in update_data and update_data["domain_profile_id"] is not None:
+        profile_result = await db.execute(
+            select(DomainProfile.id).where(DomainProfile.id == update_data["domain_profile_id"])
+        )
+        if profile_result.scalar_one_or_none() is None:
+            raise HTTPException(400, f"Domain profile id {update_data['domain_profile_id']} not found")
+
     for key, value in update_data.items():
         setattr(project, key, value)
 
     await db.flush()
     await db.refresh(project)
     return ProjectResponse.model_validate(project)
+
+
+@router.put("/{project_id}/domain-profile", response_model=ProjectResponse)
+async def assign_domain_profile(
+    project_id: int,
+    data: ProjectDomainProfileAssignRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign a project to a domain profile by profile_id."""
+    try:
+        project = await assign_project_domain_profile(db, project_id, data.profile_id)
+        return ProjectResponse.model_validate(project)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.delete("/{project_id}", status_code=204)
