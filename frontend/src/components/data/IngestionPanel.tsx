@@ -3,6 +3,7 @@ import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { buildWsUrl } from '../../utils/ws';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -11,6 +12,7 @@ interface IngestionPanelProps {
 }
 
 type SourceTab = 'upload' | 'huggingface' | 'kaggle' | 'url';
+type RemoteSourceTab = Exclude<SourceTab, 'upload'>;
 
 interface RemoteImportQueueResponse {
     status: string;
@@ -42,9 +44,36 @@ interface ProjectSecretListResponse {
 
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
-        const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+        const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
         if (typeof detail === 'string' && detail.trim()) {
             return detail;
+        }
+        if (Array.isArray(detail)) {
+            const messages = detail
+                .map((item) => {
+                    if (typeof item === 'string') {
+                        return item;
+                    }
+                    if (typeof item === 'object' && item !== null) {
+                        const msg = (item as { msg?: unknown }).msg;
+                        const loc = (item as { loc?: unknown }).loc;
+                        const locText = Array.isArray(loc) ? loc.join('.') : '';
+                        if (typeof msg === 'string' && msg.trim()) {
+                            return locText ? `${locText}: ${msg}` : msg;
+                        }
+                    }
+                    return '';
+                })
+                .filter((item) => item);
+            if (messages.length > 0) {
+                return messages.join('; ');
+            }
+        }
+        if (typeof detail === 'object' && detail !== null) {
+            const msg = (detail as { message?: unknown }).message;
+            if (typeof msg === 'string' && msg.trim()) {
+                return msg;
+            }
         }
     }
     if (error instanceof Error) {
@@ -127,8 +156,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
             return;
         }
 
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${protocol}://${window.location.host}/api/projects/${projectId}/ingestion/ws/logs`;
+        const wsUrl = buildWsUrl(`/api/projects/${projectId}/ingestion/ws/logs`);
         const ws = new WebSocket(wsUrl);
 
         ws.onmessage = (event) => {
@@ -276,6 +304,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
 
     const handleRemoteImport = async () => {
         if (!remoteId.trim()) return;
+        if (activeTab === 'upload') return;
 
         setIsImporting(true);
         setImportStatus('Queueing remote import job...');
@@ -284,8 +313,20 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         setActiveTaskId(null);
 
         try {
+            let parsedMaxSamples: number | null = null;
+            if (remoteMaxSamples.trim()) {
+                const parsed = Number(remoteMaxSamples);
+                if (!Number.isFinite(parsed) || parsed <= 0) {
+                    setImportStatus('Import failed: max samples must be a positive number or left blank.');
+                    setIsImporting(false);
+                    return;
+                }
+                parsedMaxSamples = Math.floor(parsed);
+            }
+
+            const remoteSource = activeTab as RemoteSourceTab;
             const payload: {
-                source_type: SourceTab;
+                source_type: RemoteSourceTab;
                 identifier: string;
                 split: string;
                 max_samples: number | null;
@@ -294,22 +335,22 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 kaggle_username?: string;
                 kaggle_key?: string;
             } = {
-                source_type: activeTab,
+                source_type: remoteSource,
                 identifier: remoteId.trim(),
-                split: remoteSplit,
-                max_samples: remoteMaxSamples ? Number(remoteMaxSamples) : null,
+                split: remoteSource === 'huggingface' ? (remoteSplit || 'train') : 'train',
+                max_samples: parsedMaxSamples,
                 use_saved_secrets:
-                    activeTab === 'huggingface'
+                    remoteSource === 'huggingface'
                         ? useSavedHfToken
-                        : activeTab === 'kaggle'
+                        : remoteSource === 'kaggle'
                             ? useSavedKaggleCreds
                             : true,
             };
 
-            if (activeTab === 'huggingface' && hfToken.trim()) {
+            if (remoteSource === 'huggingface' && hfToken.trim()) {
                 payload.hf_token = hfToken.trim();
             }
-            if (activeTab === 'kaggle') {
+            if (remoteSource === 'kaggle') {
                 if (kaggleUsername.trim()) {
                     payload.kaggle_username = kaggleUsername.trim();
                 }

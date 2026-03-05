@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.project import Project
-from app.services.record_normalization import build_schema_profile, normalize_records
+from app.services.domain_hook_service import (
+    apply_normalizer_hook,
+    resolve_project_domain_hooks,
+    run_validator_hook,
+)
+from app.services.record_normalization import build_schema_profile, canonicalize_record
 from app.utils.file_parsers import (
     SUPPORTED_EXTENSIONS,
     compute_file_hash,
@@ -237,6 +242,37 @@ def _resolve_import_report_path(project_id: int, report_path: str) -> Path:
     return requested
 
 
+def _render_remote_row_text(row: dict) -> str:
+    """Render a normalized imported row to human-readable plain text."""
+    text = str(row.get("text") or "").strip()
+    if text:
+        return text
+
+    question = str(row.get("question") or "").strip()
+    answer = str(row.get("answer") or "").strip()
+    if question and answer:
+        return f"Q: {question}\nA: {answer}"
+    if question:
+        return question
+    if answer:
+        return answer
+
+    prompt = str(row.get("prompt") or row.get("instruction") or "").strip()
+    completion = str(row.get("completion") or row.get("output") or "").strip()
+    if prompt and completion:
+        return f"Prompt: {prompt}\nCompletion: {completion}"
+    if prompt:
+        return prompt
+    if completion:
+        return completion
+
+    for key in ("input_text", "target_text", "document", "content", "value"):
+        token = str(row.get(key) or "").strip()
+        if token:
+            return token
+    return ""
+
+
 async def queue_remote_import(
     project_id: int,
     source_type: str,
@@ -367,8 +403,15 @@ async def ingest_remote_dataset(
     raw_samples: list[dict] = []
     source_mode = "simulated"
     target_samples = max_samples or 200
+    hook_state = await resolve_project_domain_hooks(db, project_id)
+    normalizer_hook_spec = hook_state.get("normalizer")
+    validator_hook_spec = hook_state.get("validator")
     await _progress(
         f"[import] source={source_type} identifier={identifier} split={split} target_samples={target_samples}"
+    )
+    await _progress(
+        f"[import] hooks normalizer={(normalizer_hook_spec or {}).get('id')} "
+        f"validator={(validator_hook_spec or {}).get('id')}"
     )
 
     if use_saved_secrets and source_type == "huggingface" and not hf_token:
@@ -574,7 +617,18 @@ async def ingest_remote_dataset(
 
     await _progress(f"[import] normalizing {len(raw_samples)} rows for training...")
     if normalize_for_training:
-        rows_to_write, dropped_records = normalize_records(raw_samples, field_mapping=field_mapping)
+        rows_to_write: list[dict] = []
+        dropped_records = 0
+        for sample in raw_samples:
+            if not isinstance(sample, dict):
+                dropped_records += 1
+                continue
+            canonical = canonicalize_record(sample, field_mapping=field_mapping)
+            normalized = apply_normalizer_hook(sample, canonical, normalizer_hook_spec)
+            if normalized:
+                rows_to_write.append(normalized)
+            else:
+                dropped_records += 1
         if not rows_to_write:
             raise ValueError(
                 "Unable to normalize imported records. Provide field_mapping for question/answer/text columns."
@@ -587,6 +641,11 @@ async def ingest_remote_dataset(
     schema_profile = build_schema_profile(
         raw_samples,
         field_mapping=field_mapping if normalize_for_training else None,
+    )
+    validator_report = run_validator_hook(
+        rows_to_write if normalize_for_training else [],
+        base_profile=schema_profile,
+        hook_spec=validator_hook_spec,
     )
 
     # Write JSONL file
@@ -601,6 +660,18 @@ async def ingest_remote_dataset(
     with open(file_path, "w", encoding="utf-8") as f:
         for sample in rows_to_write:
             f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+
+    extracted_path = file_path.with_suffix(".extracted.txt")
+    extracted_fragments = [_render_remote_row_text(sample) for sample in rows_to_write]
+    extracted_fragments = [frag for frag in extracted_fragments if frag]
+    if extracted_fragments:
+        extracted_text = "\n\n".join(extracted_fragments)
+        extracted_path.write_text(extracted_text, encoding="utf-8")
+        extracted_char_count = len(extracted_text)
+        extracted_word_count = len(extracted_text.split())
+    else:
+        extracted_char_count = 0
+        extracted_word_count = 0
 
     file_content = file_path.read_bytes()
     file_hash = compute_file_hash(file_path)
@@ -627,8 +698,13 @@ async def ingest_remote_dataset(
             "normalize_for_training": normalize_for_training,
             "field_mapping": field_mapping or {},
             "schema_profile": schema_profile,
+            "domain_hooks": hook_state,
+            "validator_report": validator_report,
             "config_name": config_name,
             "source_mode": source_mode,
+            "extracted_text_path": str(extracted_path) if extracted_fragments else None,
+            "char_count": extracted_char_count,
+            "word_count": extracted_word_count,
         },
     )
     db.add(doc)
@@ -652,5 +728,7 @@ async def ingest_remote_dataset(
         "file_size_bytes": len(file_content),
         "source_mode": source_mode,
         "schema_profile": schema_profile,
+        "domain_hooks": hook_state,
+        "validator_report": validator_report,
         "status": "accepted",
     }

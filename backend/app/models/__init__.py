@@ -5,6 +5,8 @@ from app.models.export import Export
 from app.models.auth import User, ApiKey, ProjectMembership, AuditLog
 from app.models.registry import ModelRegistryEntry
 from app.models.secret import ProjectSecret
+from app.models.domain_pack import DomainPack
+from app.models.domain_profile import DomainProfile
 
 __all__ = [
     "Project",
@@ -21,4 +23,6 @@ __all__ = [
     "AuditLog",
     "ModelRegistryEntry",
     "ProjectSecret",
+    "DomainPack",
+    "DomainProfile",
 ]

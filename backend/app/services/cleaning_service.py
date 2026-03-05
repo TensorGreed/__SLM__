@@ -1,5 +1,6 @@
 """Data Cleaning service — deduplication, PII detection, quality scoring, chunking."""
 
+import csv
 import hashlib
 import json
 import re
@@ -153,6 +154,120 @@ def _cleaned_dir(project_id: int) -> Path:
     return d
 
 
+def _render_record_text(record: object) -> str:
+    """Render a structured row into a plain-text snippet for cleaning."""
+    if isinstance(record, str):
+        return record.strip()
+    if not isinstance(record, dict):
+        return str(record).strip()
+
+    text = str(record.get("text") or "").strip()
+    if text:
+        return text
+
+    question = str(record.get("question") or "").strip()
+    answer = str(record.get("answer") or "").strip()
+    if question and answer:
+        return f"Q: {question}\nA: {answer}"
+    if question:
+        return question
+    if answer:
+        return answer
+
+    input_text = str(record.get("input_text") or "").strip()
+    target_text = str(record.get("target_text") or "").strip()
+    if input_text and target_text:
+        return f"Input: {input_text}\nTarget: {target_text}"
+    if input_text:
+        return input_text
+    if target_text:
+        return target_text
+
+    prompt = str(record.get("prompt") or record.get("instruction") or "").strip()
+    completion = str(record.get("completion") or record.get("output") or "").strip()
+    if prompt and completion:
+        return f"Prompt: {prompt}\nCompletion: {completion}"
+    if prompt:
+        return prompt
+    if completion:
+        return completion
+
+    for key in ("document", "content", "body", "value"):
+        value = str(record.get(key) or "").strip()
+        if value:
+            return value
+
+    parts: list[str] = []
+    for value in record.values():
+        if isinstance(value, str):
+            token = value.strip()
+            if token:
+                parts.append(token)
+        if len(parts) >= 4:
+            break
+    return "\n".join(parts).strip()
+
+
+def _load_rows_from_source_file(file_path: Path) -> list[object]:
+    if not file_path.exists():
+        return []
+
+    ext = file_path.suffix.lower()
+    rows: list[object] = []
+
+    if ext == ".jsonl":
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                token = line.strip()
+                if not token:
+                    continue
+                try:
+                    rows.append(json.loads(token))
+                except json.JSONDecodeError:
+                    rows.append(token)
+        return rows
+
+    if ext == ".json":
+        raw = json.loads(file_path.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            return list(raw)
+        return [raw]
+
+    if ext == ".csv":
+        with open(file_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(dict(row))
+        return rows
+
+    return [file_path.read_text(encoding="utf-8", errors="replace")]
+
+
+def _materialize_extracted_text(doc: RawDocument) -> Path:
+    """
+    Ensure `.extracted.txt` exists for a document.
+
+    Remote imports write structured JSONL directly and skip the explicit "process document"
+    step; for those docs we synthesize extracted text from structured rows on demand.
+    """
+    source_path = Path(doc.file_path)
+    extracted_path = source_path.with_suffix(".extracted.txt")
+    if extracted_path.exists():
+        return extracted_path
+
+    rows = _load_rows_from_source_file(source_path)
+    snippets: list[str] = []
+    for row in rows:
+        snippet = _render_record_text(row)
+        if snippet:
+            snippets.append(snippet)
+
+    synthesized_text = "\n\n".join(snippets).strip()
+    if synthesized_text:
+        extracted_path.write_text(synthesized_text, encoding="utf-8")
+    return extracted_path
+
+
 async def get_or_create_cleaned_dataset(
     db: AsyncSession,
     project_id: int,
@@ -204,11 +319,13 @@ async def clean_document(
         raise ValueError(f"Document {document_id} not found")
 
     # Read extracted text
-    extracted_path = Path(doc.file_path).with_suffix(".extracted.txt")
+    extracted_path = _materialize_extracted_text(doc)
     if not extracted_path.exists():
-        raise ValueError(f"Document not yet processed. Run ingestion processing first.")
+        raise ValueError("Document has no extractable text. Run ingestion processing first.")
 
     raw_text = extracted_path.read_text(encoding="utf-8")
+    if not raw_text.strip():
+        raise ValueError("Document extracted text is empty. Re-process or re-import the document.")
 
     # Step 1: Remove boilerplate
     cleaned = remove_boilerplate(raw_text)
@@ -281,6 +398,7 @@ async def clean_document(
     doc.chunk_count = len(chunks)
     doc.metadata_ = {
         **(doc.metadata_ or {}),
+        "extracted_text_path": str(extracted_path),
         "cleaned_path": str(cleaned_path),
         "chunks_path": str(chunks_path),
         "cleaned_dataset_path": str(cleaned_file_path),

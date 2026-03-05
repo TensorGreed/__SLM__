@@ -5,6 +5,7 @@ import unittest
 from app.services.synthetic_service import (
     _generate_demo_pairs,
     _compute_confidence,
+    _parse_teacher_pairs,
 )
 
 
@@ -68,6 +69,48 @@ class SyntheticServiceTests(unittest.TestCase):
     def test_confidence_low_for_empty(self):
         score = _compute_confidence({"question": "", "answer": ""})
         self.assertLessEqual(score, 0.5)
+
+    # ── Teacher Response Parsing ──────────────────────────────────────
+
+    def test_parse_teacher_pairs_accepts_json_array(self):
+        content = (
+            '[{"question":"What is ML?","answer":"Machine learning is a subset of AI."},'
+            '{"question":"What is deep learning?","answer":"A subset of ML using neural networks."}]'
+        )
+        pairs = _parse_teacher_pairs(content)
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual(pairs[0]["question"], "What is ML?")
+
+    def test_parse_teacher_pairs_accepts_fenced_json(self):
+        content = (
+            "Here are your pairs:\n"
+            "```json\n"
+            '[{"question":"Q1","answer":"A1"},{"question":"Q2","answer":"A2"}]\n'
+            "```"
+        )
+        pairs = _parse_teacher_pairs(content)
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual(pairs[1]["answer"], "A2")
+
+    def test_parse_teacher_pairs_accepts_wrapped_object(self):
+        content = (
+            '{"pairs":[{"question":"What is AI?","answer":"AI stands for artificial intelligence."}]}'
+        )
+        pairs = _parse_teacher_pairs(content)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["question"], "What is AI?")
+
+    def test_parse_teacher_pairs_falls_back_to_plaintext_qa(self):
+        content = (
+            "Q: What is supervised learning?\n"
+            "A: It is learning from labeled data.\n\n"
+            "Q: Name one ML framework.\n"
+            "A: PyTorch."
+        )
+        pairs = _parse_teacher_pairs(content)
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual(pairs[0]["question"], "What is supervised learning?")
+        self.assertEqual(pairs[1]["answer"], "PyTorch.")
 
 
 if __name__ == "__main__":

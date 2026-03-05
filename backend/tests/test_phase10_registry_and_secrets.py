@@ -21,6 +21,7 @@ class Phase10RegistrySecretsTests(unittest.IsolatedAsyncioTestCase):
         import app.models  # noqa: F401
         from app.database import Base
         from app.models.experiment import EvalResult, Experiment, ExperimentStatus
+        from app.models.domain_profile import DomainProfile, DomainProfileStatus
         from app.models.project import Project
         from app.models.registry import RegistryStage
         from app.models.secret import ProjectSecret
@@ -40,6 +41,8 @@ class Phase10RegistrySecretsTests(unittest.IsolatedAsyncioTestCase):
         self.Experiment = Experiment
         self.ExperimentStatus = ExperimentStatus
         self.Project = Project
+        self.DomainProfile = DomainProfile
+        self.DomainProfileStatus = DomainProfileStatus
         self.RegistryStage = RegistryStage
         self.ProjectSecret = ProjectSecret
         self.mark_model_deployed = mark_model_deployed
@@ -197,6 +200,77 @@ class Phase10RegistrySecretsTests(unittest.IsolatedAsyncioTestCase):
                     project_id=project.id,
                     model_id=entry.id,
                     target_stage=self.RegistryStage.PRODUCTION,
+                    force=False,
+                )
+
+    async def test_registry_uses_domain_profile_gate_defaults(self):
+        async with self.session_factory() as db:
+            profile = self.DomainProfile(
+                profile_id="strict-registry-v1",
+                version="1.0.0",
+                display_name="Strict Registry",
+                description="Strict gate defaults",
+                owner="qa",
+                status=self.DomainProfileStatus.ACTIVE,
+                schema_ref="slm.domain-profile/v1",
+                contract={
+                    "$schema": "slm.domain-profile/v1",
+                    "profile_id": "strict-registry-v1",
+                    "version": "1.0.0",
+                    "display_name": "Strict Registry",
+                    "registry_gates": {
+                        "to_staging": {
+                            "min_metrics": {
+                                "f1": 0.9,
+                            }
+                        }
+                    },
+                },
+                is_system=False,
+            )
+            db.add(profile)
+            await db.flush()
+
+            project, exp = await self._seed_project_and_experiment(db, name_suffix="profile-gates")
+            project.domain_profile_id = profile.id
+
+            db.add(
+                self.EvalResult(
+                    experiment_id=exp.id,
+                    dataset_name="test",
+                    eval_type="exact_match",
+                    metrics={"exact_match": 0.95},
+                    pass_rate=0.95,
+                )
+            )
+            db.add(
+                self.EvalResult(
+                    experiment_id=exp.id,
+                    dataset_name="test",
+                    eval_type="f1",
+                    metrics={"f1": 0.82},
+                    pass_rate=0.82,
+                )
+            )
+            db.add(
+                self.EvalResult(
+                    experiment_id=exp.id,
+                    dataset_name="test",
+                    eval_type="llm_judge",
+                    metrics={"pass_rate": 0.95},
+                    pass_rate=0.95,
+                )
+            )
+            await db.flush()
+
+            entry = await self.register_model(db, project.id, exp.id)
+
+            with self.assertRaises(ValueError):
+                await self.promote_model(
+                    db=db,
+                    project_id=project.id,
+                    model_id=entry.id,
+                    target_stage=self.RegistryStage.STAGING,
                     force=False,
                 )
 

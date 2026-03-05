@@ -81,15 +81,34 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                         await _publish(f"[ERR] {line.strip()}")
 
                 await _publish(f"[worker] training process exited with code {process.returncode}")
-                return process.returncode
+                return {
+                    "returncode": process.returncode,
+                    "payload": payload,
+                }
             finally:
                 await redis_client.aclose()
             
-        returncode = loop.run_until_complete(_run())
+        execution = loop.run_until_complete(_run())
+        returncode = int(execution.get("returncode", -1))
         
         if returncode == 0:
             return {"status": "success", "experiment_id": experiment_id}
         else:
+            payload = execution.get("payload", {}) if isinstance(execution, dict) else {}
+            error_tail = ""
+            for key in ("stdout", "stderr"):
+                text = str(payload.get(key, ""))
+                for line in reversed(text.splitlines()):
+                    stripped = line.strip()
+                    if stripped:
+                        error_tail = stripped
+                        break
+                if error_tail:
+                    break
+            if error_tail:
+                if len(error_tail) > 320:
+                    error_tail = f"{error_tail[:320].rstrip()}..."
+                raise Exception(f"Training command failed with return code {returncode}: {error_tail}")
             raise Exception(f"Training command failed with return code {returncode}")
             
     except Exception as e:

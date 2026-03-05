@@ -1,6 +1,7 @@
 """Synthetic data generation service — teacher model integration."""
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType
+
+
+def _coerce_completion_content(raw: Any) -> str:
+    """Normalize OpenAI-compatible message content to plain text."""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(raw, dict):
+        text = raw.get("text")
+        if isinstance(text, str):
+            return text
+    return str(raw or "")
 
 
 def _synthetic_dir(project_id: int) -> Path:
@@ -82,7 +105,9 @@ async def call_teacher_model(
         data = resp.json()
 
     # Extract response (OpenAI format)
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    content = _coerce_completion_content(
+        data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    )
     usage = data.get("usage", {})
 
     return {
@@ -143,6 +168,125 @@ def _generate_demo_pairs(source_text: str, num_pairs: int = 5) -> list[dict]:
     return pairs
 
 
+def _unwrap_pairs_payload(payload: Any) -> list[dict] | None:
+    """Normalize known payload wrappers into a list of pair-like dicts."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        if isinstance(payload.get("question"), str) and isinstance(payload.get("answer"), str):
+            return [payload]
+        for key in ("pairs", "qa_pairs", "questions", "items", "data", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return None
+
+
+def _extract_json_blocks(text: str) -> list[str]:
+    """Collect candidate JSON blocks from free-form model output."""
+    candidates: list[str] = []
+    stripped = text.strip()
+    if stripped:
+        candidates.append(stripped)
+
+    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE):
+        block = match.group(1).strip()
+        if block:
+            candidates.append(block)
+
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(text):
+        if char not in "[{":
+            continue
+        fragment = text[idx:]
+        try:
+            _, consumed = decoder.raw_decode(fragment)
+        except json.JSONDecodeError:
+            continue
+        block = fragment[:consumed].strip()
+        if block:
+            candidates.append(block)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def _parse_plaintext_qa_pairs(text: str) -> list[dict]:
+    """Fallback parser for `Q:`/`A:` formatted model responses."""
+    pairs: list[dict] = []
+    current_question = ""
+    current_answer_lines: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        q_match = re.match(r"^(?:\d+[\).:\-]\s*)?(?:q|question)\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
+        if q_match:
+            if current_question and current_answer_lines:
+                pairs.append({
+                    "question": current_question.strip(),
+                    "answer": " ".join(current_answer_lines).strip(),
+                })
+            current_question = q_match.group(1).strip()
+            current_answer_lines = []
+            continue
+
+        a_match = re.match(r"^(?:a|answer)\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
+        if a_match:
+            if not current_question:
+                continue
+            current_answer_lines = [a_match.group(1).strip()]
+            continue
+
+        if current_question and current_answer_lines:
+            current_answer_lines.append(line)
+        elif current_question:
+            current_question = f"{current_question} {line}".strip()
+
+    if current_question and current_answer_lines:
+        pairs.append({
+            "question": current_question.strip(),
+            "answer": " ".join(current_answer_lines).strip(),
+        })
+    return pairs
+
+
+def _parse_teacher_pairs(content: str) -> list[dict]:
+    """Parse model output into `{question, answer}` candidate rows."""
+    for candidate in _extract_json_blocks(content):
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        pairs = _unwrap_pairs_payload(payload)
+        if pairs:
+            return pairs
+    return _parse_plaintext_qa_pairs(content)
+
+
+def _preview_text(text: str, limit: int = 260) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[:limit].rstrip()}..."
+
+
+def _pick_text_value(pair: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = pair.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 async def generate_qa_pairs(
     db: AsyncSession | None,
     project_id: int,
@@ -174,15 +318,18 @@ async def generate_qa_pairs(
         return pairs
 
     # ── Production mode: call teacher model ───────────────────
-    prompt = f"""Based on the following text, generate {num_pairs} question-answer pairs suitable for fine-tuning a small language model.
-
-Format your response as a JSON array of objects with "question" and "answer" keys.
-Make questions specific, varied in difficulty, and grounded in the text.
-
-Text:
-{source_text[:4000]}
-
-Generate {num_pairs} Q&A pairs as JSON array:"""
+    prompt = (
+        f"Based on the following text, generate {num_pairs} question-answer pairs "
+        "suitable for fine-tuning a small language model.\n\n"
+        "Output rules:\n"
+        "- Return ONLY valid JSON (no markdown, no code fences, no commentary).\n"
+        '- Preferred format: {"pairs":[{"question":"...","answer":"..."}]}.\n'
+        '- Alternative accepted format: [{"question":"...","answer":"..."}].\n'
+        "- Ground all answers in the source text.\n"
+        "- Make questions specific and varied in difficulty.\n\n"
+        f"Text:\n{source_text[:4000]}\n\n"
+        f"Return exactly {num_pairs} Q&A pairs now."
+    )
 
     result = await call_teacher_model(
         prompt,
@@ -191,29 +338,21 @@ Generate {num_pairs} Q&A pairs as JSON array:"""
         model_name=model_name,
     )
 
-    # Parse the JSON from the response
     content = result["content"]
-    try:
-        # Try to extract JSON array from response
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        if start >= 0 and end > start:
-            pairs = json.loads(content[start:end])
-        else:
-            pairs = json.loads(content)
-    except json.JSONDecodeError:
-        raise ValueError("Teacher model response was not valid JSON for Q&A extraction")
-
-    if not isinstance(pairs, list):
-        raise ValueError("Teacher model response must be a JSON array of {question, answer}")
+    pairs = _parse_teacher_pairs(content)
+    if not pairs:
+        preview = _preview_text(content)
+        raise ValueError(
+            "Teacher model response was not valid JSON for Q&A extraction. "
+            "Expected JSON array/object with question+answer fields. "
+            f"Response preview: {preview}"
+        )
 
     # Score each pair
     scored_pairs = []
     for pair in pairs:
-        if not isinstance(pair, dict):
-            continue
-        question = str(pair.get("question", "")).strip()
-        answer = str(pair.get("answer", "")).strip()
+        question = _pick_text_value(pair, ("question", "q", "prompt", "instruction", "input"))
+        answer = _pick_text_value(pair, ("answer", "a", "response", "output", "completion"))
         if not question or not answer:
             continue
 

@@ -15,11 +15,18 @@ interface ProjectState {
 
     // Actions
     fetchProjects: () => Promise<void>;
-    createProject: (name: string, description?: string, baseModel?: string) => Promise<Project>;
+    createProject: (
+        name: string,
+        description?: string,
+        baseModel?: string,
+        domainPackId?: number | null,
+        domainProfileId?: number | null,
+    ) => Promise<Project>;
     fetchProject: (id: number) => Promise<void>;
     deleteProject: (id: number) => Promise<void>;
     fetchPipelineStatus: (projectId: number) => Promise<void>;
     setActiveTab: (tab: TabKey) => void;
+    setActiveProject: (project: Project | null) => void;
 }
 
 export const useProjectStore = create<ProjectState>((set) => ({
@@ -44,11 +51,19 @@ export const useProjectStore = create<ProjectState>((set) => ({
         }
     },
 
-    createProject: async (name, description = '', baseModel = '') => {
+    createProject: async (
+        name,
+        description = '',
+        baseModel = '',
+        domainPackId = null,
+        domainProfileId = null,
+    ) => {
         const res = await api.post('/projects', {
             name,
             description,
             base_model_name: baseModel,
+            domain_pack_id: domainPackId,
+            domain_profile_id: domainProfileId,
         });
         const project = res.data;
         set((state) => ({
@@ -77,4 +92,5 @@ export const useProjectStore = create<ProjectState>((set) => ({
     },
 
     setActiveTab: (tab) => set({ activeTab: tab }),
+    setActiveProject: (project) => set({ activeProject: project }),
 }));

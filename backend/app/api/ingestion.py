@@ -1,10 +1,9 @@
 """Data Ingestion API routes — file upload and document management."""
 import asyncio
-from typing import Literal
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -26,17 +25,70 @@ router = APIRouter(prefix="/projects/{project_id}/ingestion", tags=["Ingestion"]
 
 
 class RemoteImportRequest(BaseModel):
-    source_type: Literal["huggingface", "kaggle", "url"]
+    source_type: str
     identifier: str = Field(..., min_length=1)   # dataset ID, slug, or URL
     split: str = "train"
-    max_samples: int | None = Field(default=None, ge=1, le=100000)
+    max_samples: int | None = None
     config_name: str | None = None
     field_mapping: dict[str, str] | None = None
     normalize_for_training: bool = True
-    hf_token: str | None = Field(default=None, min_length=1, max_length=4096)
-    kaggle_username: str | None = Field(default=None, min_length=1, max_length=255)
-    kaggle_key: str | None = Field(default=None, min_length=1, max_length=4096)
+    hf_token: str | None = Field(default=None, max_length=4096)
+    kaggle_username: str | None = Field(default=None, max_length=255)
+    kaggle_key: str | None = Field(default=None, max_length=4096)
     use_saved_secrets: bool = True
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: object) -> str:
+        token = str(value or "").strip().lower()
+        compact = token.replace("_", "").replace("-", "").replace(" ", "")
+        alias_map = {
+            "hf": "huggingface",
+            "huggingface": "huggingface",
+            "kaggle": "kaggle",
+            "url": "url",
+        }
+        normalized = alias_map.get(compact)
+        if normalized:
+            return normalized
+        raise ValueError("source_type must be one of: huggingface, kaggle, url")
+
+    @field_validator("identifier")
+    @classmethod
+    def normalize_identifier(cls, value: str) -> str:
+        token = value.strip()
+        if not token:
+            raise ValueError("identifier cannot be empty")
+        return token
+
+    @field_validator("split", mode="before")
+    @classmethod
+    def normalize_split(cls, value: object) -> str:
+        token = str(value or "").strip()
+        return token or "train"
+
+    @field_validator("max_samples", mode="before")
+    @classmethod
+    def normalize_max_samples(cls, value: object) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            parsed = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            raise ValueError("max_samples must be an integer")
+        if parsed <= 0:
+            return None
+        if parsed > 100000:
+            raise ValueError("max_samples must be <= 100000")
+        return parsed
+
+    @field_validator("hf_token", "kaggle_username", "kaggle_key", mode="before")
+    @classmethod
+    def normalize_optional_strings(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        token = str(value).strip()
+        return token or None
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)

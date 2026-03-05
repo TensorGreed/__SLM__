@@ -189,6 +189,22 @@
     margin-bottom: 1rem;
 }
 
+.dp-split-default-toggle {
+    margin: 0 0 .85rem;
+}
+
+.dp-split-default-toggle label {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: .82rem;
+    color: rgba(255 255 255 / .72);
+}
+
+.dp-split-default-toggle input {
+    accent-color: #6c5ce7;
+}
+
 .dp-split-field {
     display: flex;
     flex-direction: column;
@@ -256,6 +272,60 @@
     min-width: 50px;
     font-size: .78rem;
     color: rgba(255 255 255 / .45);
+}
+
+.dp-resolved-panel {
+    background: rgba(59, 130, 246, .08);
+    border: 1px solid rgba(59, 130, 246, .2);
+    border-radius: 10px;
+    padding: .85rem 1rem;
+    margin: 0 0 1rem;
+}
+
+.dp-resolved-title {
+    font-size: .85rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: rgba(255 255 255 / .75);
+    margin-bottom: .65rem;
+}
+
+.dp-resolved-kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: .8rem;
+    color: rgba(255 255 255 / .76);
+    margin-bottom: .45rem;
+}
+
+.dp-resolved-kv strong {
+    color: rgba(255 255 255 / .96);
+    text-align: right;
+}
+
+.dp-resolved-grid {
+    display: grid;
+    gap: .65rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin-top: .55rem;
+}
+
+.dp-resolved-subtitle {
+    font-size: .75rem;
+    color: rgba(255 255 255 / .58);
+    margin-bottom: .3rem;
+}
+
+.dp-resolved-json {
+    margin: 0;
+    background: rgba(10, 14, 26, .75);
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 8px;
+    padding: .55rem .65rem;
+    font-size: .72rem;
+    line-height: 1.35;
+    overflow-x: auto;
 }
 
 /* ── Manifest Result ───────────────────────────────────────── */

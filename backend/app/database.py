@@ -51,6 +51,8 @@ class Base(DeclarativeBase):
 
 
 BASE_REQUIRED_TABLES = {
+    "domain_packs",
+    "domain_profiles",
     "projects",
     "datasets",
     "dataset_versions",
