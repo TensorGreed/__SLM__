@@ -1,6 +1,9 @@
 """Data Ingestion service — handles file uploads, parsing, and storage."""
 
+from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -216,6 +219,104 @@ async def delete_document(
 
 # ── Remote Dataset Connectors ─────────────────────────────────────────
 
+def _import_job_dir(project_id: int) -> Path:
+    d = _project_data_dir(project_id) / "import_jobs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _resolve_import_report_path(project_id: int, report_path: str) -> Path:
+    base = _import_job_dir(project_id).resolve()
+    requested = Path(report_path).expanduser()
+    if not requested.is_absolute():
+        requested = (base / requested).resolve()
+    else:
+        requested = requested.resolve()
+    if requested != base and base not in requested.parents:
+        raise ValueError("report_path must be inside the project ingestion import-jobs directory")
+    return requested
+
+
+async def queue_remote_import(
+    project_id: int,
+    source_type: str,
+    identifier: str,
+    split: str = "train",
+    max_samples: int | None = None,
+    config_name: str | None = None,
+    field_mapping: dict[str, str] | None = None,
+    normalize_for_training: bool = True,
+    hf_token: str | None = None,
+    kaggle_username: str | None = None,
+    kaggle_key: str | None = None,
+) -> dict:
+    report_dir = _import_job_dir(project_id)
+    job_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    report_path = report_dir / f"remote_import_{job_stamp}.json"
+
+    from app.worker import celery_app
+
+    request_payload = {
+        "source_type": source_type,
+        "identifier": identifier,
+        "split": split,
+        "max_samples": max_samples,
+        "config_name": config_name,
+        "field_mapping": field_mapping or {},
+        "normalize_for_training": normalize_for_training,
+        "hf_token": hf_token or "",
+        "kaggle_username": kaggle_username or "",
+        "kaggle_key": kaggle_key or "",
+    }
+
+    task = celery_app.send_task(
+        "run_remote_import_job",
+        kwargs={
+            "project_id": project_id,
+            "request_payload": request_payload,
+            "report_path": str(report_path),
+        },
+    )
+    return {
+        "project_id": project_id,
+        "status": "queued",
+        "source_type": source_type,
+        "identifier": identifier,
+        "report_path": str(report_path),
+        "task_id": task.id,
+    }
+
+
+def get_import_job_status(project_id: int, report_path: str) -> dict:
+    safe_report_path = _resolve_import_report_path(project_id, report_path)
+    if not safe_report_path.exists():
+        return {
+            "project_id": project_id,
+            "status": "running",
+            "report_path": str(safe_report_path),
+        }
+
+    import json
+
+    try:
+        payload = json.loads(safe_report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse ingestion report file {safe_report_path}: {e}")
+
+    digest = sha256(str(payload).encode("utf-8")).hexdigest()
+    return {
+        "project_id": project_id,
+        "status": payload.get("status", "running"),
+        "report_path": str(safe_report_path),
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "source_type": payload.get("source_type"),
+        "identifier": payload.get("identifier"),
+        "result": payload.get("result"),
+        "error": payload.get("error"),
+        "output_digest": digest,
+    }
+
 async def ingest_remote_dataset(
     db: AsyncSession,
     project_id: int,
@@ -226,6 +327,10 @@ async def ingest_remote_dataset(
     config_name: str | None = None,
     field_mapping: dict[str, str] | None = None,
     normalize_for_training: bool = True,
+    hf_token: str | None = None,
+    kaggle_username: str | None = None,
+    kaggle_key: str | None = None,
+    progress_callback: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict:
     """
     Ingest a dataset from a remote source.
@@ -238,17 +343,29 @@ async def ingest_remote_dataset(
     """
     import csv
     import json
+    import os
     import random
     import re
     import tempfile
 
     import httpx
 
+    async def _progress(message: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(message)
+        except Exception:
+            pass
+
     raw_dataset = await get_or_create_raw_dataset(db, project_id)
     data_dir = _project_data_dir(project_id)
     raw_samples: list[dict] = []
     source_mode = "simulated"
     target_samples = max_samples or 200
+    await _progress(
+        f"[import] source={source_type} identifier={identifier} split={split} target_samples={target_samples}"
+    )
 
     def _safe_remote_name(value: str) -> str:
         return re.sub(r"[^a-zA-Z0-9._-]+", "_", value).strip("_")[:80] or "dataset"
@@ -308,7 +425,11 @@ async def ingest_remote_dataset(
             dataset_kwargs = {"split": split}
             if config_name:
                 dataset_kwargs["name"] = config_name
+            if hf_token:
+                dataset_kwargs["token"] = hf_token
+            await _progress("[hf] loading dataset from HuggingFace Hub...")
             hf_dataset = load_dataset(identifier, **dataset_kwargs)
+            await _progress("[hf] dataset loaded. Collecting rows...")
             for i, row in enumerate(hf_dataset):
                 if i >= target_samples:
                     break
@@ -316,7 +437,10 @@ async def ingest_remote_dataset(
                     raw_samples.append(row)
                 else:
                     raw_samples.append({"value": row})
+                if (i + 1) % 200 == 0:
+                    await _progress(f"[hf] collected {i + 1} rows")
             source_mode = "live"
+            await _progress(f"[hf] collected {len(raw_samples)} rows")
         except Exception as e:
             if not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
                 raise ValueError(
@@ -324,6 +448,7 @@ async def ingest_remote_dataset(
                     "(or set ALLOW_SIMULATED_INGESTION_FALLBACK=true for demo fallback). "
                     f"Details: {e}"
                 )
+            await _progress("[hf] live import failed; using simulated fallback rows")
             for i in range(target_samples):
                 raw_samples.append({
                     "instruction": f"Sample instruction #{i+1} from {identifier}",
@@ -336,10 +461,18 @@ async def ingest_remote_dataset(
     elif source_type == "kaggle":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))
         filename = f"kaggle_{safe_name}.jsonl"
+        prev_kaggle_user = os.environ.get("KAGGLE_USERNAME")
+        prev_kaggle_key = os.environ.get("KAGGLE_KEY")
         try:
             from kaggle.api.kaggle_api_extended import KaggleApi
 
+            if kaggle_username:
+                os.environ["KAGGLE_USERNAME"] = kaggle_username
+            if kaggle_key:
+                os.environ["KAGGLE_KEY"] = kaggle_key
+
             with tempfile.TemporaryDirectory(prefix="slm_kaggle_") as tmp_dir:
+                await _progress("[kaggle] authenticating and downloading dataset...")
                 api = KaggleApi()
                 api.authenticate()
                 api.dataset_download_files(identifier, path=tmp_dir, unzip=True, quiet=True)
@@ -352,6 +485,7 @@ async def ingest_remote_dataset(
                 if not candidate_files:
                     raise ValueError("No supported files found in downloaded Kaggle dataset")
 
+                await _progress(f"[kaggle] parsing {len(candidate_files)} extracted files...")
                 for fpath in candidate_files:
                     raw_text = fpath.read_text(encoding="utf-8", errors="replace")
                     _append_records_from_text(raw_text, fpath.suffix.lower(), target_samples)
@@ -361,6 +495,7 @@ async def ingest_remote_dataset(
             if not raw_samples:
                 raise ValueError("No records parsed from Kaggle dataset")
             source_mode = "live"
+            await _progress(f"[kaggle] collected {len(raw_samples)} rows")
         except Exception as e:
             if not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
                 raise ValueError(
@@ -368,17 +503,28 @@ async def ingest_remote_dataset(
                     "(or set ALLOW_SIMULATED_INGESTION_FALLBACK=true for demo fallback). "
                     f"Details: {e}"
                 )
+            await _progress("[kaggle] live import failed; using simulated fallback rows")
             for i in range(target_samples):
                 raw_samples.append({
                     "text": f"Row {i+1} from Kaggle dataset {identifier}.",
                     "label": random.choice(["positive", "negative", "neutral"]),
                     "source": f"kaggle/{identifier}",
                 })
+        finally:
+            if prev_kaggle_user is None:
+                os.environ.pop("KAGGLE_USERNAME", None)
+            else:
+                os.environ["KAGGLE_USERNAME"] = prev_kaggle_user
+            if prev_kaggle_key is None:
+                os.environ.pop("KAGGLE_KEY", None)
+            else:
+                os.environ["KAGGLE_KEY"] = prev_kaggle_key
 
     elif source_type == "url":
         safe_name = _safe_remote_name(Path(identifier).stem or "download")
         filename = f"url_{safe_name}.jsonl"
         try:
+            await _progress("[url] downloading remote file...")
             async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
                 resp = await client.get(identifier)
                 resp.raise_for_status()
@@ -390,6 +536,7 @@ async def ingest_remote_dataset(
             if not raw_samples:
                 raise ValueError("No records parsed from URL response")
             source_mode = "live"
+            await _progress(f"[url] parsed {len(raw_samples)} rows")
         except Exception as e:
             raise ValueError(f"URL import failed: {e}")
 
@@ -399,6 +546,7 @@ async def ingest_remote_dataset(
     if not raw_samples:
         raise ValueError(f"No records available from source '{source_type}:{identifier}'")
 
+    await _progress(f"[import] normalizing {len(raw_samples)} rows for training...")
     if normalize_for_training:
         rows_to_write, dropped_records = normalize_records(raw_samples, field_mapping=field_mapping)
         if not rows_to_write:
@@ -408,6 +556,7 @@ async def ingest_remote_dataset(
     else:
         rows_to_write = [s if isinstance(s, dict) else {"value": s} for s in raw_samples]
         dropped_records = 0
+    await _progress(f"[import] normalized rows={len(rows_to_write)} dropped={dropped_records}")
 
     schema_profile = build_schema_profile(
         raw_samples,
@@ -422,6 +571,7 @@ async def ingest_remote_dataset(
         file_path = data_dir / f"{stem}_{counter}.jsonl"
         counter += 1
 
+    await _progress(f"[import] writing dataset file: {file_path.name}")
     with open(file_path, "w", encoding="utf-8") as f:
         for sample in rows_to_write:
             f.write(json.dumps(sample, ensure_ascii=False) + "\n")
@@ -461,6 +611,9 @@ async def ingest_remote_dataset(
 
     raw_dataset.record_count += 1
     await db.flush()
+    await _progress(
+        f"[import] completed document_id={doc.id} file={doc.filename} samples_ingested={len(rows_to_write)}"
+    )
 
     return {
         "document_id": doc.id,

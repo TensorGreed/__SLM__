@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import Celery
@@ -201,6 +202,110 @@ def run_benchmark_job(
         return {"status": "success", "report_path": report_path}
     except Exception as e:
         logger.error(f"Benchmark job failed: {e}")
+        raise
+    finally:
+        loop.close()
+
+
+@celery_app.task(bind=True, name="run_remote_import_job", track_started=True)
+def run_remote_import_job(
+    self,
+    project_id: int,
+    request_payload: dict,
+    report_path: str,
+):
+    """Execute remote dataset import in worker and publish progress logs."""
+    source_type = str(request_payload.get("source_type", "unknown"))
+    identifier = str(request_payload.get("identifier", ""))
+    logger.info("Starting remote import job project=%s source=%s id=%s", project_id, source_type, identifier)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        from app.database import async_session_factory
+        from app.services.ingestion_service import ingest_remote_dataset
+
+        async def _run():
+            channel = f"log:ingestion:project:{project_id}"
+            redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+            async def _publish(line: str) -> None:
+                await redis_client.publish(channel, line)
+
+            safe_request = {
+                "source_type": source_type,
+                "identifier": identifier,
+                "split": str(request_payload.get("split", "train")),
+                "max_samples": request_payload.get("max_samples"),
+                "config_name": request_payload.get("config_name"),
+                "normalize_for_training": bool(request_payload.get("normalize_for_training", True)),
+            }
+            started_at = datetime.now(timezone.utc).isoformat()
+
+            try:
+                await _publish(
+                    f"[worker] starting remote import source={source_type} identifier={identifier}"
+                )
+                async with async_session_factory() as db:
+                    result = await ingest_remote_dataset(
+                        db=db,
+                        project_id=project_id,
+                        source_type=source_type,
+                        identifier=identifier,
+                        split=str(request_payload.get("split", "train")),
+                        max_samples=request_payload.get("max_samples"),
+                        config_name=request_payload.get("config_name"),
+                        field_mapping=request_payload.get("field_mapping") or None,
+                        normalize_for_training=bool(request_payload.get("normalize_for_training", True)),
+                        hf_token=str(request_payload.get("hf_token", "")).strip() or None,
+                        kaggle_username=str(request_payload.get("kaggle_username", "")).strip() or None,
+                        kaggle_key=str(request_payload.get("kaggle_key", "")).strip() or None,
+                        progress_callback=_publish,
+                    )
+                    await db.commit()
+
+                finished_at = datetime.now(timezone.utc).isoformat()
+                payload = {
+                    "status": "completed",
+                    "project_id": project_id,
+                    "source_type": source_type,
+                    "identifier": identifier,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "request": safe_request,
+                    "result": result,
+                }
+                rp = Path(report_path)
+                rp.parent.mkdir(parents=True, exist_ok=True)
+                rp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                await _publish(
+                    f"[worker] remote import completed: samples={result.get('samples_ingested', 0)}"
+                )
+                return payload
+            except Exception as e:
+                finished_at = datetime.now(timezone.utc).isoformat()
+                payload = {
+                    "status": "failed",
+                    "project_id": project_id,
+                    "source_type": source_type,
+                    "identifier": identifier,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "request": safe_request,
+                    "error": str(e),
+                }
+                rp = Path(report_path)
+                rp.parent.mkdir(parents=True, exist_ok=True)
+                rp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                await _publish(f"[ERR] {e}")
+                raise
+            finally:
+                await redis_client.aclose()
+
+        return loop.run_until_complete(_run())
+    except Exception as e:
+        logger.error("Remote import job failed for project %s: %s", project_id, e)
         raise
     finally:
         loop.close()

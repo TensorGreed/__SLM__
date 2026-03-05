@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
+import { TerminalConsole } from '../shared/TerminalConsole';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -11,25 +12,61 @@ interface IngestionPanelProps {
 
 type SourceTab = 'upload' | 'huggingface' | 'kaggle' | 'url';
 
+interface RemoteImportQueueResponse {
+    status: string;
+    report_path?: string;
+    source_type: string;
+    identifier: string;
+    task_id?: string;
+}
+
+interface RemoteImportStatusResponse {
+    status: 'running' | 'completed' | 'failed' | string;
+    result?: {
+        samples_ingested?: number;
+        source_type?: string;
+        identifier?: string;
+    };
+    error?: string;
+}
+
+function extractErrorMessage(error: unknown): string {
+    if (typeof error === 'object' && error !== null) {
+        const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+        if (typeof detail === 'string' && detail.trim()) {
+            return detail;
+        }
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return 'Operation failed';
+}
+
 export default function IngestionPanel({ projectId, onNextStep }: IngestionPanelProps) {
     const [documents, setDocuments] = useState<RawDocument[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState<string>('');
+    const [uploadProgress, setUploadProgress] = useState('');
 
-    // Remote import state
     const [activeTab, setActiveTab] = useState<SourceTab>('upload');
     const [remoteId, setRemoteId] = useState('');
     const [remoteSplit, setRemoteSplit] = useState('train');
     const [remoteMaxSamples, setRemoteMaxSamples] = useState('');
+    const [hfToken, setHfToken] = useState('');
+    const [kaggleUsername, setKaggleUsername] = useState('');
+    const [kaggleKey, setKaggleKey] = useState('');
+
     const [isImporting, setIsImporting] = useState(false);
     const [importStatus, setImportStatus] = useState('');
+    const [importLogs, setImportLogs] = useState<string[]>([]);
+    const [activeReportPath, setActiveReportPath] = useState<string | null>(null);
 
     const fetchDocs = useCallback(async () => {
         setIsLoading(true);
         try {
-            const res = await api.get(`/projects/${projectId}/ingestion/documents`);
+            const res = await api.get<RawDocument[]>(`/projects/${projectId}/ingestion/documents`);
             setDocuments(res.data);
         } catch (err) {
             console.error('Failed to fetch documents', err);
@@ -39,8 +76,70 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     }, [projectId]);
 
     useEffect(() => {
-        fetchDocs();
+        void fetchDocs();
     }, [fetchDocs]);
+
+    useEffect(() => {
+        if (!activeReportPath) {
+            return;
+        }
+
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${protocol}://${window.location.host}/api/projects/${projectId}/ingestion/ws/logs`;
+        const ws = new WebSocket(wsUrl);
+
+        ws.onmessage = (event) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.type === 'log' && typeof payload.text === 'string') {
+                    setImportLogs((prev) => [...prev, payload.text]);
+                }
+            } catch (err) {
+                console.error('Failed to parse ingestion log message', err);
+            }
+        };
+
+        return () => {
+            ws.close();
+        };
+    }, [activeReportPath, projectId]);
+
+    useEffect(() => {
+        if (!activeReportPath) {
+            return;
+        }
+
+        const interval = window.setInterval(async () => {
+            try {
+                const statusRes = await api.get<RemoteImportStatusResponse>(
+                    `/projects/${projectId}/ingestion/imports/status`,
+                    { params: { report_path: activeReportPath } },
+                );
+                const status = statusRes.data;
+                if (status.status === 'completed') {
+                    const imported = status.result?.samples_ingested ?? 0;
+                    const source = status.result?.source_type ?? activeTab;
+                    const identifier = status.result?.identifier ?? remoteId;
+                    setImportStatus(`Imported ${imported} samples from ${source}:${identifier}`);
+                    setIsImporting(false);
+                    setActiveReportPath(null);
+                    void fetchDocs();
+                } else if (status.status === 'failed') {
+                    setImportStatus(status.error ? `Import failed: ${status.error}` : 'Import failed. Check logs and retry.');
+                    setIsImporting(false);
+                    setActiveReportPath(null);
+                }
+            } catch (err) {
+                setImportStatus(`Import polling failed: ${extractErrorMessage(err)}`);
+                setIsImporting(false);
+                setActiveReportPath(null);
+            }
+        }, 2000);
+
+        return () => {
+            window.clearInterval(interval);
+        };
+    }, [activeReportPath, activeTab, fetchDocs, projectId, remoteId]);
 
     const handleUpload = async (files: FileList | File[]) => {
         if (!files.length) return;
@@ -53,13 +152,20 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         }
 
         try {
-            const res = await api.post(`/projects/${projectId}/ingestion/upload-batch`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-            });
-            setUploadProgress(`Uploaded ${res.data.uploaded} file(s)${res.data.errors.length ? `, ${res.data.errors.length} error(s)` : ''}`);
-            fetchDocs();
+            const res = await api.post<{ uploaded: number; errors: Array<{ error: string }> }>(
+                `/projects/${projectId}/ingestion/upload-batch`,
+                formData,
+                {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                },
+            );
+            const errorCount = res.data.errors.length;
+            setUploadProgress(
+                `Uploaded ${res.data.uploaded} file(s)${errorCount ? `, ${errorCount} error(s)` : ''}`,
+            );
+            void fetchDocs();
         } catch (err) {
-            setUploadProgress('Upload failed');
+            setUploadProgress(`Upload failed: ${extractErrorMessage(err)}`);
             console.error(err);
         } finally {
             setIsUploading(false);
@@ -69,31 +175,64 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
 
     const handleRemoteImport = async () => {
         if (!remoteId.trim()) return;
+
         setIsImporting(true);
-        setImportStatus('Connecting to source...');
+        setImportStatus('Queueing remote import job...');
+        setImportLogs([]);
+        setActiveReportPath(null);
+
         try {
-            const res = await api.post(`/projects/${projectId}/ingestion/import-remote`, {
+            const payload: {
+                source_type: SourceTab;
+                identifier: string;
+                split: string;
+                max_samples: number | null;
+                hf_token?: string;
+                kaggle_username?: string;
+                kaggle_key?: string;
+            } = {
                 source_type: activeTab,
-                identifier: remoteId,
+                identifier: remoteId.trim(),
                 split: remoteSplit,
-                max_samples: remoteMaxSamples ? parseInt(remoteMaxSamples) : null,
-            });
-            setImportStatus(`Imported ${res.data.samples_ingested} samples from ${res.data.source_type}:${res.data.identifier}`);
-            setRemoteId('');
-            fetchDocs();
+                max_samples: remoteMaxSamples ? Number(remoteMaxSamples) : null,
+            };
+
+            if (activeTab === 'huggingface' && hfToken.trim()) {
+                payload.hf_token = hfToken.trim();
+            }
+            if (activeTab === 'kaggle') {
+                if (kaggleUsername.trim()) {
+                    payload.kaggle_username = kaggleUsername.trim();
+                }
+                if (kaggleKey.trim()) {
+                    payload.kaggle_key = kaggleKey.trim();
+                }
+            }
+
+            const res = await api.post<RemoteImportQueueResponse>(
+                `/projects/${projectId}/ingestion/import-remote/queue`,
+                payload,
+            );
+
+            if (res.data.report_path) {
+                setActiveReportPath(res.data.report_path);
+                setImportStatus(`Import queued (${res.data.task_id ?? 'task'}). Streaming progress...`);
+            } else {
+                setImportStatus('Import queued but no report path returned.');
+                setIsImporting(false);
+            }
         } catch (err) {
-            setImportStatus('Import failed. Check identifier and try again.');
-            console.error(err);
-        } finally {
+            const message = extractErrorMessage(err);
+            setImportStatus(`Import failed: ${message}`);
             setIsImporting(false);
-            setTimeout(() => setImportStatus(''), 5000);
+            console.error(err);
         }
     };
 
     const handleProcess = async (docId: number) => {
         try {
             await api.post(`/projects/${projectId}/ingestion/documents/${docId}/process`);
-            fetchDocs();
+            void fetchDocs();
         } catch (err) {
             console.error('Processing failed', err);
         }
@@ -103,7 +242,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         if (!confirm('Delete this document?')) return;
         try {
             await api.delete(`/projects/${projectId}/ingestion/documents/${docId}`);
-            setDocuments((prev) => prev.filter((d) => d.id !== docId));
+            setDocuments((prev) => prev.filter((doc) => doc.id !== docId));
         } catch (err) {
             console.error('Delete failed', err);
         }
@@ -112,24 +251,30 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setDragOver(false);
-        handleUpload(e.dataTransfer.files);
+        void handleUpload(e.dataTransfer.files);
     };
 
     const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
-            handleUpload(e.target.files);
+            void handleUpload(e.target.files);
             e.target.value = '';
         }
     };
 
     const statusBadgeClass = (status: DocumentStatus) => {
         switch (status) {
-            case 'accepted': return 'badge-success';
-            case 'processing': return 'badge-info';
-            case 'pending': return 'badge-warning';
-            case 'error': return 'badge-error';
-            case 'rejected': return 'badge-error';
-            default: return 'badge-info';
+            case 'accepted':
+                return 'badge-success';
+            case 'processing':
+                return 'badge-info';
+            case 'pending':
+                return 'badge-warning';
+            case 'error':
+                return 'badge-error';
+            case 'rejected':
+                return 'badge-error';
+            default:
+                return 'badge-info';
         }
     };
 
@@ -140,18 +285,37 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     };
 
     const sourceTabConfig: Record<SourceTab, { icon: string; label: string; placeholder: string; help: string }> = {
-        upload: { icon: '📤', label: 'Local Files', placeholder: '', help: '' },
-        huggingface: { icon: '🤗', label: 'HuggingFace', placeholder: 'e.g. tatsu-lab/alpaca or squad', help: 'Enter a HuggingFace dataset ID. Public datasets are fetched instantly.' },
-        kaggle: { icon: '📊', label: 'Kaggle', placeholder: 'e.g. username/dataset-name', help: 'Enter a Kaggle dataset slug. Requires KAGGLE_USERNAME and KAGGLE_KEY env vars on the server.' },
-        url: { icon: '🔗', label: 'URL / S3 / GCS', placeholder: 'https://example.com/data.csv', help: 'Paste a direct link to a CSV, JSON, or JSONL file. Supports HTTP, S3, and GCS URIs.' },
+        upload: {
+            icon: '📤',
+            label: 'Local Files',
+            placeholder: '',
+            help: '',
+        },
+        huggingface: {
+            icon: '🤗',
+            label: 'HuggingFace',
+            placeholder: 'e.g. tatsu-lab/alpaca or squad',
+            help: 'Enter a HuggingFace dataset ID. Add HF token below for gated/private datasets.',
+        },
+        kaggle: {
+            icon: '📊',
+            label: 'Kaggle',
+            placeholder: 'e.g. username/dataset-name',
+            help: 'Enter a Kaggle dataset slug. Add Kaggle username/key below if not configured on the server.',
+        },
+        url: {
+            icon: '🔗',
+            label: 'URL / S3 / GCS',
+            placeholder: 'https://example.com/data.csv',
+            help: 'Paste a direct link to a CSV, JSON, or JSONL file. Supports HTTP, S3, and GCS URIs.',
+        },
     };
 
     return (
         <div className="ingestion-panel animate-fade-in">
-            {/* Source Tabs */}
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
-                    {(Object.keys(sourceTabConfig) as SourceTab[]).map(tab => (
+                    {(Object.keys(sourceTabConfig) as SourceTab[]).map((tab) => (
                         <button
                             key={tab}
                             className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-secondary'}`}
@@ -164,11 +328,13 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     ))}
                 </div>
 
-                {/* Local Upload Zone */}
                 {activeTab === 'upload' && (
                     <div
                         className={`upload-zone glass-card ${dragOver ? 'drag-over' : ''}`}
-                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                        onDragOver={(e) => {
+                            e.preventDefault();
+                            setDragOver(true);
+                        }}
                         onDragLeave={() => setDragOver(false)}
                         onDrop={handleDrop}
                     >
@@ -188,32 +354,41 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                 {isUploading ? 'Uploading...' : 'Choose Files'}
                             </label>
                         </div>
-                        {uploadProgress && (
-                            <div className="upload-progress">{uploadProgress}</div>
-                        )}
+                        {uploadProgress && <div className="upload-progress">{uploadProgress}</div>}
                     </div>
                 )}
 
-                {/* Remote Import Form */}
                 {activeTab !== 'upload' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                         <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: 0 }}>
                             {sourceTabConfig[activeTab].help}
                         </p>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 'var(--space-md)', alignItems: 'end' }}>
+                        <div
+                            style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1fr auto auto',
+                                gap: 'var(--space-md)',
+                                alignItems: 'end',
+                            }}
+                        >
                             <div className="form-group" style={{ margin: 0 }}>
                                 <label className="form-label">Dataset Identifier</label>
                                 <input
                                     className="input"
                                     value={remoteId}
-                                    onChange={e => setRemoteId(e.target.value)}
+                                    onChange={(e) => setRemoteId(e.target.value)}
                                     placeholder={sourceTabConfig[activeTab].placeholder}
                                 />
                             </div>
                             {activeTab === 'huggingface' && (
                                 <div className="form-group" style={{ margin: 0 }}>
                                     <label className="form-label">Split</label>
-                                    <select className="input" value={remoteSplit} onChange={e => setRemoteSplit(e.target.value)} style={{ width: 120 }}>
+                                    <select
+                                        className="input"
+                                        value={remoteSplit}
+                                        onChange={(e) => setRemoteSplit(e.target.value)}
+                                        style={{ width: 120 }}
+                                    >
                                         <option value="train">train</option>
                                         <option value="test">test</option>
                                         <option value="validation">validation</option>
@@ -226,28 +401,78 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                     className="input"
                                     type="number"
                                     value={remoteMaxSamples}
-                                    onChange={e => setRemoteMaxSamples(e.target.value)}
+                                    onChange={(e) => setRemoteMaxSamples(e.target.value)}
                                     placeholder="All"
                                     style={{ width: 100 }}
                                 />
                             </div>
                         </div>
+
+                        {activeTab === 'huggingface' && (
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">HuggingFace Token (optional)</label>
+                                <input
+                                    className="input"
+                                    type="password"
+                                    value={hfToken}
+                                    onChange={(e) => setHfToken(e.target.value)}
+                                    placeholder="hf_..."
+                                />
+                                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                                    Used only for this import request. Not saved to project metadata.
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'kaggle' && (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Kaggle Username (optional)</label>
+                                    <input
+                                        className="input"
+                                        value={kaggleUsername}
+                                        onChange={(e) => setKaggleUsername(e.target.value)}
+                                        placeholder="your_kaggle_username"
+                                    />
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Kaggle Key (optional)</label>
+                                    <input
+                                        className="input"
+                                        type="password"
+                                        value={kaggleKey}
+                                        onChange={(e) => setKaggleKey(e.target.value)}
+                                        placeholder="kaggle_api_key"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
                         <button
                             className="btn btn-primary"
-                            onClick={handleRemoteImport}
+                            onClick={() => void handleRemoteImport()}
                             disabled={isImporting || !remoteId.trim()}
                             style={{ alignSelf: 'flex-start' }}
                         >
-                            {isImporting ? 'Importing...' : `Import from ${sourceTabConfig[activeTab].label}`}
+                            {isImporting
+                                ? 'Importing...'
+                                : `Import from ${sourceTabConfig[activeTab].label}`}
                         </button>
+
                         {importStatus && (
-                            <div style={{
-                                padding: 'var(--space-sm) var(--space-md)',
-                                borderRadius: 'var(--radius-md)',
-                                background: importStatus.includes('failed') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)',
-                                color: importStatus.includes('failed') ? 'var(--color-error)' : 'var(--color-success)',
-                                fontSize: 'var(--font-size-sm)',
-                            }}>
+                            <div
+                                style={{
+                                    padding: 'var(--space-sm) var(--space-md)',
+                                    borderRadius: 'var(--radius-md)',
+                                    background: importStatus.toLowerCase().includes('failed')
+                                        ? 'rgba(239,68,68,0.1)'
+                                        : 'rgba(34,197,94,0.1)',
+                                    color: importStatus.toLowerCase().includes('failed')
+                                        ? 'var(--color-error)'
+                                        : 'var(--color-success)',
+                                    fontSize: 'var(--font-size-sm)',
+                                }}
+                            >
                                 {importStatus}
                             </div>
                         )}
@@ -255,7 +480,21 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 )}
             </div>
 
-            {/* Document List */}
+            {(isImporting || importLogs.length > 0) && (
+                <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+                    <h3
+                        style={{
+                            fontSize: 'var(--font-size-md)',
+                            fontWeight: 600,
+                            marginBottom: 'var(--space-md)',
+                        }}
+                    >
+                        Remote Import Progress
+                    </h3>
+                    <TerminalConsole logs={importLogs} height="260px" />
+                </div>
+            )}
+
             <div className="docs-section">
                 <div className="docs-header">
                     <h3 className="docs-title">Ingested Documents</h3>
@@ -272,7 +511,9 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     <div className="empty-state" style={{ padding: '2rem' }}>
                         <div className="empty-state-icon">📂</div>
                         <div className="empty-state-title">No documents yet</div>
-                        <div className="empty-state-text">Upload files or import from HuggingFace, Kaggle, or a URL above.</div>
+                        <div className="empty-state-text">
+                            Upload files or import from HuggingFace, Kaggle, or a URL above.
+                        </div>
                     </div>
                 ) : (
                     <div className="docs-table-container">
@@ -292,18 +533,34 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                 {documents.map((doc) => (
                                     <tr key={doc.id} className="doc-row">
                                         <td className="doc-name">{doc.filename}</td>
-                                        <td><span className="badge badge-info" style={{ fontSize: 10 }}>{(doc as any).source || 'upload'}</span></td>
-                                        <td><span className="badge badge-accent">{doc.file_type}</span></td>
+                                        <td>
+                                            <span className="badge badge-info" style={{ fontSize: 10 }}>
+                                                {doc.source || 'upload'}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span className="badge badge-accent">{doc.file_type}</span>
+                                        </td>
                                         <td className="doc-size">{formatSize(doc.file_size_bytes)}</td>
-                                        <td><span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span></td>
+                                        <td>
+                                            <span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span>
+                                        </td>
                                         <td className="doc-date">{new Date(doc.ingested_at).toLocaleDateString()}</td>
                                         <td className="doc-actions">
                                             {doc.status === 'pending' && (
-                                                <button className="btn btn-ghost btn-sm" onClick={() => handleProcess(doc.id)} title="Process">
+                                                <button
+                                                    className="btn btn-ghost btn-sm"
+                                                    onClick={() => void handleProcess(doc.id)}
+                                                    title="Process"
+                                                >
                                                     ⚙️
                                                 </button>
                                             )}
-                                            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(doc.id)} title="Delete">
+                                            <button
+                                                className="btn btn-ghost btn-sm"
+                                                onClick={() => void handleDelete(doc.id)}
+                                                title="Delete"
+                                            >
                                                 🗑️
                                             </button>
                                         </td>

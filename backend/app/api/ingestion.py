@@ -1,20 +1,24 @@
 """Data Ingestion API routes — file upload and document management."""
-
+import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.dataset import DocumentStatus
 from app.schemas.dataset import DocumentResponse, DocumentUploadResponse
 from app.services.ingestion_service import (
     delete_document,
+    get_import_job_status,
     ingest_file,
     ingest_remote_dataset,
     list_documents,
     process_document,
+    queue_remote_import,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/ingestion", tags=["Ingestion"])
@@ -28,6 +32,9 @@ class RemoteImportRequest(BaseModel):
     config_name: str | None = None
     field_mapping: dict[str, str] | None = None
     normalize_for_training: bool = True
+    hf_token: str | None = Field(default=None, min_length=1, max_length=4096)
+    kaggle_username: str | None = Field(default=None, min_length=1, max_length=255)
+    kaggle_key: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
@@ -111,8 +118,47 @@ async def import_remote_dataset(
             config_name=req.config_name,
             field_mapping=req.field_mapping,
             normalize_for_training=req.normalize_for_training,
+            hf_token=req.hf_token,
+            kaggle_username=req.kaggle_username,
+            kaggle_key=req.kaggle_key,
         )
         return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/import-remote/queue", status_code=202)
+async def import_remote_dataset_queue(
+    project_id: int,
+    req: RemoteImportRequest,
+):
+    """Queue a remote import job and stream progress via websocket logs."""
+    try:
+        return await queue_remote_import(
+            project_id=project_id,
+            source_type=req.source_type,
+            identifier=req.identifier,
+            split=req.split,
+            max_samples=req.max_samples,
+            config_name=req.config_name,
+            field_mapping=req.field_mapping,
+            normalize_for_training=req.normalize_for_training,
+            hf_token=req.hf_token,
+            kaggle_username=req.kaggle_username,
+            kaggle_key=req.kaggle_key,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/imports/status")
+async def remote_import_job_status(
+    project_id: int,
+    report_path: str = Query(..., min_length=1, max_length=4096),
+):
+    """Poll a queued remote import job status by report path."""
+    try:
+        return get_import_job_status(project_id, report_path)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -156,3 +202,27 @@ async def remove_document(
         await delete_document(db, project_id, document_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.websocket("/ws/logs")
+async def ingestion_logs(websocket: WebSocket, project_id: int):
+    """Stream ingestion worker log lines for a project."""
+    await websocket.accept()
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    pubsub = redis_client.pubsub()
+    channel = f"log:ingestion:project:{project_id}"
+    await pubsub.subscribe(channel)
+    try:
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message and message.get("type") == "message":
+                await websocket.send_json({"type": "log", "text": str(message.get("data", ""))})
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+            except TimeoutError:
+                pass
+            except WebSocketDisconnect:
+                break
+    finally:
+        await pubsub.unsubscribe(channel)
+        await redis_client.aclose()
