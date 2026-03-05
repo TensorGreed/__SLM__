@@ -16,6 +16,11 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Workflow Graph Preview** (read-only visual stage graph + step contracts) in project detail.
 - Added **Workflow Contract Runtime (Phase 2)** APIs: graph validate, dry-run, run active step, and run history.
 - Added **Visual Pipeline Editor (Phase 3)** with project-scoped graph contract save/load/reset and compile diagnostics.
+- Refactored project UI into a cleaner workspace IA:
+  - `Pipeline` page
+  - `Workflow Graph` page
+  - `Domain Contracts` page
+  - left sidebar navigation with pipeline stages as submenu
 - Added runtime transparency in split/training responses (applied profile + resolved defaults).
 - Added **Duplicate-as-new-version** flow for domain profiles from the project UI.
 - Added dedicated **Resolved Defaults** panels in Dataset Prep and Training tabs.

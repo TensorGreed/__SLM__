@@ -1,0 +1,14 @@
+.progress-card {
+    margin-bottom: var(--space-xl);
+}
+
+.project-tabs-container {
+    animation: fadeIn 0.4s ease-out;
+}
+
+.tab.tab--locked {
+    opacity: 0.35;
+    cursor: not-allowed !important;
+    pointer-events: none;
+    filter: grayscale(0.6);
+}

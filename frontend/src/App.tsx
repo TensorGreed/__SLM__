@@ -1,6 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProjectListPage from './pages/ProjectListPage';
-import ProjectDetailPage from './pages/ProjectDetailPage';
+import ProjectWorkspaceLayout from './pages/ProjectWorkspaceLayout';
+import ProjectPipelinePage from './pages/ProjectPipelinePage';
+import ProjectDomainPage from './pages/ProjectDomainPage';
+import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -18,7 +21,13 @@ function App() {
         {isAuthenticated ? (
           <>
             <Route path="/" element={<ProjectListPage />} />
-            <Route path="/project/:id" element={<ProjectDetailPage />} />
+            <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
+              <Route index element={<Navigate to="pipeline/data" replace />} />
+              <Route path="pipeline" element={<Navigate to="data" replace />} />
+              <Route path="pipeline/:tabKey" element={<ProjectPipelinePage />} />
+              <Route path="workflow" element={<ProjectWorkflowPage />} />
+              <Route path="domain" element={<ProjectDomainPage />} />
+            </Route>
           </>
         ) : (
           <Route path="*" element={<Navigate to="/login" replace />} />
