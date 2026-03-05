@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import re
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,6 +133,37 @@ async def list_domain_profiles(db: AsyncSession) -> list[DomainProfile]:
     return list(result.scalars().all())
 
 
+def _bump_patch_version(version: str) -> str:
+    parts = version.split(".")
+    if len(parts) != 3:
+        return version
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2])
+    except ValueError:
+        return version
+    return f"{major}.{minor}.{patch + 1}"
+
+
+async def _derive_next_profile_id(db: AsyncSession, source_profile_id: str) -> str:
+    rows = await db.execute(select(DomainProfile.profile_id))
+    existing = {str(item).strip().lower() for item in rows.scalars().all()}
+
+    match = re.match(r"^(.*)-v(\d+)$", source_profile_id)
+    stem = source_profile_id
+    candidate_num = 2
+    if match:
+        stem = match.group(1)
+        candidate_num = int(match.group(2)) + 1
+
+    candidate = f"{stem}-v{candidate_num}"
+    while candidate in existing:
+        candidate_num += 1
+        candidate = f"{stem}-v{candidate_num}"
+    return candidate
+
+
 async def get_domain_profile(db: AsyncSession, profile_id: str) -> DomainProfile | None:
     result = await db.execute(
         select(DomainProfile).where(DomainProfile.profile_id == profile_id.strip().lower())
@@ -252,6 +286,28 @@ async def create_domain_profile(
     await db.flush()
     await db.refresh(profile)
     return profile
+
+
+async def duplicate_domain_profile(
+    db: AsyncSession,
+    source: DomainProfile,
+    *,
+    new_profile_id: str | None = None,
+    new_version: str | None = None,
+    status_override: str | None = None,
+) -> DomainProfile:
+    source_contract = source.contract if isinstance(source.contract, dict) else None
+    if not source_contract:
+        raise ValueError("Source domain profile has no valid contract")
+
+    payload = copy.deepcopy(source_contract)
+    payload["profile_id"] = new_profile_id or await _derive_next_profile_id(db, source.profile_id)
+    payload["version"] = new_version or _bump_patch_version(str(payload.get("version", source.version or "1.0.0")))
+    if status_override:
+        payload["status"] = status_override
+
+    contract = DomainProfileContract.model_validate(payload)
+    return await create_domain_profile(db, contract)
 
 
 async def update_domain_profile(

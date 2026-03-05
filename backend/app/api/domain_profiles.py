@@ -8,12 +8,14 @@ from app.database import get_db
 from app.models.auth import GlobalRole
 from app.schemas.domain_profile import (
     DomainProfileContract,
+    DomainProfileDuplicateRequest,
     DomainProfileResponse,
     DomainProfileSummaryResponse,
 )
 from app.security import get_request_principal
 from app.services.domain_profile_service import (
     create_domain_profile,
+    duplicate_domain_profile,
     get_domain_profile,
     list_domain_profiles,
     update_domain_profile,
@@ -86,5 +88,31 @@ async def update_profile(
     try:
         updated = await update_domain_profile(db, profile, contract)
         return DomainProfileResponse.model_validate(updated)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/{profile_id}/duplicate", response_model=DomainProfileResponse, status_code=201)
+async def duplicate_profile(
+    profile_id: str,
+    request_data: DomainProfileDuplicateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Duplicate a domain profile with auto-generated profile_id/version unless overridden."""
+    _require_profile_write_access(request)
+    profile = await get_domain_profile(db, profile_id)
+    if not profile:
+        raise HTTPException(404, f"Domain profile '{profile_id}' not found")
+
+    try:
+        duplicated = await duplicate_domain_profile(
+            db,
+            profile,
+            new_profile_id=request_data.new_profile_id,
+            new_version=request_data.new_version,
+            status_override=request_data.status.value,
+        )
+        return DomainProfileResponse.model_validate(duplicated)
     except ValueError as e:
         raise HTTPException(400, str(e))

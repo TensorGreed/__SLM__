@@ -201,6 +201,31 @@ export default function DomainProfileManager({
     }
   };
 
+  const handleDuplicateProfile = async () => {
+    if (!selectedProfileId) {
+      setErrorMessage('Select a profile to duplicate.');
+      return;
+    }
+    setErrorMessage('');
+    setStatusMessage('');
+    try {
+      const res = await api.post<DomainProfileResponse>(
+        `/domain-profiles/${selectedProfileId}/duplicate`,
+        {},
+      );
+      const duplicated = res.data;
+      setStatusMessage(`Duplicated profile as ${duplicated.profile_id}@${duplicated.version}`);
+      setSelectedProfileId(duplicated.profile_id);
+      setEditorMode('edit');
+      setEditorTargetProfileId(duplicated.profile_id);
+      setEditorJson(JSON.stringify(duplicated.contract || {}, null, 2));
+      setEditorOpen(true);
+      await loadProfiles();
+    } catch (err) {
+      setErrorMessage(`Failed to duplicate profile: ${extractErrorMessage(err)}`);
+    }
+  };
+
   const handleSaveProfile = async () => {
     if (!editorJson.trim()) {
       setErrorMessage('Contract JSON cannot be empty.');
@@ -297,6 +322,9 @@ export default function DomainProfileManager({
         </button>
         <button className="btn btn-secondary" onClick={openEditEditor} disabled={!selectedProfileId}>
           View/Edit Contract
+        </button>
+        <button className="btn btn-secondary" onClick={() => void handleDuplicateProfile()} disabled={!selectedProfileId}>
+          Duplicate + Open Editor
         </button>
         <button className="btn btn-secondary" onClick={openCreateEditor}>
           New Profile

@@ -228,3 +228,19 @@ class DomainProfileSummaryResponse(BaseModel):
 
 class DomainProfileResponse(DomainProfileSummaryResponse):
     contract: DomainProfileContract
+
+
+class DomainProfileDuplicateRequest(BaseModel):
+    new_profile_id: str | None = Field(default=None, min_length=3, max_length=128)
+    new_version: str | None = Field(default=None, min_length=1, max_length=32)
+    status: DomainProfileStatus = DomainProfileStatus.DRAFT
+
+    @field_validator("new_profile_id")
+    @classmethod
+    def normalize_new_profile_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        token = _normalize_token(value)
+        if not token:
+            raise ValueError("new_profile_id cannot be empty")
+        return token

@@ -143,6 +143,36 @@ class Phase11DomainProfileTests(unittest.TestCase):
         self.assertEqual(fetched.status_code, 200, fetched.text)
         self.assertEqual(fetched.json()["domain_profile_id"], assigned["domain_profile_id"])
 
+    def test_duplicate_domain_profile_auto_versions(self):
+        create_profile = self.client.post(
+            "/api/domain-profiles",
+            headers=self.admin_headers,
+            json=_sample_contract("duplicate-domain-v1", "Duplicate Domain"),
+        )
+        self.assertEqual(create_profile.status_code, 201, create_profile.text)
+
+        duplicate_a = self.client.post(
+            "/api/domain-profiles/duplicate-domain-v1/duplicate",
+            headers=self.admin_headers,
+            json={},
+        )
+        self.assertEqual(duplicate_a.status_code, 201, duplicate_a.text)
+        payload_a = duplicate_a.json()
+        self.assertEqual(payload_a["profile_id"], "duplicate-domain-v2")
+        self.assertEqual(payload_a["version"], "1.0.1")
+        self.assertEqual(payload_a["status"], "draft")
+
+        duplicate_b = self.client.post(
+            "/api/domain-profiles/duplicate-domain-v1/duplicate",
+            headers=self.admin_headers,
+            json={},
+        )
+        self.assertEqual(duplicate_b.status_code, 201, duplicate_b.text)
+        payload_b = duplicate_b.json()
+        self.assertEqual(payload_b["profile_id"], "duplicate-domain-v3")
+        self.assertEqual(payload_b["version"], "1.0.1")
+        self.assertEqual(payload_b["status"], "draft")
+
     def test_dataset_split_uses_domain_profile_defaults(self):
         create_profile = self.client.post(
             "/api/domain-profiles",
@@ -201,6 +231,21 @@ class Phase11DomainProfileTests(unittest.TestCase):
         self.assertEqual(kwargs["seed"], 99)
         self.assertEqual(kwargs["chat_template"], "chatml")
 
+        preview = self.client.post(
+            f"/api/projects/{project_id}/dataset/split/effective-config",
+            headers=self.admin_headers,
+            json={},
+        )
+        self.assertEqual(preview.status_code, 200, preview.text)
+        preview_payload = preview.json()
+        self.assertEqual(preview_payload.get("domain_profile_applied"), "ops-domain-v1")
+        self.assertEqual(preview_payload.get("resolved_split_config", {}).get("train_ratio"), 0.7)
+        self.assertEqual(preview_payload.get("resolved_split_config", {}).get("chat_template"), "chatml")
+        self.assertCountEqual(
+            preview_payload.get("profile_defaults_applied", []),
+            ["train_ratio", "val_ratio", "test_ratio", "seed", "chat_template"],
+        )
+
     def test_training_experiment_uses_domain_profile_defaults(self):
         create_profile = self.client.post(
             "/api/domain-profiles",
@@ -258,6 +303,22 @@ class Phase11DomainProfileTests(unittest.TestCase):
         self.assertEqual(exp_payload.get("resolved_training_config", {}).get("training_mode"), "orpo")
         self.assertCountEqual(
             exp_payload.get("profile_defaults_applied", []),
+            ["training_mode", "chat_template", "num_epochs", "batch_size", "learning_rate", "use_lora"],
+        )
+
+        preview = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/effective-config",
+            headers=self.admin_headers,
+            json={"config": {"base_model": "microsoft/phi-2"}},
+        )
+        self.assertEqual(preview.status_code, 200, preview.text)
+        preview_payload = preview.json()
+        self.assertEqual(preview_payload.get("domain_profile_applied"), "training-domain-v1")
+        self.assertEqual(preview_payload.get("resolved_training_mode"), "orpo")
+        self.assertEqual(preview_payload.get("resolved_training_config", {}).get("chat_template"), "phi3")
+        self.assertFalse(preview_payload.get("resolved_training_config", {}).get("use_lora"))
+        self.assertCountEqual(
+            preview_payload.get("profile_defaults_applied", []),
             ["training_mode", "chat_template", "num_epochs", "batch_size", "learning_rate", "use_lora"],
         )
 

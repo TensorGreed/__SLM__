@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
@@ -43,6 +43,20 @@ interface SplitManifest {
     profile_defaults_applied?: string[];
 }
 
+interface SplitEffectiveConfig {
+    domain_profile_applied?: string | null;
+    profile_split_defaults?: Record<string, unknown> | null;
+    resolved_split_config?: {
+        train_ratio?: number;
+        val_ratio?: number;
+        test_ratio?: number;
+        seed?: number;
+        chat_template?: string;
+    } | null;
+    profile_defaults_applied?: string[];
+    include_types?: string[] | null;
+}
+
 const CHAT_TEMPLATES = [
     { value: 'llama3', label: 'Llama 3' },
     { value: 'chatml', label: 'ChatML' },
@@ -78,6 +92,42 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     });
     const [splitLoading, setSplitLoading] = useState(false);
     const [splitManifest, setSplitManifest] = useState<SplitManifest | null>(null);
+    const [effectiveSplitConfig, setEffectiveSplitConfig] = useState<SplitEffectiveConfig | null>(null);
+    const [effectiveSplitLoading, setEffectiveSplitLoading] = useState(false);
+    const [effectiveSplitError, setEffectiveSplitError] = useState('');
+
+    const buildSplitPayload = (): Record<string, unknown> => {
+        const payload: Record<string, unknown> = {};
+        if (!useProfileDefaults || splitTouched.train_ratio) payload.train_ratio = trainRatio;
+        if (!useProfileDefaults || splitTouched.val_ratio) payload.val_ratio = valRatio;
+        if (!useProfileDefaults || splitTouched.test_ratio) payload.test_ratio = testRatio;
+        if (!useProfileDefaults || splitTouched.seed) payload.seed = splitSeed;
+        if (!useProfileDefaults || splitTouched.chat_template) payload.chat_template = splitTemplate;
+        return payload;
+    };
+
+    const previewEffectiveSplitConfig = async () => {
+        setEffectiveSplitLoading(true);
+        setEffectiveSplitError('');
+        try {
+            const payload = buildSplitPayload();
+            const res = await api.post<SplitEffectiveConfig>(
+                `/projects/${projectId}/dataset/split/effective-config`,
+                payload,
+            );
+            setEffectiveSplitConfig(res.data);
+        } catch (err: any) {
+            setEffectiveSplitConfig(null);
+            setEffectiveSplitError(err?.response?.data?.detail || 'Failed to preview effective split config');
+        } finally {
+            setEffectiveSplitLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void previewEffectiveSplitConfig();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId]);
 
     // ── Preview ────────────────────────────────────────────────
     const loadPreview = async () => {
@@ -116,12 +166,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const runSplit = async () => {
         setSplitLoading(true);
         try {
-            const payload: Record<string, unknown> = {};
-            if (!useProfileDefaults || splitTouched.train_ratio) payload.train_ratio = trainRatio;
-            if (!useProfileDefaults || splitTouched.val_ratio) payload.val_ratio = valRatio;
-            if (!useProfileDefaults || splitTouched.test_ratio) payload.test_ratio = testRatio;
-            if (!useProfileDefaults || splitTouched.seed) payload.seed = splitSeed;
-            if (!useProfileDefaults || splitTouched.chat_template) payload.chat_template = splitTemplate;
+            const payload = buildSplitPayload();
 
             const res = await api.post<SplitManifest>(`/projects/${projectId}/dataset/split`, payload);
             const manifest = res.data;
@@ -143,6 +188,13 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             if (typeof resolved.chat_template === 'string') {
                 setSplitTemplate(resolved.chat_template);
             }
+            setEffectiveSplitConfig({
+                domain_profile_applied: manifest.domain_profile_applied,
+                profile_split_defaults: manifest.profile_split_defaults,
+                resolved_split_config: manifest.resolved_split_config,
+                profile_defaults_applied: manifest.profile_defaults_applied,
+                include_types: null,
+            });
             setSplitTouched({
                 train_ratio: false,
                 val_ratio: false,
@@ -382,25 +434,81 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     </p>
                 )}
                 <div className="dp-actions">
+                    <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
+                        {effectiveSplitLoading ? '⏳ Resolving...' : '🧭 Preview Effective Config'}
+                    </button>
                     <button className="btn-primary" onClick={runSplit}
                         disabled={splitLoading || Math.abs(ratioSum - 1.0) > 0.001}>
                         {splitLoading ? '⏳ Splitting...' : '✂️ Run Split'}
                     </button>
                 </div>
+                {effectiveSplitError && (
+                    <p style={{ color: '#ff6b6b', fontSize: '.82rem', margin: '0 0 .75rem' }}>{effectiveSplitError}</p>
+                )}
+                {effectiveSplitConfig && (
+                    <div className="dp-resolved-panel">
+                        <div className="dp-resolved-title">Effective Config Preview (Pre-run)</div>
+                        <div className="dp-resolved-kv">
+                            <span>Applied Profile</span>
+                            <strong>{effectiveSplitConfig.domain_profile_applied || 'none'}</strong>
+                        </div>
+                        <div className="dp-resolved-kv">
+                            <span>Profile Fields Applied</span>
+                            <strong>
+                                {effectiveSplitConfig.profile_defaults_applied && effectiveSplitConfig.profile_defaults_applied.length > 0
+                                    ? effectiveSplitConfig.profile_defaults_applied.join(', ')
+                                    : 'none'}
+                            </strong>
+                        </div>
+                        <div className="dp-resolved-grid">
+                            <div>
+                                <div className="dp-resolved-subtitle">Resolved Split Config</div>
+                                <pre className="dp-resolved-json">
+                                    {JSON.stringify(effectiveSplitConfig.resolved_split_config || {}, null, 2)}
+                                </pre>
+                            </div>
+                            <div>
+                                <div className="dp-resolved-subtitle">Profile Split Defaults</div>
+                                <pre className="dp-resolved-json">
+                                    {JSON.stringify(effectiveSplitConfig.profile_split_defaults || {}, null, 2)}
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {splitManifest && (
                     <div className="dp-manifest">
                         <h4>✅ Split Complete</h4>
-                        {splitManifest.domain_profile_applied && (
-                            <p className="dp-resolved-line">
-                                Applied profile: <strong>{splitManifest.domain_profile_applied}</strong>
-                            </p>
-                        )}
-                        {splitManifest.profile_defaults_applied && splitManifest.profile_defaults_applied.length > 0 && (
-                            <p className="dp-resolved-line">
-                                Profile defaults used: <code>{splitManifest.profile_defaults_applied.join(', ')}</code>
-                            </p>
-                        )}
+                        <div className="dp-resolved-panel">
+                            <div className="dp-resolved-title">Resolved Defaults</div>
+                            <div className="dp-resolved-kv">
+                                <span>Applied Profile</span>
+                                <strong>{splitManifest.domain_profile_applied || 'none'}</strong>
+                            </div>
+                            <div className="dp-resolved-kv">
+                                <span>Profile Fields Applied</span>
+                                <strong>
+                                    {splitManifest.profile_defaults_applied && splitManifest.profile_defaults_applied.length > 0
+                                        ? splitManifest.profile_defaults_applied.join(', ')
+                                        : 'none'}
+                                </strong>
+                            </div>
+                            <div className="dp-resolved-grid">
+                                <div>
+                                    <div className="dp-resolved-subtitle">Resolved Split Config</div>
+                                    <pre className="dp-resolved-json">
+                                        {JSON.stringify(splitManifest.resolved_split_config || {}, null, 2)}
+                                    </pre>
+                                </div>
+                                <div>
+                                    <div className="dp-resolved-subtitle">Profile Split Defaults</div>
+                                    <pre className="dp-resolved-json">
+                                        {JSON.stringify(splitManifest.profile_split_defaults || {}, null, 2)}
+                                    </pre>
+                                </div>
+                            </div>
+                        </div>
                         <div className="dp-stats-grid">
                             <div className="dp-stat">
                                 <div className="label">Total</div>

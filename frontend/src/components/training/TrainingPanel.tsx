@@ -42,6 +42,14 @@ interface TrainingMetric {
   [key: string]: unknown;
 }
 
+interface TrainingEffectiveConfigResponse {
+  domain_profile_applied?: string | null;
+  profile_training_defaults?: Record<string, unknown> | null;
+  resolved_training_config?: Record<string, unknown> | null;
+  resolved_training_mode?: string;
+  profile_defaults_applied?: string[];
+}
+
 type ConfigFieldKey =
   | 'chat_template'
   | 'learning_rate'
@@ -93,8 +101,12 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const [lastCreateSummary, setLastCreateSummary] = useState<{
     domainProfileApplied: string | null;
     defaultsApplied: string[];
+    profileDefaults: Record<string, unknown> | null;
     resolvedConfig: Record<string, unknown> | null;
   } | null>(null);
+  const [effectivePreview, setEffectivePreview] = useState<TrainingEffectiveConfigResponse | null>(null);
+  const [effectivePreviewLoading, setEffectivePreviewLoading] = useState(false);
+  const [effectivePreviewError, setEffectivePreviewError] = useState('');
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -104,6 +116,48 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         : status === 'failed'
           ? 'badge-error'
           : 'badge-warning';
+
+  const buildTrainingConfigPayload = (): Record<string, unknown> => {
+    const learningRate = Number.parseFloat(lr);
+    const parsedTargetModules = targetModules
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const config: Record<string, unknown> = {
+      base_model: baseModel,
+    };
+    const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
+    if (includeField('chat_template')) config.chat_template = chatTemplate;
+    if (includeField('learning_rate')) config.learning_rate = learningRate;
+    if (includeField('num_epochs')) config.num_epochs = epochs;
+    if (includeField('batch_size')) config.batch_size = batchSize;
+    if (includeField('optimizer')) config.optimizer = optimizer;
+    if (includeField('use_lora')) config.use_lora = useLora;
+    if (includeField('lora_r')) config.lora_r = loraR;
+    if (includeField('lora_alpha')) config.lora_alpha = loraAlpha;
+    if (includeField('target_modules')) config.target_modules = parsedTargetModules;
+    if (includeField('gradient_checkpointing')) config.gradient_checkpointing = gradientCheckpointing;
+    return config;
+  };
+
+  const previewEffectiveConfig = async () => {
+    setEffectivePreviewLoading(true);
+    setEffectivePreviewError('');
+    try {
+      const config = buildTrainingConfigPayload();
+      const res = await api.post<TrainingEffectiveConfigResponse>(
+        `/projects/${projectId}/training/experiments/effective-config`,
+        { config },
+      );
+      setEffectivePreview(res.data);
+    } catch (err: any) {
+      setEffectivePreview(null);
+      setEffectivePreviewError(err?.response?.data?.detail || 'Failed to preview effective training config');
+    } finally {
+      setEffectivePreviewLoading(false);
+    }
+  };
 
   const refreshExperiments = async () => {
     const res = await api.get(`/projects/${projectId}/training/experiments`);
@@ -140,6 +194,8 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       gradient_checkpointing: false,
     });
     setLastCreateSummary(null);
+    setEffectivePreview(null);
+    setEffectivePreviewError('');
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -211,31 +267,19 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     return () => ws.close();
   }, [activeExperiment, projectId]);
 
+  useEffect(() => {
+    if (!showCreate) {
+      return;
+    }
+    void previewEffectiveConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCreate, projectId]);
+
   const handleCreate = async () => {
     if (!name.trim()) return;
     setTrainingError('');
 
-    const learningRate = Number.parseFloat(lr);
-    const parsedTargetModules = targetModules
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    const config: Record<string, unknown> = {
-      base_model: baseModel,
-    };
-
-    const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
-    if (includeField('chat_template')) config.chat_template = chatTemplate;
-    if (includeField('learning_rate')) config.learning_rate = learningRate;
-    if (includeField('num_epochs')) config.num_epochs = epochs;
-    if (includeField('batch_size')) config.batch_size = batchSize;
-    if (includeField('optimizer')) config.optimizer = optimizer;
-    if (includeField('use_lora')) config.use_lora = useLora;
-    if (includeField('lora_r')) config.lora_r = loraR;
-    if (includeField('lora_alpha')) config.lora_alpha = loraAlpha;
-    if (includeField('target_modules')) config.target_modules = parsedTargetModules;
-    if (includeField('gradient_checkpointing')) config.gradient_checkpointing = gradientCheckpointing;
+    const config = buildTrainingConfigPayload();
 
     try {
       const res = await api.post<Experiment>(`/projects/${projectId}/training/experiments`, { name, config });
@@ -244,6 +288,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       setLastCreateSummary({
         domainProfileApplied: created.domain_profile_applied ?? null,
         defaultsApplied: created.profile_defaults_applied || [],
+        profileDefaults:
+          created.profile_training_defaults && typeof created.profile_training_defaults === 'object'
+            ? created.profile_training_defaults
+            : null,
         resolvedConfig:
           created.resolved_training_config && typeof created.resolved_training_config === 'object'
             ? created.resolved_training_config
@@ -429,6 +477,55 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                 Base model is always sent. Other fields are only sent after you edit them.
               </div>
             </div>
+            <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => void previewEffectiveConfig()}
+                disabled={effectivePreviewLoading}
+              >
+                {effectivePreviewLoading ? 'Resolving...' : 'Preview Effective Config'}
+              </button>
+            </div>
+            {effectivePreviewError && (
+              <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                {effectivePreviewError}
+              </div>
+            )}
+            {effectivePreview && (
+              <div className="resolved-defaults-panel">
+                <div className="resolved-defaults-panel__title">Effective Config Preview (Pre-create)</div>
+                <div className="resolved-defaults-panel__kv">
+                  <span>Applied Profile</span>
+                  <strong>{effectivePreview.domain_profile_applied || 'none'}</strong>
+                </div>
+                <div className="resolved-defaults-panel__kv">
+                  <span>Resolved Training Mode</span>
+                  <strong>{effectivePreview.resolved_training_mode || 'sft'}</strong>
+                </div>
+                <div className="resolved-defaults-panel__kv">
+                  <span>Profile Fields Applied</span>
+                  <strong>
+                    {effectivePreview.profile_defaults_applied && effectivePreview.profile_defaults_applied.length > 0
+                      ? effectivePreview.profile_defaults_applied.join(', ')
+                      : 'none'}
+                  </strong>
+                </div>
+                <div className="resolved-defaults-panel__grid">
+                  <div>
+                    <div className="resolved-defaults-panel__subtitle">Resolved Training Config</div>
+                    <pre className="resolved-defaults-panel__json">
+                      {JSON.stringify(effectivePreview.resolved_training_config || {}, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <div className="resolved-defaults-panel__subtitle">Profile Training Defaults</div>
+                    <pre className="resolved-defaults-panel__json">
+                      {JSON.stringify(effectivePreview.profile_training_defaults || {}, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
               <div>
@@ -590,15 +687,34 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         )}
 
         {lastCreateSummary && (
-          <div style={{ marginBottom: 'var(--space-md)', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-            <div style={{ fontSize: 'var(--font-size-sm)', marginBottom: 6 }}>
-              Applied profile: <strong>{lastCreateSummary.domainProfileApplied || 'none'}</strong>
+          <div className="resolved-defaults-panel">
+            <div className="resolved-defaults-panel__title">Resolved Defaults</div>
+            <div className="resolved-defaults-panel__kv">
+              <span>Applied Profile</span>
+              <strong>{lastCreateSummary.domainProfileApplied || 'none'}</strong>
             </div>
-            {lastCreateSummary.defaultsApplied.length > 0 && (
-              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
-                Profile defaults used: {lastCreateSummary.defaultsApplied.join(', ')}
+            <div className="resolved-defaults-panel__kv">
+              <span>Profile Fields Applied</span>
+              <strong>
+                {lastCreateSummary.defaultsApplied.length > 0
+                  ? lastCreateSummary.defaultsApplied.join(', ')
+                  : 'none'}
+              </strong>
+            </div>
+            <div className="resolved-defaults-panel__grid">
+              <div>
+                <div className="resolved-defaults-panel__subtitle">Resolved Training Config</div>
+                <pre className="resolved-defaults-panel__json">
+                  {JSON.stringify(lastCreateSummary.resolvedConfig || {}, null, 2)}
+                </pre>
               </div>
-            )}
+              <div>
+                <div className="resolved-defaults-panel__subtitle">Profile Training Defaults</div>
+                <pre className="resolved-defaults-panel__json">
+                  {JSON.stringify(lastCreateSummary.profileDefaults || {}, null, 2)}
+                </pre>
+              </div>
+            </div>
           </div>
         )}
 

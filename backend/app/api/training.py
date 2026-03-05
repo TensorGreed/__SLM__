@@ -3,13 +3,14 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 import redis.asyncio as aioredis
 import asyncio
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.experiment import Checkpoint, Experiment
-from app.schemas.training import ExperimentCreate, ExperimentResponse
+from app.models.experiment import Checkpoint, Experiment, TrainingMode
+from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
 from app.services.job_service import get_task_status
 from app.services.domain_profile_service import (
     get_project_domain_profile_contract,
@@ -26,6 +27,44 @@ from app.services.training_service import (
 )
 
 router = APIRouter(prefix="/projects/{project_id}/training", tags=["Training"])
+
+
+class TrainingEffectiveConfigRequest(BaseModel):
+    config: dict[str, object] = Field(default_factory=dict)
+
+
+def _resolve_training_config(
+    *,
+    config_payload: dict,
+    provided_config_fields: set[str],
+    profile_training_defaults: dict,
+    fallback_training_mode: TrainingMode,
+) -> tuple[dict, TrainingMode, list[str]]:
+    resolved_config = dict(config_payload)
+    profile_defaults_applied: list[str] = []
+
+    if profile_training_defaults:
+        for key, value in profile_training_defaults.items():
+            if key == "training_mode":
+                continue
+            if key not in provided_config_fields:
+                resolved_config[key] = value
+                profile_defaults_applied.append(key)
+
+    resolved_training_mode = fallback_training_mode
+    if (
+        "training_mode" not in provided_config_fields
+        and isinstance(profile_training_defaults.get("training_mode"), str)
+    ):
+        candidate_mode = str(profile_training_defaults["training_mode"]).strip().lower()
+        try:
+            resolved_training_mode = TrainingMode(candidate_mode)
+            resolved_config["training_mode"] = resolved_training_mode.value
+            profile_defaults_applied.append("training_mode")
+        except ValueError:
+            pass
+
+    return resolved_config, resolved_training_mode, sorted(set(profile_defaults_applied))
 
 
 @router.websocket("/ws/{experiment_id}")
@@ -118,30 +157,15 @@ async def create(
     try:
         config_payload = data.config.model_dump()
         provided_config_fields = set(data.config.model_fields_set)
-        profile_defaults_applied: list[str] = []
 
         profile_contract = await get_project_domain_profile_contract(db, project_id)
         profile_training_defaults = get_training_defaults(profile_contract)
-        if profile_training_defaults:
-            for key, value in profile_training_defaults.items():
-                if key == "training_mode":
-                    continue
-                if key not in provided_config_fields:
-                    config_payload[key] = value
-                    profile_defaults_applied.append(key)
-
-        resolved_training_mode = data.config.training_mode
-        if (
-            "training_mode" not in provided_config_fields
-            and isinstance(profile_training_defaults.get("training_mode"), str)
-        ):
-            candidate_mode = str(profile_training_defaults["training_mode"]).strip().lower()
-            try:
-                resolved_training_mode = type(data.config.training_mode)(candidate_mode)
-                config_payload["training_mode"] = resolved_training_mode.value
-                profile_defaults_applied.append("training_mode")
-            except ValueError:
-                pass
+        config_payload, resolved_training_mode, profile_defaults_applied = _resolve_training_config(
+            config_payload=config_payload,
+            provided_config_fields=provided_config_fields,
+            profile_training_defaults=profile_training_defaults,
+            fallback_training_mode=data.config.training_mode,
+        )
 
         exp = await create_experiment(
             db,
@@ -166,6 +190,47 @@ async def create(
         return ExperimentResponse.model_validate(response_payload)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/experiments/effective-config")
+async def effective_training_config(
+    project_id: int,
+    req: TrainingEffectiveConfigRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview effective training config after profile defaults are applied."""
+    source_config = dict(req.config or {})
+    provided_config_fields = set(source_config.keys())
+    if "base_model" not in source_config:
+        source_config["base_model"] = "microsoft/phi-2"
+
+    try:
+        parsed_config = TrainingConfig.model_validate(source_config)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid training config: {e}")
+
+    profile_contract = await get_project_domain_profile_contract(db, project_id)
+    profile_training_defaults = get_training_defaults(profile_contract)
+    resolved_config, resolved_training_mode, profile_defaults_applied = _resolve_training_config(
+        config_payload=parsed_config.model_dump(),
+        provided_config_fields=provided_config_fields,
+        profile_training_defaults=profile_training_defaults,
+        fallback_training_mode=parsed_config.training_mode,
+    )
+
+    return {
+        "domain_profile_applied": (
+            profile_contract.get("profile_id")
+            if isinstance(profile_contract, dict)
+            else None
+        ),
+        "profile_training_defaults": (
+            dict(profile_training_defaults) if profile_training_defaults else None
+        ),
+        "resolved_training_config": resolved_config,
+        "resolved_training_mode": resolved_training_mode.value,
+        "profile_defaults_applied": profile_defaults_applied,
+    }
 
 
 @router.post("/experiments/{experiment_id}/start")

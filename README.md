@@ -11,6 +11,8 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Domain Profiles** with a typed contract and project-level assignment.
 - Added **Domain Profile Manager UI** (list/create/edit/assign) in project detail and profile selection during project creation.
 - Added runtime transparency in split/training responses (applied profile + resolved defaults).
+- Added **Duplicate-as-new-version** flow for domain profiles from the project UI.
+- Added dedicated **Resolved Defaults** panels in Dataset Prep and Training tabs.
 - Added queued **remote ingestion** jobs with task status/cancel APIs and WebSocket log streaming.
 - Added queued **compression** jobs (quantize/merge/benchmark) with task status/cancel APIs and WebSocket logs.
 - Added **experiment comparison** API/UI for side-by-side metrics and loss-history visualization.
@@ -153,15 +155,21 @@ Domain profiles are not just metadata; they are applied during runtime.
 - New projects auto-attach to `generic-domain-v1` when available.
 - You can re-assign profile per project:
   - `PUT /api/projects/{project_id}/domain-profile` with `{ "profile_id": "..." }`
+- Server-side duplication:
+  - `POST /api/domain-profiles/{profile_id}/duplicate`
+  - Auto-generates next `profile_id`/`version` unless explicitly overridden in request body.
 - Frontend wiring:
   - Project detail page exposes Domain Profile Manager to list/create/edit/assign contracts.
+  - Selected profile can be duplicated as a new version (server-generated ID/version, default status `draft`) and opened immediately in the editor.
   - New project modal allows selecting a profile (or auto-assign default).
   - Dataset split and training forms can omit untouched fields so profile defaults are actually applied.
+  - Dataset Prep and Training tabs show dedicated "Resolved Defaults" panels with applied profile, fields sourced from profile defaults, and resolved config payloads.
 
 Current enforced behavior:
 
 - Dataset split defaults:
   - `POST /api/projects/{project_id}/dataset/split`
+  - `POST /api/projects/{project_id}/dataset/split/effective-config` previews resolved config pre-run.
   - If omitted in request body, `train_ratio`, `val_ratio`, `test_ratio`, `seed` are pulled from profile `dataset_split`.
   - If `chat_template` is omitted, it is taken from profile `training_defaults.chat_template`.
   - Response now includes:
@@ -171,6 +179,7 @@ Current enforced behavior:
     - `profile_defaults_applied`
 - Training experiment defaults:
   - `POST /api/projects/{project_id}/training/experiments`
+  - `POST /api/projects/{project_id}/training/experiments/effective-config` previews resolved config pre-create.
   - For omitted config fields, defaults come from profile `training_defaults` (e.g. `batch_size`, `num_epochs`, `learning_rate`, `chat_template`, `use_lora`, `training_mode`).
   - Response now includes:
     - `domain_profile_applied`

@@ -45,7 +45,7 @@
 .domain-profile-controls {
   display: grid;
   gap: var(--space-sm);
-  grid-template-columns: minmax(260px, 1fr) auto auto auto;
+  grid-template-columns: minmax(260px, 1fr) auto auto auto auto;
 }
 
 .domain-profile-status {
