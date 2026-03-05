@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.job_service import cancel_task, get_task_status
 from app.services.compression_service import (
     benchmark_model,
     get_compression_job_status,
@@ -67,6 +68,30 @@ async def job_status(
     """Check compression job status by report path returned from queue calls."""
     try:
         return get_compression_job_status(project_id, report_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/jobs/tasks/{task_id}")
+async def compression_task_status(
+    project_id: int,
+    task_id: str,
+):
+    """Read Celery task state for a compression task."""
+    try:
+        return get_task_status(task_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/jobs/tasks/{task_id}/cancel")
+async def cancel_compression_task(
+    project_id: int,
+    task_id: str,
+):
+    """Request cancellation for a compression task."""
+    try:
+        return cancel_task(task_id, terminate=True)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     # ── Judge Model (for evaluation) ────────────────────────────────────
     JUDGE_MODEL_API_URL: str = ""
     JUDGE_MODEL_API_KEY: str = ""
+    SECRETS_ENCRYPTION_KEY: str = ""
 
     # ── Ingestion Strictness ────────────────────────────────────────────
     ALLOW_SIMULATED_INGESTION_FALLBACK: bool = False

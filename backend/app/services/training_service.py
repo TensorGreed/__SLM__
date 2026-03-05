@@ -144,6 +144,7 @@ async def _monitor_external_training(
 ) -> None:
     """Monitor external training process and sync experiment status."""
     started = datetime.now(timezone.utc)
+    final_status = "failed"
     try:
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -174,17 +175,21 @@ async def _monitor_external_training(
                 return
 
             config = dict(exp.config or {})
-            config["_runtime"] = {
+            runtime = dict(config.get("_runtime") or {})
+            runtime.update(
+                {
                 "backend": "external",
                 "command": command,
                 "log_path": str(log_path),
                 "returncode": process.returncode,
-            }
+                }
+            )
+            config["_runtime"] = runtime
             report_path = output_dir / "training_report.json"
             if report_path.exists():
                 try:
                     report = json.loads(report_path.read_text(encoding="utf-8"))
-                    config["_runtime"]["report_path"] = str(report_path)
+                    runtime["report_path"] = str(report_path)
                     exp.final_train_loss = _coerce_float(report.get("final_train_loss"))
                     exp.final_eval_loss = _coerce_float(report.get("final_eval_loss"))
 
@@ -255,22 +260,27 @@ async def _monitor_external_training(
                             db.add(ckpt)
                             existing_steps.add(step)
                 except Exception as parse_error:
-                    config["_runtime"]["report_parse_error"] = str(parse_error)
+                    runtime["report_parse_error"] = str(parse_error)
 
             exp.config = config
 
-            if process.returncode == 0:
-                exp.status = ExperimentStatus.COMPLETED
-                exp.completed_at = finished
+            if exp.status == ExperimentStatus.CANCELLED:
+                runtime["cancelled_completion_returncode"] = process.returncode
+                final_status = "cancelled"
             else:
-                exp.status = ExperimentStatus.FAILED
+                if process.returncode == 0:
+                    exp.status = ExperimentStatus.COMPLETED
+                    final_status = "completed"
+                else:
+                    exp.status = ExperimentStatus.FAILED
+                    final_status = "failed"
                 exp.completed_at = finished
             await db.commit()
         await broadcast_event(
             experiment_id,
             {
                 "type": "status",
-                "status": "completed" if process.returncode == 0 else "failed",
+                "status": final_status,
                 "returncode": process.returncode,
             },
         )
@@ -279,19 +289,28 @@ async def _monitor_external_training(
             result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
             exp = result.scalar_one_or_none()
             if exp:
-                exp.status = ExperimentStatus.FAILED
-                exp.completed_at = datetime.now(timezone.utc)
                 config = dict(exp.config or {})
-                config["_runtime"] = {
+                runtime = dict(config.get("_runtime") or {})
+                runtime.update(
+                    {
                     "backend": "external",
                     "error": str(e),
                     "log_path": str(log_path),
-                }
+                    }
+                )
+                config["_runtime"] = runtime
+                if exp.status != ExperimentStatus.CANCELLED:
+                    exp.status = ExperimentStatus.FAILED
+                    exp.completed_at = datetime.now(timezone.utc)
                 exp.config = config
                 await db.commit()
         await broadcast_event(
             experiment_id,
-            {"type": "status", "status": "failed", "error": str(e)},
+            {
+                "type": "status",
+                "status": "cancelled" if final_status == "cancelled" else "failed",
+                "error": str(e),
+            },
         )
 
 
@@ -308,6 +327,17 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
 
         for step in range(1, total_steps + 1):
             await asyncio.sleep(0.1)  # 100ms per step to make demo fast but visible
+
+            if step % 10 == 0:
+                async with async_session_factory() as db:
+                    exp_result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
+                    exp = exp_result.scalar_one_or_none()
+                    if not exp or exp.status == ExperimentStatus.CANCELLED:
+                        await broadcast_event(
+                            experiment_id,
+                            {"type": "status", "status": "cancelled"},
+                        )
+                        return
 
             # Simulate realistic loss curve
             current_loss = current_loss * 0.995 + (0.01 * 0.5) + random.uniform(-0.05, 0.05)
@@ -412,6 +442,7 @@ async def start_training(
         raise ValueError(f"Unsupported training backend '{settings.TRAINING_BACKEND}'")
 
     message = ""
+    task_id: str | None = None
     runtime_config: dict = {"backend": backend}
     external_command = ""
     output_dir = Path(exp.output_dir) if exp.output_dir else _experiment_dir(project_id, experiment_id)
@@ -473,7 +504,7 @@ async def start_training(
         # Dispatch to Celery instead of manual subprocess
         try:
             from app.worker import celery_app
-            celery_app.send_task(
+            task = celery_app.send_task(
                 "run_training_job",
                 kwargs={
                     "experiment_id": exp.id,
@@ -482,6 +513,12 @@ async def start_training(
                     "output_dir": str(output_dir),
                 }
             )
+            task_id = task.id
+            runtime_config["task_id"] = task.id
+            cfg = dict(exp.config or {})
+            cfg["_runtime"] = runtime_config
+            exp.config = cfg
+            await db.flush()
         except Exception as e:
             exp.status = ExperimentStatus.FAILED
             exp.completed_at = datetime.now(timezone.utc)
@@ -496,7 +533,50 @@ async def start_training(
         "status": exp.status.value,
         "message": message,
         "backend": backend,
+        "task_id": task_id,
         "config": exp.config,
+    }
+
+
+async def cancel_training(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+) -> dict:
+    """Best-effort cancellation for a running training experiment."""
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+    if exp.status != ExperimentStatus.RUNNING:
+        raise ValueError(f"Experiment {experiment_id} is not running")
+
+    cfg = dict(exp.config or {})
+    runtime = dict(cfg.get("_runtime") or {})
+    task_id = str(runtime.get("task_id", "")).strip()
+    cancel_note = "cancel_requested"
+
+    if task_id:
+        from app.services.job_service import cancel_task
+
+        cancel_task(task_id, terminate=True)
+    else:
+        cancel_note = "cancel_requested_without_task_id"
+
+    runtime["cancel_status"] = cancel_note
+    runtime["cancel_requested_at"] = datetime.now(timezone.utc).isoformat()
+    cfg["_runtime"] = runtime
+
+    exp.config = cfg
+    exp.status = ExperimentStatus.CANCELLED
+    exp.completed_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    await broadcast_event(experiment_id, {"type": "status", "status": "cancelled"})
+    return {
+        "experiment_id": experiment_id,
+        "status": exp.status.value,
+        "task_id": task_id or None,
+        "cancel_status": cancel_note,
     }
 
 
@@ -517,6 +597,14 @@ async def get_training_status(
     )
     checkpoints = ckpt_result.scalars().all()
 
+    runtime = (exp.config or {}).get("_runtime", {}) if isinstance(exp.config, dict) else {}
+    task_status = None
+    task_id = runtime.get("task_id") if isinstance(runtime, dict) else None
+    if isinstance(task_id, str) and task_id.strip():
+        from app.services.job_service import get_task_status
+
+        task_status = get_task_status(task_id)
+
     return {
         "experiment_id": exp.id,
         "name": exp.name,
@@ -530,6 +618,7 @@ async def get_training_status(
         "total_steps": exp.total_steps,
         "started_at": exp.started_at.isoformat() if exp.started_at else None,
         "completed_at": exp.completed_at.isoformat() if exp.completed_at else None,
+        "task_status": task_status,
         "checkpoints": [
             {
                 "epoch": c.epoch,

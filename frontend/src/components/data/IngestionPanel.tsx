@@ -30,6 +30,16 @@ interface RemoteImportStatusResponse {
     error?: string;
 }
 
+interface ProjectSecret {
+    provider: string;
+    key_name: string;
+    value_hint: string;
+}
+
+interface ProjectSecretListResponse {
+    secrets: ProjectSecret[];
+}
+
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -62,6 +72,14 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [importStatus, setImportStatus] = useState('');
     const [importLogs, setImportLogs] = useState<string[]>([]);
     const [activeReportPath, setActiveReportPath] = useState<string | null>(null);
+    const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+
+    const [savedHfTokenHint, setSavedHfTokenHint] = useState('');
+    const [savedKaggleUserHint, setSavedKaggleUserHint] = useState('');
+    const [savedKaggleKeyHint, setSavedKaggleKeyHint] = useState('');
+    const [useSavedHfToken, setUseSavedHfToken] = useState(true);
+    const [useSavedKaggleCreds, setUseSavedKaggleCreds] = useState(true);
+    const [secretStatus, setSecretStatus] = useState('');
 
     const fetchDocs = useCallback(async () => {
         setIsLoading(true);
@@ -75,9 +93,34 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         }
     }, [projectId]);
 
+    const refreshSecrets = useCallback(async () => {
+        try {
+            const res = await api.get<ProjectSecretListResponse>(`/projects/${projectId}/secrets`);
+            const secrets = res.data.secrets || [];
+            const findHint = (provider: string, keyName: string) =>
+                secrets.find((item) => item.provider === provider && item.key_name === keyName)?.value_hint || '';
+
+            const hfHint = findHint('huggingface', 'token');
+            const kaggleUserHint = findHint('kaggle', 'username');
+            const kaggleKey = findHint('kaggle', 'key');
+            setSavedHfTokenHint(hfHint);
+            setSavedKaggleUserHint(kaggleUserHint);
+            setSavedKaggleKeyHint(kaggleKey);
+            setUseSavedHfToken(Boolean(hfHint));
+            setUseSavedKaggleCreds(Boolean(kaggleUserHint && kaggleKey));
+        } catch {
+            setSavedHfTokenHint('');
+            setSavedKaggleUserHint('');
+            setSavedKaggleKeyHint('');
+            setUseSavedHfToken(false);
+            setUseSavedKaggleCreds(false);
+        }
+    }, [projectId]);
+
     useEffect(() => {
         void fetchDocs();
-    }, [fetchDocs]);
+        void refreshSecrets();
+    }, [fetchDocs, refreshSecrets]);
 
     useEffect(() => {
         if (!activeReportPath) {
@@ -123,16 +166,19 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     setImportStatus(`Imported ${imported} samples from ${source}:${identifier}`);
                     setIsImporting(false);
                     setActiveReportPath(null);
+                    setActiveTaskId(null);
                     void fetchDocs();
                 } else if (status.status === 'failed') {
                     setImportStatus(status.error ? `Import failed: ${status.error}` : 'Import failed. Check logs and retry.');
                     setIsImporting(false);
                     setActiveReportPath(null);
+                    setActiveTaskId(null);
                 }
             } catch (err) {
                 setImportStatus(`Import polling failed: ${extractErrorMessage(err)}`);
                 setIsImporting(false);
                 setActiveReportPath(null);
+                setActiveTaskId(null);
             }
         }, 2000);
 
@@ -173,6 +219,61 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         }
     };
 
+    const upsertSecret = async (provider: string, keyName: string, value: string) => {
+        await api.put(`/projects/${projectId}/secrets`, {
+            provider,
+            key_name: keyName,
+            value,
+        });
+    };
+
+    const handleSaveHfToken = async () => {
+        if (!hfToken.trim()) {
+            setSecretStatus('Enter a HuggingFace token to save.');
+            return;
+        }
+        try {
+            await upsertSecret('huggingface', 'token', hfToken.trim());
+            setSecretStatus('Saved HuggingFace token to project secrets.');
+            await refreshSecrets();
+        } catch (err) {
+            setSecretStatus(`Failed to save HuggingFace token: ${extractErrorMessage(err)}`);
+        }
+    };
+
+    const handleSaveKaggleCredentials = async () => {
+        if (!kaggleUsername.trim() || !kaggleKey.trim()) {
+            setSecretStatus('Enter both Kaggle username and key to save.');
+            return;
+        }
+        try {
+            await Promise.all([
+                upsertSecret('kaggle', 'username', kaggleUsername.trim()),
+                upsertSecret('kaggle', 'key', kaggleKey.trim()),
+            ]);
+            setSecretStatus('Saved Kaggle credentials to project secrets.');
+            await refreshSecrets();
+        } catch (err) {
+            setSecretStatus(`Failed to save Kaggle credentials: ${extractErrorMessage(err)}`);
+        }
+    };
+
+    const handleCancelImport = async () => {
+        if (!activeTaskId) {
+            setImportStatus('No active import task to cancel.');
+            return;
+        }
+        try {
+            await api.post(`/projects/${projectId}/ingestion/imports/tasks/${activeTaskId}/cancel`);
+            setImportStatus('Cancel requested. Worker may take a few seconds to stop.');
+            setIsImporting(false);
+            setActiveTaskId(null);
+            setActiveReportPath(null);
+        } catch (err) {
+            setImportStatus(`Failed to cancel import: ${extractErrorMessage(err)}`);
+        }
+    };
+
     const handleRemoteImport = async () => {
         if (!remoteId.trim()) return;
 
@@ -180,6 +281,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         setImportStatus('Queueing remote import job...');
         setImportLogs([]);
         setActiveReportPath(null);
+        setActiveTaskId(null);
 
         try {
             const payload: {
@@ -187,6 +289,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 identifier: string;
                 split: string;
                 max_samples: number | null;
+                use_saved_secrets: boolean;
                 hf_token?: string;
                 kaggle_username?: string;
                 kaggle_key?: string;
@@ -195,6 +298,12 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 identifier: remoteId.trim(),
                 split: remoteSplit,
                 max_samples: remoteMaxSamples ? Number(remoteMaxSamples) : null,
+                use_saved_secrets:
+                    activeTab === 'huggingface'
+                        ? useSavedHfToken
+                        : activeTab === 'kaggle'
+                            ? useSavedKaggleCreds
+                            : true,
             };
 
             if (activeTab === 'huggingface' && hfToken.trim()) {
@@ -216,6 +325,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
 
             if (res.data.report_path) {
                 setActiveReportPath(res.data.report_path);
+                setActiveTaskId(res.data.task_id ?? null);
                 setImportStatus(`Import queued (${res.data.task_id ?? 'task'}). Streaming progress...`);
             } else {
                 setImportStatus('Import queued but no report path returned.');
@@ -418,8 +528,28 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                     onChange={(e) => setHfToken(e.target.value)}
                                     placeholder="hf_..."
                                 />
+                                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 8, flexWrap: 'wrap' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-size-xs)' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={useSavedHfToken}
+                                            onChange={(e) => setUseSavedHfToken(e.target.checked)}
+                                            disabled={!savedHfTokenHint}
+                                        />
+                                        Use saved token
+                                    </label>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => void handleSaveHfToken()}
+                                        disabled={!hfToken.trim()}
+                                    >
+                                        Save Token
+                                    </button>
+                                </div>
                                 <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                                    Used only for this import request. Not saved to project metadata.
+                                    {savedHfTokenHint
+                                        ? `Saved token: ${savedHfTokenHint} (auto-used when request token is blank).`
+                                        : 'No saved token. Imported request token is used only for this run unless you click Save Token.'}
                                 </div>
                             </div>
                         )}
@@ -445,19 +575,60 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                         placeholder="kaggle_api_key"
                                     />
                                 </div>
+                                <div className="form-group" style={{ margin: 0, alignSelf: 'end' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--font-size-xs)' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={useSavedKaggleCreds}
+                                            onChange={(e) => setUseSavedKaggleCreds(e.target.checked)}
+                                            disabled={!(savedKaggleUserHint && savedKaggleKeyHint)}
+                                        />
+                                        Use saved credentials
+                                    </label>
+                                </div>
+                                <div className="form-group" style={{ margin: 0, alignSelf: 'end' }}>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => void handleSaveKaggleCredentials()}
+                                        disabled={!kaggleUsername.trim() || !kaggleKey.trim()}
+                                    >
+                                        Save Credentials
+                                    </button>
+                                </div>
+                                <div style={{ gridColumn: '1 / -1', fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                                    {savedKaggleUserHint && savedKaggleKeyHint
+                                        ? `Saved Kaggle credentials: username ${savedKaggleUserHint}, key ${savedKaggleKeyHint}.`
+                                        : 'No saved Kaggle credentials.'}
+                                </div>
                             </div>
                         )}
 
-                        <button
-                            className="btn btn-primary"
-                            onClick={() => void handleRemoteImport()}
-                            disabled={isImporting || !remoteId.trim()}
-                            style={{ alignSelf: 'flex-start' }}
-                        >
-                            {isImporting
-                                ? 'Importing...'
-                                : `Import from ${sourceTabConfig[activeTab].label}`}
-                        </button>
+                        <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => void handleRemoteImport()}
+                                disabled={isImporting || !remoteId.trim()}
+                                style={{ alignSelf: 'flex-start' }}
+                            >
+                                {isImporting
+                                    ? 'Importing...'
+                                    : `Import from ${sourceTabConfig[activeTab].label}`}
+                            </button>
+                            {isImporting && activeTaskId && (
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => void handleCancelImport()}
+                                >
+                                    Cancel Import
+                                </button>
+                            )}
+                        </div>
+
+                        {secretStatus && (
+                            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-info)' }}>
+                                {secretStatus}
+                            </div>
+                        )}
 
                         {importStatus && (
                             <div

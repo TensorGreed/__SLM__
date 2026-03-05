@@ -46,6 +46,8 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const [trainingLogs, setTrainingLogs] = useState<string[]>([]);
   const [selectedForCompare, setSelectedForCompare] = useState<number[]>([]);
   const [showCompare, setShowCompare] = useState(false);
+  const [taskState, setTaskState] = useState<string>('');
+  const [trainingError, setTrainingError] = useState<string>('');
 
   const [name, setName] = useState('');
   const [baseModel, setBaseModel] = useState('microsoft/phi-2');
@@ -88,6 +90,8 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setSelectedForCompare([]);
     setShowCompare(false);
     setShowCreate(false);
+    setTaskState('');
+    setTrainingError('');
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -103,6 +107,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           const status = String(res.data?.status || '');
           if (!status) return;
           setActiveExperiment((prev) => (prev ? { ...prev, status } : prev));
+          const nextTaskState = String(res.data?.task_status?.state || '').trim();
+          if (nextTaskState) {
+            setTaskState(nextTaskState);
+          }
           if (status !== 'running') {
             refreshExperiments().catch(() => undefined);
           }
@@ -177,15 +185,33 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   };
 
   const handleStart = async (experimentId: number) => {
-    await api.post(`/projects/${projectId}/training/experiments/${experimentId}/start`);
-    setExperiments((prev) =>
-      prev.map((exp) => (exp.id === experimentId ? { ...exp, status: 'running' } : exp))
-    );
-    const exp = experiments.find((e) => e.id === experimentId);
-    if (exp) {
-      setActiveExperiment({ ...exp, status: 'running' });
-      setMetrics([]);
-      setTrainingLogs([]);
+    setTrainingError('');
+    try {
+      const res = await api.post(`/projects/${projectId}/training/experiments/${experimentId}/start`);
+      setExperiments((prev) =>
+        prev.map((exp) => (exp.id === experimentId ? { ...exp, status: 'running' } : exp))
+      );
+      setTaskState(String(res.data?.task_id || '').trim() ? 'queued' : '');
+      const exp = experiments.find((e) => e.id === experimentId);
+      if (exp) {
+        setActiveExperiment({ ...exp, status: 'running' });
+        setMetrics([]);
+        setTrainingLogs([]);
+      }
+    } catch (err: any) {
+      setTrainingError(err?.response?.data?.detail || 'Failed to start training');
+    }
+  };
+
+  const handleCancel = async (experimentId: number) => {
+    setTrainingError('');
+    try {
+      await api.post(`/projects/${projectId}/training/experiments/${experimentId}/cancel`);
+      setActiveExperiment((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+      setTaskState('cancel_requested');
+      refreshExperiments().catch(() => undefined);
+    } catch (err: any) {
+      setTrainingError(err?.response?.data?.detail || 'Failed to cancel training');
     }
   };
 
@@ -193,6 +219,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setActiveExperiment(exp);
     setMetrics([]);
     setTrainingLogs([]);
+    setTaskState('');
   };
 
   const toggleCompareSelection = (expId: number) => {
@@ -225,6 +252,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
             style={{ marginBottom: 16 }}
             onClick={() => {
               setActiveExperiment(null);
+              setTaskState('');
               refreshExperiments().catch(() => undefined);
             }}
           >
@@ -237,11 +265,32 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
                 {activeExperiment.base_model} • {activeExperiment.training_mode}
               </div>
+              {taskState && (
+                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                  Worker task state: {taskState}
+                </div>
+              )}
             </div>
-            <span className={`badge ${statusColor(activeExperiment.status)}`} style={{ fontSize: 'var(--font-size-md)', padding: '6px 16px' }}>
-              {activeExperiment.status.toUpperCase()}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {activeExperiment.status === 'running' && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void handleCancel(activeExperiment.id)}
+                >
+                  Cancel
+                </button>
+              )}
+              <span className={`badge ${statusColor(activeExperiment.status)}`} style={{ fontSize: 'var(--font-size-md)', padding: '6px 16px' }}>
+                {activeExperiment.status.toUpperCase()}
+              </span>
+            </div>
           </div>
+
+          {trainingError && (
+            <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+              {trainingError}
+            </div>
+          )}
 
           <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
             <div className="metric-box box-blue">
@@ -355,6 +404,12 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
               <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
             </div>
+          </div>
+        )}
+
+        {trainingError && (
+          <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+            {trainingError}
           </div>
         )}
 

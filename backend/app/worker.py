@@ -261,6 +261,7 @@ def run_remote_import_job(
                         hf_token=str(request_payload.get("hf_token", "")).strip() or None,
                         kaggle_username=str(request_payload.get("kaggle_username", "")).strip() or None,
                         kaggle_key=str(request_payload.get("kaggle_key", "")).strip() or None,
+                        use_saved_secrets=bool(request_payload.get("use_saved_secrets", True)),
                         progress_callback=_publish,
                     )
                     await db.commit()

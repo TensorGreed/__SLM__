@@ -59,6 +59,8 @@ BASE_REQUIRED_TABLES = {
     "checkpoints",
     "eval_results",
     "exports",
+    "model_registry_entries",
+    "project_secrets",
 }
 
 AUTH_REQUIRED_TABLES = {

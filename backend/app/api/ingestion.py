@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.dataset import DocumentStatus
 from app.schemas.dataset import DocumentResponse, DocumentUploadResponse
+from app.services.job_service import cancel_task, get_task_status
 from app.services.ingestion_service import (
     delete_document,
     get_import_job_status,
@@ -35,6 +36,7 @@ class RemoteImportRequest(BaseModel):
     hf_token: str | None = Field(default=None, min_length=1, max_length=4096)
     kaggle_username: str | None = Field(default=None, min_length=1, max_length=255)
     kaggle_key: str | None = Field(default=None, min_length=1, max_length=4096)
+    use_saved_secrets: bool = True
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
@@ -121,6 +123,7 @@ async def import_remote_dataset(
             hf_token=req.hf_token,
             kaggle_username=req.kaggle_username,
             kaggle_key=req.kaggle_key,
+            use_saved_secrets=req.use_saved_secrets,
         )
         return result
     except ValueError as e:
@@ -146,6 +149,7 @@ async def import_remote_dataset_queue(
             hf_token=req.hf_token,
             kaggle_username=req.kaggle_username,
             kaggle_key=req.kaggle_key,
+            use_saved_secrets=req.use_saved_secrets,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -159,6 +163,30 @@ async def remote_import_job_status(
     """Poll a queued remote import job status by report path."""
     try:
         return get_import_job_status(project_id, report_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/imports/tasks/{task_id}")
+async def remote_import_task_status(
+    project_id: int,
+    task_id: str,
+):
+    """Read Celery task state for an ingestion import job."""
+    try:
+        return get_task_status(task_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/imports/tasks/{task_id}/cancel")
+async def cancel_remote_import_task(
+    project_id: int,
+    task_id: str,
+):
+    """Request cancellation for a queued/running ingestion import task."""
+    try:
+        return cancel_task(task_id, terminate=True)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

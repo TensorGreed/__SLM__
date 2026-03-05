@@ -717,6 +717,8 @@ async def evaluate_with_llm_judge(
     predictions: list[dict],
 ) -> EvalResult:
     """Evaluate predictions using an LLM-as-a-Judge."""
+    from app.services.secret_service import get_project_secret_value
+
     exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
@@ -726,7 +728,12 @@ async def evaluate_with_llm_judge(
     passed_count = 0
     fallback_count = 0
 
-    judge_endpoint = _build_judge_endpoint(settings.JUDGE_MODEL_API_URL) if settings.JUDGE_MODEL_API_URL else ""
+    secret_api_url = await get_project_secret_value(db, project_id, "judge_model", "api_url")
+    secret_api_key = await get_project_secret_value(db, project_id, "judge_model", "api_key")
+    resolved_api_url = secret_api_url or settings.JUDGE_MODEL_API_URL
+    resolved_api_key = secret_api_key or settings.JUDGE_MODEL_API_KEY
+
+    judge_endpoint = _build_judge_endpoint(resolved_api_url) if resolved_api_url else ""
     use_remote_judge = bool(judge_endpoint)
     remote_client: httpx.AsyncClient | None = None
     if use_remote_judge:
@@ -743,7 +750,7 @@ async def evaluate_with_llm_judge(
                     score, rationale = await _judge_with_remote_model(
                         client=remote_client,
                         endpoint=judge_endpoint,
-                        api_key=settings.JUDGE_MODEL_API_KEY,
+                        api_key=resolved_api_key,
                         judge_model=judge_model,
                         prompt=prompt,
                         reference=reference,

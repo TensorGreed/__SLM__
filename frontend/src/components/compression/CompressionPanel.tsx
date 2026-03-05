@@ -9,6 +9,7 @@ interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 interface CompressionResult {
     status?: string;
     report_path?: string;
+    task_id?: string;
     [key: string]: unknown;
 }
 
@@ -21,6 +22,9 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     const [isCompressing, setIsCompressing] = useState(false);
     const [compressionLogs, setCompressionLogs] = useState<string[]>([]);
     const [activeReportPath, setActiveReportPath] = useState<string | null>(null);
+    const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+    const [taskState, setTaskState] = useState<string>('');
+    const [compressionError, setCompressionError] = useState<string>('');
 
     useEffect(() => {
         if (!isCompressing) return;
@@ -56,24 +60,35 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                     setResult(status.data);
                     setIsCompressing(false);
                     setActiveReportPath(null);
+                    setActiveTaskId(null);
+                    setTaskState('');
+                } else if (activeTaskId) {
+                    const task = await api.get(`/projects/${projectId}/compression/jobs/tasks/${activeTaskId}`);
+                    setTaskState(String(task.data?.state || ''));
                 }
             } catch (err) {
                 console.error("Failed to poll compression status", err);
                 setIsCompressing(false);
                 setActiveReportPath(null);
+                setActiveTaskId(null);
+                setTaskState('');
             }
         }, 2000);
         return () => window.clearInterval(interval);
-    }, [activeReportPath, projectId]);
+    }, [activeReportPath, activeTaskId, projectId]);
 
     const handleAction = async (actionFn: () => Promise<{ data: CompressionResult }>) => {
         setIsCompressing(true);
         setCompressionLogs([]);
         setResult(null);
         setActiveReportPath(null);
+        setActiveTaskId(null);
+        setTaskState('');
+        setCompressionError('');
         try {
             const res = await actionFn();
             setResult(res.data);
+            setActiveTaskId(typeof res.data?.task_id === 'string' ? res.data.task_id : null);
             if (res.data?.status === "queued" && res.data?.report_path) {
                 setActiveReportPath(res.data.report_path);
             } else {
@@ -82,6 +97,21 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
         } catch (e) {
             console.error(e);
             setIsCompressing(false);
+            setCompressionError('Compression request failed. Check configuration and logs.');
+        }
+    };
+
+    const handleCancel = async () => {
+        if (!activeTaskId) return;
+        try {
+            await api.post(`/projects/${projectId}/compression/jobs/tasks/${activeTaskId}/cancel`);
+            setCompressionLogs((prev) => [...prev, '[ui] cancellation requested']);
+            setIsCompressing(false);
+            setActiveTaskId(null);
+            setActiveReportPath(null);
+            setTaskState('cancel_requested');
+        } catch {
+            setCompressionError('Failed to cancel compression task.');
         }
     };
 
@@ -120,7 +150,15 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                     <button className="btn btn-primary" onClick={handleQuantize} disabled={isCompressing}>📦 Quantize</button>
                     <button className="btn btn-secondary" onClick={handleMerge} disabled={isCompressing}>🔗 Merge LoRA</button>
                     <button className="btn btn-secondary" onClick={handleBenchmark} disabled={isCompressing}>📐 Benchmark</button>
+                    {isCompressing && activeTaskId && (
+                        <button className="btn btn-secondary" onClick={() => void handleCancel()}>Cancel Job</button>
+                    )}
                 </div>
+                {(taskState || compressionError) && (
+                    <div style={{ marginTop: 'var(--space-sm)', fontSize: 'var(--font-size-sm)', color: compressionError ? 'var(--color-error)' : 'var(--text-tertiary)' }}>
+                        {compressionError || `Worker task state: ${taskState}`}
+                    </div>
+                )}
             </div>
 
             {(isCompressing || compressionLogs.length > 0) && (

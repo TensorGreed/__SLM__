@@ -144,7 +144,7 @@ def _generate_demo_pairs(source_text: str, num_pairs: int = 5) -> list[dict]:
 
 
 async def generate_qa_pairs(
-    db: AsyncSession,
+    db: AsyncSession | None,
     project_id: int,
     source_text: str,
     num_pairs: int = 5,
@@ -153,7 +153,15 @@ async def generate_qa_pairs(
     model_name: str = "llama3",
 ) -> list[dict]:
     """Generate Q&A pairs from source text using teacher model, with demo fallback."""
-    url = api_url or settings.TEACHER_MODEL_API_URL
+    secret_url = None
+    secret_key = None
+    if db is not None:
+        from app.services.secret_service import get_project_secret_value
+
+        secret_url = await get_project_secret_value(db, project_id, "teacher_model", "api_url")
+        secret_key = await get_project_secret_value(db, project_id, "teacher_model", "api_key")
+    url = api_url or secret_url or settings.TEACHER_MODEL_API_URL
+    resolved_api_key = api_key or secret_key or settings.TEACHER_MODEL_API_KEY
 
     # ── Demo mode: no teacher API configured ──────────────────
     if not url:
@@ -176,7 +184,12 @@ Text:
 
 Generate {num_pairs} Q&A pairs as JSON array:"""
 
-    result = await call_teacher_model(prompt, api_url=api_url, api_key=api_key, model_name=model_name)
+    result = await call_teacher_model(
+        prompt,
+        api_url=url,
+        api_key=resolved_api_key,
+        model_name=model_name,
+    )
 
     # Parse the JSON from the response
     content = result["content"]

@@ -10,7 +10,9 @@ from app.config import settings
 from app.database import get_db
 from app.models.experiment import Checkpoint, Experiment
 from app.schemas.training import ExperimentCreate, ExperimentResponse
+from app.services.job_service import get_task_status
 from app.services.training_service import (
+    cancel_training,
     create_experiment,
     get_training_status,
     list_experiments,
@@ -137,6 +139,22 @@ async def start(
         raise HTTPException(400, detail)
 
 
+@router.post("/experiments/{experiment_id}/cancel")
+async def cancel(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a running training experiment."""
+    try:
+        return await cancel_training(db, project_id, experiment_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(409, detail)
+
+
 @router.get("/experiments/{experiment_id}/status")
 async def status(
     project_id: int,
@@ -148,6 +166,18 @@ async def status(
         return await get_training_status(db, project_id, experiment_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.get("/tasks/{task_id}")
+async def task_status(
+    project_id: int,
+    task_id: str,
+):
+    """Read Celery task state for training-related jobs."""
+    try:
+        return get_task_status(task_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/experiments", response_model=list[ExperimentResponse])

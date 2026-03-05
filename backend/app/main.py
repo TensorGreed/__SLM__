@@ -26,6 +26,8 @@ from app.api.evaluation import router as evaluation_router
 from app.api.compression import router as compression_router
 from app.api.export import router as export_router
 from app.api.comparison import router as comparison_router
+from app.api.registry import router as registry_router
+from app.api.secrets import router as secrets_router
 
 
 @asynccontextmanager
@@ -71,6 +73,8 @@ app.include_router(evaluation_router, prefix="/api", dependencies=API_DEPENDENCI
 app.include_router(compression_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(export_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(comparison_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(registry_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(secrets_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

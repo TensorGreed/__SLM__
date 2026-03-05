@@ -249,6 +249,7 @@ async def queue_remote_import(
     hf_token: str | None = None,
     kaggle_username: str | None = None,
     kaggle_key: str | None = None,
+    use_saved_secrets: bool = True,
 ) -> dict:
     report_dir = _import_job_dir(project_id)
     job_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -267,6 +268,7 @@ async def queue_remote_import(
         "hf_token": hf_token or "",
         "kaggle_username": kaggle_username or "",
         "kaggle_key": kaggle_key or "",
+        "use_saved_secrets": bool(use_saved_secrets),
     }
 
     task = celery_app.send_task(
@@ -330,6 +332,7 @@ async def ingest_remote_dataset(
     hf_token: str | None = None,
     kaggle_username: str | None = None,
     kaggle_key: str | None = None,
+    use_saved_secrets: bool = True,
     progress_callback: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict:
     """
@@ -349,6 +352,7 @@ async def ingest_remote_dataset(
     import tempfile
 
     import httpx
+    from app.services.secret_service import get_project_secret_value
 
     async def _progress(message: str) -> None:
         if progress_callback is None:
@@ -366,6 +370,28 @@ async def ingest_remote_dataset(
     await _progress(
         f"[import] source={source_type} identifier={identifier} split={split} target_samples={target_samples}"
     )
+
+    if use_saved_secrets and source_type == "huggingface" and not hf_token:
+        saved_hf_token = await get_project_secret_value(db, project_id, "huggingface", "token")
+        if saved_hf_token:
+            hf_token = saved_hf_token
+            await _progress("[hf] using saved HuggingFace token from project secrets")
+    if use_saved_secrets and source_type == "kaggle":
+        if not kaggle_username:
+            saved_kaggle_username = await get_project_secret_value(
+                db,
+                project_id,
+                "kaggle",
+                "username",
+            )
+            if saved_kaggle_username:
+                kaggle_username = saved_kaggle_username
+        if not kaggle_key:
+            saved_kaggle_key = await get_project_secret_value(db, project_id, "kaggle", "key")
+            if saved_kaggle_key:
+                kaggle_key = saved_kaggle_key
+        if kaggle_username and kaggle_key:
+            await _progress("[kaggle] using saved Kaggle credentials from project secrets")
 
     def _safe_remote_name(value: str) -> str:
         return re.sub(r"[^a-zA-Z0-9._-]+", "_", value).strip("_")[:80] or "dataset"
