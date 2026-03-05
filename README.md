@@ -13,6 +13,8 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Domain Pack Hooks** for custom normalizers, validators, and evaluators.
 - Added **Domain Profile Manager UI** (list/create/edit/assign) in project detail and profile selection during project creation.
 - Added **Domain Pack Manager UI** (list/create/edit/assign) in project detail and pack selection during project creation.
+- Added **Workflow Graph Preview** (read-only visual stage graph + step contracts) in project detail.
+- Added **Workflow Contract Runtime (Phase 2)** APIs: graph validate, dry-run, run active step, and run history.
 - Added runtime transparency in split/training responses (applied profile + resolved defaults).
 - Added **Duplicate-as-new-version** flow for domain profiles from the project UI.
 - Added dedicated **Resolved Defaults** panels in Dataset Prep and Training tabs.
@@ -154,7 +156,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Projects | `/projects` | CRUD, stats, base model metadata |
 | Domain Packs | `/domain-packs` | Create/list/get/update pack overlays, hook catalog/reload |
 | Domain Profiles | `/domain-profiles` | Create/list/get/update contract profiles |
-| Pipeline | `/projects/{id}/pipeline` | Stage status, advance, rollback |
+| Pipeline | `/projects/{id}/pipeline` | Stage status, read-only graph preview, graph runtime actions, advance, rollback |
 | Ingestion | `/projects/{id}/ingestion` | Upload/batch upload, remote import (sync + queued), document lifecycle, job status/cancel, WS logs |
 | Cleaning | `/projects/{id}/cleaning` | Clean, clean-batch, chunk inspection |
 | Gold Set | `/projects/{id}/gold` | Add/import/list/lock evaluation gold data |
@@ -170,6 +172,15 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Secrets | `/projects/{id}/secrets` | Upsert/list/delete project secrets with encrypted storage |
 | Auth | `/auth` | Config, me, SSO flow, local login, user/member management |
 | Audit | `/audit` | Audit log listing |
+
+Pipeline graph preview endpoint:
+- `GET /api/projects/{project_id}/pipeline/graph`
+- Returns a read-only node/edge graph with stage status and step contract metadata (`input_artifacts`, `output_artifacts`, `config_schema_ref`).
+- `POST /api/projects/{project_id}/pipeline/graph/validate`
+- `POST /api/projects/{project_id}/pipeline/graph/dry-run`
+- `POST /api/projects/{project_id}/pipeline/graph/run-step`
+- `GET /api/projects/{project_id}/pipeline/graph/runs`
+- Runtime mode in phase 2 executes active-step gating with contract checks + stage guardrails; invalid custom graph payloads can fall back to default graph.
 
 ---
 

@@ -118,6 +118,100 @@ export interface PipelineStatusResponse {
     stages: PipelineStageInfo[];
 }
 
+export interface PipelineGraphNodePosition {
+    x: number;
+    y: number;
+}
+
+export interface PipelineGraphNode {
+    id: string;
+    stage: PipelineStage;
+    display_name: string;
+    index: number;
+    kind: string;
+    status: 'completed' | 'active' | 'pending';
+    step_type: string;
+    description: string;
+    input_artifacts: string[];
+    output_artifacts: string[];
+    config_schema_ref: string;
+    position: PipelineGraphNodePosition;
+}
+
+export interface PipelineGraphEdge {
+    id: string;
+    source: string;
+    target: string;
+    kind: string;
+}
+
+export interface PipelineGraphResponse {
+    project_id: number;
+    graph_id: string;
+    graph_label: string;
+    graph_version: string;
+    mode: string;
+    current_stage: PipelineStage;
+    nodes: PipelineGraphNode[];
+    edges: PipelineGraphEdge[];
+}
+
+export interface PipelineGraphValidationResponse {
+    project_id: number;
+    current_stage: PipelineStage;
+    valid: boolean;
+    fallback_used: boolean;
+    errors: string[];
+    warnings: string[];
+    graph: PipelineGraphResponse;
+}
+
+export interface PipelineGraphDryRunStep {
+    id: string;
+    stage: PipelineStage;
+    status: 'completed' | 'active' | 'pending' | string;
+    can_run_now: boolean;
+    missing_inputs: string[];
+    input_artifacts: string[];
+    output_artifacts: string[];
+}
+
+export interface PipelineGraphDryRunResponse {
+    project_id: number;
+    current_stage: PipelineStage;
+    valid_graph: boolean;
+    fallback_used: boolean;
+    errors: string[];
+    warnings: string[];
+    available_artifacts: string[];
+    active_step: PipelineGraphDryRunStep | null;
+    plan: PipelineGraphDryRunStep[];
+    graph: PipelineGraphResponse;
+}
+
+export interface PipelineGraphRunStepResponse {
+    run_id: string;
+    run_started_at: string;
+    run_finished_at?: string;
+    run_record_path?: string;
+    project_id: number;
+    requested_stage: PipelineStage;
+    current_stage: PipelineStage;
+    previous_stage?: PipelineStage;
+    status: 'ready' | 'blocked' | 'completed' | 'invalid_graph' | string;
+    valid_graph: boolean;
+    fallback_used: boolean;
+    errors: string[];
+    warnings: string[];
+    available_artifacts: string[];
+    declared_inputs: string[];
+    declared_outputs: string[];
+    missing_inputs: string[];
+    can_execute: boolean;
+    auto_advance: boolean;
+    advanced: boolean;
+}
+
 export interface EvalResult {
     id: number;
     experiment_id: number;

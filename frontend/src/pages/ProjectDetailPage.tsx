@@ -20,6 +20,7 @@ import type { Project, TabKey } from '../types';
 import api from '../api/client';
 import DomainPackManager from '../components/domain/DomainPackManager';
 import DomainProfileManager from '../components/domain/DomainProfileManager';
+import PipelineGraphPreview from '../components/pipeline/PipelineGraphPreview';
 import './ProjectDetailPage.css';
 
 // Define tab order for next-step navigation
@@ -217,6 +218,13 @@ export default function ProjectDetailPage() {
                         <div className="card progress-card">
                             <PipelineProgress stages={pipelineStatus.stages} progressPercent={pipelineStatus.progress_percent} />
                         </div>
+                    )}
+                    {pipelineStatus && (
+                        <PipelineGraphPreview
+                            projectId={projectId}
+                            currentStage={pipelineStatus.current_stage}
+                            onPipelineUpdated={() => fetchPipelineStatus(projectId)}
+                        />
                     )}
 
                     {showWizard ? (
