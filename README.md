@@ -15,6 +15,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Domain Pack Manager UI** (list/create/edit/assign) in project detail and pack selection during project creation.
 - Added **Workflow Graph Preview** (read-only visual stage graph + step contracts) in project detail.
 - Added **Workflow Contract Runtime (Phase 2)** APIs: graph validate, dry-run, run active step, and run history.
+- Added **Visual Pipeline Editor (Phase 3)** with project-scoped graph contract save/load/reset and compile diagnostics.
 - Added runtime transparency in split/training responses (applied profile + resolved defaults).
 - Added **Duplicate-as-new-version** flow for domain profiles from the project UI.
 - Added dedicated **Resolved Defaults** panels in Dataset Prep and Training tabs.
@@ -176,11 +177,17 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 Pipeline graph preview endpoint:
 - `GET /api/projects/{project_id}/pipeline/graph`
 - Returns a read-only node/edge graph with stage status and step contract metadata (`input_artifacts`, `output_artifacts`, `config_schema_ref`).
+- `GET /api/projects/{project_id}/pipeline/graph/stage-catalog`
+- `GET /api/projects/{project_id}/pipeline/graph/contract`
+- `PUT /api/projects/{project_id}/pipeline/graph/contract`
+- `DELETE /api/projects/{project_id}/pipeline/graph/contract`
 - `POST /api/projects/{project_id}/pipeline/graph/validate`
+- `POST /api/projects/{project_id}/pipeline/graph/compile`
 - `POST /api/projects/{project_id}/pipeline/graph/dry-run`
 - `POST /api/projects/{project_id}/pipeline/graph/run-step`
 - `GET /api/projects/{project_id}/pipeline/graph/runs`
-- Runtime mode in phase 2 executes active-step gating with contract checks + stage guardrails; invalid custom graph payloads can fall back to default graph.
+- Runtime mode executes active-step gating with contract checks + stage guardrails; invalid custom graph payloads can fall back to default graph.
+- Phase 3 adds persisted per-project graph overrides and compile-time graph diagnostics before save/run.
 
 ---
 

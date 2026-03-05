@@ -212,6 +212,85 @@ class PipelineGuardTests(unittest.TestCase):
         self.assertFalse(payload["advanced"])
         self.assertIn("source.file", payload["missing_inputs"])
 
+    def test_pipeline_graph_contract_save_get_reset_cycle(self):
+        create = self.client.post(
+            "/api/projects",
+            json={
+                "name": f"phase7-graph-contract-{uuid4().hex[:8]}",
+                "description": "pipeline graph contract save/get/reset test",
+                "base_model_name": "microsoft/phi-2",
+            },
+        )
+        self.assertEqual(create.status_code, 201, create.text)
+        project_id = create.json()["id"]
+
+        graph_resp = self.client.get(f"/api/projects/{project_id}/pipeline/graph")
+        self.assertEqual(graph_resp.status_code, 200, graph_resp.text)
+        graph_payload = graph_resp.json()
+
+        save_resp = self.client.put(
+            f"/api/projects/{project_id}/pipeline/graph/contract",
+            json={"graph": graph_payload},
+        )
+        self.assertEqual(save_resp.status_code, 200, save_resp.text)
+        self.assertTrue(save_resp.json()["saved"])
+
+        get_resp = self.client.get(f"/api/projects/{project_id}/pipeline/graph/contract")
+        self.assertEqual(get_resp.status_code, 200, get_resp.text)
+        self.assertTrue(get_resp.json()["has_saved_override"])
+        self.assertEqual(get_resp.json()["requested_source"], "saved_override")
+
+        reset_resp = self.client.delete(f"/api/projects/{project_id}/pipeline/graph/contract")
+        self.assertEqual(reset_resp.status_code, 200, reset_resp.text)
+        self.assertTrue(reset_resp.json()["reset"])
+
+    def test_pipeline_graph_compile_flags_missing_active_stage(self):
+        create = self.client.post(
+            "/api/projects",
+            json={
+                "name": f"phase7-graph-compile-{uuid4().hex[:8]}",
+                "description": "pipeline graph compile diagnostics test",
+                "base_model_name": "microsoft/phi-2",
+            },
+        )
+        self.assertEqual(create.status_code, 201, create.text)
+        project_id = create.json()["id"]
+
+        broken_graph = {
+            "graph_id": "broken",
+            "graph_label": "Broken Graph",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:training",
+                    "stage": "training",
+                    "display_name": "Training",
+                    "index": 0,
+                    "kind": "core_step",
+                    "step_type": "core.training",
+                    "description": "broken graph node",
+                    "input_artifacts": ["dataset.train"],
+                    "output_artifacts": ["model.checkpoint"],
+                    "config_schema_ref": "slm.step.training/v1",
+                    "position": {"x": 0, "y": 0},
+                }
+            ],
+            "edges": [],
+        }
+
+        compile_resp = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/compile",
+            json={
+                "graph": broken_graph,
+                "allow_fallback": False,
+                "use_saved_override": False,
+            },
+        )
+        self.assertEqual(compile_resp.status_code, 200, compile_resp.text)
+        compile_payload = compile_resp.json()
+        self.assertFalse(compile_payload["checks"]["active_stage_present"])
+        self.assertTrue(any("Current project stage" in msg for msg in compile_payload["errors"]))
+
 
 if __name__ == "__main__":
     unittest.main()

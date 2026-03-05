@@ -21,6 +21,7 @@ import api from '../api/client';
 import DomainPackManager from '../components/domain/DomainPackManager';
 import DomainProfileManager from '../components/domain/DomainProfileManager';
 import PipelineGraphPreview from '../components/pipeline/PipelineGraphPreview';
+import PipelineGraphEditor from '../components/pipeline/PipelineGraphEditor';
 import './ProjectDetailPage.css';
 
 // Define tab order for next-step navigation
@@ -224,6 +225,12 @@ export default function ProjectDetailPage() {
                             projectId={projectId}
                             currentStage={pipelineStatus.current_stage}
                             onPipelineUpdated={() => fetchPipelineStatus(projectId)}
+                        />
+                    )}
+                    {pipelineStatus && (
+                        <PipelineGraphEditor
+                            projectId={projectId}
+                            currentStage={pipelineStatus.current_stage}
                         />
                     )}
 

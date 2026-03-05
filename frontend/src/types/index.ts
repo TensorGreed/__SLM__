@@ -160,6 +160,9 @@ export interface PipelineGraphValidationResponse {
     project_id: number;
     current_stage: PipelineStage;
     valid: boolean;
+    requested_source?: string;
+    effective_source?: string;
+    has_saved_override?: boolean;
     fallback_used: boolean;
     errors: string[];
     warnings: string[];
@@ -180,6 +183,9 @@ export interface PipelineGraphDryRunResponse {
     project_id: number;
     current_stage: PipelineStage;
     valid_graph: boolean;
+    requested_source?: string;
+    effective_source?: string;
+    has_saved_override?: boolean;
     fallback_used: boolean;
     errors: string[];
     warnings: string[];
@@ -200,6 +206,9 @@ export interface PipelineGraphRunStepResponse {
     previous_stage?: PipelineStage;
     status: 'ready' | 'blocked' | 'completed' | 'invalid_graph' | string;
     valid_graph: boolean;
+    requested_source?: string;
+    effective_source?: string;
+    has_saved_override?: boolean;
     fallback_used: boolean;
     errors: string[];
     warnings: string[];
@@ -210,6 +219,65 @@ export interface PipelineGraphRunStepResponse {
     can_execute: boolean;
     auto_advance: boolean;
     advanced: boolean;
+}
+
+export interface PipelineGraphContractResponse {
+    project_id: number;
+    current_stage: PipelineStage;
+    has_saved_override: boolean;
+    requested_source: string;
+    effective_source: string;
+    graph: PipelineGraphResponse;
+}
+
+export interface PipelineGraphCompileChecks {
+    active_stage_present: boolean;
+    active_stage_node_id: string | null;
+    active_stage_missing_inputs: string[];
+    active_stage_ready_now: boolean;
+}
+
+export interface PipelineGraphCompileResponse {
+    project_id: number;
+    current_stage: PipelineStage;
+    valid_graph: boolean;
+    fallback_used: boolean;
+    requested_source: string;
+    effective_source: string;
+    has_saved_override: boolean;
+    errors: string[];
+    warnings: string[];
+    checks: PipelineGraphCompileChecks;
+    available_artifacts: string[];
+    graph: PipelineGraphResponse;
+}
+
+export interface PipelineGraphContractSaveResponse {
+    project_id: number;
+    saved: boolean;
+    path: string;
+    graph: PipelineGraphResponse;
+}
+
+export interface PipelineGraphContractResetResponse {
+    project_id: number;
+    reset: boolean;
+}
+
+export interface PipelineGraphStageTemplate {
+    stage: PipelineStage;
+    display_name: string;
+    index: number;
+    step_type: string;
+    description: string;
+    input_artifacts: string[];
+    output_artifacts: string[];
+    config_schema_ref: string;
+}
+
+export interface PipelineGraphStageCatalogResponse {
+    project_id: number;
+    stages: PipelineGraphStageTemplate[];
 }
 
 export interface EvalResult {

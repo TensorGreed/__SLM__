@@ -20,12 +20,17 @@ from app.pipeline.orchestrator import (
     get_progress_percent,
 )
 from app.services.workflow_graph_service import (
-    build_readonly_pipeline_graph,
+    compile_workflow_graph,
+    delete_workflow_graph_override,
     build_workflow_dry_run,
+    get_step_contract_catalog,
+    load_saved_workflow_graph_override,
     list_pipeline_run_records,
     persist_pipeline_run_record,
     prepare_workflow_step_run,
+    resolve_project_workflow_graph,
     resolve_workflow_graph,
+    save_workflow_graph_override,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/pipeline", tags=["Pipeline"])
@@ -39,11 +44,23 @@ class GraphValidateRequest(BaseModel):
 class GraphDryRunRequest(BaseModel):
     graph: dict | None = None
     allow_fallback: bool = True
+    use_saved_override: bool = True
+
+
+class GraphCompileRequest(BaseModel):
+    graph: dict | None = None
+    allow_fallback: bool = True
+    use_saved_override: bool = True
+
+
+class GraphContractSaveRequest(BaseModel):
+    graph: dict
 
 
 class GraphRunStepRequest(BaseModel):
     graph: dict | None = None
     allow_fallback: bool = True
+    use_saved_override: bool = True
     stage: PipelineStage | None = None
     auto_advance: bool = True
     config: dict[str, object] = Field(default_factory=dict)
@@ -180,7 +197,120 @@ async def pipeline_graph(project_id: int, db: AsyncSession = Depends(get_db)):
     if not project:
         raise HTTPException(404, "Project not found")
 
-    return build_readonly_pipeline_graph(project.id, project.pipeline_stage)
+    resolved = resolve_project_workflow_graph(
+        project_id=project.id,
+        current_stage=project.pipeline_stage,
+        graph_override=None,
+        allow_fallback=True,
+        use_saved_override=True,
+    )
+    payload = dict(resolved.get("graph") or {})
+    payload["requested_source"] = resolved.get("requested_source")
+    payload["effective_source"] = resolved.get("effective_source")
+    payload["has_saved_override"] = resolved.get("has_saved_override")
+    return payload
+
+
+@router.get("/graph/stage-catalog")
+async def pipeline_graph_stage_catalog(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List built-in stage contract templates for visual editor workflows."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+    return {
+        "project_id": project_id,
+        "stages": get_step_contract_catalog(),
+    }
+
+
+@router.get("/graph/contract")
+async def get_pipeline_graph_contract(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return effective graph contract and saved-override metadata."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    saved = load_saved_workflow_graph_override(project_id)
+    resolved = resolve_project_workflow_graph(
+        project_id=project.id,
+        current_stage=project.pipeline_stage,
+        graph_override=None,
+        allow_fallback=True,
+        use_saved_override=True,
+    )
+    return {
+        "project_id": project.id,
+        "current_stage": project.pipeline_stage.value,
+        "has_saved_override": saved is not None,
+        "requested_source": resolved.get("requested_source"),
+        "effective_source": resolved.get("effective_source"),
+        "graph": resolved.get("graph"),
+    }
+
+
+@router.put("/graph/contract")
+async def save_pipeline_graph_contract(
+    project_id: int,
+    req: GraphContractSaveRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist project graph override after strict validation."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    resolved = resolve_workflow_graph(
+        project_id=project.id,
+        current_stage=project.pipeline_stage,
+        graph_override=req.graph,
+        allow_fallback=False,
+    )
+    if not resolved.get("valid"):
+        raise HTTPException(
+            400,
+            {
+                "message": "Graph contract validation failed",
+                "errors": resolved.get("errors"),
+                "warnings": resolved.get("warnings"),
+            },
+        )
+
+    normalized_graph = resolved.get("graph")
+    if not isinstance(normalized_graph, dict):
+        raise HTTPException(400, "Graph normalization failed")
+
+    saved_path = save_workflow_graph_override(project.id, normalized_graph)
+    return {
+        "project_id": project.id,
+        "saved": True,
+        "path": saved_path,
+        "graph": normalized_graph,
+    }
+
+
+@router.delete("/graph/contract")
+async def reset_pipeline_graph_contract(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset project graph override to default fallback graph."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+
+    deleted = delete_workflow_graph_override(project_id)
+    return {
+        "project_id": project_id,
+        "reset": deleted,
+    }
 
 
 @router.post("/graph/validate")
@@ -195,21 +325,46 @@ async def validate_pipeline_graph(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    resolved = resolve_workflow_graph(
+    resolved = resolve_project_workflow_graph(
         project_id=project.id,
         current_stage=project.pipeline_stage,
         graph_override=req.graph,
         allow_fallback=req.allow_fallback,
+        use_saved_override=req.graph is None,
     )
     return {
         "project_id": project.id,
         "current_stage": project.pipeline_stage.value,
         "valid": resolved.get("valid"),
+        "requested_source": resolved.get("requested_source"),
+        "effective_source": resolved.get("effective_source"),
+        "has_saved_override": resolved.get("has_saved_override"),
         "fallback_used": resolved.get("fallback_used"),
         "errors": resolved.get("errors"),
         "warnings": resolved.get("warnings"),
         "graph": resolved.get("graph"),
     }
+
+
+@router.post("/graph/compile")
+async def compile_pipeline_graph(
+    project_id: int,
+    req: GraphCompileRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compile resolved graph into actionable diagnostics for execution readiness."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    return await compile_workflow_graph(
+        db=db,
+        project=project,
+        graph_override=req.graph,
+        allow_fallback=req.allow_fallback,
+        use_saved_override=req.use_saved_override,
+    )
 
 
 @router.post("/graph/dry-run")
@@ -229,6 +384,7 @@ async def dry_run_pipeline_graph(
         project=project,
         graph_override=req.graph,
         allow_fallback=req.allow_fallback,
+        use_saved_override=req.use_saved_override,
     )
 
 
@@ -251,6 +407,7 @@ async def run_pipeline_graph_step(
         stage=requested_stage,
         graph_override=req.graph,
         allow_fallback=req.allow_fallback,
+        use_saved_override=req.use_saved_override,
         config=req.config,
     )
     step_run["auto_advance"] = bool(req.auto_advance)

@@ -23,6 +23,7 @@ from app.pipeline.orchestrator import STAGE_ORDER, get_pipeline_status
 DEFAULT_GRAPH_ID = "default-linear-v1"
 DEFAULT_GRAPH_LABEL = "Default SLM Pipeline"
 DEFAULT_GRAPH_VERSION = "1.0.0"
+SOURCE_ARTIFACTS = {"source.file", "source.remote_dataset"}
 
 
 _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
@@ -158,6 +159,111 @@ def build_readonly_pipeline_graph(project_id: int, current_stage: PipelineStage)
     }
 
 
+def _workflow_graph_dir(project_id: int) -> Path:
+    path = settings.DATA_DIR / "projects" / str(project_id) / "workflow_graph"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _workflow_graph_contract_path(project_id: int) -> Path:
+    return _workflow_graph_dir(project_id) / "contract.json"
+
+
+def load_saved_workflow_graph_override(project_id: int) -> dict[str, Any] | None:
+    """Load persisted workflow graph override for a project, if present."""
+    path = _workflow_graph_contract_path(project_id)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if isinstance(payload.get("graph"), dict):
+        maybe_graph = payload["graph"]
+        if isinstance(maybe_graph, dict):
+            return maybe_graph
+    return payload
+
+
+def save_workflow_graph_override(project_id: int, graph: dict[str, Any]) -> str:
+    """Persist workflow graph override for a project."""
+    path = _workflow_graph_contract_path(project_id)
+    payload = {
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "graph": graph,
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    return str(path)
+
+
+def delete_workflow_graph_override(project_id: int) -> bool:
+    """Delete persisted workflow graph override for a project."""
+    path = _workflow_graph_contract_path(project_id)
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def get_step_contract_catalog() -> list[dict[str, Any]]:
+    """Expose built-in stage contracts for editor/tooling UIs."""
+    stages = [stage.value for stage in STAGE_ORDER if stage.value in _STEP_CONTRACTS]
+    catalog: list[dict[str, Any]] = []
+    for index, stage_name in enumerate(stages):
+        contract = _STEP_CONTRACTS[stage_name]
+        catalog.append(
+            {
+                "stage": stage_name,
+                "display_name": stage_name.replace("_", " ").title(),
+                "index": index,
+                **contract,
+            }
+        )
+    return catalog
+
+
+def resolve_project_workflow_graph(
+    project_id: int,
+    current_stage: PipelineStage,
+    graph_override: dict[str, Any] | None = None,
+    allow_fallback: bool = True,
+    use_saved_override: bool = True,
+) -> dict[str, Any]:
+    """Resolve graph by request override, saved override, then platform default."""
+    requested_source = "default"
+    candidate_override = graph_override
+
+    if candidate_override is not None:
+        requested_source = "request_override"
+    elif use_saved_override:
+        saved = load_saved_workflow_graph_override(project_id)
+        if saved is not None:
+            candidate_override = saved
+            requested_source = "saved_override"
+
+    resolved = resolve_workflow_graph(
+        project_id=project_id,
+        current_stage=current_stage,
+        graph_override=candidate_override,
+        allow_fallback=allow_fallback,
+    )
+
+    effective_source = requested_source
+    if resolved.get("fallback_used"):
+        effective_source = "default_fallback"
+    elif requested_source == "default":
+        effective_source = "default"
+
+    return {
+        **resolved,
+        "requested_source": requested_source,
+        "effective_source": effective_source,
+        "has_saved_override": load_saved_workflow_graph_override(project_id) is not None,
+    }
+
+
 def _is_nonempty_str(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
@@ -188,6 +294,29 @@ def _graph_has_cycle(node_ids: set[str], edges: list[dict[str, Any]]) -> bool:
                 queue.append(neighbor)
 
     return visited != len(node_ids)
+
+
+def _topological_order(node_ids: set[str], edges: list[dict[str, Any]]) -> list[str]:
+    graph: dict[str, list[str]] = defaultdict(list)
+    in_degree = {node_id: 0 for node_id in node_ids}
+
+    for edge in edges:
+        source = str(edge.get("source", "")).strip()
+        target = str(edge.get("target", "")).strip()
+        if source in node_ids and target in node_ids:
+            graph[source].append(target)
+            in_degree[target] += 1
+
+    queue = deque([node_id for node_id, degree in in_degree.items() if degree == 0])
+    ordered: list[str] = []
+    while queue:
+        node_id = queue.popleft()
+        ordered.append(node_id)
+        for neighbor in graph.get(node_id, []):
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+    return ordered
 
 
 def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -527,18 +656,104 @@ def _missing_inputs_for_node(node: dict[str, Any], available_artifacts: set[str]
     )
 
 
+async def compile_workflow_graph(
+    db: AsyncSession,
+    project: Project,
+    graph_override: dict[str, Any] | None = None,
+    allow_fallback: bool = True,
+    use_saved_override: bool = True,
+) -> dict[str, Any]:
+    """Compile graph contract with structural and artifact-flow diagnostics."""
+    resolved = resolve_project_workflow_graph(
+        project_id=project.id,
+        current_stage=project.pipeline_stage,
+        graph_override=graph_override,
+        allow_fallback=allow_fallback,
+        use_saved_override=use_saved_override,
+    )
+    available_artifacts = await collect_available_artifacts(db, project.id)
+    graph = resolved.get("graph")
+    errors = list(resolved.get("errors", []))
+    warnings = list(resolved.get("warnings", []))
+
+    active_stage = project.pipeline_stage.value
+    active_node_id = ""
+    active_missing_inputs: list[str] = []
+    stage_present = False
+
+    if isinstance(graph, dict):
+        nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict)]
+        edges = [edge for edge in graph.get("edges", []) if isinstance(edge, dict)]
+        node_id_to_node = {str(node.get("id", "")).strip(): node for node in nodes if str(node.get("id", "")).strip()}
+        ordered_ids = _topological_order(set(node_id_to_node.keys()), edges)
+        if ordered_ids and len(ordered_ids) != len(node_id_to_node):
+            errors.append("Compile failed: graph ordering incomplete due to invalid connectivity.")
+
+        produced_artifacts = set(SOURCE_ARTIFACTS)
+        if ordered_ids:
+            for node_id in ordered_ids:
+                node = node_id_to_node[node_id]
+                stage_name = str(node.get("stage", "")).strip()
+                inputs = [item for item in node.get("input_artifacts", []) if isinstance(item, str) and item.strip()]
+                outputs = [item for item in node.get("output_artifacts", []) if isinstance(item, str) and item.strip()]
+                upstream_missing = sorted({artifact for artifact in inputs if artifact not in produced_artifacts})
+                if upstream_missing:
+                    warnings.append(
+                        f"{node_id} ({stage_name}) declares inputs not produced upstream: {', '.join(upstream_missing)}"
+                    )
+                produced_artifacts.update(outputs)
+
+                if stage_name == active_stage:
+                    stage_present = True
+                    active_node_id = node_id
+                    active_missing_inputs = _missing_inputs_for_node(node, available_artifacts)
+        else:
+            stage_present = any(str(node.get("stage", "")).strip() == active_stage for node in nodes)
+            if stage_present:
+                node = next(
+                    node for node in nodes if str(node.get("stage", "")).strip() == active_stage
+                )
+                active_node_id = str(node.get("id", "")).strip()
+                active_missing_inputs = _missing_inputs_for_node(node, available_artifacts)
+
+        if not stage_present:
+            errors.append(f"Current project stage '{active_stage}' is not present in resolved graph.")
+
+    return {
+        "project_id": project.id,
+        "current_stage": active_stage,
+        "valid_graph": bool(resolved.get("valid")),
+        "fallback_used": bool(resolved.get("fallback_used")),
+        "requested_source": resolved.get("requested_source"),
+        "effective_source": resolved.get("effective_source"),
+        "has_saved_override": bool(resolved.get("has_saved_override")),
+        "errors": sorted(set(errors)),
+        "warnings": sorted(set(warnings)),
+        "checks": {
+            "active_stage_present": stage_present,
+            "active_stage_node_id": active_node_id or None,
+            "active_stage_missing_inputs": active_missing_inputs,
+            "active_stage_ready_now": not active_missing_inputs and stage_present,
+        },
+        "available_artifacts": sorted(available_artifacts),
+        "graph": graph,
+    }
+
+
 async def build_workflow_dry_run(
     db: AsyncSession,
     project: Project,
     graph_override: dict[str, Any] | None = None,
     allow_fallback: bool = True,
+    use_saved_override: bool = True,
 ) -> dict[str, Any]:
     """Create an execution preview against currently materialized artifacts."""
-    resolved = resolve_workflow_graph(
+    resolved = resolve_project_workflow_graph(
         project_id=project.id,
         current_stage=project.pipeline_stage,
         graph_override=graph_override,
         allow_fallback=allow_fallback,
+        use_saved_override=use_saved_override,
     )
     available_artifacts = await collect_available_artifacts(db, project.id)
 
@@ -574,6 +789,9 @@ async def build_workflow_dry_run(
         "current_stage": active_stage,
         "valid_graph": bool(resolved.get("valid")),
         "fallback_used": bool(resolved.get("fallback_used")),
+        "requested_source": resolved.get("requested_source"),
+        "effective_source": resolved.get("effective_source"),
+        "has_saved_override": bool(resolved.get("has_saved_override")),
         "errors": list(resolved.get("errors", [])),
         "warnings": list(resolved.get("warnings", [])),
         "available_artifacts": sorted(available_artifacts),
@@ -629,14 +847,16 @@ async def prepare_workflow_step_run(
     stage: PipelineStage,
     graph_override: dict[str, Any] | None = None,
     allow_fallback: bool = True,
+    use_saved_override: bool = True,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Prepare a single-step execution payload, without mutating project stage."""
-    resolved = resolve_workflow_graph(
+    resolved = resolve_project_workflow_graph(
         project_id=project.id,
         current_stage=project.pipeline_stage,
         graph_override=graph_override,
         allow_fallback=allow_fallback,
+        use_saved_override=use_saved_override,
     )
     available_artifacts = await collect_available_artifacts(db, project.id)
     graph = resolved.get("graph") if isinstance(resolved.get("graph"), dict) else {}
@@ -651,6 +871,9 @@ async def prepare_workflow_step_run(
         "current_stage": project.pipeline_stage.value,
         "valid_graph": bool(resolved.get("valid")),
         "fallback_used": bool(resolved.get("fallback_used")),
+        "requested_source": resolved.get("requested_source"),
+        "effective_source": resolved.get("effective_source"),
+        "has_saved_override": bool(resolved.get("has_saved_override")),
         "errors": list(resolved.get("errors", [])),
         "warnings": list(resolved.get("warnings", [])),
         "config": dict(config or {}),
