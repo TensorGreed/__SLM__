@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, WebSocketException, status
+from starlette.requests import HTTPConnection
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,14 +40,26 @@ def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
-def _parse_api_key_from_headers(request: Request) -> str | None:
-    header_key = request.headers.get("x-api-key")
+def _raise_auth_error(is_websocket: bool, status_code: int, detail: str) -> None:
+    if is_websocket:
+        # WebSocket authz failures map to policy violation close code.
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=detail)
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
+def _parse_api_key_from_connection(connection: HTTPConnection) -> str | None:
+    header_key = connection.headers.get("x-api-key")
     if header_key:
         return header_key.strip()
 
-    auth_header = request.headers.get("authorization", "")
+    auth_header = connection.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
+
+    # Browser WebSocket API can't set custom Authorization headers.
+    query_token = connection.query_params.get("token") or connection.query_params.get("access_token")
+    if query_token:
+        return query_token.strip()
 
     return None
 
@@ -170,15 +183,15 @@ async def upsert_project_membership(
 
 
 async def get_current_principal(
-    request: Request,
+    connection: HTTPConnection,
     db: AsyncSession = Depends(get_db),
 ) -> Principal | None:
     """Resolve current principal from API key or JWT headers."""
     if not settings.AUTH_ENABLED:
-        request.state.principal = None
+        connection.state.principal = None
         return None
 
-    token = _parse_api_key_from_headers(request)
+    token = _parse_api_key_from_connection(connection)
     if not token:
         return None
 
@@ -192,7 +205,7 @@ async def get_current_principal(
             api_key_id=0,
             api_key_prefix="jwt",
         )
-        request.state.principal = principal
+        connection.state.principal = principal
         return principal
     except (jwt.PyJWTError, KeyError, ValueError):
         # Not a valid JWT or missing claims, fall back to API key lookup
@@ -223,13 +236,13 @@ async def get_current_principal(
         api_key_id=api_key_obj.id,
         api_key_prefix=api_key_obj.key_prefix,
     )
-    request.state.principal = principal
+    connection.state.principal = principal
     return principal
 
 
-def _require_global_role(principal: Principal, allowed: set[GlobalRole]) -> None:
+def _require_global_role(principal: Principal, allowed: set[GlobalRole], *, is_websocket: bool) -> None:
     if principal.role not in allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient role")
+        _raise_auth_error(is_websocket, status.HTTP_403_FORBIDDEN, "Insufficient role")
 
 
 async def _require_project_role(
@@ -237,6 +250,8 @@ async def _require_project_role(
     principal: Principal,
     project_id: int,
     min_role: ProjectRole,
+    *,
+    is_websocket: bool,
 ) -> None:
     if principal.role == GlobalRole.ADMIN:
         return
@@ -249,10 +264,10 @@ async def _require_project_role(
     )
     membership = membership_res.scalar_one_or_none()
     if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this project")
+        _raise_auth_error(is_websocket, status.HTTP_403_FORBIDDEN, "No access to this project")
 
     if PROJECT_ROLE_RANK[membership.role] < PROJECT_ROLE_RANK[min_role]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient project permissions")
+        _raise_auth_error(is_websocket, status.HTTP_403_FORBIDDEN, "Insufficient project permissions")
 
 
 def _required_project_role(method: str, path: str) -> ProjectRole:
@@ -265,7 +280,7 @@ def _required_project_role(method: str, path: str) -> ProjectRole:
 
 
 async def authorize_request(
-    request: Request,
+    connection: HTTPConnection,
     db: AsyncSession = Depends(get_db),
     principal: Principal | None = Depends(get_current_principal),
 ) -> Principal | None:
@@ -274,16 +289,17 @@ async def authorize_request(
 
     Applied router-wide so every API request passes through role and project checks.
     """
-    path = request.url.path
-    method = request.method.upper()
+    is_websocket = connection.scope.get("type") == "websocket"
+    path = connection.url.path
+    method = "WEBSOCKET" if is_websocket else connection.method.upper()
     project_id = extract_project_id_from_path(path)
-    request.state.project_id = project_id
+    connection.state.project_id = project_id
 
     if not settings.AUTH_ENABLED:
         return principal
 
     # Pre-check public routes
-    if path in {
+    if not is_websocket and path in {
         "/api/health",
         "/api/auth/local/login",
         "/api/auth/config",
@@ -294,18 +310,32 @@ async def authorize_request(
         return principal
 
     if principal is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        _raise_auth_error(is_websocket, status.HTTP_401_UNAUTHORIZED, "Authentication required")
 
-    if path == "/api/projects" and method == "POST":
-        _require_global_role(principal, {GlobalRole.ADMIN, GlobalRole.ENGINEER})
+    if not is_websocket and path == "/api/projects" and method == "POST":
+        _require_global_role(
+            principal,
+            {GlobalRole.ADMIN, GlobalRole.ENGINEER},
+            is_websocket=is_websocket,
+        )
         return principal
 
-    if path == "/api/projects" and method == "GET":
-        _require_global_role(principal, {GlobalRole.ADMIN, GlobalRole.ENGINEER, GlobalRole.VIEWER})
+    if not is_websocket and path == "/api/projects" and method == "GET":
+        _require_global_role(
+            principal,
+            {GlobalRole.ADMIN, GlobalRole.ENGINEER, GlobalRole.VIEWER},
+            is_websocket=is_websocket,
+        )
         return principal
 
     if project_id is not None:
-        required = _required_project_role(method, path)
-        await _require_project_role(db, principal, project_id, required)
+        required = ProjectRole.VIEWER if is_websocket else _required_project_role(method, path)
+        await _require_project_role(
+            db,
+            principal,
+            project_id,
+            required,
+            is_websocket=is_websocket,
+        )
 
     return principal

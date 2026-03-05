@@ -4,6 +4,7 @@ import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import ExperimentCompare from './ExperimentCompare';
+import { buildWsUrl } from '../../utils/ws';
 import './TrainingPanel.css';
 
 interface TrainingPanelProps {
@@ -126,6 +127,8 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           ? 'badge-error'
           : 'badge-warning';
 
+  const activeExperimentKey = activeExperiment ? `${activeExperiment.id}:${activeExperiment.status}` : '';
+
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
     const parsedTargetModules = targetModules
@@ -213,13 +216,18 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     if (!activeExperiment || activeExperiment.status !== 'running') {
       return;
     }
+    const experimentId = activeExperiment.id;
     const interval = window.setInterval(() => {
       api
-        .get(`/projects/${projectId}/training/experiments/${activeExperiment.id}/status`)
+        .get(`/projects/${projectId}/training/experiments/${experimentId}/status`)
         .then((res) => {
           const status = String(res.data?.status || '');
           if (!status) return;
-          setActiveExperiment((prev) => (prev ? { ...prev, status } : prev));
+          setActiveExperiment((prev) => {
+            if (!prev || prev.id !== experimentId) return prev;
+            if (prev.status === status) return prev;
+            return { ...prev, status };
+          });
           const nextTaskState = String(res.data?.task_status?.state || '').trim();
           if (nextTaskState) {
             setTaskState(nextTaskState);
@@ -232,15 +240,15 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [activeExperiment, projectId]);
+  }, [activeExperimentKey, projectId]);
 
   useEffect(() => {
     if (!activeExperiment || activeExperiment.status !== 'running') {
       return;
     }
+    const experimentId = activeExperiment.id;
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${protocol}://${window.location.host}/api/projects/${projectId}/training/ws/${activeExperiment.id}`;
+    const wsUrl = buildWsUrl(`/api/projects/${projectId}/training/ws/${experimentId}`);
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
@@ -274,7 +282,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     };
 
     return () => ws.close();
-  }, [activeExperiment, projectId]);
+  }, [activeExperimentKey, projectId]);
 
   useEffect(() => {
     if (!showCreate) {

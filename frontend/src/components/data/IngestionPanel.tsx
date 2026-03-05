@@ -3,6 +3,7 @@ import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { buildWsUrl } from '../../utils/ws';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -155,8 +156,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
             return;
         }
 
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${protocol}://${window.location.host}/api/projects/${projectId}/ingestion/ws/logs`;
+        const wsUrl = buildWsUrl(`/api/projects/${projectId}/ingestion/ws/logs`);
         const ws = new WebSocket(wsUrl);
 
         ws.onmessage = (event) => {

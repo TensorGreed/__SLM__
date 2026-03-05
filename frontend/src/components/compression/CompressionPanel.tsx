@@ -3,6 +3,7 @@ import { Terminal } from 'lucide-react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { buildWsUrl } from '../../utils/ws';
 
 interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -29,8 +30,7 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     useEffect(() => {
         if (!isCompressing) return;
 
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${protocol}://${window.location.host}/api/projects/${projectId}/compression/ws/logs`;
+        const wsUrl = buildWsUrl(`/api/projects/${projectId}/compression/ws/logs`);
         const ws = new WebSocket(wsUrl);
 
         ws.onmessage = (event) => {
