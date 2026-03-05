@@ -1,37 +1,60 @@
 # SLM Platform
 
-> **Build, evaluate, compress, and export domain-specific Small Language Models (SLMs)** through a guided, production-oriented workflow.
+> Build, evaluate, compress, govern, and export domain-specific Small Language Models (SLMs) with a guided full-stack workflow.
 
-A modular platform for ML engineers to go from arbitrary source data to releasable SLM artifacts with RBAC, audit logging, dataset normalization, training/eval orchestration, and export manifests.
+This repository contains a FastAPI backend + React frontend for end-to-end SLM lifecycle operations: ingestion, cleaning, dataset prep, training, evaluation, compression, export packaging, model registry promotion gates, and project-scoped secret management.
+
+## Latest Updates (March 5, 2026)
+
+- Added **Model Registry** lifecycle with readiness snapshots, promotion gates, and deploy tracking.
+- Added **Project Secrets** APIs with masked listing and encrypted-at-rest values.
+- Added queued **remote ingestion** jobs with task status/cancel APIs and WebSocket log streaming.
+- Added queued **compression** jobs (quantize/merge/benchmark) with task status/cancel APIs and WebSocket logs.
+- Added **experiment comparison** API/UI for side-by-side metrics and loss-history visualization.
+- Added auth UX updates for **SSO + local login** flow.
+- Added Alembic revision `20260305_0002` for registry + secrets tables.
 
 ---
 
-## Getting Started
+## Quick Start (Local Dev)
 
 ### Prerequisites
-- **Python 3.11+** with `pip`
-- **Node.js 18+** with `npm`
-- **Redis** (optional — needed only for Celery background jobs)
-- **GPU + CUDA** (optional — needed only for real training/inference)
 
-### 1. Backend Setup
+- Python 3.11+
+- Node.js 18+
+- Redis (required for queued training/compression/remote-import jobs)
+- Optional GPU/CUDA for real training and inference benchmarking
+
+### 1. Backend API
 
 ```bash
 cd backend
 python -m venv .venv
-# macOS/Linux:
 source .venv/bin/activate
-# Windows PowerShell:
-# .venv\Scripts\activate
-
 pip install -r requirements.txt
-cp .env.example .env          # adjust values as needed
+cp .env.example .env
+
+# Optional (recommended for Postgres/prod-like setups):
+# alembic upgrade head
+
 uvicorn app.main:app --reload --port 8000
 ```
 
-The backend auto-creates SQLite tables on first run (when `ALLOW_SQLITE_AUTOCREATE=true`).
+Notes:
+- Default local DB is SQLite (`sqlite+aiosqlite:///./data/slm_platform.db`).
+- With `ALLOW_SQLITE_AUTOCREATE=true` (default), tables auto-create on startup.
 
-### 2. Frontend Setup
+### 2. Worker (Celery)
+
+Run this in a second terminal if you want queued jobs (training external runtime, compression, remote imports):
+
+```bash
+cd backend
+source .venv/bin/activate
+celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2
+```
+
+### 3. Frontend
 
 ```bash
 cd frontend
@@ -39,160 +62,183 @@ npm install
 npm run dev
 ```
 
-### 3. Login & First Project
+### 4. Login and First Project
 
-1. Open **http://localhost:5173** → you'll see the login page
-2. Enter any username and the API key from `.env` as the password (default: `sk-mock-admin-key`)
-3. Click **Sign in** → you'll be redirected to the dashboard
-4. Click **New Project**, give it a name and base model (e.g. `TinyLlama/TinyLlama-1.1B-Chat-v1.0`)
-5. Walk through each pipeline tab: **Ingest → Clean → Gold → Synthetic → Dataset Prep → Tokenize → Train → Evaluate → Compress → Export**
+1. Open `http://localhost:5173/login`
+2. If OIDC is configured, use **Sign in with SSO**
+3. Otherwise use local login:
+   - Username: any value (new users are auto-provisioned)
+   - Password: `API_KEY` from `backend/.env` (default `sk-mock-admin-key`)
+4. Create a project and walk tabs:
+   - Data -> Cleaning -> Gold Set -> Synthetic -> Dataset Prep -> Tokenization -> Training -> Evaluation -> Compression -> Export
 
-### 4. API Docs
+### 5. API Docs
 
-With the backend running, visit **http://localhost:8000/docs** for the full interactive API reference.
+With backend running, visit: `http://localhost:8000/docs`
 
 ---
 
+## Optional Docker Compose
 
-## Architecture
+Repo includes `docker-compose.yml` for:
+- Postgres
+- Redis
+- Backend API
+- Celery worker
+- Frontend
 
-```
-__SLM__/
-├── backend/
-│   └── app/
-│       ├── api/           # REST routers (auth, audit, ingestion, cleaning, training, eval, export, ...)
-│       ├── models/        # SQLAlchemy ORM (project, dataset, experiment, export, auth)
-│       ├── schemas/       # Pydantic request/response models
-│       ├── services/      # Business logic and pipeline operations
-│       ├── pipeline/      # Orchestrator + stage definitions
-│       └── utils/         # Parsers, metrics, helpers
-├── frontend/
-│   └── src/
-│       ├── components/    # Pipeline UI panels
-│       ├── pages/         # Project list + detail
-│       ├── stores/        # Zustand stores
-│       └── api/           # Axios client
-└── data/                  # Runtime data (projects, models, exports)
+```bash
+docker compose up --build
 ```
 
-## Pipeline Modules
+If your frontend image build fails, verify `frontend/nginx.conf` exists and matches your deployment routing needs.
 
-| Module | Description | Backend Service | API Routes |
-|--------|-------------|-----------------|------------|
-| **Data Ingestion** | Upload/import PDF, DOCX, TXT, MD, CSV, JSON, JSONL; remote HF/Kaggle/URL | `ingestion_service.py` | `/ingestion` |
-| **Data Cleaning** | PII redaction, dedup, quality scoring, chunking | `cleaning_service.py` | `/cleaning` |
-| **Gold Dataset** | Manual Q&A creation/import/lock for evaluation | `gold_service.py` | `/gold` |
-| **Synthetic Gen** | Teacher model Q&A generation (incl. local providers) | `synthetic_service.py` | `/synthetic` |
-| **Dataset Prep** | Normalize, combine, profile, split train/val/test + manifest | `dataset_service.py` | `/dataset` |
-| **Tokenization** | Token stats + vocab inspection | `tokenization_service.py` | `/tokenization` |
-| **Training** | SFT/LoRA experiment management + checkpoints | `training_service.py` | `/training` |
-| **Evaluation** | Exact match, F1, safety, LLM-judge | `evaluation_service.py` | `/evaluation` |
-| **Compression** | Quantization and model-size optimization | `compression_service.py` | `/compression` |
-| **Export** | GGUF/ONNX/HF/Docker packaging + run manifests | `export_service.py` | `/export` |
+---
+
+## Authentication and Authorization
+
+### Auth modes
+
+- **SSO mode**: enable OIDC vars (`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_DISCOVERY_URL`)
+- **Local mode**: `/api/auth/local/login` returns a JWT token (used by frontend)
+
+### Access control
+
+- Global roles: `admin`, `engineer`, `viewer`
+- Project membership roles: `owner`, `editor`, `viewer`
+- Request auth supports either:
+  - `Authorization: Bearer <jwt-or-api-key>`
+  - `x-api-key: <api-key>`
+- Audit logs are captured for mutating API calls (configurable via `AUDIT_LOG_ENABLED`)
+
+---
+
+## Pipeline and API Surface
+
+All project-scoped routes are under `/api/projects/{project_id}/...`.
+
+| Domain | Route Prefix | Key Capabilities |
+|---|---|---|
+| Projects | `/projects` | CRUD, stats, base model metadata |
+| Pipeline | `/projects/{id}/pipeline` | Stage status, advance, rollback |
+| Ingestion | `/projects/{id}/ingestion` | Upload/batch upload, remote import (sync + queued), document lifecycle, job status/cancel, WS logs |
+| Cleaning | `/projects/{id}/cleaning` | Clean, clean-batch, chunk inspection |
+| Gold Set | `/projects/{id}/gold` | Add/import/list/lock evaluation gold data |
+| Synthetic | `/projects/{id}/synthetic` | Teacher-model generation + save workflow |
+| Dataset Prep | `/projects/{id}/dataset` | Split, preview, schema/profile diagnostics |
+| Tokenization | `/projects/{id}/tokenization` | Token stats + vocab sample |
+| Training | `/projects/{id}/training` | Experiments, start/cancel, status, task status, WS telemetry/logs |
+| Comparison | `/projects/{id}/training/compare` | Compare up to 5 experiments side by side |
+| Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards |
+| Compression | `/projects/{id}/compression` | Quantize/merge/benchmark queue, report status, task status/cancel, WS logs |
+| Export | `/projects/{id}/export` | Create/run/list exports with manifests |
+| Registry | `/projects/{id}/registry` | Register, readiness snapshot, promote with gates, deploy metadata |
+| Secrets | `/projects/{id}/secrets` | Upsert/list/delete project secrets with encrypted storage |
+| Auth | `/auth` | Config, me, SSO flow, local login, user/member management |
+| Audit | `/audit` | Audit log listing |
 
 ---
 
 ## Production-Oriented Capabilities
 
-### 1. Auth, RBAC, and Audit
-- API-key based authentication with global roles: `admin`, `engineer`, `viewer`
-- **Local Fallback Auth**: If SSO/OIDC environment variables are not provided, the platform automatically falls back to a built-in Local Authentication mode using your API_KEY as the password.
-- Project-level memberships: `owner`, `editor`, `viewer`
-- Project-scoped authorization checks across API routes
-- HTTP audit logging for mutating API calls
-
-### 2. Generic Dataset Normalization
-- Works with heterogeneous source schemas from any domain
-- Optional `field_mapping` to map custom schema fields into canonical training keys
-- Heuristic fallback normalization for unknown schemas
-- Coverage diagnostics and dropped-record visibility during import/profile
-
-### 3. Dataset Profiling Before Training
-- `POST /api/projects/{project_id}/dataset/profile`
-- Inspect top fields, normalization coverage, text-length distribution, and sample previews
-- Profile raw documents directly or prepared datasets
-
-### 4. Evaluation with Deterministic + Provider Judge Modes
-- LLM-judge path supports:
-  - deterministic local fallback scoring
-  - optional OpenAI-compatible remote judge endpoint via env config
-- Bounded prediction payload handling and explicit request schema validation
-
-### 5. Strict Runtime Modes (No Silent Demo Fallbacks)
-- Ingestion and synthetic generation can be configured to fail fast instead of silently simulating data
-- Training runtime supports explicit backends: `simulate` (opt-in) and `external` command execution
-- Compression runtime supports explicit backends: `external` and `stub` (opt-in)
-- Startup schema checks fail when required tables are missing (unless local auto-create is enabled)
-- Optional startup migration gate verifies DB revision is at Alembic head
-
-### 6. Export Run Manifests for Release
-- Each export run produces a versioned `run-<timestamp>` directory
-- Manifest includes:
-  - run metadata
-  - experiment summary
-  - artifact checksums (SHA-256)
-- Root export manifest tracks latest run for backward compatibility
+- Strict runtime modes (no silent fallbacks unless explicitly enabled)
+- Alembic migration head enforcement (`DB_REQUIRE_ALEMBIC_HEAD=true`)
+- Queued background jobs with task-level status/cancel APIs
+- Real-time worker logs over Redis PubSub WebSockets
+- Dataset normalization for heterogeneous schemas
+- Export run packaging with checksums + versioned run directories
+- Model registry governance with promotion gating and regression checks
+- Project-level encrypted secret storage for connectors/providers
 
 ---
 
 ## Environment Configuration
 
-Common backend environment variables:
+Common backend env vars (see `backend/.env.example`):
+
+### Core and DB
 
 - `DATABASE_URL` (default: `sqlite+aiosqlite:///./data/slm_platform.db`)
-- `DB_AUTO_CREATE` (`true`/`false`, default `false`)
-- `ALLOW_SQLITE_AUTOCREATE` (`true`/`false`, default `true`)
-- `DB_REQUIRE_ALEMBIC_HEAD` (`true`/`false`, default `true`)
-- `ALEMBIC_CONFIG_FILE` (default `alembic.ini`)
-- `AUTH_ENABLED` (`true`/`false`)
+- `DB_AUTO_CREATE` (default: `false`)
+- `ALLOW_SQLITE_AUTOCREATE` (default: `true`)
+- `DB_REQUIRE_ALEMBIC_HEAD` (default: `true`)
+- `ALEMBIC_CONFIG_FILE` (default: `alembic.ini`)
+- `DATA_DIR`
+
+### Auth and security
+
+- `AUTH_ENABLED`
 - `AUTH_BOOTSTRAP_API_KEY`
 - `AUTH_BOOTSTRAP_USERNAME` (default: `admin`)
 - `AUTH_BOOTSTRAP_ROLE` (default: `admin`)
-- `AUDIT_LOG_ENABLED` (`true`/`false`)
-- `JUDGE_MODEL_API_URL` (optional, OpenAI-compatible endpoint)
-- `JUDGE_MODEL_API_KEY` (optional bearer token)
-- `ALLOW_SIMULATED_INGESTION_FALLBACK` (`true`/`false`, default `false`)
-- `ALLOW_SYNTHETIC_DEMO_FALLBACK` (`true`/`false`, default `false`)
+- `API_KEY` (used by local login password)
+- `JWT_SECRET`
+- `AUDIT_LOG_ENABLED`
+- `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_DISCOVERY_URL`
+- `SECRETS_ENCRYPTION_KEY` (optional; falls back to `JWT_SECRET` if unset)
+
+### Worker/broker
+
+- `REDIS_URL`
+- `CELERY_BROKER_URL`
+- `CELERY_RESULT_BACKEND`
+
+### Ingestion / synthetic / judge
+
+- `ALLOW_SIMULATED_INGESTION_FALLBACK`
+- `TEACHER_MODEL_API_URL`, `TEACHER_MODEL_API_KEY`
+- `ALLOW_SYNTHETIC_DEMO_FALLBACK`
+- `JUDGE_MODEL_API_URL`, `JUDGE_MODEL_API_KEY`
+
+### Training runtime
+
 - `TRAINING_BACKEND` (`simulate` or `external`)
-- `ALLOW_SIMULATED_TRAINING` (`true`/`false`, default `false`)
-- `TRAINING_EXTERNAL_CMD` (required when `TRAINING_BACKEND=external`)
+- `ALLOW_SIMULATED_TRAINING`
+- `TRAINING_EXTERNAL_CMD`
+
+### Compression runtime
+
 - `COMPRESSION_BACKEND` (`external` or `stub`)
-- `ALLOW_STUB_COMPRESSION` (`true`/`false`, default `false`)
-- `QUANTIZE_EXTERNAL_CMD`, `MERGE_LORA_EXTERNAL_CMD`, `BENCHMARK_EXTERNAL_CMD`
-- `EXTERNAL_COMMAND_TIMEOUT_SECONDS` (default `21600`)
+- `ALLOW_STUB_COMPRESSION`
+- `QUANTIZE_EXTERNAL_CMD`
+- `MERGE_LORA_EXTERNAL_CMD`
+- `BENCHMARK_EXTERNAL_CMD`
+- `EXTERNAL_COMMAND_TIMEOUT_SECONDS`
 
-When `AUTH_ENABLED=true`, set a bootstrap API key and call secured APIs with:
-- `x-api-key: <your-key>`
+---
 
-Example external training command template:
+## External Runtime Command Templates
+
+Example training command template:
 
 ```bash
 TRAINING_BACKEND=external
-TRAINING_EXTERNAL_CMD="python scripts/train.py --project {project_id} --experiment {experiment_id} --output {output_dir} --base-model {base_model} --config {config_path} --train-file {train_file} --val-file {val_file}"
+TRAINING_EXTERNAL_CMD='python "{backend_dir}/scripts/train.py" --project {project_id} --experiment {experiment_id} --output "{output_dir}" --base-model "{base_model}" --config "{config_path}" --train-file "{train_file}" --val-file "{val_file}"'
 ```
 
-`scripts/train.py` now performs real HuggingFace finetuning (not simulated) and expects:
-- `train.jsonl` from dataset split
-- `torch`, `transformers`, `datasets`, `accelerate`
-- optional `peft` for LoRA and `bitsandbytes` for 8-bit optimizer modes
+`backend/scripts/train.py` performs real HuggingFace Trainer fine-tuning and expects prepared split files (for example `train.jsonl`).
 
-Example external quantization command template:
+Example compression template:
 
 ```bash
 COMPRESSION_BACKEND=external
-QUANTIZE_EXTERNAL_CMD="python scripts/quantize.py --model {model_path} --bits {bits} --format {output_format} --out {output_model_path}"
+QUANTIZE_EXTERNAL_CMD='python "{backend_dir}/scripts/quantize.py" --project {project_id} --model "{model_path}" --bits {bits} --format {output_format} --out "{output_model_path}"'
 ```
+
+`backend/scripts/quantize.py` and `backend/scripts/benchmark.py` are starter external runtimes you can replace with your own production commands.
+
+---
 
 ## Database Migrations (Alembic)
 
-Use Alembic for production schema management:
+Run migrations:
 
 ```bash
 cd backend
 alembic upgrade head
 ```
 
-Create a new migration after model changes:
+Create a new migration:
 
 ```bash
 cd backend
@@ -200,7 +246,11 @@ alembic revision --autogenerate -m "describe change"
 alembic upgrade head
 ```
 
-From repo root, equivalent command:
+Current revisions:
+- `20260304_0001` baseline schema
+- `20260305_0002` model registry + project secrets
+
+From repo root:
 
 ```bash
 alembic -c backend/alembic.ini upgrade head
@@ -210,28 +260,46 @@ alembic -c backend/alembic.ini upgrade head
 
 ## Testing
 
+Backend unit tests:
+
 ```bash
 cd backend
-.venv/bin/python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
 ```
 
+Frontend production build check:
+
+```bash
+cd frontend
+npm run build
+```
+
+CI workflow (`.github/workflows/ci.yml`) runs backend tests and frontend build on pushes/PRs.
+
 ---
 
-## API Documentation
+## Repository Layout
 
-With backend running, visit:
-- **http://localhost:8000/docs**
-
----
-
-## CI
-
-GitHub Actions workflow is included at:
-- `.github/workflows/ci.yml`
-
-It validates:
-- backend unit tests
-- frontend production build (`npm run build`)
+```text
+__SLM__/
+├── backend/
+│   ├── app/
+│   │   ├── api/          # FastAPI routers
+│   │   ├── models/       # SQLAlchemy ORM models
+│   │   ├── schemas/      # Pydantic schemas
+│   │   ├── services/     # Business logic
+│   │   ├── pipeline/     # Stage orchestration
+│   │   └── utils/        # Parsers/helpers
+│   ├── alembic/          # DB migrations
+│   └── scripts/          # External runtime scripts
+├── frontend/src/
+│   ├── components/       # Pipeline and dashboard UI
+│   ├── pages/            # Login, project list, project detail
+│   ├── stores/           # Zustand state stores
+│   └── api/              # Axios client
+├── data/                 # Runtime data, artifacts, manifests
+└── docker-compose.yml
+```
 
 ---
 
