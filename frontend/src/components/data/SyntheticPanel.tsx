@@ -13,6 +13,46 @@ interface Chunk {
     selected?: boolean;
 }
 
+function extractErrorMessage(error: unknown): string {
+    if (typeof error === 'object' && error !== null) {
+        const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+        if (typeof detail === 'string' && detail.trim()) {
+            return detail;
+        }
+        if (Array.isArray(detail)) {
+            const messages = detail
+                .map((item) => {
+                    if (typeof item === 'string') {
+                        return item;
+                    }
+                    if (typeof item === 'object' && item !== null) {
+                        const msg = (item as { msg?: unknown }).msg;
+                        const loc = (item as { loc?: unknown }).loc;
+                        const locText = Array.isArray(loc) ? loc.join('.') : '';
+                        if (typeof msg === 'string' && msg.trim()) {
+                            return locText ? `${locText}: ${msg}` : msg;
+                        }
+                    }
+                    return '';
+                })
+                .filter((item) => item);
+            if (messages.length > 0) {
+                return messages.join('; ');
+            }
+        }
+        if (typeof detail === 'object' && detail !== null) {
+            const message = (detail as { message?: unknown }).message;
+            if (typeof message === 'string' && message.trim()) {
+                return message;
+            }
+        }
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return 'Generation failed. Check teacher model settings.';
+}
+
 export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanelProps) {
     type Provider = 'ollama' | 'openai' | 'custom';
     const [provider, setProvider] = useState<Provider>('ollama');
@@ -82,7 +122,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             });
             setGeneratedPairs(res.data.pairs || []);
         } catch (err: any) {
-            toast.error(err.response?.data?.detail || 'Generation failed. Check teacher model settings.');
+            toast.error(extractErrorMessage(err));
         } finally {
             setIsGenerating(false);
         }

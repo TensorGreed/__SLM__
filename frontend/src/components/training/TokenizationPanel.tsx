@@ -24,6 +24,59 @@ interface TokenStats {
     histogram: { bucket: string; count: number }[];
 }
 
+function toNumber(value: unknown, fallback = 0): number {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+    return fallback;
+}
+
+function normalizeTokenStats(raw: any, fallbackModelName: string): TokenStats {
+    const totalSamples = toNumber(raw?.total_samples ?? raw?.total_entries, 0);
+    const avgTokens = toNumber(raw?.avg_tokens ?? raw?.avg_length, 0);
+    const totalTokens = toNumber(raw?.total_tokens, Math.round(totalSamples * avgTokens));
+    const minTokens = toNumber(raw?.min_tokens ?? raw?.min_length, 0);
+    const maxTokens = toNumber(raw?.max_tokens ?? raw?.max_length, 0);
+    const p50Tokens = toNumber(raw?.p50_tokens ?? raw?.median_length, minTokens);
+    const p95Tokens = toNumber(raw?.p95_tokens, maxTokens || p50Tokens);
+    const p99Tokens = toNumber(raw?.p99_tokens, maxTokens || p95Tokens);
+    const exceedingMax = toNumber(raw?.exceeding_max ?? raw?.truncation_count, 0);
+    const maxSeqLength = toNumber(raw?.max_seq_length, 2048);
+
+    const histogram = Array.isArray(raw?.histogram)
+        ? raw.histogram.map((item: any) => ({
+            bucket: String(item?.bucket ?? ''),
+            count: toNumber(item?.count, 0),
+        }))
+        : (raw?.length_distribution && typeof raw.length_distribution === 'object')
+            ? Object.entries(raw.length_distribution).map(([bucket, count]) => ({
+                bucket,
+                count: toNumber(count, 0),
+            }))
+            : [];
+
+    return {
+        model_name: String(raw?.model_name || fallbackModelName),
+        total_samples: totalSamples,
+        total_tokens: totalTokens,
+        avg_tokens: avgTokens,
+        min_tokens: minTokens,
+        max_tokens: maxTokens,
+        p50_tokens: p50Tokens,
+        p95_tokens: p95Tokens,
+        p99_tokens: p99Tokens,
+        exceeding_max: exceedingMax,
+        max_seq_length: maxSeqLength,
+        histogram,
+    };
+}
+
 const MODEL_PRESETS = [
     { id: 'meta-llama/Llama-3.2-1B', label: 'Llama 3.2 1B' },
     { id: 'meta-llama/Llama-3.2-3B', label: 'Llama 3.2 3B' },
@@ -56,7 +109,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                 split,
                 max_seq_length: maxSeqLen,
             });
-            setStats(res.data);
+            setStats(normalizeTokenStats(res.data, modelName));
         } catch (err: any) {
             const msg = err?.response?.data?.detail || 'Analysis failed. Make sure you have split your dataset first.';
             alert(msg);
@@ -71,7 +124,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
             const res = await api.get(`/projects/${projectId}/tokenization/vocab-sample`, {
                 params: { model_name: modelName, sample_size: 200 },
             });
-            setVocab(res.data.tokens || []);
+            setVocab(res.data.tokens || res.data.sample || []);
         } catch {
             setVocab([]);
         } finally {
@@ -80,7 +133,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
     };
 
     const recommendedSeqLen = stats
-        ? Math.min(32768, Math.pow(2, Math.ceil(Math.log2(stats.p95_tokens))))
+        ? Math.min(32768, Math.pow(2, Math.ceil(Math.log2(Math.max(1, stats.p95_tokens)))))
         : null;
 
     const histogramColors = ['#6c5ce7', '#a855f7', '#c4a1f7'];

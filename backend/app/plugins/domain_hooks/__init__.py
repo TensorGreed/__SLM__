@@ -1,0 +1,1 @@
+"""Domain hook plugin namespace."""

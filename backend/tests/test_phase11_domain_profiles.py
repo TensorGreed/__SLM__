@@ -15,6 +15,7 @@ os.environ["AUTH_BOOTSTRAP_USERNAME"] = "phase11-admin"
 os.environ["AUTH_BOOTSTRAP_ROLE"] = "admin"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}"
 os.environ["DEBUG"] = "false"
+os.environ["DOMAIN_HOOK_PLUGIN_MODULES"] = '["app.plugins.domain_hooks.example_hooks"]'
 
 from fastapi.testclient import TestClient
 
@@ -94,6 +95,12 @@ def _sample_pack(
     batch_size: int = 8,
     train_ratio: float = 0.75,
     learning_rate: float = 0.0003,
+    normalizer_hook_id: str = "default-normalizer",
+    normalizer_hook_config: dict | None = None,
+    validator_hook_id: str = "default-validator",
+    validator_hook_config: dict | None = None,
+    evaluator_hook_id: str = "default-evaluator",
+    evaluator_hook_config: dict | None = None,
 ) -> dict:
     return {
         "$schema": "slm.domain-pack/v1",
@@ -104,6 +111,20 @@ def _sample_pack(
         "owner": "qa",
         "status": "active",
         "default_profile_id": default_profile_id,
+        "hooks": {
+            "normalizer": {
+                "id": normalizer_hook_id,
+                "config": normalizer_hook_config or {},
+            },
+            "validator": {
+                "id": validator_hook_id,
+                "config": validator_hook_config or {},
+            },
+            "evaluator": {
+                "id": evaluator_hook_id,
+                "config": evaluator_hook_config or {},
+            },
+        },
         "overlay": {
             "dataset_split": {"train": train_ratio, "val": 0.15, "test": 0.1, "seed": 77},
             "training_defaults": {
@@ -273,6 +294,115 @@ class Phase11DomainProfileTests(unittest.TestCase):
             0.00035,
             places=8,
         )
+
+    def test_domain_pack_hooks_catalog_and_eval_hook(self):
+        catalog = self.client.get("/api/domain-packs/hooks/catalog", headers=self.admin_headers)
+        self.assertEqual(catalog.status_code, 200, catalog.text)
+        catalog_payload = catalog.json()
+        self.assertIn("normalizers", catalog_payload)
+        self.assertIn("validators", catalog_payload)
+        self.assertIn("evaluators", catalog_payload)
+        self.assertIn("pass-rate-band-evaluator", catalog_payload.get("evaluators", {}))
+        self.assertIn("caps-normalizer", catalog_payload.get("normalizers", {}))
+        self.assertIn("target-ratio-validator", catalog_payload.get("validators", {}))
+        self.assertIn("confidence-band-evaluator", catalog_payload.get("evaluators", {}))
+        self.assertIn(
+            "app.plugins.domain_hooks.example_hooks",
+            catalog_payload.get("plugin_modules_loaded", []),
+        )
+
+        reload_resp = self.client.post(
+            "/api/domain-packs/hooks/reload",
+            headers=self.admin_headers,
+        )
+        self.assertEqual(reload_resp.status_code, 200, reload_resp.text)
+        reload_payload = reload_resp.json()
+        self.assertIn("reload", reload_payload)
+        self.assertIn("catalog", reload_payload)
+
+        create_profile = self.client.post(
+            "/api/domain-profiles",
+            headers=self.admin_headers,
+            json=_sample_contract("hooks-profile-v1", "Hooks Profile"),
+        )
+        self.assertEqual(create_profile.status_code, 201, create_profile.text)
+
+        create_pack = self.client.post(
+            "/api/domain-packs",
+            headers=self.admin_headers,
+            json=_sample_pack(
+                "hooks-pack-v1",
+                "Hooks Pack",
+                default_profile_id="hooks-profile-v1",
+                evaluator_hook_id="pass-rate-band-evaluator",
+                evaluator_hook_config={"high_threshold": 0.8, "medium_threshold": 0.6},
+                normalizer_hook_id="qa-required-normalizer",
+                normalizer_hook_config={"require_question": True, "require_answer": True},
+                validator_hook_id="min-text-length-validator",
+                validator_hook_config={"min_chars": 10},
+            ),
+        )
+        self.assertEqual(create_pack.status_code, 201, create_pack.text)
+        pack_db_id = create_pack.json()["id"]
+
+        create_project = self.client.post(
+            "/api/projects",
+            headers=self.admin_headers,
+            json={"name": "phase11-project-hooks", "description": "phase11", "domain_pack_id": pack_db_id},
+        )
+        self.assertEqual(create_project.status_code, 201, create_project.text)
+        project_id = create_project.json()["id"]
+
+        runtime = self.client.get(
+            f"/api/projects/{project_id}/domain-runtime",
+            headers=self.admin_headers,
+        )
+        self.assertEqual(runtime.status_code, 200, runtime.text)
+        runtime_payload = runtime.json()
+        self.assertEqual(runtime_payload.get("pack_hooks", {}).get("evaluator", {}).get("id"), "pass-rate-band-evaluator")
+        self.assertEqual(runtime_payload.get("pack_hooks", {}).get("normalizer", {}).get("id"), "qa-required-normalizer")
+        self.assertEqual(runtime_payload.get("pack_hooks", {}).get("validator", {}).get("id"), "min-text-length-validator")
+
+        profile_preview = self.client.post(
+            f"/api/projects/{project_id}/dataset/profile",
+            headers=self.admin_headers,
+            json={"dataset_type": "raw", "sample_size": 50},
+        )
+        self.assertEqual(profile_preview.status_code, 200, profile_preview.text)
+        profile_payload = profile_preview.json()
+        self.assertEqual(profile_payload.get("domain_hooks", {}).get("normalizer", {}).get("id"), "qa-required-normalizer")
+        self.assertEqual(profile_payload.get("domain_hooks", {}).get("validator", {}).get("id"), "min-text-length-validator")
+        self.assertEqual(profile_payload.get("validator_report", {}).get("hook_id"), "min-text-length-validator")
+
+        create_exp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            headers=self.admin_headers,
+            json={
+                "name": "phase11-hooks-exp",
+                "config": {"base_model": "microsoft/phi-2"},
+            },
+        )
+        self.assertEqual(create_exp.status_code, 201, create_exp.text)
+        experiment_id = create_exp.json()["id"]
+
+        run_eval = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run",
+            headers=self.admin_headers,
+            json={
+                "experiment_id": experiment_id,
+                "dataset_name": "unit",
+                "eval_type": "exact_match",
+                "predictions": [
+                    {"prediction": "A", "reference": "A"},
+                    {"prediction": "B", "reference": "C"},
+                ],
+            },
+        )
+        self.assertEqual(run_eval.status_code, 201, run_eval.text)
+        eval_payload = run_eval.json()
+        self.assertEqual(eval_payload.get("eval_type"), "exact_match")
+        self.assertEqual(eval_payload.get("metrics", {}).get("hook_evaluator_id"), "pass-rate-band-evaluator")
+        self.assertEqual(eval_payload.get("metrics", {}).get("quality_band"), "low")
 
     def test_duplicate_domain_profile_auto_versions(self):
         create_profile = self.client.post(

@@ -48,10 +48,20 @@ def _extract_pack_overlay(contract: dict | None) -> dict[str, Any]:
             "description",
             "owner",
             "status",
+            "hooks",
         }:
             cleaned.pop(reserved, None)
         return cleaned
     return {}
+
+
+def _extract_pack_hooks(contract: dict | None) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return {}
+    hooks = contract.get("hooks")
+    if not isinstance(hooks, dict):
+        return {}
+    return copy.deepcopy(hooks)
 
 
 async def _get_project(project_id: int, db: AsyncSession) -> Project | None:
@@ -132,6 +142,7 @@ async def resolve_project_domain_runtime(db: AsyncSession, project_id: int) -> d
     profile_contract = profile.contract if isinstance(profile.contract, dict) else {}
     pack_contract = pack.contract if isinstance(pack.contract, dict) else {}
     pack_overlay = _extract_pack_overlay(pack_contract)
+    pack_hooks = _extract_pack_hooks(pack_contract)
 
     effective_contract = _deep_merge(core_contract, profile_contract)
     effective_contract = _deep_merge(effective_contract, pack_overlay)
@@ -144,6 +155,7 @@ async def resolve_project_domain_runtime(db: AsyncSession, project_id: int) -> d
         "domain_profile_source": profile_source,
         "pack_default_profile_id": default_profile_id,
         "pack_overlay": pack_overlay or {},
+        "pack_hooks": pack_hooks or {},
         "effective_contract": effective_contract,
     }
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
+from app.services.domain_hook_service import apply_evaluator_hook, resolve_project_domain_hooks
 from app.services.record_normalization import canonicalize_record
 
 
@@ -174,12 +175,29 @@ async def run_evaluation(
             "failed": len(results) - passed,
         }
 
+    hook_state = await resolve_project_domain_hooks(db, project_id)
+    metrics = apply_evaluator_hook(
+        eval_type,
+        metrics,
+        hook_state.get("evaluator"),
+        context={
+            "project_id": project_id,
+            "experiment_id": experiment_id,
+            "dataset_name": dataset_name,
+        },
+    )
+
     eval_result = EvalResult(
         experiment_id=experiment_id,
         dataset_name=dataset_name,
         eval_type=eval_type,
         metrics=metrics,
         pass_rate=metrics.get("pass_rate") or metrics.get("exact_match") or metrics.get("f1"),
+        details={
+            "domain_pack_applied": hook_state.get("domain_pack_applied"),
+            "domain_profile_applied": hook_state.get("domain_profile_applied"),
+            "evaluator_hook_id": hook_state.get("evaluator", {}).get("id"),
+        },
     )
     db.add(eval_result)
     await db.flush()
@@ -798,6 +816,18 @@ async def evaluate_with_llm_judge(
         },
         "scored_predictions": scored_predictions[:50],  # Keep bounded payload size.
     }
+    hook_state = await resolve_project_domain_hooks(db, project_id)
+    metrics = apply_evaluator_hook(
+        "llm_judge",
+        metrics,
+        hook_state.get("evaluator"),
+        context={
+            "project_id": project_id,
+            "experiment_id": experiment_id,
+            "dataset_name": dataset_name,
+            "judge_model": judge_model,
+        },
+    )
 
     eval_result = EvalResult(
         experiment_id=experiment_id,
@@ -808,6 +838,9 @@ async def evaluate_with_llm_judge(
         details={
             "judge_model": judge_model,
             "judge_provider": metrics["judge_provider"],
+            "domain_pack_applied": hook_state.get("domain_pack_applied"),
+            "domain_profile_applied": hook_state.get("domain_profile_applied"),
+            "evaluator_hook_id": hook_state.get("evaluator", {}).get("id"),
         },
     )
 

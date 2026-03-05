@@ -50,6 +50,10 @@ class TokenizationServiceTests(unittest.TestCase):
             self.assertEqual(result["total_entries"], 2)
             self.assertIn("avg_length", result)
             self.assertIn("length_distribution", result)
+            self.assertEqual(result["model_name"], "test-model")
+            self.assertEqual(result["total_samples"], 2)
+            self.assertIn("p95_tokens", result)
+            self.assertIn("histogram", result)
             self.assertEqual(result["vocab_size"], 32000)
             self.assertEqual(result["truncation_count"], 0)
         finally:
@@ -72,6 +76,7 @@ class TokenizationServiceTests(unittest.TestCase):
             result = analyze_dataset_tokens(path, "test-model", max_seq_length=50)
             self.assertEqual(result["total_entries"], 1)
             self.assertEqual(result["truncation_count"], 1)
+            self.assertEqual(result["exceeding_max"], 1)
             self.assertGreater(result["truncation_percent"], 0)
         finally:
             Path(path).unlink(missing_ok=True)

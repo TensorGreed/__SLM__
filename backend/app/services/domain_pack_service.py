@@ -23,6 +23,11 @@ DEFAULT_DOMAIN_PACK_CONTRACT = {
     "status": "active",
     "default_profile_id": "generic-domain-v1",
     "tags": ["general", "fallback"],
+    "hooks": {
+        "normalizer": {"id": "default-normalizer", "config": {}},
+        "validator": {"id": "default-validator", "config": {}},
+        "evaluator": {"id": "default-evaluator", "config": {}},
+    },
     "overlay": {
         "dataset_split": {
             "train": 0.8,
@@ -213,5 +218,22 @@ async def ensure_default_domain_pack(db: AsyncSession) -> DomainPack:
     contract = DomainPackContract.model_validate(DEFAULT_DOMAIN_PACK_CONTRACT)
     existing = await get_domain_pack(db, contract.pack_id)
     if existing:
+        existing_contract = existing.contract if isinstance(existing.contract, dict) else {}
+        if not isinstance(existing_contract.get("hooks"), dict):
+            patched = copy.deepcopy(existing_contract)
+            patched.setdefault("$schema", existing.schema_ref or "slm.domain-pack/v1")
+            patched.setdefault("pack_id", existing.pack_id)
+            patched.setdefault("version", existing.version)
+            patched.setdefault("display_name", existing.display_name)
+            patched.setdefault("description", existing.description or "")
+            patched.setdefault("owner", existing.owner or "platform")
+            patched.setdefault("status", existing.status.value)
+            patched.setdefault("default_profile_id", existing.default_profile_id)
+            patched.setdefault("overlay", {})
+            patched["hooks"] = copy.deepcopy(DEFAULT_DOMAIN_PACK_CONTRACT["hooks"])
+            normalized = DomainPackContract.model_validate(patched)
+            _hydrate_pack_from_contract(existing, normalized, is_system=existing.is_system)
+            await db.flush()
+            await db.refresh(existing)
         return existing
     return await create_domain_pack(db, contract, is_system=True)

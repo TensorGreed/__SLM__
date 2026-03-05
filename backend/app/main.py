@@ -31,6 +31,7 @@ from app.api.secrets import router as secrets_router
 from app.api.domain_packs import router as domain_packs_router
 from app.api.domain_profiles import router as domain_profiles_router
 from app.services.domain_pack_service import ensure_default_domain_pack
+from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
 
 
@@ -38,6 +39,7 @@ from app.services.domain_profile_service import ensure_default_domain_profile
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     settings.ensure_dirs()
+    load_hook_plugins_from_settings()
     await init_db()
     await ensure_bootstrap_auth()
     async with async_session_factory() as db:

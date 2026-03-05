@@ -13,6 +13,11 @@ from app.schemas.domain_pack import (
     DomainPackSummaryResponse,
 )
 from app.security import get_request_principal
+from app.services.domain_hook_service import (
+    clear_plugin_hooks,
+    list_domain_hook_catalog,
+    load_hook_plugins_from_settings,
+)
 from app.services.domain_pack_service import (
     create_domain_pack,
     duplicate_domain_pack,
@@ -43,6 +48,26 @@ async def list_packs(
     return {
         "packs": [DomainPackSummaryResponse.model_validate(item) for item in packs],
         "count": len(packs),
+    }
+
+
+@router.get("/hooks/catalog")
+async def hooks_catalog():
+    """List available normalizer/validator/evaluator hook IDs and plugin status."""
+    return list_domain_hook_catalog()
+
+
+@router.post("/hooks/reload")
+async def reload_hooks(
+    request: Request,
+):
+    """Reload domain hook plugins configured in settings."""
+    _require_pack_write_access(request)
+    clear_plugin_hooks()
+    load_result = load_hook_plugins_from_settings(force_reload=True)
+    return {
+        "reload": load_result,
+        "catalog": list_domain_hook_catalog(),
     }
 
 

@@ -21,6 +21,12 @@ interface ProfileResult {
     };
     sample_records: Record<string, unknown>[];
     normalized_preview: Record<string, unknown>[];
+    domain_hooks?: {
+        normalizer?: { id?: string };
+        validator?: { id?: string };
+        evaluator?: { id?: string };
+    };
+    validator_report?: Record<string, unknown>;
 }
 
 interface SplitManifest {
@@ -367,6 +373,25 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 </div>
                             </>
                         )}
+
+                        <div className="dp-resolved-panel" style={{ marginTop: '1rem' }}>
+                            <div className="dp-resolved-title">Hook Validation</div>
+                            <div className="dp-resolved-kv">
+                                <span>Normalizer Hook</span>
+                                <strong>{profile.domain_hooks?.normalizer?.id || 'default-normalizer'}</strong>
+                            </div>
+                            <div className="dp-resolved-kv">
+                                <span>Validator Hook</span>
+                                <strong>{profile.domain_hooks?.validator?.id || 'default-validator'}</strong>
+                            </div>
+                            <div className="dp-resolved-kv">
+                                <span>Evaluator Hook</span>
+                                <strong>{profile.domain_hooks?.evaluator?.id || 'default-evaluator'}</strong>
+                            </div>
+                            <pre className="dp-resolved-json">
+                                {JSON.stringify(profile.validator_report || {}, null, 2)}
+                            </pre>
+                        </div>
                     </>
                 )}
             </div>

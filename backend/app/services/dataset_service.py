@@ -15,6 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
+from app.services.domain_hook_service import (
+    apply_normalizer_hook,
+    resolve_project_domain_hooks,
+    run_validator_hook,
+)
 from app.services.record_normalization import (
     build_schema_profile,
     canonicalize_record,
@@ -120,10 +125,12 @@ def _normalize_rows_for_training(
     rows: list[dict[str, Any]],
     source_dataset: DatasetType,
     chat_template: str,
+    normalizer_hook_spec: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_entries: list[dict[str, Any]] = []
     for row in rows:
         canonical = canonicalize_record(row)
+        canonical = apply_normalizer_hook(row, canonical, normalizer_hook_spec)
         if not canonical:
             continue
 
@@ -153,6 +160,13 @@ async def combine_datasets(
     default_types = [DatasetType.CLEANED, DatasetType.SYNTHETIC, DatasetType.GOLD_DEV]
     if include_types is None:
         include_types = default_types
+
+    normalizer_hook_spec: dict[str, Any] | None = None
+    try:
+        hook_state = await resolve_project_domain_hooks(db, project_id)
+        normalizer_hook_spec = hook_state.get("normalizer")
+    except ValueError:
+        normalizer_hook_spec = None
 
     all_entries: list[dict[str, Any]] = []
 
@@ -188,7 +202,12 @@ async def combine_datasets(
             for doc in docs:
                 doc_path = Path(doc.file_path)
                 rows = _load_records_from_file(doc_path)
-                normalized = _normalize_rows_for_training(rows, ds.dataset_type, chat_template)
+                normalized = _normalize_rows_for_training(
+                    rows,
+                    ds.dataset_type,
+                    chat_template,
+                    normalizer_hook_spec=normalizer_hook_spec,
+                )
                 for entry in normalized:
                     entry["_source_document_id"] = doc.id
                     entry["_source_document"] = doc.filename
@@ -199,7 +218,12 @@ async def combine_datasets(
             continue
         path = Path(ds.file_path)
         rows = _load_records_from_file(path)
-        normalized = _normalize_rows_for_training(rows, ds.dataset_type, chat_template)
+        normalized = _normalize_rows_for_training(
+            rows,
+            ds.dataset_type,
+            chat_template,
+            normalizer_hook_spec=normalizer_hook_spec,
+        )
         all_entries.extend(normalized)
 
     return all_entries
@@ -338,6 +362,10 @@ async def profile_project_dataset(
     field_mapping: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create schema/profile diagnostics for a project dataset."""
+    hook_state = await resolve_project_domain_hooks(db, project_id)
+    normalizer_hook_spec = hook_state.get("normalizer")
+    validator_hook_spec = hook_state.get("validator")
+
     if dataset_type == DatasetType.RAW:
         records: list[dict[str, Any]] = []
         source: dict[str, Any] = {"dataset_type": dataset_type.value}
@@ -406,11 +434,23 @@ async def profile_project_dataset(
         }
 
     profile = build_schema_profile(records, field_mapping=field_mapping)
-    normalized_preview = _normalize_rows_for_training(records[:20], dataset_type, chat_template="llama3")
+    normalized_for_validation = _normalize_rows_for_training(
+        records,
+        dataset_type,
+        chat_template="llama3",
+        normalizer_hook_spec=normalizer_hook_spec,
+    )
+    validator_report = run_validator_hook(
+        normalized_for_validation,
+        base_profile=profile,
+        hook_spec=validator_hook_spec,
+    )
 
     return {
         "source": source,
         "profile": profile,
+        "domain_hooks": hook_state,
+        "validator_report": validator_report,
         "sample_records": records[:5],
-        "normalized_preview": normalized_preview[:5],
+        "normalized_preview": normalized_for_validation[:5],
     }

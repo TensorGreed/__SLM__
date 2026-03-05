@@ -10,6 +10,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Project Secrets** APIs with masked listing and encrypted-at-rest values.
 - Added **Domain Profiles** with a typed contract and project-level assignment.
 - Added **Domain Packs** (pluggable overlays + default profile pointer) with project-level assignment.
+- Added **Domain Pack Hooks** for custom normalizers, validators, and evaluators.
 - Added **Domain Profile Manager UI** (list/create/edit/assign) in project detail and profile selection during project creation.
 - Added **Domain Pack Manager UI** (list/create/edit/assign) in project detail and pack selection during project creation.
 - Added runtime transparency in split/training responses (applied profile + resolved defaults).
@@ -86,6 +87,27 @@ npm run dev
 
 With backend running, visit: `http://localhost:8000/docs`
 
+### 6. Synthetic Generation with Ollama
+
+Use these defaults in the **Synthetic** tab:
+
+- Provider: `Local (Ollama)`
+- API URL: `http://localhost:11434/v1/chat/completions`
+- Model: `llama3.1:latest` (or any installed Ollama chat model)
+
+Quick checks:
+
+```bash
+ollama serve
+ollama list
+```
+
+If you see `Teacher model response was not valid JSON for Q&A extraction`:
+
+- Update to the latest backend code (parser now tolerates fenced/wrapped JSON and `Q:/A:` text).
+- Keep `Pairs to Generate` small at first (`3-8`) and start with a smaller source selection.
+- Ensure the model is available locally (`ollama list`) and the API URL is reachable from backend host.
+
 ---
 
 ## Optional Docker Compose
@@ -130,7 +152,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Domain | Route Prefix | Key Capabilities |
 |---|---|---|
 | Projects | `/projects` | CRUD, stats, base model metadata |
-| Domain Packs | `/domain-packs` | Create/list/get/update pack overlays |
+| Domain Packs | `/domain-packs` | Create/list/get/update pack overlays, hook catalog/reload |
 | Domain Profiles | `/domain-profiles` | Create/list/get/update contract profiles |
 | Pipeline | `/projects/{id}/pipeline` | Stage status, advance, rollback |
 | Ingestion | `/projects/{id}/ingestion` | Upload/batch upload, remote import (sync + queued), document lifecycle, job status/cancel, WS logs |
@@ -161,6 +183,7 @@ Domain packs and profiles are runtime primitives. The system always resolves an 
 - New projects auto-attach to the selected pack's default profile when available, otherwise fall back to `generic-domain-v1`.
 - You can inspect resolved runtime contract:
   - `GET /api/projects/{project_id}/domain-runtime`
+  - Response includes `pack_hooks` and merged `effective_contract`.
 - You can re-assign pack and profile per project:
   - `PUT /api/projects/{project_id}/domain-pack` with `{ "pack_id": "...", "adopt_pack_default_profile": true }`
   - `PUT /api/projects/{project_id}/domain-profile` with `{ "profile_id": "..." }`
@@ -170,6 +193,10 @@ Domain packs and profiles are runtime primitives. The system always resolves an 
   3. Domain pack overlay (project pack -> platform default pack)
 - Server-side pack duplication:
   - `POST /api/domain-packs/{pack_id}/duplicate`
+- Hook catalog:
+  - `GET /api/domain-packs/hooks/catalog`
+- Hook plugin reload (admin/engineer):
+  - `POST /api/domain-packs/hooks/reload`
 - Server-side duplication:
   - `POST /api/domain-profiles/{profile_id}/duplicate`
   - Auto-generates next `profile_id`/`version` unless explicitly overridden in request body.
@@ -182,6 +209,11 @@ Domain packs and profiles are runtime primitives. The system always resolves an 
   "version": "1.0.0",
   "display_name": "General Domain Pack",
   "default_profile_id": "generic-domain-v1",
+  "hooks": {
+    "normalizer": { "id": "default-normalizer", "config": {} },
+    "validator": { "id": "default-validator", "config": {} },
+    "evaluator": { "id": "default-evaluator", "config": {} }
+  },
   "overlay": {
     "dataset_split": { "train": 0.8, "val": 0.1, "test": 0.1, "seed": 42 },
     "training_defaults": { "training_mode": "sft", "chat_template": "llama3" },
@@ -192,8 +224,24 @@ Domain packs and profiles are runtime primitives. The system always resolves an 
   }
 }
 ```
+
+- Built-in hook IDs (initial set):
+  - normalizers: `default-normalizer`, `qa-required-normalizer`, `min-text-length-normalizer`, `strip-markdown-normalizer`
+  - validators: `default-validator`, `min-text-length-validator`, `qa-pair-validator`
+  - evaluators: `default-evaluator`, `pass-rate-band-evaluator`, `weighted-score-evaluator`
+- External/plugin hooks:
+  - Configure `DOMAIN_HOOK_PLUGIN_MODULES` with Python module paths.
+  - On startup, modules are imported and any exported hooks are registered.
+  - Catalog response includes plugin load status and load errors.
+  - Example module: `app.plugins.domain_hooks.example_hooks`.
+  - Module can expose either:
+    - `register_domain_hooks(register)` callback API
+    - `get_domain_hooks()` returning `{ normalizers, validators, evaluators }`
+    - or constants `NORMALIZER_HOOKS` / `VALIDATOR_HOOKS` / `EVALUATOR_HOOKS`
 - Frontend wiring:
   - Project detail page exposes Domain Pack Manager to list/create/edit/assign pack contracts.
+  - Domain Pack Manager includes Hook Catalog view and "Reload Plugins" action for runtime hook operations.
+  - Domain Pack contract editor includes a Hook Helper to load/apply hook IDs into `hooks.normalizer|validator|evaluator`.
   - Project detail page exposes Domain Profile Manager to list/create/edit/assign contracts.
   - Selected pack can be duplicated as a new version and opened immediately in the editor.
   - Selected profile can be duplicated as a new version (server-generated ID/version, default status `draft`) and opened immediately in the editor.
@@ -216,6 +264,14 @@ Current enforced behavior:
     - `profile_split_defaults`
     - `resolved_split_config`
     - `profile_defaults_applied`
+- Dataset profile diagnostics:
+  - `POST /api/projects/{project_id}/dataset/profile`
+  - Response now includes:
+    - `domain_hooks`
+    - `validator_report`
+- Cleaning behavior:
+  - Remote-imported structured documents (`jsonl/json/csv`) can be cleaned directly.
+  - If `.extracted.txt` is missing, cleaning will synthesize extractable text from structured rows.
 - Training experiment defaults:
   - `POST /api/projects/{project_id}/training/experiments`
   - `POST /api/projects/{project_id}/training/experiments/effective-config` previews resolved config pre-create.
@@ -228,10 +284,18 @@ Current enforced behavior:
     - `profile_training_defaults`
     - `resolved_training_config`
     - `profile_defaults_applied`
+- Evaluation hook application:
+  - `POST /api/projects/{project_id}/evaluation/run`
+  - `POST /api/projects/{project_id}/evaluation/llm-judge`
+  - Metrics are post-processed by the active pack evaluator hook (for example adds `quality_band`).
 - Registry promotion gates:
   - `POST /api/projects/{project_id}/registry/models/{model_id}/promote`
   - Gate defaults are pulled from resolved runtime `registry_gates.to_staging` / `registry_gates.to_production`.
   - Explicit request `gates` still override profile/default values.
+
+Remote import request notes:
+- `source_type` accepts `huggingface`, `kaggle`, `url` (also normalizes `hf` and minor formatting variants).
+- `max_samples <= 0` is treated as omitted/default instead of failing request validation.
 
 ## Production-Oriented Capabilities
 
@@ -254,6 +318,7 @@ Common backend env vars (see `backend/.env.example`):
 ### Core and DB
 
 - `DATABASE_URL` (default: `sqlite+aiosqlite:///./data/slm_platform.db`)
+  - If using SQLite, prefer an absolute path if you launch `uvicorn` from different directories.
 - `DB_AUTO_CREATE` (default: `false`)
 - `ALLOW_SQLITE_AUTOCREATE` (default: `true`)
 - `DB_REQUIRE_ALEMBIC_HEAD` (default: `true`)
@@ -299,6 +364,11 @@ Common backend env vars (see `backend/.env.example`):
 - `MERGE_LORA_EXTERNAL_CMD`
 - `BENCHMARK_EXTERNAL_CMD`
 - `EXTERNAL_COMMAND_TIMEOUT_SECONDS`
+
+### Domain hook plugins
+
+- `DOMAIN_HOOK_PLUGIN_MODULES` (JSON array of Python module paths)
+- Example: `["app.plugins.domain_hooks.example_hooks"]`
 
 ---
 

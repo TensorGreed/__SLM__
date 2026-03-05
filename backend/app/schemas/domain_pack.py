@@ -26,6 +26,36 @@ class DomainPackOverlaySpec(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class DomainPackHookSpec(BaseModel):
+    hook_id: str = Field(default="", alias="id")
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {
+        "populate_by_name": True,
+        "extra": "allow",
+    }
+
+    @field_validator("hook_id")
+    @classmethod
+    def normalize_hook_id(cls, value: str) -> str:
+        token = _normalize_token(value)
+        return token
+
+
+class DomainPackHooksSpec(BaseModel):
+    normalizer: DomainPackHookSpec = Field(
+        default_factory=lambda: DomainPackHookSpec.model_validate({"id": "default-normalizer"})
+    )
+    validator: DomainPackHookSpec = Field(
+        default_factory=lambda: DomainPackHookSpec.model_validate({"id": "default-validator"})
+    )
+    evaluator: DomainPackHookSpec = Field(
+        default_factory=lambda: DomainPackHookSpec.model_validate({"id": "default-evaluator"})
+    )
+
+    model_config = {"extra": "allow"}
+
+
 class DomainPackContract(BaseModel):
     schema_ref: str = Field(default="slm.domain-pack/v1", alias="$schema")
     pack_id: str = Field(..., min_length=3, max_length=128)
@@ -37,6 +67,7 @@ class DomainPackContract(BaseModel):
     default_profile_id: str | None = Field(default=None, min_length=3, max_length=128)
     tags: list[str] = Field(default_factory=list)
     overlay: DomainPackOverlaySpec = Field(default_factory=DomainPackOverlaySpec)
+    hooks: DomainPackHooksSpec = Field(default_factory=DomainPackHooksSpec)
 
     model_config = {
         "populate_by_name": True,

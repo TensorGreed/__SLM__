@@ -2,7 +2,11 @@
 
 from pathlib import Path
 from typing import Optional
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -21,8 +25,8 @@ class Settings(BaseSettings):
     AUDIT_LOG_ENABLED: bool = True
 
     # ── Paths ───────────────────────────────────────────────────────────
-    DATA_DIR: Path = Path(__file__).resolve().parent.parent.parent / "data"
-    MODEL_CACHE_DIR: Path = Path(__file__).resolve().parent.parent.parent / "data" / "models"
+    DATA_DIR: Path = PROJECT_ROOT / "data"
+    MODEL_CACHE_DIR: Path = PROJECT_ROOT / "data" / "models"
 
     # ── Database ────────────────────────────────────────────────────────
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/slm_platform.db"
@@ -97,7 +101,39 @@ class Settings(BaseSettings):
     # ── Process Runtime Controls ────────────────────────────────────────
     EXTERNAL_COMMAND_TIMEOUT_SECONDS: int = 21600
 
+    # ── Domain Hook Plugins ─────────────────────────────────────────────
+    # Example:
+    # DOMAIN_HOOK_PLUGIN_MODULES='["app.plugins.domain_hooks.example_hooks"]'
+    DOMAIN_HOOK_PLUGIN_MODULES: list[str] = []
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+    @model_validator(mode="after")
+    def normalize_paths(self) -> "Settings":
+        """Normalize filesystem-backed settings for consistent behavior across CWDs."""
+        self.DATA_DIR = Path(self.DATA_DIR).expanduser().resolve()
+        self.MODEL_CACHE_DIR = Path(self.MODEL_CACHE_DIR).expanduser().resolve()
+        self.DATABASE_URL = self._normalize_sqlite_database_url(self.DATABASE_URL)
+        return self
+
+    def _normalize_sqlite_database_url(self, value: str) -> str:
+        for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+            if not value.startswith(prefix):
+                continue
+
+            path_and_query = value[len(prefix):]
+            path_part, sep, query_part = path_and_query.partition("?")
+
+            # Already absolute: sqlite+aiosqlite:////abs/path.db
+            if path_part.startswith("/"):
+                return value
+
+            absolute_path = (PROJECT_ROOT / path_part).resolve()
+            normalized = f"{prefix}{absolute_path.as_posix()}"
+            if sep:
+                normalized = f"{normalized}?{query_part}"
+            return normalized
+        return value
 
     def ensure_dirs(self) -> None:
         """Create required data directories."""
