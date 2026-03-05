@@ -1,14 +1,19 @@
 """Evaluation framework service — metrics, safety, regression comparison."""
 
+import asyncio
 import json
 import re
+from pathlib import Path
+from time import perf_counter
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
+from app.services.record_normalization import canonicalize_record
 
 
 async def _get_experiment_for_project(
@@ -181,6 +186,405 @@ async def run_evaluation(
     await db.refresh(eval_result)
 
     return eval_result
+
+
+def _resolve_dataset_alias(dataset_name: str) -> set[DatasetType]:
+    key = dataset_name.strip().lower()
+    aliases: dict[str, set[DatasetType]] = {
+        "heldout": {DatasetType.TEST, DatasetType.GOLD_TEST, DatasetType.VALIDATION},
+        "test": {DatasetType.TEST, DatasetType.GOLD_TEST},
+        "gold_test": {DatasetType.GOLD_TEST},
+        "validation": {DatasetType.VALIDATION, DatasetType.GOLD_DEV},
+        "val": {DatasetType.VALIDATION, DatasetType.GOLD_DEV},
+        "gold_dev": {DatasetType.GOLD_DEV},
+        "train": {DatasetType.TRAIN},
+    }
+    if key in aliases:
+        return aliases[key]
+    try:
+        return {DatasetType(key)}
+    except ValueError:
+        return set()
+
+
+async def _resolve_heldout_dataset(
+    db: AsyncSession,
+    project_id: int,
+    dataset_name: str,
+) -> Dataset:
+    result = await db.execute(
+        select(Dataset)
+        .where(Dataset.project_id == project_id)
+        .order_by(Dataset.updated_at.desc())
+    )
+    datasets = list(result.scalars().all())
+    if not datasets:
+        raise ValueError(f"No datasets found in project {project_id}")
+
+    requested = dataset_name.strip().lower()
+    alias_types = _resolve_dataset_alias(dataset_name)
+
+    if alias_types:
+        for ds in datasets:
+            if ds.dataset_type in alias_types and ds.file_path:
+                return ds
+
+    for ds in datasets:
+        if ds.name.strip().lower() == requested and ds.file_path:
+            return ds
+        if ds.dataset_type.value == requested and ds.file_path:
+            return ds
+
+    raise ValueError(
+        f"Dataset '{dataset_name}' not found in project {project_id}. "
+        "Provide a dataset type (test/validation/gold_test) or an existing dataset name."
+    )
+
+
+def _load_eval_rows(file_path: Path) -> list[dict]:
+    if not file_path.exists():
+        raise FileNotFoundError(f"Held-out dataset file not found: {file_path}")
+
+    rows: list[dict] = []
+    suffix = file_path.suffix.lower()
+    if suffix == ".jsonl":
+        for line in file_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+        return rows
+
+    if suffix == ".json":
+        payload = json.loads(file_path.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, dict):
+            return [payload]
+        return []
+
+    for line in file_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        text = line.strip()
+        if text:
+            rows.append({"prompt": text, "reference": ""})
+    return rows
+
+
+def _extract_prompt_and_reference(row: dict) -> tuple[str, str]:
+    prompt = str(row.get("prompt") or row.get("question") or row.get("instruction") or "").strip()
+    reference = str(
+        row.get("reference")
+        or row.get("answer")
+        or row.get("completion")
+        or row.get("output")
+        or row.get("response")
+        or ""
+    ).strip()
+
+    if not prompt or not reference:
+        canonical = canonicalize_record(row)
+        if canonical:
+            if not prompt:
+                prompt = str(canonical.get("question") or "").strip()
+            if not reference:
+                reference = str(canonical.get("answer") or "").strip()
+
+    return prompt, reference
+
+
+def _load_heldout_pairs(dataset_path: Path, max_samples: int) -> list[dict]:
+    rows = _load_eval_rows(dataset_path)
+    sample_cap = max(1, max_samples)
+    pairs: list[dict] = []
+    for idx, row in enumerate(rows):
+        prompt, reference = _extract_prompt_and_reference(row)
+        if not prompt or not reference:
+            continue
+        pairs.append(
+            {
+                "prompt": prompt,
+                "reference": reference,
+                "_row_index": idx,
+            }
+        )
+        if len(pairs) >= sample_cap:
+            break
+    return pairs
+
+
+def _resolve_model_reference(experiment: Experiment, override_model_path: str | None) -> str:
+    if override_model_path:
+        supplied = Path(override_model_path).expanduser()
+        return str(supplied.resolve()) if supplied.exists() else override_model_path
+
+    if not experiment.output_dir:
+        raise ValueError("Experiment output directory is not set; cannot locate model artifacts")
+
+    output_dir = Path(experiment.output_dir).expanduser()
+    model_dir = output_dir / "model"
+    if model_dir.exists() and model_dir.is_dir():
+        return str(model_dir.resolve())
+    if output_dir.exists():
+        return str(output_dir.resolve())
+
+    raise ValueError(
+        f"Experiment model artifacts not found at {output_dir}. "
+        "Train the experiment first or pass model_path explicitly."
+    )
+
+
+def _run_transformers_inference(
+    model_ref: str,
+    pairs: list[dict],
+    max_new_tokens: int,
+    temperature: float,
+) -> tuple[list[dict], dict]:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    load_started = perf_counter()
+    tokenizer = AutoTokenizer.from_pretrained(model_ref, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token:
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
+
+    use_cuda = torch.cuda.is_available()
+    model_kwargs: dict = {"trust_remote_code": True}
+    if use_cuda and torch.cuda.is_bf16_supported():
+        model_kwargs["torch_dtype"] = torch.bfloat16
+    elif use_cuda:
+        model_kwargs["torch_dtype"] = torch.float16
+
+    model = AutoModelForCausalLM.from_pretrained(model_ref, **model_kwargs)
+    if len(tokenizer) > model.get_input_embeddings().num_embeddings:
+        model.resize_token_embeddings(len(tokenizer))
+    if use_cuda:
+        model = model.to("cuda")
+    model.eval()
+    load_seconds = perf_counter() - load_started
+
+    predictions: list[dict] = []
+    latencies_s: list[float] = []
+    generated_tokens_total = 0
+    generation_started = perf_counter()
+    for row in pairs:
+        prompt = row["prompt"]
+        reference = row["reference"]
+
+        inputs = tokenizer(prompt, return_tensors="pt")
+        if use_cuda:
+            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+        prompt_tokens = int(inputs["input_ids"].shape[-1])
+        started = perf_counter()
+        with torch.inference_mode():
+            output_ids = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature if temperature > 0 else 1.0,
+                do_sample=temperature > 0,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+        elapsed = perf_counter() - started
+        latencies_s.append(elapsed)
+
+        generated = output_ids[0][prompt_tokens:]
+        generated_tokens = int(generated.shape[-1])
+        generated_tokens_total += generated_tokens
+        prediction = tokenizer.decode(generated, skip_special_tokens=True).strip()
+        predictions.append(
+            {
+                "prompt": prompt,
+                "reference": reference,
+                "prediction": prediction,
+                "generated_tokens": generated_tokens,
+                "latency_ms": round(elapsed * 1000, 3),
+            }
+        )
+
+    total_generation_seconds = perf_counter() - generation_started
+    latency_ms = [v * 1000 for v in latencies_s]
+    avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
+    token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
+    runtime = {
+        "engine": "transformers",
+        "device": "cuda" if use_cuda else "cpu",
+        "dtype": str(getattr(model, "dtype", "unknown")),
+        "model_load_seconds": round(load_seconds, 3),
+        "generation_seconds": round(total_generation_seconds, 3),
+        "average_latency_ms": round(avg_latency_ms, 3),
+        "token_throughput_tps": round(token_tps, 3),
+        "total_generated_tokens": generated_tokens_total,
+    }
+    return predictions, runtime
+
+
+def _run_llama_cpp_inference(
+    model_ref: str,
+    pairs: list[dict],
+    max_new_tokens: int,
+    temperature: float,
+) -> tuple[list[dict], dict]:
+    from llama_cpp import Llama
+
+    load_started = perf_counter()
+    llm = Llama(model_path=model_ref, n_ctx=4096)
+    load_seconds = perf_counter() - load_started
+
+    predictions: list[dict] = []
+    latencies_s: list[float] = []
+    generated_tokens_total = 0
+    generation_started = perf_counter()
+    for row in pairs:
+        prompt = row["prompt"]
+        reference = row["reference"]
+        started = perf_counter()
+        output = llm(prompt, max_tokens=max_new_tokens, temperature=temperature)
+        elapsed = perf_counter() - started
+        latencies_s.append(elapsed)
+
+        choice = output.get("choices", [{}])[0]
+        usage = output.get("usage", {})
+        generated_tokens = int(usage.get("completion_tokens", 0))
+        generated_tokens_total += generated_tokens
+        predictions.append(
+            {
+                "prompt": prompt,
+                "reference": reference,
+                "prediction": str(choice.get("text", "")).strip(),
+                "generated_tokens": generated_tokens,
+                "latency_ms": round(elapsed * 1000, 3),
+            }
+        )
+
+    total_generation_seconds = perf_counter() - generation_started
+    latency_ms = [v * 1000 for v in latencies_s]
+    avg_latency_ms = (sum(latency_ms) / len(latency_ms)) if latency_ms else 0.0
+    token_tps = generated_tokens_total / total_generation_seconds if total_generation_seconds > 0 else 0.0
+    runtime = {
+        "engine": "llama_cpp",
+        "device": "cpu",
+        "dtype": "gguf",
+        "model_load_seconds": round(load_seconds, 3),
+        "generation_seconds": round(total_generation_seconds, 3),
+        "average_latency_ms": round(avg_latency_ms, 3),
+        "token_throughput_tps": round(token_tps, 3),
+        "total_generated_tokens": generated_tokens_total,
+    }
+    return predictions, runtime
+
+
+def _run_local_inference(
+    model_ref: str,
+    pairs: list[dict],
+    max_new_tokens: int,
+    temperature: float,
+) -> tuple[list[dict], dict]:
+    model_path = Path(model_ref).expanduser()
+    if model_path.exists() and model_path.suffix.lower() == ".gguf":
+        return _run_llama_cpp_inference(model_ref, pairs, max_new_tokens, temperature)
+    return _run_transformers_inference(model_ref, pairs, max_new_tokens, temperature)
+
+
+async def run_heldout_evaluation(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+    dataset_name: str = "test",
+    eval_type: str = "exact_match",
+    max_samples: int = 100,
+    max_new_tokens: int = 128,
+    temperature: float = 0.0,
+    model_path: str | None = None,
+    judge_model: str = "meta-llama/Meta-Llama-3-70B-Instruct",
+) -> EvalResult:
+    """Run end-to-end evaluation by generating predictions on held-out data."""
+    supported = {"exact_match", "f1", "llm_judge"}
+    if eval_type not in supported:
+        raise ValueError(f"Unsupported eval_type '{eval_type}'. Use one of: {', '.join(sorted(supported))}")
+
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
+    dataset = await _resolve_heldout_dataset(db, project_id, dataset_name)
+    if not dataset.file_path:
+        raise ValueError(f"Dataset '{dataset.name}' has no file path")
+    dataset_path = Path(dataset.file_path).expanduser().resolve()
+    pairs = _load_heldout_pairs(dataset_path, max_samples=max_samples)
+    if not pairs:
+        raise ValueError(
+            f"No valid evaluation rows found in {dataset_path}. "
+            "Rows must include prompt/question and reference/answer fields."
+        )
+
+    model_ref = _resolve_model_reference(exp, model_path)
+    predictions, runtime = await asyncio.to_thread(
+        _run_local_inference,
+        model_ref,
+        pairs,
+        max(1, max_new_tokens),
+        max(0.0, float(temperature)),
+    )
+
+    eval_dataset_name = dataset.dataset_type.value
+    if eval_type == "llm_judge":
+        result = await evaluate_with_llm_judge(
+            db=db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            dataset_name=eval_dataset_name,
+            judge_model=judge_model,
+            predictions=predictions,
+        )
+    else:
+        result = await run_evaluation(
+            db=db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            dataset_name=eval_dataset_name,
+            eval_type=eval_type,
+            predictions=predictions,
+        )
+
+    metrics = dict(result.metrics or {})
+    metrics["evaluated_samples"] = len(predictions)
+    metrics["inference"] = runtime
+    result.metrics = metrics
+
+    details = dict(result.details or {})
+    details["dataset"] = {
+        "id": dataset.id,
+        "name": dataset.name,
+        "dataset_type": dataset.dataset_type.value,
+        "file_path": str(dataset_path),
+    }
+    details["inference"] = {
+        "model_path": model_ref,
+        "max_new_tokens": max(1, max_new_tokens),
+        "temperature": max(0.0, float(temperature)),
+        "samples": len(predictions),
+    }
+    details["predictions_preview"] = [
+        {
+            "prompt": p.get("prompt", "")[:160],
+            "reference": p.get("reference", "")[:160],
+            "prediction": p.get("prediction", "")[:160],
+            "latency_ms": p.get("latency_ms"),
+        }
+        for p in predictions[:5]
+    ]
+    result.details = details
+    await db.flush()
+    await db.refresh(result)
+    return result
 
 
 def _heuristic_judge_score(reference: str, prediction: str) -> tuple[int, str]:

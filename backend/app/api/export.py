@@ -38,6 +38,7 @@ async def create(
             "format": export.export_format.value,
             "status": export.status.value,
             "output_path": export.output_path,
+            "file_size_bytes": export.file_size_bytes,
         }
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -59,6 +60,7 @@ async def run(
             "status": export.status.value,
             "output_path": export.output_path,
             "run_id": (export.manifest or {}).get("run_id"),
+            "file_size_bytes": export.file_size_bytes,
             "manifest": export.manifest,
         }
     except ValueError as e:
@@ -80,6 +82,7 @@ async def list_all(
             "quantization": e.quantization,
             "output_path": e.output_path,
             "run_id": (e.manifest or {}).get("run_id"),
+            "file_size_bytes": e.file_size_bytes,
             "created_at": e.created_at.isoformat(),
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,
         }

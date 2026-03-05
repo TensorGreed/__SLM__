@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     BENCHMARK_EXTERNAL_CMD: str = (
         'python "{backend_dir}/scripts/benchmark.py" '
         '--project {project_id} --model "{model_path}" --samples {num_samples} '
-        '--out "{output_dir}/benchmark_results.json"'
+        '--out "{benchmark_output_path}"'
     )
 
     # ── Process Runtime Controls ────────────────────────────────────────

@@ -13,6 +13,7 @@ from app.services.evaluation_service import (
     get_eval_results,
     run_evaluation,
     evaluate_with_llm_judge,
+    run_heldout_evaluation,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/evaluation", tags=["Evaluation"])
@@ -23,6 +24,17 @@ class EvalRunRequest(BaseModel):
     dataset_name: str = Field(..., min_length=1, max_length=255)
     eval_type: Literal["exact_match", "f1", "safety"]
     predictions: list[dict]
+
+
+class HeldoutEvalRunRequest(BaseModel):
+    experiment_id: int
+    dataset_name: str = Field(default="test", min_length=1, max_length=255)
+    eval_type: Literal["exact_match", "f1", "llm_judge"] = "exact_match"
+    max_samples: int = Field(default=100, ge=1, le=5000)
+    max_new_tokens: int = Field(default=128, ge=1, le=1024)
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    model_path: str | None = None
+    judge_model: str = Field(default="meta-llama/Meta-Llama-3-70B-Instruct", min_length=1, max_length=255)
 
 
 @router.post("/run", status_code=201)
@@ -60,6 +72,31 @@ async def run_llm_judge_eval(
         return EvalResultResponse.model_validate(result)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/run-heldout", status_code=201)
+async def run_eval_on_heldout(
+    project_id: int,
+    req: HeldoutEvalRunRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run end-to-end evaluation by generating predictions from held-out dataset rows."""
+    try:
+        result = await run_heldout_evaluation(
+            db=db,
+            project_id=project_id,
+            experiment_id=req.experiment_id,
+            dataset_name=req.dataset_name,
+            eval_type=req.eval_type,
+            max_samples=req.max_samples,
+            max_new_tokens=req.max_new_tokens,
+            temperature=req.temperature,
+            model_path=req.model_path,
+            judge_model=req.judge_model,
+        )
+        return EvalResultResponse.model_validate(result)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/results/{experiment_id}", response_model=list[EvalResultResponse])

@@ -3,6 +3,7 @@ uvicorn[standard]
 sqlalchemy
 alembic
 aiosqlite
+asyncpg
 pydantic
 pydantic-settings
 python-multipart

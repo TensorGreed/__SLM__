@@ -1,12 +1,14 @@
 """Compression API routes."""
 import asyncio
+
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.compression_service import (
     benchmark_model,
+    get_compression_job_status,
     merge_lora,
     quantize_model,
 )
@@ -55,3 +57,39 @@ async def benchmark(project_id: int, req: BenchmarkRequest):
         return await benchmark_model(project_id, req.model_path, req.num_samples)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.get("/jobs/status")
+async def job_status(
+    project_id: int,
+    report_path: str = Query(..., min_length=1, max_length=2048),
+):
+    """Check compression job status by report path returned from queue calls."""
+    try:
+        return get_compression_job_status(project_id, report_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.websocket("/ws/logs")
+async def compression_logs(websocket: WebSocket, project_id: int):
+    """Stream compression worker log lines for a project."""
+    await websocket.accept()
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    pubsub = redis_client.pubsub()
+    channel = f"log:compression:project:{project_id}"
+    await pubsub.subscribe(channel)
+    try:
+        while True:
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message and message.get("type") == "message":
+                await websocket.send_json({"type": "log", "text": str(message.get("data", ""))})
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+            except TimeoutError:
+                pass
+            except WebSocketDisconnect:
+                break
+    finally:
+        await pubsub.unsubscribe(channel)
+        await redis_client.aclose()

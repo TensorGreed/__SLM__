@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +34,126 @@ def _artifact_manifest_entry(file_path: Path, root_dir: Path) -> dict:
         "size_bytes": file_path.stat().st_size,
         "sha256": _sha256_file(file_path),
     }
+
+
+def _project_dir(project_id: int) -> Path:
+    return settings.DATA_DIR / "projects" / str(project_id)
+
+
+def _sanitize_token(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _matches_quantization(file_name: str, quantization: str | None) -> bool:
+    if not quantization:
+        return True
+    quant_norm = _sanitize_token(quantization)
+    name_norm = _sanitize_token(file_name)
+    if not quant_norm:
+        return True
+    if quant_norm in name_norm:
+        return True
+
+    digits = "".join(ch for ch in quant_norm if ch.isdigit())
+    if digits:
+        for token in (f"{digits}bit", f"q{digits}", f"int{digits}"):
+            if token in name_norm:
+                return True
+    return False
+
+
+def _collect_compressed_files(
+    project_id: int,
+    export_format: ExportFormat,
+    quantization: str | None,
+) -> list[Path]:
+    compressed_dir = _project_dir(project_id) / "compressed"
+    if not compressed_dir.exists():
+        return []
+
+    extension_map = {
+        ExportFormat.GGUF: {".gguf"},
+        ExportFormat.ONNX: {".onnx"},
+        ExportFormat.TENSORRT: {".engine", ".plan"},
+    }
+    allowed_ext = extension_map.get(export_format)
+
+    files = [p for p in compressed_dir.rglob("*") if p.is_file()]
+    if allowed_ext:
+        files = [p for p in files if p.suffix.lower() in allowed_ext]
+    else:
+        files = [
+            p for p in files
+            if not p.name.endswith("_report.json")
+            and p.name not in {"benchmark_results.json", "benchmark_report.json"}
+        ]
+
+    filtered = [p for p in files if _matches_quantization(p.name, quantization)]
+    return sorted(filtered, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def _copy_files_preserve_structure(
+    files: list[Path],
+    dest_dir: Path,
+    source_root: Path,
+) -> list[Path]:
+    copied: list[Path] = []
+    for src in files:
+        target = dest_dir / src.relative_to(source_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
+        copied.append(target)
+    return copied
+
+
+def _copy_files(files: list[Path], dest_dir: Path) -> list[Path]:
+    copied: list[Path] = []
+    used_names: set[str] = set()
+    for src in files:
+        base_name = src.name
+        stem = src.stem
+        suffix = src.suffix
+        candidate = base_name
+        idx = 1
+        while candidate in used_names or (dest_dir / candidate).exists():
+            candidate = f"{stem}_{idx}{suffix}"
+            idx += 1
+        target = dest_dir / candidate
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
+        copied.append(target)
+        used_names.add(candidate)
+    return copied
+
+
+def _resolve_source_model_files(
+    project_id: int,
+    experiment: Experiment,
+    export_format: ExportFormat,
+    quantization: str | None,
+) -> tuple[str, list[Path], Path | None]:
+    use_compressed = export_format in {ExportFormat.GGUF, ExportFormat.ONNX, ExportFormat.TENSORRT} or bool(quantization)
+    if use_compressed:
+        compressed_files = _collect_compressed_files(project_id, export_format, quantization)
+        if compressed_files:
+            return "compressed", compressed_files, None
+
+    output_dir = Path(experiment.output_dir).expanduser() if experiment.output_dir else None
+    if output_dir and output_dir.exists():
+        model_dir = output_dir / "model"
+        if model_dir.exists() and model_dir.is_dir():
+            model_files = [p for p in model_dir.rglob("*") if p.is_file()]
+            if model_files:
+                return "experiment_model_dir", model_files, model_dir
+
+        direct_model_files = [
+            p for p in output_dir.rglob("*")
+            if p.is_file() and p.name not in {"training_config.json", "training_report.json", "external_training.log"}
+        ]
+        if direct_model_files:
+            return "experiment_output_dir", direct_model_files, output_dir
+
+    return "none", [], None
 
 
 async def create_export(
@@ -111,6 +232,29 @@ async def run_export(
         run_dir.mkdir(parents=True, exist_ok=True)
         artifacts: list[dict] = []
 
+        # Copy actual model artifacts into export package.
+        model_source, source_files, source_root = _resolve_source_model_files(
+            project_id=project_id,
+            experiment=experiment,
+            export_format=export.export_format,
+            quantization=export.quantization,
+        )
+        if not source_files:
+            raise ValueError(
+                "No model artifacts found for export. "
+                "Complete training (and compression for quantized formats) before exporting."
+            )
+
+        model_dir = run_dir / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        if source_root is not None:
+            copied_model_files = _copy_files_preserve_structure(source_files, model_dir, source_root)
+        else:
+            copied_model_files = _copy_files(source_files, model_dir)
+        for copied in copied_model_files:
+            artifacts.append(_artifact_manifest_entry(copied, run_dir))
+        model_size_bytes = sum(p.stat().st_size for p in copied_model_files)
+
         # Save eval report
         if eval_report:
             export.eval_report = eval_report
@@ -150,6 +294,9 @@ async def run_export(
                 f"- Experiment ID: {experiment.id}\n"
                 f"- Format: {export.export_format.value}\n"
                 f"- Quantization: {export.quantization or 'none'}\n"
+                f"- Model source: {model_source}\n"
+                f"- Model artifacts: {len(copied_model_files)} files\n"
+                f"- Model bytes: {model_size_bytes}\n"
                 f"- Generated at: {now.isoformat()}\n"
                 f"- Platform version: {settings.APP_VERSION}\n"
             ),
@@ -176,6 +323,12 @@ async def run_export(
                 "final_train_loss": experiment.final_train_loss,
                 "final_eval_loss": experiment.final_eval_loss,
             },
+            "model_artifacts": {
+                "source": model_source,
+                "count": len(copied_model_files),
+                "size_bytes": model_size_bytes,
+                "path": "model",
+            },
             "artifacts": artifacts,
         }
 
@@ -192,6 +345,7 @@ async def run_export(
         export.status = ExportStatus.COMPLETED
         export.manifest = manifest
         export.output_path = str(output_dir)
+        export.file_size_bytes = model_size_bytes
         export.completed_at = now
 
     except Exception as e:

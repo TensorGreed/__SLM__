@@ -34,6 +34,20 @@ def unregister_websocket(experiment_id: int, ws: WebSocket):
         active_websockets[experiment_id].remove(ws)
 
 
+async def broadcast_event(experiment_id: int, payload: dict) -> None:
+    """Broadcast an event envelope to all active websockets for an experiment."""
+    if experiment_id not in active_websockets:
+        return
+    dead_socks = []
+    for ws in active_websockets[experiment_id]:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead_socks.append(ws)
+    for ws in dead_socks:
+        active_websockets[experiment_id].remove(ws)
+
+
 async def _get_experiment_for_project(
     db: AsyncSession,
     project_id: int,
@@ -96,15 +110,7 @@ async def create_experiment(
 
 async def broadcast_metric(experiment_id: int, metric: dict):
     """Broadcast metric to all active websockets for an experiment."""
-    if experiment_id in active_websockets:
-        dead_socks = []
-        for ws in active_websockets[experiment_id]:
-            try:
-                await ws.send_json(metric)
-            except Exception:
-                dead_socks.append(ws)
-        for ws in dead_socks:
-            active_websockets[experiment_id].remove(ws)
+    await broadcast_event(experiment_id, {"type": "metric", "metric": metric})
 
 
 def _render_external_command(template: str, placeholders: dict[str, str | int]) -> str:
@@ -260,6 +266,14 @@ async def _monitor_external_training(
                 exp.status = ExperimentStatus.FAILED
                 exp.completed_at = finished
             await db.commit()
+        await broadcast_event(
+            experiment_id,
+            {
+                "type": "status",
+                "status": "completed" if process.returncode == 0 else "failed",
+                "returncode": process.returncode,
+            },
+        )
     except Exception as e:
         async with async_session_factory() as db:
             result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
@@ -275,6 +289,10 @@ async def _monitor_external_training(
                 }
                 exp.config = config
                 await db.commit()
+        await broadcast_event(
+            experiment_id,
+            {"type": "status", "status": "failed", "error": str(e)},
+        )
 
 
 async def _simulate_training_loop(experiment_id: int, config: dict):

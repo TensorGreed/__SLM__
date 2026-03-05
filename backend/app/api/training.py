@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import async_session_factory, get_db
-from app.models.experiment import Experiment
+from app.database import get_db
+from app.models.experiment import Checkpoint, Experiment
 from app.schemas.training import ExperimentCreate, ExperimentResponse
 from app.services.training_service import (
     create_experiment,
@@ -34,15 +34,35 @@ async def ws_training_status(
     """
     await websocket.accept()
 
-    # Verify experiment exists
-    exp = await db.get(Experiment, experiment_id)
-    if not exp or exp.project_id != project_id: # Added project_id check
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    exp = exp_result.scalar_one_or_none()
+    if not exp:
         await websocket.close(code=1008, reason="Experiment not found")
         return
 
     register_websocket(experiment_id, websocket)
 
-    metrics = exp.metrics or []
+    ckpt_result = await db.execute(
+        select(Checkpoint)
+        .where(Checkpoint.experiment_id == experiment_id)
+        .order_by(Checkpoint.step.asc())
+    )
+    checkpoints = ckpt_result.scalars().all()
+    metrics = [
+        {
+            "experiment_id": experiment_id,
+            "epoch": c.epoch,
+            "step": c.step,
+            "train_loss": c.train_loss,
+            "eval_loss": c.eval_loss,
+        }
+        for c in checkpoints
+    ]
     try:
         await websocket.send_json({"type": "init", "metrics": metrics})
     except Exception:
@@ -75,7 +95,7 @@ async def ws_training_status(
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
-    except Exception as e:
+    except Exception:
         pass
     finally:
         log_task.cancel()

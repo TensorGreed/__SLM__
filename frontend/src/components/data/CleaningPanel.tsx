@@ -18,19 +18,13 @@ interface DocToClean {
 
 export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelProps) {
     const [documents, setDocuments] = useState<DocToClean[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [chunkSize, setChunkSize] = useState(1000);
     const [redactPii, setRedactPii] = useState(true);
     const [cleaningResults, setCleaningResults] = useState<any[]>([]);
 
     const fetchDocs = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const res = await api.get(`/projects/${projectId}/ingestion/documents`);
-            setDocuments(res.data);
-        } finally {
-            setIsLoading(false);
-        }
+        const res = await api.get(`/projects/${projectId}/ingestion/documents`);
+        setDocuments(res.data);
     }, [projectId]);
 
     useEffect(() => {

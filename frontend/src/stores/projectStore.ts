@@ -22,7 +22,7 @@ interface ProjectState {
     setActiveTab: (tab: TabKey) => void;
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
+export const useProjectStore = create<ProjectState>((set) => ({
     projects: [],
     totalProjects: 0,
     isLoadingProjects: false,

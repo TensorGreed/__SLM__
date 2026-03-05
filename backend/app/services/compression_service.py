@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from hashlib import sha256
 from asyncio.subprocess import PIPE
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,18 @@ def _compression_dir(project_id: int) -> Path:
     d = settings.DATA_DIR / "projects" / str(project_id) / "compressed"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _resolve_report_path(project_id: int, report_path: str) -> Path:
+    base = _compression_dir(project_id).resolve()
+    requested = Path(report_path).expanduser()
+    if not requested.is_absolute():
+        requested = (base / requested).resolve()
+    else:
+        requested = requested.resolve()
+    if requested != base and base not in requested.parents:
+        raise ValueError("report_path must be inside the project compression directory")
+    return requested
 
 
 def _resolve_backend() -> str:
@@ -110,6 +123,7 @@ async def quantize_model(
         raise ValueError("QUANTIZE_EXTERNAL_CMD is required when COMPRESSION_BACKEND=external")
 
     output_model_path = output_dir / f"quantized_{bits}bit.{output_format}"
+    report_path = output_dir / "quantize_report.json"
     command = _render_external_command(
         template,
         {
@@ -123,11 +137,13 @@ async def quantize_model(
         },
     )
     from app.worker import celery_app
-    celery_app.send_task(
+    task = celery_app.send_task(
         "run_quantization_job",
         kwargs={
             "command": command,
             "report_path": str(report_path),
+            "project_id": project_id,
+            "job_type": "quantize",
         }
     )
 
@@ -141,6 +157,7 @@ async def quantize_model(
         "status": "queued",
         "created_at": created_at,
         "report_path": str(report_path),
+        "task_id": task.id,
     }
 
 
@@ -176,6 +193,7 @@ async def merge_lora(
         raise ValueError("MERGE_LORA_EXTERNAL_CMD is required when COMPRESSION_BACKEND=external")
 
     output_model_path = output_dir / "merged_model"
+    report_path = output_dir / "merge_report.json"
     command = _render_external_command(
         template,
         {
@@ -188,11 +206,13 @@ async def merge_lora(
         },
     )
     from app.worker import celery_app
-    celery_app.send_task(
+    task = celery_app.send_task(
         "run_quantization_job",  # using same worker task, as merge is just quantization config
         kwargs={
             "command": command,
             "report_path": str(report_path),
+            "project_id": project_id,
+            "job_type": "merge",
         }
     )
 
@@ -205,6 +225,7 @@ async def merge_lora(
         "status": "queued",
         "created_at": created_at,
         "report_path": str(report_path),
+        "task_id": task.id,
     }
 
 
@@ -250,6 +271,8 @@ async def benchmark_model(
         raise ValueError("BENCHMARK_EXTERNAL_CMD is required when COMPRESSION_BACKEND=external")
 
     output_dir = _compression_dir(project_id)
+    benchmark_output_path = output_dir / "benchmark_results.json"
+    job_report_path = output_dir / "benchmark_report.json"
     command = _render_external_command(
         template,
         {
@@ -257,24 +280,62 @@ async def benchmark_model(
             "model_path": model_path,
             "num_samples": num_samples,
             "output_dir": str(output_dir),
+            "report_path": str(benchmark_output_path),
+            "benchmark_output_path": str(benchmark_output_path),
             "backend_dir": str(BACKEND_DIR),
         },
     )
-    report_path = output_dir / "benchmark_report.json"
-    
+
     from app.worker import celery_app
-    celery_app.send_task(
+    task = celery_app.send_task(
         "run_benchmark_job",
         kwargs={
             "command": command,
-            "report_path": str(report_path),
+            "report_path": str(job_report_path),
+            "benchmark_output_path": str(benchmark_output_path),
+            "project_id": project_id,
         }
     )
 
     result.update(
         {
             "status": "queued",
-            "report_path": str(report_path),
+            "report_path": str(job_report_path),
+            "benchmark_report_path": str(benchmark_output_path),
+            "task_id": task.id,
         }
     )
     return result
+
+
+def get_compression_job_status(project_id: int, report_path: str) -> dict:
+    """Inspect queued/completed status from a worker report path."""
+    safe_report_path = _resolve_report_path(project_id, report_path)
+    if not safe_report_path.exists():
+        return {
+            "project_id": project_id,
+            "status": "running",
+            "report_path": str(safe_report_path),
+        }
+
+    try:
+        payload = json.loads(safe_report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse report file {safe_report_path}: {e}")
+    returncode = payload.get("returncode")
+    stdout = payload.get("stdout", "")
+    stderr = payload.get("stderr", "")
+    digest = sha256(f"{stdout}\n{stderr}".encode("utf-8")).hexdigest()
+    return {
+        "project_id": project_id,
+        "status": "completed" if returncode == 0 else "failed",
+        "report_path": str(safe_report_path),
+        "returncode": returncode,
+        "duration_seconds": payload.get("duration_seconds"),
+        "command": payload.get("command"),
+        "stdout": stdout,
+        "stderr": stderr,
+        "output_digest": digest,
+        "benchmark_report_path": payload.get("benchmark_report_path"),
+        "benchmark": payload.get("benchmark"),
+    }

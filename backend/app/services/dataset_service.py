@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
 from app.services.record_normalization import (
     build_schema_profile,
     canonicalize_record,
@@ -24,6 +25,14 @@ def _prep_dir(project_id: int) -> Path:
     d = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def apply_chat_template(entry: dict, template_name: str = "llama3") -> str:
@@ -213,6 +222,11 @@ async def split_dataset(
         raise ValueError("Split ratios must sum to 1.0")
 
     types = None
+    included_source_types = include_types[:] if include_types else [
+        DatasetType.CLEANED.value,
+        DatasetType.SYNTHETIC.value,
+        DatasetType.GOLD_DEV.value,
+    ]
     if include_types:
         types = [DatasetType(t) for t in include_types]
 
@@ -235,6 +249,8 @@ async def split_dataset(
 
     prep_dir = _prep_dir(project_id)
     file_paths: dict[str, str] = {}
+    file_hashes: dict[str, str] = {}
+    dataset_versions: dict[str, int] = {}
 
     for split_name, split_data in splits.items():
         file_path = prep_dir / f"{split_name}.jsonl"
@@ -242,6 +258,7 @@ async def split_dataset(
             for entry in split_data:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         file_paths[split_name] = str(file_path)
+        file_hashes[split_name] = _sha256_file(file_path)
 
         ds_type = {
             "train": DatasetType.TRAIN,
@@ -269,6 +286,29 @@ async def split_dataset(
         ds.file_path = str(file_path)
         await db.flush()
 
+        version_result = await db.execute(
+            select(func.max(DatasetVersion.version)).where(DatasetVersion.dataset_id == ds.id)
+        )
+        next_version = int(version_result.scalar() or 0) + 1
+        version_manifest = {
+            "split": split_name,
+            "seed": seed,
+            "chat_template": chat_template,
+            "count": len(split_data),
+            "sha256": file_hashes[split_name],
+            "source_types": included_source_types,
+        }
+        db.add(
+            DatasetVersion(
+                dataset_id=ds.id,
+                version=next_version,
+                file_path=str(file_path),
+                record_count=len(split_data),
+                manifest=version_manifest,
+            )
+        )
+        dataset_versions[split_name] = next_version
+
     manifest = {
         "project_id": project_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -277,6 +317,10 @@ async def split_dataset(
         "splits": {k: len(v) for k, v in splits.items()},
         "ratios": {"train": train_ratio, "val": val_ratio, "test": test_ratio},
         "file_paths": file_paths,
+        "file_hashes": file_hashes,
+        "dataset_versions": dataset_versions,
+        "chat_template": chat_template,
+        "included_types": included_source_types,
     }
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:

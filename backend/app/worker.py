@@ -45,34 +45,44 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
         from app.services.training_service import _monitor_external_training
         
         async def _run():
+            channel = f"log:experiment:{experiment_id}"
+            redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+            async def _publish(line: str) -> None:
+                await redis_client.publish(channel, line)
+
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(BACKEND_DIR),
             )
-            
-            async def _stream_logs(stream, is_error=False):
-                redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-                channel = f"log:experiment:{experiment_id}"
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    text = line.decode("utf-8").rstrip()
-                    prefix = "[ERR] " if is_error else ""
-                    await redis_client.publish(channel, f"{prefix}{text}")
-                await redis_client.aclose()
-                
-            # Run stream monitoring concurrently with the existing monitor
-            await asyncio.gather(
-                _stream_logs(process.stdout),
-                _stream_logs(process.stderr, is_error=True),
-                _monitor_external_training(
+
+            try:
+                await _publish(f"[worker] starting external training process for experiment {experiment_id}")
+                await _monitor_external_training(
                     experiment_id, process, command, Path(log_path), Path(output_dir)
                 )
-            )
-            return process.returncode
+
+                payload = {}
+                lp = Path(log_path)
+                if lp.exists():
+                    try:
+                        payload = json.loads(lp.read_text(encoding="utf-8"))
+                    except Exception:
+                        payload = {}
+
+                for line in str(payload.get("stdout", "")).splitlines():
+                    if line.strip():
+                        await _publish(line.strip())
+                for line in str(payload.get("stderr", "")).splitlines():
+                    if line.strip():
+                        await _publish(f"[ERR] {line.strip()}")
+
+                await _publish(f"[worker] training process exited with code {process.returncode}")
+                return process.returncode
+            finally:
+                await redis_client.aclose()
             
         returncode = loop.run_until_complete(_run())
         
@@ -88,7 +98,7 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
         loop.close()
 
 @celery_app.task(bind=True, name="run_quantization_job", track_started=True)
-def run_quantization_job(self, command: str, report_path: str):
+def run_quantization_job(self, command: str, report_path: str, project_id: int | None = None, job_type: str = "quantize"):
     """Executes the external quantization script within the Celery worker."""
     logger.info(f"Starting quantization job: {command}")
     
@@ -99,29 +109,27 @@ def run_quantization_job(self, command: str, report_path: str):
         from app.services.compression_service import _run_external_command
         
         async def _run():
-            
-            async def _stream_logs(stream, is_error=False):
-                redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-                channel = "log:compression:quantize" # broadcast for compression
-                while True:
-                    line = await stream.readline()
-                    if not line:
-                        break
-                    text = line.decode("utf-8").rstrip()
-                    prefix = "[ERR] " if is_error else ""
-                    await redis_client.publish(channel, f"{prefix}{text}")
+            channel = f"log:compression:project:{project_id}" if project_id is not None else "log:compression:project:0"
+            redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+            async def _publish(line: str) -> None:
+                await redis_client.publish(channel, line)
+
+            try:
+                await _publish(f"[worker] starting {job_type} job")
+                execution = await _run_external_command(command, cwd=BACKEND_DIR)
+                Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(report_path).write_text(json.dumps(execution, indent=2), encoding="utf-8")
+                for line in str(execution.get("stdout", "")).splitlines():
+                    if line.strip():
+                        await _publish(line.strip())
+                for line in str(execution.get("stderr", "")).splitlines():
+                    if line.strip():
+                        await _publish(f"[ERR] {line.strip()}")
+                await _publish(f"[worker] {job_type} job finished with code {execution.get('returncode')}")
+                return execution
+            finally:
                 await redis_client.aclose()
-                
-            # Note: _run_external_command internally consumes stdout/stderr. 
-            # For live streaming, we actually need to bypass that utility or modify it. 
-            # Since _run_external_command uses asyncio.wait_for(process.communicate()),
-            # we can't easily hook into streams here without rewriting the utility.
-            # Instead, we will rely on the static report_path for now to avoid breaking the utility,
-            # or we could rewrite the utility if live compression logs are strictly required.
-            
-            execution = await _run_external_command(command, cwd=BACKEND_DIR)
-            Path(report_path).write_text(json.dumps(execution, indent=2), encoding="utf-8")
-            return execution
             
         execution = loop.run_until_complete(_run())
         if execution["returncode"] != 0:
@@ -135,7 +143,13 @@ def run_quantization_job(self, command: str, report_path: str):
         loop.close()
 
 @celery_app.task(bind=True, name="run_benchmark_job", track_started=True)
-def run_benchmark_job(self, command: str, report_path: str):
+def run_benchmark_job(
+    self,
+    command: str,
+    report_path: str,
+    benchmark_output_path: str | None = None,
+    project_id: int | None = None,
+):
     """Executes the external benchmark script within the Celery worker."""
     logger.info(f"Starting benchmark job: {command}")
     
@@ -146,9 +160,39 @@ def run_benchmark_job(self, command: str, report_path: str):
         from app.services.compression_service import _run_external_command
         
         async def _run():
-            execution = await _run_external_command(command, cwd=BACKEND_DIR)
-            Path(report_path).write_text(json.dumps(execution, indent=2), encoding="utf-8")
-            return execution
+            channel = f"log:compression:project:{project_id}" if project_id is not None else "log:compression:project:0"
+            redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+
+            async def _publish(line: str) -> None:
+                await redis_client.publish(channel, line)
+
+            try:
+                await _publish("[worker] starting benchmark job")
+                execution = await _run_external_command(command, cwd=BACKEND_DIR)
+                benchmark_payload = None
+                if benchmark_output_path:
+                    output_file = Path(benchmark_output_path)
+                    if output_file.exists():
+                        try:
+                            benchmark_payload = json.loads(output_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            benchmark_payload = None
+                if benchmark_output_path:
+                    execution["benchmark_report_path"] = benchmark_output_path
+                if benchmark_payload is not None:
+                    execution["benchmark"] = benchmark_payload
+                Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(report_path).write_text(json.dumps(execution, indent=2), encoding="utf-8")
+                for line in str(execution.get("stdout", "")).splitlines():
+                    if line.strip():
+                        await _publish(line.strip())
+                for line in str(execution.get("stderr", "")).splitlines():
+                    if line.strip():
+                        await _publish(f"[ERR] {line.strip()}")
+                await _publish(f"[worker] benchmark job finished with code {execution.get('returncode')}")
+                return execution
+            finally:
+                await redis_client.aclose()
             
         execution = loop.run_until_complete(_run())
         if execution["returncode"] != 0:

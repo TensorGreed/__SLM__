@@ -15,12 +15,10 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     const [difficulty, setDifficulty] = useState('medium');
     const [isHallucTrap, setIsHallucTrap] = useState(false);
     const [datasetType, setDatasetType] = useState('gold_dev');
-    const [loaded, setLoaded] = useState(false);
 
     const fetchEntries = useCallback(async () => {
         const res = await api.get(`/projects/${projectId}/gold/entries?dataset_type=${datasetType}`);
         setEntries(res.data.entries || []);
-        setLoaded(true);
     }, [projectId, datasetType]);
 
     useEffect(() => { fetchEntries(); }, [fetchEntries]);

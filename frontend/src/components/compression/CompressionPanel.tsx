@@ -6,19 +6,27 @@ import { TerminalConsole } from '../shared/TerminalConsole';
 
 interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 
+interface CompressionResult {
+    status?: string;
+    report_path?: string;
+    [key: string]: unknown;
+}
+
 export default function CompressionPanel({ projectId, onNextStep }: CompressionPanelProps) {
     const [modelPath, setModelPath] = useState('');
     const [bits, setBits] = useState(4);
     const [format, setFormat] = useState('gguf');
     const [loraPath, setLoraPath] = useState('');
-    const [result, setResult] = useState<any>(null);
+    const [result, setResult] = useState<CompressionResult | null>(null);
     const [isCompressing, setIsCompressing] = useState(false);
     const [compressionLogs, setCompressionLogs] = useState<string[]>([]);
+    const [activeReportPath, setActiveReportPath] = useState<string | null>(null);
 
     useEffect(() => {
         if (!isCompressing) return;
 
-        const wsUrl = `ws://localhost:8000/api/projects/${projectId}/compression/ws/logs`;
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${protocol}://${window.location.host}/api/projects/${projectId}/compression/ws/logs`;
         const ws = new WebSocket(wsUrl);
 
         ws.onmessage = (event) => {
@@ -37,33 +45,59 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
         };
     }, [isCompressing, projectId]);
 
-    const handleAction = async (actionFn: () => Promise<any>) => {
+    useEffect(() => {
+        if (!activeReportPath) return;
+        const interval = window.setInterval(async () => {
+            try {
+                const status = await api.get<CompressionResult>(`/projects/${projectId}/compression/jobs/status`, {
+                    params: { report_path: activeReportPath },
+                });
+                if (status.data?.status === "completed" || status.data?.status === "failed") {
+                    setResult(status.data);
+                    setIsCompressing(false);
+                    setActiveReportPath(null);
+                }
+            } catch (err) {
+                console.error("Failed to poll compression status", err);
+                setIsCompressing(false);
+                setActiveReportPath(null);
+            }
+        }, 2000);
+        return () => window.clearInterval(interval);
+    }, [activeReportPath, projectId]);
+
+    const handleAction = async (actionFn: () => Promise<{ data: CompressionResult }>) => {
         setIsCompressing(true);
         setCompressionLogs([]);
         setResult(null);
+        setActiveReportPath(null);
         try {
             const res = await actionFn();
             setResult(res.data);
+            if (res.data?.status === "queued" && res.data?.report_path) {
+                setActiveReportPath(res.data.report_path);
+            } else {
+                setIsCompressing(false);
+            }
         } catch (e) {
             console.error(e);
-        } finally {
             setIsCompressing(false);
         }
     };
 
     const handleQuantize = async () => {
         if (!modelPath) return;
-        await handleAction(() => api.post(`/projects/${projectId}/compression/quantize`, { model_path: modelPath, bits, output_format: format }));
+        await handleAction(() => api.post<CompressionResult>(`/projects/${projectId}/compression/quantize`, { model_path: modelPath, bits, output_format: format }));
     };
 
     const handleMerge = async () => {
         if (!modelPath || !loraPath) return;
-        await handleAction(() => api.post(`/projects/${projectId}/compression/merge-lora`, { base_model_path: modelPath, lora_adapter_path: loraPath }));
+        await handleAction(() => api.post<CompressionResult>(`/projects/${projectId}/compression/merge-lora`, { base_model_path: modelPath, lora_adapter_path: loraPath }));
     };
 
     const handleBenchmark = async () => {
         if (!modelPath) return;
-        await handleAction(() => api.post(`/projects/${projectId}/compression/benchmark`, { model_path: modelPath }));
+        await handleAction(() => api.post<CompressionResult>(`/projects/${projectId}/compression/benchmark`, { model_path: modelPath }));
     };
 
     return (
