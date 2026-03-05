@@ -70,7 +70,10 @@ class ExperimentResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    domain_pack_applied: str | None = None
+    domain_pack_source: str | None = None
     domain_profile_applied: str | None = None
+    domain_profile_source: str | None = None
     profile_training_defaults: dict[str, Any] | None = None
     resolved_training_config: dict[str, Any] | None = None
     profile_defaults_applied: list[str] = Field(default_factory=list)

@@ -7,10 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.dataset import DatasetType
 from app.services.dataset_service import combine_datasets, profile_project_dataset, split_dataset
-from app.services.domain_profile_service import (
-    get_dataset_split_defaults,
-    get_project_domain_profile_contract,
-)
+from app.services.domain_profile_service import get_dataset_split_defaults
+from app.services.domain_runtime_service import resolve_project_domain_runtime
 
 router = APIRouter(prefix="/projects/{project_id}/dataset", tags=["Dataset Prep"])
 
@@ -103,9 +101,16 @@ async def split_effective_config(
     req: SplitEffectiveConfigRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Preview effective split config after domain-profile defaults are applied."""
-    profile_contract = await get_project_domain_profile_contract(db, project_id)
-    profile_defaults = get_dataset_split_defaults(profile_contract)
+    """Preview effective split config after domain runtime defaults are applied."""
+    try:
+        runtime = await resolve_project_domain_runtime(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    effective_contract = runtime.get("effective_contract")
+    profile_defaults = get_dataset_split_defaults(effective_contract)
     provided = set(req.model_fields_set)
 
     resolved, profile_defaults_applied = _resolve_split_config(
@@ -122,11 +127,10 @@ async def split_effective_config(
         raise HTTPException(400, "train_ratio + val_ratio + test_ratio must equal 1.0")
 
     return {
-        "domain_profile_applied": (
-            profile_contract.get("profile_id")
-            if isinstance(profile_contract, dict)
-            else None
-        ),
+        "domain_pack_applied": runtime.get("domain_pack_applied"),
+        "domain_pack_source": runtime.get("domain_pack_source"),
+        "domain_profile_applied": runtime.get("domain_profile_applied"),
+        "domain_profile_source": runtime.get("domain_profile_source"),
         "profile_split_defaults": profile_defaults or None,
         "resolved_split_config": resolved,
         "profile_defaults_applied": profile_defaults_applied,
@@ -142,8 +146,9 @@ async def split(
 ):
     """Split combined data into train/validation/test JSONL datasets."""
     try:
-        profile_contract = await get_project_domain_profile_contract(db, project_id)
-        profile_defaults = get_dataset_split_defaults(profile_contract)
+        runtime = await resolve_project_domain_runtime(db, project_id)
+        effective_contract = runtime.get("effective_contract")
+        profile_defaults = get_dataset_split_defaults(effective_contract)
         provided = set(req.model_fields_set)
 
         resolved, profile_defaults_applied = _resolve_split_config(
@@ -169,17 +174,19 @@ async def split(
             include_types=[t.value for t in req.include_types] if req.include_types else None,
             chat_template=str(resolved["chat_template"]),
         )
-        manifest["domain_profile_applied"] = (
-            profile_contract.get("profile_id")
-            if isinstance(profile_contract, dict)
-            else None
-        )
+        manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
+        manifest["domain_pack_source"] = runtime.get("domain_pack_source")
+        manifest["domain_profile_applied"] = runtime.get("domain_profile_applied")
+        manifest["domain_profile_source"] = runtime.get("domain_profile_source")
         manifest["profile_split_defaults"] = profile_defaults or None
         manifest["resolved_split_config"] = resolved
         manifest["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
         return manifest
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.get("/preview")

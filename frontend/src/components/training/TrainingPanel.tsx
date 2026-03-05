@@ -27,7 +27,10 @@ interface Experiment {
   training_mode: string;
   base_model: string;
   config?: ExperimentConfig;
+  domain_pack_applied?: string | null;
+  domain_pack_source?: string | null;
   domain_profile_applied?: string | null;
+  domain_profile_source?: string | null;
   profile_training_defaults?: Record<string, unknown> | null;
   resolved_training_config?: Record<string, unknown> | null;
   profile_defaults_applied?: string[];
@@ -43,7 +46,10 @@ interface TrainingMetric {
 }
 
 interface TrainingEffectiveConfigResponse {
+  domain_pack_applied?: string | null;
+  domain_pack_source?: string | null;
   domain_profile_applied?: string | null;
+  domain_profile_source?: string | null;
   profile_training_defaults?: Record<string, unknown> | null;
   resolved_training_config?: Record<string, unknown> | null;
   resolved_training_mode?: string;
@@ -99,7 +105,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     gradient_checkpointing: false,
   });
   const [lastCreateSummary, setLastCreateSummary] = useState<{
+    domainPackApplied: string | null;
+    domainPackSource: string | null;
     domainProfileApplied: string | null;
+    domainProfileSource: string | null;
     defaultsApplied: string[];
     profileDefaults: Record<string, unknown> | null;
     resolvedConfig: Record<string, unknown> | null;
@@ -286,7 +295,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       const created = res.data;
       setExperiments((prev) => [created, ...prev]);
       setLastCreateSummary({
+        domainPackApplied: created.domain_pack_applied ?? null,
+        domainPackSource: created.domain_pack_source ?? null,
         domainProfileApplied: created.domain_profile_applied ?? null,
+        domainProfileSource: created.domain_profile_source ?? null,
         defaultsApplied: created.profile_defaults_applied || [],
         profileDefaults:
           created.profile_training_defaults && typeof created.profile_training_defaults === 'object'
@@ -397,9 +409,16 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
                 {activeExperiment.base_model} • {activeExperiment.training_mode}
               </div>
+              {activeExperiment.domain_pack_applied && (
+                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                  Pack: {activeExperiment.domain_pack_applied}
+                  {activeExperiment.domain_pack_source ? ` (${activeExperiment.domain_pack_source})` : ''}
+                </div>
+              )}
               {activeExperiment.domain_profile_applied && (
                 <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
                   Profile: {activeExperiment.domain_profile_applied}
+                  {activeExperiment.domain_profile_source ? ` (${activeExperiment.domain_profile_source})` : ''}
                 </div>
               )}
               {taskState && (
@@ -471,7 +490,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                   checked={useProfileDefaults}
                   onChange={(e) => setUseProfileDefaults(e.target.checked)}
                 />
-                Use domain profile defaults for untouched fields
+                Use domain runtime defaults for untouched fields
               </label>
               <div className="form-hint">
                 Base model is always sent. Other fields are only sent after you edit them.
@@ -495,15 +514,27 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               <div className="resolved-defaults-panel">
                 <div className="resolved-defaults-panel__title">Effective Config Preview (Pre-create)</div>
                 <div className="resolved-defaults-panel__kv">
+                  <span>Applied Pack</span>
+                  <strong>
+                    {effectivePreview.domain_pack_applied
+                      ? `${effectivePreview.domain_pack_applied} (${effectivePreview.domain_pack_source || 'unknown'})`
+                      : 'none'}
+                  </strong>
+                </div>
+                <div className="resolved-defaults-panel__kv">
                   <span>Applied Profile</span>
-                  <strong>{effectivePreview.domain_profile_applied || 'none'}</strong>
+                  <strong>
+                    {effectivePreview.domain_profile_applied
+                      ? `${effectivePreview.domain_profile_applied} (${effectivePreview.domain_profile_source || 'unknown'})`
+                      : 'none'}
+                  </strong>
                 </div>
                 <div className="resolved-defaults-panel__kv">
                   <span>Resolved Training Mode</span>
                   <strong>{effectivePreview.resolved_training_mode || 'sft'}</strong>
                 </div>
                 <div className="resolved-defaults-panel__kv">
-                  <span>Profile Fields Applied</span>
+                  <span>Runtime Fields Applied</span>
                   <strong>
                     {effectivePreview.profile_defaults_applied && effectivePreview.profile_defaults_applied.length > 0
                       ? effectivePreview.profile_defaults_applied.join(', ')
@@ -518,7 +549,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     </pre>
                   </div>
                   <div>
-                    <div className="resolved-defaults-panel__subtitle">Profile Training Defaults</div>
+                    <div className="resolved-defaults-panel__subtitle">Runtime Training Defaults</div>
                     <pre className="resolved-defaults-panel__json">
                       {JSON.stringify(effectivePreview.profile_training_defaults || {}, null, 2)}
                     </pre>
@@ -690,11 +721,23 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           <div className="resolved-defaults-panel">
             <div className="resolved-defaults-panel__title">Resolved Defaults</div>
             <div className="resolved-defaults-panel__kv">
-              <span>Applied Profile</span>
-              <strong>{lastCreateSummary.domainProfileApplied || 'none'}</strong>
+              <span>Applied Pack</span>
+              <strong>
+                {lastCreateSummary.domainPackApplied
+                  ? `${lastCreateSummary.domainPackApplied} (${lastCreateSummary.domainPackSource || 'unknown'})`
+                  : 'none'}
+              </strong>
             </div>
             <div className="resolved-defaults-panel__kv">
-              <span>Profile Fields Applied</span>
+              <span>Applied Profile</span>
+              <strong>
+                {lastCreateSummary.domainProfileApplied
+                  ? `${lastCreateSummary.domainProfileApplied} (${lastCreateSummary.domainProfileSource || 'unknown'})`
+                  : 'none'}
+              </strong>
+            </div>
+            <div className="resolved-defaults-panel__kv">
+              <span>Runtime Fields Applied</span>
               <strong>
                 {lastCreateSummary.defaultsApplied.length > 0
                   ? lastCreateSummary.defaultsApplied.join(', ')
@@ -709,7 +752,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                 </pre>
               </div>
               <div>
-                <div className="resolved-defaults-panel__subtitle">Profile Training Defaults</div>
+                <div className="resolved-defaults-panel__subtitle">Runtime Training Defaults</div>
                 <pre className="resolved-defaults-panel__json">
                   {JSON.stringify(lastCreateSummary.profileDefaults || {}, null, 2)}
                 </pre>
@@ -757,9 +800,16 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
                       {exp.base_model} • {exp.training_mode}
                     </div>
+                    {exp.domain_pack_applied && (
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                        Pack: {exp.domain_pack_applied}
+                        {exp.domain_pack_source ? ` (${exp.domain_pack_source})` : ''}
+                      </div>
+                    )}
                     {exp.domain_profile_applied && (
                       <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
                         Profile: {exp.domain_profile_applied}
+                        {exp.domain_profile_source ? ` (${exp.domain_profile_source})` : ''}
                       </div>
                     )}
                   </div>

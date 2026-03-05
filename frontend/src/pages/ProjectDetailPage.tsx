@@ -18,6 +18,7 @@ import GettingStartedWizard from '../components/shared/GettingStartedWizard';
 import { PIPELINE_TABS } from '../types';
 import type { Project, TabKey } from '../types';
 import api from '../api/client';
+import DomainPackManager from '../components/domain/DomainPackManager';
 import DomainProfileManager from '../components/domain/DomainProfileManager';
 import './ProjectDetailPage.css';
 
@@ -202,6 +203,11 @@ export default function ProjectDetailPage() {
                     }
                 />
                 <div className="page-container">
+                    <DomainPackManager
+                        projectId={projectId}
+                        activeDomainPackId={activeProject.domain_pack_id}
+                        onAssigned={(project: Project) => setActiveProject(project)}
+                    />
                     <DomainProfileManager
                         projectId={projectId}
                         activeDomainProfileId={activeProject.domain_profile_id}

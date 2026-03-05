@@ -50,6 +50,10 @@ class Project(Base):
         Enum(PipelineStage), default=PipelineStage.INGESTION
     )
     base_model_name: Mapped[str | None] = mapped_column(String(255), default="")
+    domain_pack_id: Mapped[int | None] = mapped_column(
+        ForeignKey("domain_packs.id"),
+        default=None,
+    )
     domain_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("domain_profiles.id"),
         default=None,
@@ -64,6 +68,7 @@ class Project(Base):
     # Relationships
     datasets = relationship("Dataset", back_populates="project", cascade="all, delete-orphan")
     experiments = relationship("Experiment", back_populates="project", cascade="all, delete-orphan")
+    domain_pack = relationship("DomainPack", back_populates="projects")
     domain_profile = relationship("DomainProfile", back_populates="projects")
 
     def __repr__(self) -> str:

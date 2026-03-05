@@ -31,7 +31,10 @@ interface SplitManifest {
     files?: Record<string, string>;
     chat_template: string;
     created_at: string;
+    domain_pack_applied?: string | null;
+    domain_pack_source?: string | null;
     domain_profile_applied?: string | null;
+    domain_profile_source?: string | null;
     profile_split_defaults?: Record<string, unknown> | null;
     resolved_split_config?: {
         train_ratio?: number;
@@ -44,7 +47,10 @@ interface SplitManifest {
 }
 
 interface SplitEffectiveConfig {
+    domain_pack_applied?: string | null;
+    domain_pack_source?: string | null;
     domain_profile_applied?: string | null;
+    domain_profile_source?: string | null;
     profile_split_defaults?: Record<string, unknown> | null;
     resolved_split_config?: {
         train_ratio?: number;
@@ -189,7 +195,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 setSplitTemplate(resolved.chat_template);
             }
             setEffectiveSplitConfig({
+                domain_pack_applied: manifest.domain_pack_applied,
+                domain_pack_source: manifest.domain_pack_source,
                 domain_profile_applied: manifest.domain_profile_applied,
+                domain_profile_source: manifest.domain_profile_source,
                 profile_split_defaults: manifest.profile_split_defaults,
                 resolved_split_config: manifest.resolved_split_config,
                 profile_defaults_applied: manifest.profile_defaults_applied,
@@ -376,7 +385,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                             checked={useProfileDefaults}
                             onChange={(e) => setUseProfileDefaults(e.target.checked)}
                         />
-                        Use active domain profile defaults for fields left untouched
+                        Use active domain runtime defaults for fields left untouched
                     </label>
                 </div>
                 <div className="dp-split-row">
@@ -449,11 +458,23 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     <div className="dp-resolved-panel">
                         <div className="dp-resolved-title">Effective Config Preview (Pre-run)</div>
                         <div className="dp-resolved-kv">
-                            <span>Applied Profile</span>
-                            <strong>{effectiveSplitConfig.domain_profile_applied || 'none'}</strong>
+                            <span>Applied Pack</span>
+                            <strong>
+                                {effectiveSplitConfig.domain_pack_applied
+                                    ? `${effectiveSplitConfig.domain_pack_applied} (${effectiveSplitConfig.domain_pack_source || 'unknown'})`
+                                    : 'none'}
+                            </strong>
                         </div>
                         <div className="dp-resolved-kv">
-                            <span>Profile Fields Applied</span>
+                            <span>Applied Profile</span>
+                            <strong>
+                                {effectiveSplitConfig.domain_profile_applied
+                                    ? `${effectiveSplitConfig.domain_profile_applied} (${effectiveSplitConfig.domain_profile_source || 'unknown'})`
+                                    : 'none'}
+                            </strong>
+                        </div>
+                        <div className="dp-resolved-kv">
+                            <span>Runtime Fields Applied</span>
                             <strong>
                                 {effectiveSplitConfig.profile_defaults_applied && effectiveSplitConfig.profile_defaults_applied.length > 0
                                     ? effectiveSplitConfig.profile_defaults_applied.join(', ')
@@ -468,7 +489,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 </pre>
                             </div>
                             <div>
-                                <div className="dp-resolved-subtitle">Profile Split Defaults</div>
+                                <div className="dp-resolved-subtitle">Runtime Split Defaults</div>
                                 <pre className="dp-resolved-json">
                                     {JSON.stringify(effectiveSplitConfig.profile_split_defaults || {}, null, 2)}
                                 </pre>
@@ -483,11 +504,23 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         <div className="dp-resolved-panel">
                             <div className="dp-resolved-title">Resolved Defaults</div>
                             <div className="dp-resolved-kv">
-                                <span>Applied Profile</span>
-                                <strong>{splitManifest.domain_profile_applied || 'none'}</strong>
+                                <span>Applied Pack</span>
+                                <strong>
+                                    {splitManifest.domain_pack_applied
+                                        ? `${splitManifest.domain_pack_applied} (${splitManifest.domain_pack_source || 'unknown'})`
+                                        : 'none'}
+                                </strong>
                             </div>
                             <div className="dp-resolved-kv">
-                                <span>Profile Fields Applied</span>
+                                <span>Applied Profile</span>
+                                <strong>
+                                    {splitManifest.domain_profile_applied
+                                        ? `${splitManifest.domain_profile_applied} (${splitManifest.domain_profile_source || 'unknown'})`
+                                        : 'none'}
+                                </strong>
+                            </div>
+                            <div className="dp-resolved-kv">
+                                <span>Runtime Fields Applied</span>
                                 <strong>
                                     {splitManifest.profile_defaults_applied && splitManifest.profile_defaults_applied.length > 0
                                         ? splitManifest.profile_defaults_applied.join(', ')
@@ -502,7 +535,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                     </pre>
                                 </div>
                                 <div>
-                                    <div className="dp-resolved-subtitle">Profile Split Defaults</div>
+                                    <div className="dp-resolved-subtitle">Runtime Split Defaults</div>
                                     <pre className="dp-resolved-json">
                                         {JSON.stringify(splitManifest.profile_split_defaults || {}, null, 2)}
                                     </pre>

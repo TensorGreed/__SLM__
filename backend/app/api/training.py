@@ -12,10 +12,8 @@ from app.database import get_db
 from app.models.experiment import Checkpoint, Experiment, TrainingMode
 from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
 from app.services.job_service import get_task_status
-from app.services.domain_profile_service import (
-    get_project_domain_profile_contract,
-    get_training_defaults,
-)
+from app.services.domain_profile_service import get_training_defaults
+from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.training_service import (
     cancel_training,
     create_experiment,
@@ -158,8 +156,9 @@ async def create(
         config_payload = data.config.model_dump()
         provided_config_fields = set(data.config.model_fields_set)
 
-        profile_contract = await get_project_domain_profile_contract(db, project_id)
-        profile_training_defaults = get_training_defaults(profile_contract)
+        runtime = await resolve_project_domain_runtime(db, project_id)
+        effective_contract = runtime.get("effective_contract")
+        profile_training_defaults = get_training_defaults(effective_contract)
         config_payload, resolved_training_mode, profile_defaults_applied = _resolve_training_config(
             config_payload=config_payload,
             provided_config_fields=provided_config_fields,
@@ -177,11 +176,10 @@ async def create(
             resolved_training_mode,
         )
         response_payload = ExperimentResponse.model_validate(exp).model_dump()
-        response_payload["domain_profile_applied"] = (
-            profile_contract.get("profile_id")
-            if isinstance(profile_contract, dict)
-            else None
-        )
+        response_payload["domain_pack_applied"] = runtime.get("domain_pack_applied")
+        response_payload["domain_pack_source"] = runtime.get("domain_pack_source")
+        response_payload["domain_profile_applied"] = runtime.get("domain_profile_applied")
+        response_payload["domain_profile_source"] = runtime.get("domain_profile_source")
         response_payload["profile_training_defaults"] = (
             dict(profile_training_defaults) if profile_training_defaults else None
         )
@@ -198,7 +196,7 @@ async def effective_training_config(
     req: TrainingEffectiveConfigRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Preview effective training config after profile defaults are applied."""
+    """Preview effective training config after domain runtime defaults are applied."""
     source_config = dict(req.config or {})
     provided_config_fields = set(source_config.keys())
     if "base_model" not in source_config:
@@ -209,8 +207,15 @@ async def effective_training_config(
     except Exception as e:
         raise HTTPException(400, f"Invalid training config: {e}")
 
-    profile_contract = await get_project_domain_profile_contract(db, project_id)
-    profile_training_defaults = get_training_defaults(profile_contract)
+    try:
+        runtime = await resolve_project_domain_runtime(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    effective_contract = runtime.get("effective_contract")
+    profile_training_defaults = get_training_defaults(effective_contract)
     resolved_config, resolved_training_mode, profile_defaults_applied = _resolve_training_config(
         config_payload=parsed_config.model_dump(),
         provided_config_fields=provided_config_fields,
@@ -219,11 +224,10 @@ async def effective_training_config(
     )
 
     return {
-        "domain_profile_applied": (
-            profile_contract.get("profile_id")
-            if isinstance(profile_contract, dict)
-            else None
-        ),
+        "domain_pack_applied": runtime.get("domain_pack_applied"),
+        "domain_pack_source": runtime.get("domain_pack_source"),
+        "domain_profile_applied": runtime.get("domain_profile_applied"),
+        "domain_profile_source": runtime.get("domain_profile_source"),
         "profile_training_defaults": (
             dict(profile_training_defaults) if profile_training_defaults else None
         ),

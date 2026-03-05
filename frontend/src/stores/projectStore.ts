@@ -19,6 +19,7 @@ interface ProjectState {
         name: string,
         description?: string,
         baseModel?: string,
+        domainPackId?: number | null,
         domainProfileId?: number | null,
     ) => Promise<Project>;
     fetchProject: (id: number) => Promise<void>;
@@ -50,11 +51,18 @@ export const useProjectStore = create<ProjectState>((set) => ({
         }
     },
 
-    createProject: async (name, description = '', baseModel = '', domainProfileId = null) => {
+    createProject: async (
+        name,
+        description = '',
+        baseModel = '',
+        domainPackId = null,
+        domainProfileId = null,
+    ) => {
         const res = await api.post('/projects', {
             name,
             description,
             base_model_name: baseModel,
+            domain_pack_id: domainPackId,
             domain_profile_id: domainProfileId,
         });
         const project = res.data;

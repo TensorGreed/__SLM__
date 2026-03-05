@@ -7,10 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.domain_profile_service import (
-    get_project_domain_profile_contract,
-    get_registry_gate_defaults,
-)
+from app.services.domain_profile_service import get_registry_gate_defaults
+from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.models.experiment import EvalResult, Experiment
 from app.models.export import Export
 from app.models.registry import (
@@ -177,8 +175,9 @@ async def evaluate_promotion_gates(
     target_stage: RegistryStage,
     gates: dict | None = None,
 ) -> dict:
-    profile_contract = await get_project_domain_profile_contract(db, project_id)
-    profile_defaults = get_registry_gate_defaults(profile_contract, target_stage.value)
+    runtime = await resolve_project_domain_runtime(db, project_id)
+    effective_contract = runtime.get("effective_contract")
+    profile_defaults = get_registry_gate_defaults(effective_contract, target_stage.value)
     effective = _effective_gates(gates, profile_defaults)
     readiness = await build_readiness_snapshot(db, entry.experiment_id)
     metrics = readiness.get("metrics", {})
@@ -235,7 +234,10 @@ async def evaluate_promotion_gates(
     return {
         "evaluated_at": _utcnow().isoformat(),
         "target_stage": target_stage.value,
-        "domain_profile_id": profile_contract.get("profile_id") if isinstance(profile_contract, dict) else None,
+        "domain_pack_id": runtime.get("domain_pack_applied"),
+        "domain_pack_source": runtime.get("domain_pack_source"),
+        "domain_profile_id": runtime.get("domain_profile_applied"),
+        "domain_profile_source": runtime.get("domain_profile_source"),
         "gates": effective,
         "profile_gate_defaults": profile_defaults,
         "readiness": readiness,

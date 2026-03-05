@@ -9,9 +9,11 @@ from app.config import settings
 from app.database import get_db
 from app.models.auth import GlobalRole, ProjectMembership, ProjectRole
 from app.models.dataset import Dataset, RawDocument
+from app.models.domain_pack import DomainPack
 from app.models.domain_profile import DomainProfile
 from app.models.project import Project, ProjectStatus
 from app.schemas.project import (
+    ProjectDomainPackAssignRequest,
     ProjectDomainProfileAssignRequest,
     ProjectCreate,
     ProjectListResponse,
@@ -20,7 +22,9 @@ from app.schemas.project import (
     ProjectUpdate,
 )
 from app.security import get_request_principal, upsert_project_membership
+from app.services.domain_pack_service import assign_project_domain_pack, get_domain_pack
 from app.services.domain_profile_service import assign_project_domain_profile, get_domain_profile
+from app.services.domain_runtime_service import resolve_project_domain_runtime
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -74,6 +78,19 @@ async def create_project(
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"Project '{data.name}' already exists")
 
+    resolved_domain_pack_id = data.domain_pack_id
+    selected_pack: DomainPack | None = None
+    if data.domain_pack_id is not None:
+        pack_result = await db.execute(select(DomainPack).where(DomainPack.id == data.domain_pack_id))
+        selected_pack = pack_result.scalar_one_or_none()
+        if selected_pack is None:
+            raise HTTPException(400, f"Domain pack id {data.domain_pack_id} not found")
+    else:
+        default_pack = await get_domain_pack(db, "general-pack-v1")
+        if default_pack is not None:
+            resolved_domain_pack_id = default_pack.id
+            selected_pack = default_pack
+
     resolved_domain_profile_id = data.domain_profile_id
     if data.domain_profile_id is not None:
         profile_result = await db.execute(
@@ -82,14 +99,22 @@ async def create_project(
         if profile_result.scalar_one_or_none() is None:
             raise HTTPException(400, f"Domain profile id {data.domain_profile_id} not found")
     else:
-        default_profile = await get_domain_profile(db, "generic-domain-v1")
-        if default_profile is not None:
-            resolved_domain_profile_id = default_profile.id
+        candidate_profile_ids: list[str] = []
+        if selected_pack and selected_pack.default_profile_id:
+            candidate_profile_ids.append(selected_pack.default_profile_id)
+        candidate_profile_ids.append("generic-domain-v1")
+
+        for candidate in candidate_profile_ids:
+            default_profile = await get_domain_profile(db, candidate)
+            if default_profile is not None:
+                resolved_domain_profile_id = default_profile.id
+                break
 
     project = Project(
         name=data.name,
         description=data.description,
         base_model_name=data.base_model_name,
+        domain_pack_id=resolved_domain_pack_id,
         domain_profile_id=resolved_domain_profile_id,
     )
     db.add(project)
@@ -131,6 +156,13 @@ async def update_project(
         raise HTTPException(404, "Project not found")
 
     update_data = data.model_dump(exclude_unset=True)
+    if "domain_pack_id" in update_data and update_data["domain_pack_id"] is not None:
+        pack_result = await db.execute(
+            select(DomainPack.id).where(DomainPack.id == update_data["domain_pack_id"])
+        )
+        if pack_result.scalar_one_or_none() is None:
+            raise HTTPException(400, f"Domain pack id {update_data['domain_pack_id']} not found")
+
     if "domain_profile_id" in update_data and update_data["domain_profile_id"] is not None:
         profile_result = await db.execute(
             select(DomainProfile.id).where(DomainProfile.id == update_data["domain_profile_id"])
@@ -161,6 +193,40 @@ async def assign_domain_profile(
         if detail.startswith("Project "):
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+@router.put("/{project_id}/domain-pack", response_model=ProjectResponse)
+async def assign_domain_pack(
+    project_id: int,
+    data: ProjectDomainPackAssignRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign a project to a domain pack by pack_id."""
+    try:
+        project = await assign_project_domain_pack(
+            db,
+            project_id,
+            data.pack_id,
+            adopt_pack_default_profile=data.adopt_pack_default_profile,
+        )
+        return ProjectResponse.model_validate(project)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/{project_id}/domain-runtime")
+async def get_project_domain_runtime(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve the effective domain runtime contract for a project."""
+    try:
+        return await resolve_project_domain_runtime(db, project_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.delete("/{project_id}", status_code=204)
