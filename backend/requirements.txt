@@ -1,20 +1,3 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
-alembic
-aiosqlite
-asyncpg
-pydantic
-pydantic-settings
-python-multipart
-celery
-redis
-httpx
-PyPDF2
-python-docx
-datasets
-kaggle
-transformers
+# Default profile: base deps + PyPI torch (typically CPU-only).
+-r requirements-base.txt
 torch
-accelerate
-peft

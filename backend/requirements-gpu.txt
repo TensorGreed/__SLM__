@@ -1,0 +1,4 @@
+# GPU profile: install all non-torch dependencies first.
+# Then install a CUDA-enabled torch wheel for your exact platform.
+# For Linux aarch64 devices, use the vendor/official wheel for your CUDA stack.
+-r requirements-base.txt

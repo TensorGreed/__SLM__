@@ -58,15 +58,28 @@ interface TrainingEffectiveConfigResponse {
 }
 
 type ConfigFieldKey =
+  | 'task_type'
+  | 'trainer_backend'
   | 'chat_template'
   | 'learning_rate'
   | 'num_epochs'
   | 'batch_size'
+  | 'gradient_accumulation_steps'
+  | 'max_seq_length'
   | 'optimizer'
+  | 'save_steps'
+  | 'eval_steps'
+  | 'sequence_packing'
   | 'use_lora'
   | 'lora_r'
   | 'lora_alpha'
   | 'target_modules'
+  | 'fp16'
+  | 'bf16'
+  | 'flash_attention'
+  | 'auto_oom_retry'
+  | 'max_oom_retries'
+  | 'oom_retry_seq_shrink'
   | 'gradient_checkpointing';
 
 export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelProps) {
@@ -82,27 +95,53 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
   const [name, setName] = useState('');
   const [baseModel, setBaseModel] = useState('microsoft/phi-2');
+  const [taskType, setTaskType] = useState('causal_lm');
+  const [trainerBackend, setTrainerBackend] = useState('auto');
   const [chatTemplate, setChatTemplate] = useState('llama3');
   const [lr, setLr] = useState('2e-4');
   const [epochs, setEpochs] = useState(3);
   const [batchSize, setBatchSize] = useState(4);
+  const [gradientAccumulationSteps, setGradientAccumulationSteps] = useState(4);
+  const [maxSeqLength, setMaxSeqLength] = useState(2048);
   const [optimizer, setOptimizer] = useState('paged_adamw_8bit');
+  const [saveSteps, setSaveSteps] = useState(100);
+  const [evalSteps, setEvalSteps] = useState(100);
+  const [sequencePacking, setSequencePacking] = useState(true);
   const [useLora, setUseLora] = useState(true);
   const [loraR, setLoraR] = useState(16);
   const [loraAlpha, setLoraAlpha] = useState(32);
   const [targetModules, setTargetModules] = useState('q_proj, v_proj');
+  const [fp16, setFp16] = useState(false);
+  const [bf16, setBf16] = useState(true);
+  const [flashAttention, setFlashAttention] = useState(true);
+  const [autoOomRetry, setAutoOomRetry] = useState(true);
+  const [maxOomRetries, setMaxOomRetries] = useState(2);
+  const [oomRetrySeqShrink, setOomRetrySeqShrink] = useState('0.75');
   const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
   const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
+    task_type: false,
+    trainer_backend: false,
     chat_template: false,
     learning_rate: false,
     num_epochs: false,
     batch_size: false,
+    gradient_accumulation_steps: false,
+    max_seq_length: false,
     optimizer: false,
+    save_steps: false,
+    eval_steps: false,
+    sequence_packing: false,
     use_lora: false,
     lora_r: false,
     lora_alpha: false,
     target_modules: false,
+    fp16: false,
+    bf16: false,
+    flash_attention: false,
+    auto_oom_retry: false,
+    max_oom_retries: false,
+    oom_retry_seq_shrink: false,
     gradient_checkpointing: false,
   });
   const [lastCreateSummary, setLastCreateSummary] = useState<{
@@ -131,6 +170,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
+    const retryShrink = Number.parseFloat(oomRetrySeqShrink);
     const parsedTargetModules = targetModules
       .split(',')
       .map((s) => s.trim())
@@ -140,15 +180,30 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       base_model: baseModel,
     };
     const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
+    if (includeField('task_type')) config.task_type = taskType;
+    if (includeField('trainer_backend')) config.trainer_backend = trainerBackend;
     if (includeField('chat_template')) config.chat_template = chatTemplate;
     if (includeField('learning_rate')) config.learning_rate = learningRate;
     if (includeField('num_epochs')) config.num_epochs = epochs;
     if (includeField('batch_size')) config.batch_size = batchSize;
+    if (includeField('gradient_accumulation_steps')) config.gradient_accumulation_steps = gradientAccumulationSteps;
+    if (includeField('max_seq_length')) config.max_seq_length = maxSeqLength;
     if (includeField('optimizer')) config.optimizer = optimizer;
+    if (includeField('save_steps')) config.save_steps = saveSteps;
+    if (includeField('eval_steps')) config.eval_steps = evalSteps;
+    if (includeField('sequence_packing')) config.sequence_packing = sequencePacking;
     if (includeField('use_lora')) config.use_lora = useLora;
     if (includeField('lora_r')) config.lora_r = loraR;
     if (includeField('lora_alpha')) config.lora_alpha = loraAlpha;
     if (includeField('target_modules')) config.target_modules = parsedTargetModules;
+    if (includeField('fp16')) config.fp16 = fp16;
+    if (includeField('bf16')) config.bf16 = bf16;
+    if (includeField('flash_attention')) config.flash_attention = flashAttention;
+    if (includeField('auto_oom_retry')) config.auto_oom_retry = autoOomRetry;
+    if (includeField('max_oom_retries')) config.max_oom_retries = maxOomRetries;
+    if (includeField('oom_retry_seq_shrink') && Number.isFinite(retryShrink)) {
+      config.oom_retry_seq_shrink = retryShrink;
+    }
     if (includeField('gradient_checkpointing')) config.gradient_checkpointing = gradientCheckpointing;
     return config;
   };
@@ -194,15 +249,28 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setTrainingError('');
     setUseProfileDefaults(true);
     setTouchedConfig({
+      task_type: false,
+      trainer_backend: false,
       chat_template: false,
       learning_rate: false,
       num_epochs: false,
       batch_size: false,
+      gradient_accumulation_steps: false,
+      max_seq_length: false,
       optimizer: false,
+      save_steps: false,
+      eval_steps: false,
+      sequence_packing: false,
       use_lora: false,
       lora_r: false,
       lora_alpha: false,
       target_modules: false,
+      fp16: false,
+      bf16: false,
+      flash_attention: false,
+      auto_oom_retry: false,
+      max_oom_retries: false,
+      oom_retry_seq_shrink: false,
       gradient_checkpointing: false,
     });
     setLastCreateSummary(null);
@@ -320,15 +388,28 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       setShowCreate(false);
       setName('');
       setTouchedConfig({
+        task_type: false,
+        trainer_backend: false,
         chat_template: false,
         learning_rate: false,
         num_epochs: false,
         batch_size: false,
+        gradient_accumulation_steps: false,
+        max_seq_length: false,
         optimizer: false,
+        save_steps: false,
+        eval_steps: false,
+        sequence_packing: false,
         use_lora: false,
         lora_r: false,
         lora_alpha: false,
         target_modules: false,
+        fp16: false,
+        bf16: false,
+        flash_attention: false,
+        auto_oom_retry: false,
+        max_oom_retries: false,
+        oom_retry_seq_shrink: false,
         gradient_checkpointing: false,
       });
     } catch (err: any) {
@@ -392,7 +473,19 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
   if (activeExperiment) {
     const latestMetric = metrics[metrics.length - 1] || {};
-    const currentEpoch = latestMetric.epoch !== undefined ? latestMetric.epoch : '—';
+    const totalEpochs = Number(activeExperiment.config?.num_epochs || 3);
+    const epochValue = typeof latestMetric.epoch === 'number' ? Number(latestMetric.epoch) : null;
+    const currentEpoch = epochValue !== null ? epochValue.toFixed(2) : '—';
+    const currentStep = typeof latestMetric.step === 'number' ? Number(latestMetric.step) : null;
+    const completedEpochs = epochValue !== null ? Math.floor(epochValue) : 0;
+    let epochState = 'Waiting for first metric...';
+    if (epochValue !== null) {
+      if (completedEpochs >= totalEpochs) {
+        epochState = `All ${totalEpochs} epochs completed`;
+      } else {
+        epochState = `Epoch ${Math.min(totalEpochs, completedEpochs + 1)} running`;
+      }
+    }
     const currentTrainLoss = latestMetric.train_loss !== undefined ? latestMetric.train_loss : null;
     const currentEvalLoss = latestMetric.eval_loss !== undefined ? latestMetric.eval_loss : null;
 
@@ -459,7 +552,11 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
             <div className="metric-box box-blue">
               <span className="mb-label">Current Epoch</span>
-              <span className="mb-value">{currentEpoch} / {activeExperiment.config?.num_epochs || 3}</span>
+              <span className="mb-value">{currentEpoch} / {totalEpochs}</span>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 6 }}>
+                {epochState}
+                {currentStep !== null ? ` • step ${currentStep}` : ''}
+              </div>
             </div>
             <div className="metric-box box-green">
               <span className="mb-label">Training Loss</span>
@@ -573,6 +670,38 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                   <label className="form-label">Base Model</label>
                   <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Task Type</label>
+                    <select
+                      className="input"
+                      value={taskType}
+                      onChange={(e) => {
+                        setTaskType(e.target.value);
+                        setTouchedConfig((prev) => ({ ...prev, task_type: true }));
+                      }}
+                    >
+                      <option value="causal_lm">Causal LM</option>
+                      <option value="seq2seq">Seq2Seq</option>
+                      <option value="classification">Classification</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Trainer Backend</label>
+                    <select
+                      className="input"
+                      value={trainerBackend}
+                      onChange={(e) => {
+                        setTrainerBackend(e.target.value);
+                        setTouchedConfig((prev) => ({ ...prev, trainer_backend: true }));
+                      }}
+                    >
+                      <option value="auto">Auto (HF Trainer)</option>
+                      <option value="hf_trainer">HF Trainer</option>
+                      <option value="trl_sft">TRL SFTTrainer</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="form-group">
                   <label className="form-label">Chat Template</label>
                   <select
@@ -642,6 +771,62 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     </select>
                   </div>
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Grad Accum Steps</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      value={gradientAccumulationSteps}
+                      onChange={(e) => {
+                        setGradientAccumulationSteps(Math.max(1, Number(e.target.value) || 1));
+                        setTouchedConfig((prev) => ({ ...prev, gradient_accumulation_steps: true }));
+                      }}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Max Seq Length</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={128}
+                      value={maxSeqLength}
+                      onChange={(e) => {
+                        setMaxSeqLength(Math.max(128, Number(e.target.value) || 128));
+                        setTouchedConfig((prev) => ({ ...prev, max_seq_length: true }));
+                      }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Save Steps</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      value={saveSteps}
+                      onChange={(e) => {
+                        setSaveSteps(Math.max(1, Number(e.target.value) || 1));
+                        setTouchedConfig((prev) => ({ ...prev, save_steps: true }));
+                      }}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Eval Steps</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      value={evalSteps}
+                      onChange={(e) => {
+                        setEvalSteps(Math.max(1, Number(e.target.value) || 1));
+                        setTouchedConfig((prev) => ({ ...prev, eval_steps: true }));
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -708,6 +893,100 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     }}
                   />
                   <label className="form-label" style={{ margin: 0 }}>Use Gradient Checkpointing</label>
+                </div>
+                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={sequencePacking}
+                    onChange={(e) => {
+                      setSequencePacking(e.target.checked);
+                      setTouchedConfig((prev) => ({ ...prev, sequence_packing: true }));
+                    }}
+                  />
+                  <label className="form-label" style={{ margin: 0 }}>Enable Sequence Packing</label>
+                </div>
+                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={flashAttention}
+                    onChange={(e) => {
+                      setFlashAttention(e.target.checked);
+                      setTouchedConfig((prev) => ({ ...prev, flash_attention: true }));
+                    }}
+                  />
+                  <label className="form-label" style={{ margin: 0 }}>Enable Flash Attention</label>
+                </div>
+                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={bf16}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setBf16(checked);
+                      setTouchedConfig((prev) => ({ ...prev, bf16: true }));
+                      if (checked && fp16) {
+                        setFp16(false);
+                        setTouchedConfig((prev) => ({ ...prev, fp16: true }));
+                      }
+                    }}
+                  />
+                  <label className="form-label" style={{ margin: 0 }}>Use BF16</label>
+                </div>
+                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={fp16}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setFp16(checked);
+                      setTouchedConfig((prev) => ({ ...prev, fp16: true }));
+                      if (checked && bf16) {
+                        setBf16(false);
+                        setTouchedConfig((prev) => ({ ...prev, bf16: true }));
+                      }
+                    }}
+                  />
+                  <label className="form-label" style={{ margin: 0 }}>Use FP16</label>
+                </div>
+                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoOomRetry}
+                    onChange={(e) => {
+                      setAutoOomRetry(e.target.checked);
+                      setTouchedConfig((prev) => ({ ...prev, auto_oom_retry: true }));
+                    }}
+                  />
+                  <label className="form-label" style={{ margin: 0 }}>Auto OOM Retry Planner</label>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Max OOM Retries</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={maxOomRetries}
+                      onChange={(e) => {
+                        const v = Math.min(5, Math.max(0, Number(e.target.value) || 0));
+                        setMaxOomRetries(v);
+                        setTouchedConfig((prev) => ({ ...prev, max_oom_retries: true }));
+                      }}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">OOM Seq Shrink</label>
+                    <input
+                      className="input"
+                      value={oomRetrySeqShrink}
+                      onChange={(e) => {
+                        setOomRetrySeqShrink(e.target.value);
+                        setTouchedConfig((prev) => ({ ...prev, oom_retry_seq_shrink: true }));
+                      }}
+                      placeholder="0.75"
+                    />
+                  </div>
                 </div>
               </div>
             </div>

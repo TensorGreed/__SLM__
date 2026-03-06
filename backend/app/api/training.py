@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 import redis.asyncio as aioredis
 import asyncio
+import json
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,7 +113,7 @@ async def ws_training_status(
         unregister_websocket(experiment_id, websocket)
         return
 
-    # Background task to stream raw text logs from Redis PubSub
+    # Background task to stream logs and metric envelopes from Redis PubSub.
     async def log_stream_loop():
         redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         pubsub = redis_client.pubsub()
@@ -121,9 +122,36 @@ async def ws_training_status(
         try:
             async for message in pubsub.listen():
                 if message["type"] == "message":
-                    log_line = message["data"]
+                    raw = message.get("data", "")
+                    envelope = None
+                    if isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                        except Exception:
+                            parsed = None
+                        if isinstance(parsed, dict) and isinstance(parsed.get("type"), str):
+                            envelope = parsed
+
                     try:
-                        await websocket.send_json({"type": "log", "text": log_line})
+                        if envelope is None:
+                            await websocket.send_json({"type": "log", "text": str(raw)})
+                            continue
+                        event_type = str(envelope.get("type", "")).strip().lower()
+                        if event_type == "metric" and isinstance(envelope.get("metric"), dict):
+                            metric = dict(envelope["metric"])
+                            metric.setdefault("experiment_id", experiment_id)
+                            await websocket.send_json({"type": "metric", "metric": metric})
+                        elif event_type == "status":
+                            payload = {"type": "status", "status": envelope.get("status", "")}
+                            if "error" in envelope:
+                                payload["error"] = envelope.get("error")
+                            if "returncode" in envelope:
+                                payload["returncode"] = envelope.get("returncode")
+                            await websocket.send_json(payload)
+                        elif event_type == "log":
+                            await websocket.send_json({"type": "log", "text": str(envelope.get("text", ""))})
+                        else:
+                            await websocket.send_json({"type": "log", "text": str(raw)})
                     except Exception:
                         break  # client disconnected
         finally:

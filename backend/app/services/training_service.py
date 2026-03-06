@@ -141,30 +141,45 @@ async def _monitor_external_training(
     command: str,
     log_path: Path,
     output_dir: Path,
-) -> None:
+    *,
+    captured_stdout: str | None = None,
+    captured_stderr: str | None = None,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+) -> str:
     """Monitor external training process and sync experiment status."""
-    started = datetime.now(timezone.utc)
+    started = started_at or datetime.now(timezone.utc)
     final_status = "failed"
     try:
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS,
-            )
-        except TimeoutError:
-            process.kill()
-            await process.communicate()
-            raise ValueError(
-                f"External training command timed out after {settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS} seconds"
-            )
-        finished = datetime.now(timezone.utc)
+        if captured_stdout is None or captured_stderr is None:
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                process.kill()
+                await process.communicate()
+                raise ValueError(
+                    (
+                        "External training command timed out after "
+                        f"{settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS} seconds"
+                    )
+                )
+            stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+            stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
+        else:
+            stdout_text = captured_stdout
+            stderr_text = captured_stderr
+
+        finished = finished_at or datetime.now(timezone.utc)
         log_payload = {
             "command": command,
             "returncode": process.returncode,
             "started_at": started.isoformat(),
             "finished_at": finished.isoformat(),
-            "stdout": stdout.decode("utf-8", errors="replace") if stdout else "",
-            "stderr": stderr.decode("utf-8", errors="replace") if stderr else "",
+            "stdout": stdout_text,
+            "stderr": stderr_text,
         }
         log_path.write_text(json.dumps(log_payload, indent=2), encoding="utf-8")
 
@@ -172,7 +187,7 @@ async def _monitor_external_training(
             result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
             exp = result.scalar_one_or_none()
             if not exp:
-                return
+                return final_status
 
             config = dict(exp.config or {})
             runtime = dict(config.get("_runtime") or {})
@@ -284,6 +299,7 @@ async def _monitor_external_training(
                 "returncode": process.returncode,
             },
         )
+        return final_status
     except Exception as e:
         async with async_session_factory() as db:
             result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
@@ -312,6 +328,7 @@ async def _monitor_external_training(
                 "error": str(e),
             },
         )
+        return "cancelled" if final_status == "cancelled" else "failed"
 
 
 async def _simulate_training_loop(experiment_id: int, config: dict):

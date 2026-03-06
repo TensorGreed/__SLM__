@@ -13,6 +13,14 @@ class TrainingConfig(BaseModel):
     base_model: str = Field(..., description="HuggingFace model ID or local path")
     training_mode: TrainingMode = TrainingMode.SFT
     chat_template: str = Field("llama3", description="Chat template format (llama3, chatml, zephyr, phi3)")
+    task_type: str = Field(
+        "causal_lm",
+        description="Task adapter type (causal_lm, seq2seq, classification)",
+    )
+    trainer_backend: str = Field(
+        "auto",
+        description="Trainer backend (auto, hf_trainer, trl_sft)",
+    )
     
     # Hyperparameters
     batch_size: int = Field(4, ge=1, le=256)
@@ -38,6 +46,19 @@ class TrainingConfig(BaseModel):
     bf16: bool = True
     gradient_checkpointing: bool = True
     flash_attention: bool = True
+
+    # Runtime planner / retry
+    auto_oom_retry: bool = Field(
+        True,
+        description="Auto-retry CUDA OOM with smaller memory profile.",
+    )
+    max_oom_retries: int = Field(2, ge=0, le=5)
+    oom_retry_seq_shrink: float = Field(
+        0.75,
+        gt=0.1,
+        lt=1.0,
+        description="Per-retry max_seq_length shrink factor.",
+    )
     
     # Checkpointing
     save_steps: int = Field(100, ge=1)

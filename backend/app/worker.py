@@ -37,6 +37,70 @@ celery_app.conf.update(
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
+TRAINING_METRIC_PREFIX = "SLM_METRIC "
+TRAINING_EVENT_PREFIX = "SLM_EVENT "
+
+
+def _coerce_metric_number(value):
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_training_metric_line(line: str, experiment_id: int) -> dict | None:
+    if not isinstance(line, str):
+        return None
+    text = line.strip()
+    if not text.startswith(TRAINING_METRIC_PREFIX):
+        return None
+    payload = text[len(TRAINING_METRIC_PREFIX):].strip()
+    try:
+        raw = json.loads(payload)
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+
+    metric = {"experiment_id": experiment_id}
+    step = raw.get("step")
+    if isinstance(step, int):
+        metric["step"] = step
+    elif isinstance(step, float):
+        metric["step"] = int(step)
+
+    epoch = _coerce_metric_number(raw.get("epoch"))
+    if epoch is not None:
+        metric["epoch"] = round(epoch, 4)
+
+    train_loss = _coerce_metric_number(raw.get("train_loss"))
+    if train_loss is not None:
+        metric["train_loss"] = train_loss
+
+    eval_loss = _coerce_metric_number(raw.get("eval_loss"))
+    if eval_loss is not None:
+        metric["eval_loss"] = eval_loss
+
+    learning_rate = _coerce_metric_number(raw.get("learning_rate"))
+    if learning_rate is not None:
+        metric["learning_rate"] = learning_rate
+
+    return metric
+
+
+def _parse_training_event_line(line: str) -> dict | None:
+    if not isinstance(line, str):
+        return None
+    text = line.strip()
+    if not text.startswith(TRAINING_EVENT_PREFIX):
+        return None
+    payload = text[len(TRAINING_EVENT_PREFIX):].strip()
+    try:
+        raw = json.loads(payload)
+    except Exception:
+        return None
+    return raw if isinstance(raw, dict) else None
+
 # ── Celery Task Definitions ────────────
 
 @celery_app.task(bind=True, name="run_workflow_node_job", track_started=True)
@@ -164,8 +228,20 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
             channel = f"log:experiment:{experiment_id}"
             redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
 
-            async def _publish(line: str) -> None:
-                await redis_client.publish(channel, line)
+            async def _publish_event(payload: dict) -> None:
+                await redis_client.publish(channel, json.dumps(payload))
+
+            async def _publish_log(text: str) -> None:
+                await _publish_event({"type": "log", "text": text})
+
+            async def _publish_metric(metric: dict) -> None:
+                await _publish_event({"type": "metric", "metric": metric})
+
+            async def _publish_status(status: str, extra: dict | None = None) -> None:
+                body = {"type": "status", "status": status}
+                if isinstance(extra, dict):
+                    body.update(extra)
+                await _publish_event(body)
 
             process = await asyncio.create_subprocess_shell(
                 command,
@@ -173,11 +249,92 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(BACKEND_DIR),
             )
+            started_at = datetime.now(timezone.utc)
 
             try:
-                await _publish(f"[worker] starting external training process for experiment {experiment_id}")
-                await _monitor_external_training(
-                    experiment_id, process, command, Path(log_path), Path(output_dir)
+                await _publish_log(
+                    f"[worker] starting external training process for experiment {experiment_id}"
+                )
+
+                stdout_lines: list[str] = []
+                stderr_lines: list[str] = []
+
+                async def _stream_reader(stream, sink: list[str], is_stderr: bool) -> None:
+                    if stream is None:
+                        return
+                    while True:
+                        raw = await stream.readline()
+                        if not raw:
+                            break
+                        line = raw.decode("utf-8", errors="replace").rstrip()
+                        sink.append(line)
+                        metric = _parse_training_metric_line(line, experiment_id)
+                        if metric is not None:
+                            await _publish_metric(metric)
+                            continue
+
+                        stream_event = _parse_training_event_line(line)
+                        if isinstance(stream_event, dict):
+                            event_type = str(stream_event.get("event", "")).strip().lower()
+                            if event_type == "epoch_end":
+                                epoch_value = stream_event.get("epoch")
+                                await _publish_log(
+                                    f"[event] epoch {epoch_value} completed"
+                                    if epoch_value is not None
+                                    else "[event] epoch completed"
+                                )
+                                continue
+
+                        text = f"[ERR] {line}" if is_stderr else line
+                        if text:
+                            await _publish_log(text)
+
+                stdout_task = asyncio.create_task(
+                    _stream_reader(process.stdout, stdout_lines, False)
+                )
+                stderr_task = asyncio.create_task(
+                    _stream_reader(process.stderr, stderr_lines, True)
+                )
+
+                timeout_seconds = int(settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS)
+                timed_out = False
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+                except TimeoutError:
+                    timed_out = True
+                    process.kill()
+                    await process.wait()
+
+                await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+
+                finished_at = datetime.now(timezone.utc)
+                monitor_status = await _monitor_external_training(
+                    experiment_id,
+                    process,
+                    command,
+                    Path(log_path),
+                    Path(output_dir),
+                    captured_stdout="\n".join(stdout_lines),
+                    captured_stderr="\n".join(stderr_lines),
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
+
+                if timed_out:
+                    await _publish_log(
+                        (
+                            "[worker] external training command timed out after "
+                            f"{timeout_seconds} seconds"
+                        )
+                    )
+                    await _publish_status("failed", {"error": "external command timeout"})
+                else:
+                    await _publish_status(
+                        str(monitor_status or ("completed" if process.returncode == 0 else "failed")),
+                        {"returncode": process.returncode},
+                    )
+                await _publish_log(
+                    f"[worker] training process exited with code {process.returncode}"
                 )
 
                 payload = {}
@@ -187,15 +344,6 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                         payload = json.loads(lp.read_text(encoding="utf-8"))
                     except Exception:
                         payload = {}
-
-                for line in str(payload.get("stdout", "")).splitlines():
-                    if line.strip():
-                        await _publish(line.strip())
-                for line in str(payload.get("stderr", "")).splitlines():
-                    if line.strip():
-                        await _publish(f"[ERR] {line.strip()}")
-
-                await _publish(f"[worker] training process exited with code {process.returncode}")
                 return {
                     "returncode": process.returncode,
                     "payload": payload,

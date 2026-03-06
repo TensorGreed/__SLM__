@@ -1,0 +1,5 @@
+# Example GPU profile for Linux x86_64 + CUDA 12.8 using PyTorch index wheels.
+# Not suitable for all platforms (for example Linux aarch64/Jetson-class systems).
+-r requirements-base.txt
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch

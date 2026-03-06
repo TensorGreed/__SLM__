@@ -32,6 +32,13 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added queued **compression** jobs (quantize/merge/benchmark) with task status/cancel APIs and WebSocket logs.
 - Added **experiment comparison** API/UI for side-by-side metrics and loss-history visualization.
 - Added auth UX updates for **SSO + local login** flow.
+- Added training runtime generalization:
+  - trainer backend abstraction (`auto`, `hf_trainer`, `trl_sft`)
+  - task/data adapter contract (`causal_lm`, `seq2seq`, `classification`)
+  - CUDA OOM auto-retry planner with progressive memory downscaling
+- Expanded Training experiment form controls for memory/runtime tuning (`gradient_accumulation_steps`, `max_seq_length`, `save_steps`, `eval_steps`, `fp16`/`bf16`, `flash_attention`, `sequence_packing`).
+- Added split backend dependency profiles for CPU/GPU installs (`requirements-base.txt`, `requirements.txt`, `requirements-gpu.txt`, `requirements-gpu-cu128.txt`).
+- Added live external-training telemetry streaming (`epoch`, `step`, loss metrics) from Celery worker to Training dashboard via WebSocket.
 - Added Alembic revisions:
   - `20260305_0002` for registry + secrets tables
   - `20260305_0003` for domain profiles + project binding
@@ -55,7 +62,15 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 cd backend
 python -m venv .venv
 source .venv/bin/activate
+# CPU/default install profile:
 pip install -r requirements.txt
+
+# GPU profile (all non-torch deps):
+# pip install -r requirements-gpu.txt
+# then install CUDA-enabled torch for your platform
+
+# Example only (Linux x86_64 + CUDA 12.8):
+# pip install -r requirements-gpu-cu128.txt
 cp .env.example .env
 
 # Optional (recommended for Postgres/prod-like setups):
@@ -67,6 +82,23 @@ uvicorn app.main:app --reload --port 8000
 Notes:
 - Default local DB is SQLite (`sqlite+aiosqlite:///./data/slm_platform.db`).
 - With `ALLOW_SQLITE_AUTOCREATE=true` (default), tables auto-create on startup.
+- `requirements.txt` is the default CPU-friendly profile.
+- For GPU training, use `requirements-gpu.txt` and then install a CUDA-enabled torch wheel that matches your OS/arch/CUDA stack.
+  - For Linux aarch64 systems, use your vendor/official CUDA torch wheel (PyPI `torch` is often CPU-only).
+- Verify torch runtime before training:
+
+```bash
+cd backend
+source .venv/bin/activate
+python - <<'PY'
+import torch
+print("torch:", torch.__version__)
+print("cuda_available:", torch.cuda.is_available())
+print("cuda_devices:", torch.cuda.device_count())
+if torch.cuda.is_available():
+    print("device0:", torch.cuda.get_device_name(0))
+PY
+```
 
 ### 2. Worker (Celery)
 
@@ -332,6 +364,15 @@ Current enforced behavior:
   - `POST /api/projects/{project_id}/training/experiments`
   - `POST /api/projects/{project_id}/training/experiments/effective-config` previews resolved config pre-create.
   - For omitted config fields, defaults come from resolved runtime `training_defaults` (e.g. `batch_size`, `num_epochs`, `learning_rate`, `chat_template`, `use_lora`, `training_mode`).
+  - Runtime config now also supports:
+    - `task_type`: `causal_lm` | `seq2seq` | `classification`
+    - `trainer_backend`: `auto` | `hf_trainer` | `trl_sft`
+    - `auto_oom_retry`, `max_oom_retries`, `oom_retry_seq_shrink`
+  - Task-specific trainer runtime:
+    - `causal_lm` uses `AutoModelForCausalLM` (`hf_trainer` or `trl_sft` when available).
+    - `seq2seq` uses `AutoModelForSeq2SeqLM` + seq2seq collator.
+    - `classification` uses `AutoModelForSequenceClassification` + label mapping + eval accuracy/macro-F1.
+    - If `trainer_backend=trl_sft` is requested for non-`causal_lm`, runtime falls back to `hf_trainer` with a warning.
   - Response now includes:
     - `domain_pack_applied`
     - `domain_pack_source`
