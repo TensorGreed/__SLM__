@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import socket
+import subprocess
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +24,8 @@ from app.models.experiment import EvalResult, Experiment, ExperimentStatus
 from app.models.export import Export, ExportStatus
 from app.models.project import PipelineStage, Project
 from app.pipeline.orchestrator import STAGE_ORDER, get_pipeline_status
+from app.schemas.step_contract import StepContract, StepRuntimeRequirements
+from app.services.artifact_registry_service import list_latest_artifact_keys
 
 
 DEFAULT_GRAPH_ID = "default-linear-v1"
@@ -33,6 +41,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["source.file", "source.remote_dataset"],
         "output_artifacts": ["dataset.raw"],
         "config_schema_ref": "slm.step.ingestion/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "cleaning": {
         "step_type": "core.cleaning",
@@ -40,6 +56,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["dataset.raw"],
         "output_artifacts": ["dataset.cleaned", "dataset.chunks"],
         "config_schema_ref": "slm.step.cleaning/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "gold_set": {
         "step_type": "core.gold_set",
@@ -47,6 +71,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["dataset.cleaned", "dataset.raw"],
         "output_artifacts": ["dataset.gold_dev", "dataset.gold_test"],
         "config_schema_ref": "slm.step.gold_set/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "synthetic": {
         "step_type": "core.synthetic",
@@ -54,6 +86,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["dataset.cleaned", "dataset.chunks"],
         "output_artifacts": ["dataset.synthetic"],
         "config_schema_ref": "slm.step.synthetic/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "dataset_prep": {
         "step_type": "core.dataset_prep",
@@ -61,6 +101,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["dataset.cleaned", "dataset.synthetic", "dataset.gold_dev"],
         "output_artifacts": ["dataset.train", "dataset.validation", "dataset.test"],
         "config_schema_ref": "slm.step.dataset_prep/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "tokenization": {
         "step_type": "core.tokenization",
@@ -68,6 +116,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["dataset.train", "dataset.validation"],
         "output_artifacts": ["analysis.tokenization"],
         "config_schema_ref": "slm.step.tokenization/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "training": {
         "step_type": "core.training",
@@ -75,6 +131,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["dataset.train", "dataset.validation"],
         "output_artifacts": ["model.checkpoint", "report.training"],
         "config_schema_ref": "slm.step.training/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery", "external"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": ["TRAINING_BACKEND"],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "evaluation": {
         "step_type": "core.evaluation",
@@ -82,6 +146,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["model.checkpoint", "dataset.gold_dev", "dataset.test"],
         "output_artifacts": ["report.evaluation"],
         "config_schema_ref": "slm.step.evaluation/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery", "external"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "compression": {
         "step_type": "core.compression",
@@ -89,6 +161,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["model.checkpoint", "report.evaluation"],
         "output_artifacts": ["model.compressed", "report.compression"],
         "config_schema_ref": "slm.step.compression/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery", "external"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": ["COMPRESSION_BACKEND"],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
     "export": {
         "step_type": "core.export",
@@ -96,6 +176,14 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["model.compressed", "report.compression"],
         "output_artifacts": ["package.export_bundle"],
         "config_schema_ref": "slm.step.export/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "external"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
     },
 }
 
@@ -224,6 +312,185 @@ def get_step_contract_catalog() -> list[dict[str, Any]]:
     return catalog
 
 
+def _stage_sequence(*stages: str) -> list[str]:
+    valid = [stage.value for stage in STAGE_ORDER if stage.value in _STEP_CONTRACTS]
+    allowed = set(valid)
+    ordered: list[str] = []
+    for stage in stages:
+        if stage in allowed and stage not in ordered:
+            ordered.append(stage)
+    return ordered
+
+
+def _build_template_graph(
+    project_id: int,
+    current_stage: PipelineStage,
+    *,
+    template_id: str,
+    template_label: str,
+    template_description: str,
+    stages: list[str],
+    overrides: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    status_by_stage = _status_by_stage(current_stage)
+    nodes: list[dict[str, Any]] = []
+    for index, stage_name in enumerate(stages):
+        base_contract = dict(_STEP_CONTRACTS[stage_name])
+        override = dict((overrides or {}).get(stage_name, {}))
+        base_contract.update(override)
+        nodes.append(
+            {
+                "id": f"step:{stage_name}",
+                "stage": stage_name,
+                "display_name": stage_name.replace("_", " ").title(),
+                "index": index,
+                "kind": "template_step",
+                "status": status_by_stage.get(stage_name, "pending"),
+                "position": {"x": index * 280, "y": 0},
+                **base_contract,
+            }
+        )
+
+    edges: list[dict[str, str]] = []
+    for index, stage_name in enumerate(stages):
+        if index == 0:
+            continue
+        prev_stage = stages[index - 1]
+        edges.append(
+            {
+                "id": f"edge:{prev_stage}->{stage_name}",
+                "source": f"step:{prev_stage}",
+                "target": f"step:{stage_name}",
+                "kind": "template_edge",
+            }
+        )
+
+    return {
+        "project_id": project_id,
+        "graph_id": template_id,
+        "graph_label": template_label,
+        "graph_version": DEFAULT_GRAPH_VERSION,
+        "mode": "readonly_preview",
+        "current_stage": current_stage.value,
+        "template_description": template_description,
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+def get_workflow_graph_templates(project_id: int, current_stage: PipelineStage) -> list[dict[str, Any]]:
+    """Return starter graph templates for common SLM workflows."""
+    templates: list[dict[str, Any]] = []
+
+    templates.append(
+        {
+            "template_id": "template.sft",
+            "display_name": "SFT Full Pipeline",
+            "description": "Default supervised fine-tuning workflow from ingestion to export.",
+            "graph": _build_template_graph(
+                project_id,
+                current_stage,
+                template_id="template.sft",
+                template_label="SFT Full Pipeline",
+                template_description="Default supervised fine-tuning workflow from ingestion to export.",
+                stages=_stage_sequence(
+                    "ingestion",
+                    "cleaning",
+                    "gold_set",
+                    "synthetic",
+                    "dataset_prep",
+                    "tokenization",
+                    "training",
+                    "evaluation",
+                    "compression",
+                    "export",
+                ),
+            ),
+        }
+    )
+
+    templates.append(
+        {
+            "template_id": "template.lora",
+            "display_name": "LoRA Fast Track",
+            "description": "LoRA-oriented path with lightweight training defaults and full release steps.",
+            "graph": _build_template_graph(
+                project_id,
+                current_stage,
+                template_id="template.lora",
+                template_label="LoRA Fast Track",
+                template_description="LoRA-oriented path with lightweight training defaults and full release steps.",
+                stages=_stage_sequence(
+                    "ingestion",
+                    "cleaning",
+                    "synthetic",
+                    "dataset_prep",
+                    "tokenization",
+                    "training",
+                    "evaluation",
+                    "compression",
+                    "export",
+                ),
+                overrides={
+                    "training": {
+                        "config_schema_ref": "slm.step.training.lora/v1",
+                        "description": "Run adapter-based LoRA fine-tuning and output adapter checkpoints.",
+                    },
+                },
+            ),
+        }
+    )
+
+    templates.append(
+        {
+            "template_id": "template.distill",
+            "display_name": "Distillation Pipeline",
+            "description": "Distillation-style pipeline emphasizing synthetic data and iterative evaluation.",
+            "graph": _build_template_graph(
+                project_id,
+                current_stage,
+                template_id="template.distill",
+                template_label="Distillation Pipeline",
+                template_description="Distillation-style pipeline emphasizing synthetic data and iterative evaluation.",
+                stages=_stage_sequence(
+                    "ingestion",
+                    "cleaning",
+                    "gold_set",
+                    "synthetic",
+                    "dataset_prep",
+                    "training",
+                    "evaluation",
+                    "compression",
+                ),
+                overrides={
+                    "training": {
+                        "config_schema_ref": "slm.step.training.distill/v1",
+                        "description": "Train student model with teacher-guided distillation objectives.",
+                    },
+                },
+            ),
+        }
+    )
+
+    templates.append(
+        {
+            "template_id": "template.eval_only",
+            "display_name": "Eval-Only Gate",
+            "description": "Evaluate an existing checkpoint and produce deployment readiness reports.",
+            "graph": _build_template_graph(
+                project_id,
+                current_stage,
+                template_id="template.eval_only",
+                template_label="Eval-Only Gate",
+                template_description="Evaluate an existing checkpoint and produce deployment readiness reports.",
+                stages=_stage_sequence("evaluation", "compression", "export"),
+            ),
+        }
+    )
+
+    return templates
+
+
 def resolve_project_workflow_graph(
     project_id: int,
     current_stage: PipelineStage,
@@ -270,6 +537,241 @@ def _is_nonempty_str(value: object) -> bool:
 
 def _is_artifact_list(value: object) -> bool:
     return isinstance(value, list) and all(_is_nonempty_str(item) for item in value)
+
+
+def _default_runtime_requirements_for_stage(stage_name: str) -> dict[str, Any]:
+    defaults = _STEP_CONTRACTS.get(stage_name, {}).get("runtime_requirements", {})
+    try:
+        return StepRuntimeRequirements.model_validate(defaults).model_dump()
+    except ValidationError:
+        return StepRuntimeRequirements().model_dump()
+
+
+def _normalize_runtime_requirements(
+    value: object,
+    *,
+    stage_name: str,
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Return normalized runtime requirements with validation diagnostics."""
+    warnings: list[str] = []
+    errors: list[str] = []
+    default_requirements = _default_runtime_requirements_for_stage(stage_name)
+
+    if value is None:
+        warnings.append("runtime_requirements missing; defaulted from core stage contract")
+        return default_requirements, warnings, errors
+
+    try:
+        normalized = StepRuntimeRequirements.model_validate(value).model_dump()
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        location = ".".join(str(item) for item in first_error.get("loc", []))
+        message = str(first_error.get("msg", "invalid value"))
+        field = f"runtime_requirements.{location}" if location else "runtime_requirements"
+        errors.append(f"{field} {message}")
+        return default_requirements, warnings, errors
+
+    return normalized, warnings, errors
+
+
+def _validate_step_contract_node(node: dict[str, Any], stage_name: str) -> tuple[list[str], list[str], dict[str, Any]]:
+    """Validate step contract fields on a graph node."""
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    runtime_requirements, runtime_warnings, runtime_errors = _normalize_runtime_requirements(
+        node.get("runtime_requirements"),
+        stage_name=stage_name,
+    )
+    warnings.extend(runtime_warnings)
+    errors.extend(runtime_errors)
+
+    contract_payload = {
+        "step_type": node.get("step_type"),
+        "description": node.get("description"),
+        "input_artifacts": node.get("input_artifacts"),
+        "output_artifacts": node.get("output_artifacts"),
+        "config_schema_ref": node.get("config_schema_ref"),
+        "runtime_requirements": runtime_requirements,
+    }
+    try:
+        normalized_contract = StepContract.model_validate(contract_payload).model_dump()
+    except ValidationError as exc:
+        for detail in exc.errors():
+            location = ".".join(str(item) for item in detail.get("loc", []))
+            message = str(detail.get("msg", "invalid value"))
+            field = location or "contract"
+            errors.append(f"{field} {message}")
+        normalized_contract = StepContract.model_validate(
+            {
+                **contract_payload,
+                "step_type": str(node.get("step_type") or "custom.step"),
+                "description": str(node.get("description") or "custom step"),
+                "input_artifacts": node.get("input_artifacts") if isinstance(node.get("input_artifacts"), list) else [],
+                "output_artifacts": node.get("output_artifacts") if isinstance(node.get("output_artifacts"), list) else [],
+                "config_schema_ref": str(node.get("config_schema_ref") or "slm.step.custom/v1"),
+            }
+        ).model_dump()
+
+    return warnings, errors, normalized_contract
+
+
+def _service_check_redis() -> tuple[bool, str | None]:
+    parsed = urlparse(settings.REDIS_URL)
+    host = (parsed.hostname or "").strip()
+    port = int(parsed.port or 6379)
+    if not host:
+        return False, "REDIS_URL host missing"
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True, None
+    except OSError as exc:
+        return False, str(exc)
+
+
+def _service_check_ollama() -> tuple[bool, str | None]:
+    api_url = str(settings.TEACHER_MODEL_API_URL or "").strip()
+    if not api_url:
+        return False, "TEACHER_MODEL_API_URL not configured"
+    parsed = urlparse(api_url)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return False, "TEACHER_MODEL_API_URL host missing"
+    port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True, None
+    except OSError as exc:
+        return False, str(exc)
+
+
+def _service_available(service_id: str) -> tuple[bool, str | None]:
+    normalized = service_id.strip().lower()
+    if normalized == "redis":
+        return _service_check_redis()
+    if normalized == "ollama":
+        return _service_check_ollama()
+    return False, "unsupported service check"
+
+
+def _runtime_setting_is_present(name: str) -> bool:
+    if not hasattr(settings, name):
+        return False
+    value = getattr(settings, name)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _detect_gpu_present() -> bool:
+    if shutil.which("nvidia-smi"):
+        return True
+    visible = os.getenv("CUDA_VISIBLE_DEVICES", "").strip()
+    return bool(visible and visible != "-1")
+
+
+def _detect_max_vram_gb() -> float | None:
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+
+    values: list[float] = []
+    for line in proc.stdout.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            values.append(float(text) / 1024.0)
+        except ValueError:
+            continue
+    if not values:
+        return None
+    return max(values)
+
+
+def _evaluate_runtime_requirements(node: dict[str, Any]) -> dict[str, Any]:
+    stage_name = str(node.get("stage", "")).strip()
+    runtime_requirements, normalization_warnings, normalization_errors = _normalize_runtime_requirements(
+        node.get("runtime_requirements"),
+        stage_name=stage_name,
+    )
+    req = StepRuntimeRequirements.model_validate(runtime_requirements)
+
+    missing_env = [name for name in req.required_env if not os.getenv(name)]
+    missing_settings = [name for name in req.required_settings if not _runtime_setting_is_present(name)]
+    missing_services: list[str] = []
+    warnings = list(normalization_warnings)
+    errors = list(normalization_errors)
+
+    for service in req.required_services:
+        ok, detail = _service_available(service)
+        if ok:
+            continue
+        missing_services.append(service)
+        if detail:
+            warnings.append(f"service '{service}' unavailable: {detail}")
+
+    if req.requires_gpu:
+        gpu_present = _detect_gpu_present()
+        if not gpu_present:
+            missing_services.append("gpu")
+        elif req.min_vram_gb > 0:
+            max_vram_gb = _detect_max_vram_gb()
+            if max_vram_gb is None:
+                warnings.append("gpu VRAM check could not be verified; nvidia-smi unavailable")
+            elif max_vram_gb < req.min_vram_gb:
+                missing_services.append(f"gpu_vram>={req.min_vram_gb:g}GB")
+
+    ok = not (missing_env or missing_settings or missing_services or errors)
+    return {
+        "ok": ok,
+        "runtime_requirements": req.model_dump(),
+        "missing_env": sorted(set(missing_env)),
+        "missing_settings": sorted(set(missing_settings)),
+        "missing_services": sorted(set(missing_services)),
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def _flatten_missing_runtime_requirements(runtime_check: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    missing.extend(str(item) for item in runtime_check.get("missing_env", []))
+    missing.extend(str(item) for item in runtime_check.get("missing_settings", []))
+    missing.extend(str(item) for item in runtime_check.get("missing_services", []))
+    return sorted({item for item in missing if item})
+
+
+def evaluate_runtime_requirements_for_node(node: dict[str, Any]) -> dict[str, Any]:
+    """Public wrapper for runtime requirement evaluation."""
+    return _evaluate_runtime_requirements(node)
+
+
+def flatten_missing_runtime_requirements(runtime_check: dict[str, Any]) -> list[str]:
+    """Public wrapper to normalize missing runtime requirements."""
+    return _flatten_missing_runtime_requirements(runtime_check)
+
+
+def missing_inputs_for_node(node: dict[str, Any], available_artifacts: set[str]) -> list[str]:
+    """Public wrapper for artifact input checks."""
+    return _missing_inputs_for_node(node, available_artifacts)
 
 
 def _graph_has_cycle(node_ids: set[str], edges: list[dict[str, Any]]) -> bool:
@@ -341,10 +843,6 @@ def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str]
 
         node_id = str(node.get("id", "")).strip()
         stage_name = str(node.get("stage", "")).strip()
-        step_type = node.get("step_type")
-        input_artifacts = node.get("input_artifacts")
-        output_artifacts = node.get("output_artifacts")
-        config_schema_ref = node.get("config_schema_ref")
 
         if not node_id:
             errors.append(f"nodes[{index}].id is required")
@@ -361,15 +859,11 @@ def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str]
             stage_names.add(stage_name)
             if stage_name not in _STEP_CONTRACTS:
                 errors.append(f"nodes[{index}].stage '{stage_name}' is not supported by core contracts")
+            continue
 
-        if not _is_nonempty_str(step_type):
-            errors.append(f"nodes[{index}].step_type is required")
-        if not _is_nonempty_str(config_schema_ref):
-            errors.append(f"nodes[{index}].config_schema_ref is required")
-        if not _is_artifact_list(input_artifacts):
-            errors.append(f"nodes[{index}].input_artifacts must be a list of non-empty strings")
-        if not _is_artifact_list(output_artifacts):
-            errors.append(f"nodes[{index}].output_artifacts must be a list of non-empty strings")
+        node_warnings, node_errors, _ = _validate_step_contract_node(node, stage_name)
+        warnings.extend(f"nodes[{index}].{message}" for message in node_warnings)
+        errors.extend(f"nodes[{index}].{message}" for message in node_errors)
 
     for index, edge in enumerate(edges):
         if not isinstance(edge, dict):
@@ -416,9 +910,11 @@ def _normalize_override_graph(
             "x": int(x) if isinstance(x, int) else index * 280,
             "y": int(y) if isinstance(y, int) else 0,
         }
+        _, _, normalized_contract = _validate_step_contract_node(node, stage_name)
         nodes.append(
             {
                 **node,
+                **normalized_contract,
                 "display_name": str(node.get("display_name") or stage_name.replace("_", " ").title()),
                 "index": index,
                 "kind": str(node.get("kind") or "custom_step"),
@@ -537,6 +1033,9 @@ async def _dataset_exists_with_records(
 async def collect_available_artifacts(db: AsyncSession, project_id: int) -> set[str]:
     """Infer currently materialized artifacts for a project."""
     artifacts: set[str] = set()
+
+    # Source of truth for typed artifact availability (phase 12+).
+    artifacts.update(await list_latest_artifact_keys(db, project_id, only_materialized=True))
 
     raw_doc_result = await db.execute(
         select(RawDocument.id)
@@ -679,6 +1178,10 @@ async def compile_workflow_graph(
     active_stage = project.pipeline_stage.value
     active_node_id = ""
     active_missing_inputs: list[str] = []
+    active_missing_runtime_requirements: list[str] = []
+    active_runtime_requirements: dict[str, Any] = StepRuntimeRequirements().model_dump()
+    active_runtime_warnings: list[str] = []
+    active_runtime_errors: list[str] = []
     stage_present = False
 
     if isinstance(graph, dict):
@@ -707,6 +1210,11 @@ async def compile_workflow_graph(
                     stage_present = True
                     active_node_id = node_id
                     active_missing_inputs = _missing_inputs_for_node(node, available_artifacts)
+                    runtime_check = _evaluate_runtime_requirements(node)
+                    active_runtime_requirements = runtime_check["runtime_requirements"]
+                    active_missing_runtime_requirements = _flatten_missing_runtime_requirements(runtime_check)
+                    active_runtime_warnings = list(runtime_check.get("warnings", []))
+                    active_runtime_errors = list(runtime_check.get("errors", []))
         else:
             stage_present = any(str(node.get("stage", "")).strip() == active_stage for node in nodes)
             if stage_present:
@@ -715,9 +1223,21 @@ async def compile_workflow_graph(
                 )
                 active_node_id = str(node.get("id", "")).strip()
                 active_missing_inputs = _missing_inputs_for_node(node, available_artifacts)
+                runtime_check = _evaluate_runtime_requirements(node)
+                active_runtime_requirements = runtime_check["runtime_requirements"]
+                active_missing_runtime_requirements = _flatten_missing_runtime_requirements(runtime_check)
+                active_runtime_warnings = list(runtime_check.get("warnings", []))
+                active_runtime_errors = list(runtime_check.get("errors", []))
 
         if not stage_present:
             errors.append(f"Current project stage '{active_stage}' is not present in resolved graph.")
+        else:
+            warnings.extend(
+                f"{active_node_id} runtime: {item}" for item in active_runtime_warnings if item
+            )
+            errors.extend(
+                f"{active_node_id} runtime: {item}" for item in active_runtime_errors if item
+            )
 
     return {
         "project_id": project.id,
@@ -733,7 +1253,10 @@ async def compile_workflow_graph(
             "active_stage_present": stage_present,
             "active_stage_node_id": active_node_id or None,
             "active_stage_missing_inputs": active_missing_inputs,
-            "active_stage_ready_now": not active_missing_inputs and stage_present,
+            "active_stage_runtime_requirements": active_runtime_requirements,
+            "active_stage_missing_runtime_requirements": active_missing_runtime_requirements,
+            "active_stage_runtime_ready": not active_missing_runtime_requirements,
+            "active_stage_ready_now": not active_missing_inputs and not active_missing_runtime_requirements and stage_present,
         },
         "available_artifacts": sorted(available_artifacts),
         "graph": graph,
@@ -771,13 +1294,22 @@ async def build_workflow_dry_run(
             for node in ordered:
                 missing_inputs = _missing_inputs_for_node(node, available_artifacts)
                 stage_name = str(node.get("stage", "")).strip()
+                runtime_check = _evaluate_runtime_requirements(node)
+                missing_runtime_requirements = _flatten_missing_runtime_requirements(runtime_check)
                 node_plan.append(
                     {
                         "id": str(node.get("id", "")).strip(),
                         "stage": stage_name,
                         "status": str(node.get("status", "pending")),
-                        "can_run_now": not missing_inputs and stage_name == active_stage,
+                        "can_run_now": (
+                            not missing_inputs
+                            and not missing_runtime_requirements
+                            and stage_name == active_stage
+                        ),
                         "missing_inputs": missing_inputs,
+                        "runtime_requirements": runtime_check["runtime_requirements"],
+                        "missing_runtime_requirements": missing_runtime_requirements,
+                        "runtime_ready": not missing_runtime_requirements,
                         "input_artifacts": list(node.get("input_artifacts", [])),
                         "output_artifacts": list(node.get("output_artifacts", [])),
                     }
@@ -886,7 +1418,9 @@ async def prepare_workflow_step_run(
                 "status": "invalid_graph",
                 "declared_inputs": [],
                 "declared_outputs": [],
+                "declared_runtime_requirements": StepRuntimeRequirements().model_dump(),
                 "missing_inputs": [],
+                "missing_runtime_requirements": [],
                 "can_execute": False,
             }
         )
@@ -905,7 +1439,9 @@ async def prepare_workflow_step_run(
                 ],
                 "declared_inputs": [],
                 "declared_outputs": [],
+                "declared_runtime_requirements": StepRuntimeRequirements().model_dump(),
                 "missing_inputs": [],
+                "missing_runtime_requirements": [],
                 "can_execute": False,
             }
         )
@@ -918,7 +1454,9 @@ async def prepare_workflow_step_run(
                 "errors": [*base_payload["errors"], f"Stage '{stage.value}' not found in resolved graph."],
                 "declared_inputs": [],
                 "declared_outputs": [],
+                "declared_runtime_requirements": StepRuntimeRequirements().model_dump(),
                 "missing_inputs": [],
+                "missing_runtime_requirements": [],
                 "can_execute": False,
             }
         )
@@ -926,8 +1464,11 @@ async def prepare_workflow_step_run(
 
     declared_inputs = [str(item) for item in node.get("input_artifacts", []) if isinstance(item, str)]
     declared_outputs = [str(item) for item in node.get("output_artifacts", []) if isinstance(item, str)]
+    runtime_check = _evaluate_runtime_requirements(node)
+    declared_runtime_requirements = runtime_check["runtime_requirements"]
+    missing_runtime_requirements = _flatten_missing_runtime_requirements(runtime_check)
     missing_inputs = _missing_inputs_for_node(node, available_artifacts)
-    can_execute = not missing_inputs
+    can_execute = not missing_inputs and not missing_runtime_requirements
 
     base_payload.update(
         {
@@ -936,8 +1477,14 @@ async def prepare_workflow_step_run(
             "step_type": str(node.get("step_type", "")),
             "declared_inputs": declared_inputs,
             "declared_outputs": declared_outputs,
+            "declared_runtime_requirements": declared_runtime_requirements,
             "missing_inputs": missing_inputs,
+            "missing_runtime_requirements": missing_runtime_requirements,
             "can_execute": can_execute,
         }
     )
+    if runtime_check.get("warnings"):
+        base_payload["warnings"] = [*base_payload.get("warnings", []), *runtime_check["warnings"]]
+    if runtime_check.get("errors"):
+        base_payload["errors"] = [*base_payload.get("errors", []), *runtime_check["errors"]]
     return base_payload

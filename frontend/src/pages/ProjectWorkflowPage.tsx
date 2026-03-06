@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import PipelineProgress from '../components/dashboard/PipelineProgress';
 import PipelineGraphEditor from '../components/pipeline/PipelineGraphEditor';
 import PipelineGraphPreview from '../components/pipeline/PipelineGraphPreview';
+import WorkflowRunMonitor from '../components/pipeline/WorkflowRunMonitor';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectWorkflowPage.css';
 
@@ -24,6 +25,10 @@ export default function ProjectWorkflowPage() {
                 projectId={projectId}
                 currentStage={currentStage}
                 onPipelineUpdated={refreshPipelineStatus}
+            />
+            <WorkflowRunMonitor
+                projectId={projectId}
+                currentStage={currentStage}
             />
             <PipelineGraphEditor
                 projectId={projectId}

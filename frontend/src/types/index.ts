@@ -123,6 +123,15 @@ export interface PipelineGraphNodePosition {
     y: number;
 }
 
+export interface StepRuntimeRequirements {
+    execution_modes: string[];
+    required_services: string[];
+    required_env: string[];
+    required_settings: string[];
+    requires_gpu: boolean;
+    min_vram_gb: number;
+}
+
 export interface PipelineGraphNode {
     id: string;
     stage: PipelineStage;
@@ -135,6 +144,7 @@ export interface PipelineGraphNode {
     input_artifacts: string[];
     output_artifacts: string[];
     config_schema_ref: string;
+    runtime_requirements: StepRuntimeRequirements;
     position: PipelineGraphNodePosition;
 }
 
@@ -175,6 +185,9 @@ export interface PipelineGraphDryRunStep {
     status: 'completed' | 'active' | 'pending' | string;
     can_run_now: boolean;
     missing_inputs: string[];
+    runtime_requirements: StepRuntimeRequirements;
+    missing_runtime_requirements: string[];
+    runtime_ready: boolean;
     input_artifacts: string[];
     output_artifacts: string[];
 }
@@ -215,10 +228,14 @@ export interface PipelineGraphRunStepResponse {
     available_artifacts: string[];
     declared_inputs: string[];
     declared_outputs: string[];
+    declared_runtime_requirements: StepRuntimeRequirements;
     missing_inputs: string[];
+    missing_runtime_requirements: string[];
     can_execute: boolean;
     auto_advance: boolean;
     advanced: boolean;
+    published_artifacts?: Array<Record<string, unknown>>;
+    published_artifact_keys?: string[];
 }
 
 export interface PipelineGraphContractResponse {
@@ -234,6 +251,9 @@ export interface PipelineGraphCompileChecks {
     active_stage_present: boolean;
     active_stage_node_id: string | null;
     active_stage_missing_inputs: string[];
+    active_stage_runtime_requirements: StepRuntimeRequirements;
+    active_stage_missing_runtime_requirements: string[];
+    active_stage_runtime_ready: boolean;
     active_stage_ready_now: boolean;
 }
 
@@ -273,11 +293,80 @@ export interface PipelineGraphStageTemplate {
     input_artifacts: string[];
     output_artifacts: string[];
     config_schema_ref: string;
+    runtime_requirements: StepRuntimeRequirements;
 }
 
 export interface PipelineGraphStageCatalogResponse {
     project_id: number;
     stages: PipelineGraphStageTemplate[];
+}
+
+export interface PipelineGraphTemplate {
+    template_id: string;
+    display_name: string;
+    description: string;
+    graph: PipelineGraphResponse;
+}
+
+export interface PipelineGraphTemplateListResponse {
+    project_id: number;
+    templates: PipelineGraphTemplate[];
+}
+
+export interface WorkflowRunNode {
+    id: number;
+    run_id: number;
+    node_id: string;
+    stage: string;
+    step_type: string;
+    execution_backend: string;
+    status: string;
+    attempt_count: number;
+    max_retries: number;
+    dependencies: string[];
+    input_artifacts: string[];
+    output_artifacts: string[];
+    runtime_requirements: StepRuntimeRequirements;
+    missing_inputs: string[];
+    missing_runtime_requirements: string[];
+    published_artifact_keys: string[];
+    error_message: string;
+    node_log: Array<Record<string, unknown>>;
+    started_at: string | null;
+    finished_at: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+}
+
+export interface WorkflowRunSummary {
+    node_counts: Record<string, number>;
+    total_nodes: number;
+    available_artifacts_final?: string[];
+    break_reason?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkflowRun {
+    id: number;
+    project_id: number;
+    graph_id: string;
+    graph_version: string;
+    execution_backend: string;
+    status: string;
+    run_config: Record<string, unknown>;
+    summary: WorkflowRunSummary;
+    started_at: string | null;
+    finished_at: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+    nodes: WorkflowRunNode[];
+}
+
+export interface WorkflowRunListResponse {
+    project_id: number;
+    limit: number;
+    count: number;
+    runs: WorkflowRun[];
 }
 
 export interface EvalResult {

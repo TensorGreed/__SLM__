@@ -175,13 +175,15 @@ export default function PipelineGraphPreview({
                 <div className={`pipeline-graph-result ${dryRunResult.active_step?.can_run_now ? 'ok' : 'warn'}`}>
                     <strong>Dry Run:</strong> active stage `{dryRunResult.current_stage}` | ready:{' '}
                     {dryRunResult.active_step?.can_run_now ? 'yes' : 'no'} | missing:{' '}
-                    {dryRunResult.active_step?.missing_inputs.length ?? 0}
+                    {dryRunResult.active_step?.missing_inputs.length ?? 0} | runtime-missing:{' '}
+                    {dryRunResult.active_step?.missing_runtime_requirements.length ?? 0}
                 </div>
             )}
             {runResult && (
                 <div className={`pipeline-graph-result ${runResult.status === 'completed' ? 'ok' : 'warn'}`}>
                     <strong>Run Step:</strong> status `{runResult.status}` | advanced:{' '}
-                    {runResult.advanced ? 'yes' : 'no'} | current stage: `{runResult.current_stage}`
+                    {runResult.advanced ? 'yes' : 'no'} | current stage: `{runResult.current_stage}` | outputs:{' '}
+                    {runResult.published_artifact_keys?.length || 0}
                 </div>
             )}
 
@@ -203,6 +205,10 @@ export default function PipelineGraphPreview({
                                     <div className="pipeline-graph-node-meta">
                                         <code>{node.step_type}</code>
                                         <span>{node.config_schema_ref}</span>
+                                    </div>
+                                    <div className="pipeline-graph-node-meta">
+                                        <span>modes: {node.runtime_requirements?.execution_modes?.join(', ') || 'local'}</span>
+                                        <span>gpu: {node.runtime_requirements?.requires_gpu ? 'yes' : 'no'}</span>
                                     </div>
                                     <div className="pipeline-graph-node-artifacts">
                                         <section>

@@ -16,6 +16,10 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Workflow Graph Preview** (read-only visual stage graph + step contracts) in project detail.
 - Added **Workflow Contract Runtime (Phase 2)** APIs: graph validate, dry-run, run active step, and run history.
 - Added **Visual Pipeline Editor (Phase 3)** with project-scoped graph contract save/load/reset and compile diagnostics.
+- Added **Step Contract SDK v1** runtime fields (`runtime_requirements`) with compile/dry-run/run-step enforcement.
+- Added **Typed Artifact Registry (Phase 4)** with versioned artifacts and pipeline run-step artifact publication.
+- Added **Workflow Runner v1 (Phase 5)** with persisted DAG runs, node retries, dependency tracking, and backend adapters (`local`, `celery`, `external`).
+- Added **Workflow Templates + Run Monitor UI (Phase 6)** on the Workflow page.
 - Refactored project UI into a cleaner workspace IA:
   - `Pipeline` page
   - `Workflow Graph` page
@@ -32,6 +36,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - `20260305_0002` for registry + secrets tables
   - `20260305_0003` for domain profiles + project binding
   - `20260305_0004` for domain packs + project binding
+  - `20260305_0005` for artifact registry table
 
 ---
 
@@ -174,6 +179,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards |
 | Compression | `/projects/{id}/compression` | Quantize/merge/benchmark queue, report status, task status/cancel, WS logs |
 | Export | `/projects/{id}/export` | Create/run/list exports with manifests |
+| Artifacts | `/projects/{id}/artifacts` | Publish/list/version typed artifacts and resolve latest keys |
 | Registry | `/projects/{id}/registry` | Register, readiness snapshot, promote with gates, deploy metadata (runtime-aware gate defaults) |
 | Secrets | `/projects/{id}/secrets` | Upsert/list/delete project secrets with encrypted storage |
 | Auth | `/auth` | Config, me, SSO flow, local login, user/member management |
@@ -182,7 +188,9 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 Pipeline graph preview endpoint:
 - `GET /api/projects/{project_id}/pipeline/graph`
 - Returns a read-only node/edge graph with stage status and step contract metadata (`input_artifacts`, `output_artifacts`, `config_schema_ref`).
+- Node contracts also include `runtime_requirements` (`execution_modes`, `required_services`, `required_env`, `required_settings`, `requires_gpu`, `min_vram_gb`).
 - `GET /api/projects/{project_id}/pipeline/graph/stage-catalog`
+- `GET /api/projects/{project_id}/pipeline/graph/templates`
 - `GET /api/projects/{project_id}/pipeline/graph/contract`
 - `PUT /api/projects/{project_id}/pipeline/graph/contract`
 - `DELETE /api/projects/{project_id}/pipeline/graph/contract`
@@ -191,8 +199,30 @@ Pipeline graph preview endpoint:
 - `POST /api/projects/{project_id}/pipeline/graph/dry-run`
 - `POST /api/projects/{project_id}/pipeline/graph/run-step`
 - `GET /api/projects/{project_id}/pipeline/graph/runs`
-- Runtime mode executes active-step gating with contract checks + stage guardrails; invalid custom graph payloads can fall back to default graph.
+- `POST /api/projects/{project_id}/pipeline/graph/run`
+- `POST /api/projects/{project_id}/pipeline/graph/run-async`
+- `GET /api/projects/{project_id}/pipeline/graph/workflow-runs`
+- `GET /api/projects/{project_id}/pipeline/graph/workflow-runs/{run_id}`
+- Runtime mode executes active-step gating with contract checks + stage guardrails; completed step runs now publish declared outputs as versioned artifact records.
+- Dry-run/compile artifact availability resolves from typed artifact registry (plus existing inferred fallback checks).
+- Compile and run-step now also enforce active-node runtime requirements (missing env/settings/services/GPU checks surface in API responses).
+- Workflow DAG runs persist in DB (`workflow_runs` + `workflow_run_nodes`) and support:
+  - dependency-aware node ordering
+  - per-node retries (`max_retries`)
+  - stop-on-block / stop-on-failure controls
+  - backend execution mode selection (`local`, `celery`, `external`)
+- Workflow page now includes:
+  - template picker in Visual Pipeline Editor (`SFT`, `LoRA`, `Distillation`, `Eval-only`)
+  - Workflow Run Monitor panel with run controls, background DAG queueing, auto-refresh polling, recent run history, and per-node attempt status
 - Phase 3 adds persisted per-project graph overrides and compile-time graph diagnostics before save/run.
+
+Artifact registry endpoints:
+- `POST /api/projects/{project_id}/artifacts/publish`
+- `POST /api/projects/{project_id}/artifacts/publish-batch`
+- `GET /api/projects/{project_id}/artifacts`
+- `GET /api/projects/{project_id}/artifacts/keys`
+- `GET /api/projects/{project_id}/artifacts/latest/{artifact_key}`
+- Artifacts are immutable per `(project_id, artifact_key, version)` and include `producer_stage`, `producer_run_id`, `schema_ref`, and metadata.
 
 ---
 
@@ -439,6 +469,8 @@ Current revisions:
 - `20260305_0002` model registry + project secrets
 - `20260305_0003` domain profiles + project binding
 - `20260305_0004` domain packs + project binding
+- `20260305_0005` artifact registry
+- `20260305_0006` workflow run tracking tables
 
 From repo root:
 

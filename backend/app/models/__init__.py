@@ -7,6 +7,8 @@ from app.models.registry import ModelRegistryEntry
 from app.models.secret import ProjectSecret
 from app.models.domain_pack import DomainPack
 from app.models.domain_profile import DomainProfile
+from app.models.artifact import ArtifactRecord
+from app.models.workflow_run import WorkflowRun, WorkflowRunNode
 
 __all__ = [
     "Project",
@@ -25,4 +27,7 @@ __all__ = [
     "ProjectSecret",
     "DomainPack",
     "DomainProfile",
+    "ArtifactRecord",
+    "WorkflowRun",
+    "WorkflowRunNode",
 ]

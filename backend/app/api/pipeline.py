@@ -1,5 +1,6 @@
 """Pipeline status API routes."""
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+import app.database as database_module
 from app.database import get_db
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus
@@ -19,10 +21,23 @@ from app.pipeline.orchestrator import (
     get_pipeline_status,
     get_progress_percent,
 )
+from app.services.artifact_registry_service import (
+    publish_artifact_batch,
+    serialize_artifact,
+)
+from app.services.workflow_runner_service import (
+    create_workflow_run_shell,
+    get_workflow_run,
+    list_workflow_runs,
+    mark_workflow_run_failed,
+    run_workflow_graph,
+    serialize_workflow_run,
+)
 from app.services.workflow_graph_service import (
     compile_workflow_graph,
     delete_workflow_graph_override,
     build_workflow_dry_run,
+    get_workflow_graph_templates,
     get_step_contract_catalog,
     load_saved_workflow_graph_override,
     list_pipeline_run_records,
@@ -63,6 +78,17 @@ class GraphRunStepRequest(BaseModel):
     use_saved_override: bool = True
     stage: PipelineStage | None = None
     auto_advance: bool = True
+    config: dict[str, object] = Field(default_factory=dict)
+
+
+class GraphRunWorkflowRequest(BaseModel):
+    graph: dict | None = None
+    allow_fallback: bool = True
+    use_saved_override: bool = True
+    execution_backend: str = "local"
+    max_retries: int = Field(default=0, ge=0, le=5)
+    stop_on_blocked: bool = True
+    stop_on_failure: bool = True
     config: dict[str, object] = Field(default_factory=dict)
 
 
@@ -223,6 +249,22 @@ async def pipeline_graph_stage_catalog(
     return {
         "project_id": project_id,
         "stages": get_step_contract_catalog(),
+    }
+
+
+@router.get("/graph/templates")
+async def pipeline_graph_templates(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List starter workflow graph templates."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return {
+        "project_id": project_id,
+        "templates": get_workflow_graph_templates(project_id, project.pipeline_stage),
     }
 
 
@@ -437,6 +479,30 @@ async def run_pipeline_graph_step(
     else:
         step_run["advanced"] = False
 
+    published_artifacts: list[dict] = []
+    if step_run.get("status") == "completed" and bool(step_run.get("can_execute")):
+        declared_outputs = [
+            str(item).strip()
+            for item in step_run.get("declared_outputs", [])
+            if isinstance(item, str) and str(item).strip()
+        ]
+        if declared_outputs:
+            published_rows = await publish_artifact_batch(
+                db=db,
+                project_id=project.id,
+                artifact_keys=declared_outputs,
+                producer_stage=requested_stage.value,
+                producer_run_id=str(step_run.get("run_id", "")),
+                producer_step_id=str(step_run.get("step_node_id", "")),
+                metadata={
+                    "source": "pipeline.graph.run_step",
+                    "auto_advance": bool(req.auto_advance),
+                },
+            )
+            published_artifacts = [serialize_artifact(row) for row in published_rows]
+
+    step_run["published_artifacts"] = published_artifacts
+    step_run["published_artifact_keys"] = [row["artifact_key"] for row in published_artifacts]
     step_run["run_finished_at"] = datetime.now(timezone.utc).isoformat()
     run_record_path = persist_pipeline_run_record(project.id, step_run)
     step_run["run_record_path"] = run_record_path
@@ -461,6 +527,160 @@ async def list_pipeline_graph_runs(
         "count": len(runs),
         "runs": runs,
     }
+
+
+@router.post("/graph/run")
+async def run_pipeline_graph_workflow(
+    project_id: int,
+    req: GraphRunWorkflowRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute workflow DAG run with dependency tracking and retries."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    return await run_workflow_graph(
+        db=db,
+        project=project,
+        graph_override=req.graph,
+        allow_fallback=req.allow_fallback,
+        use_saved_override=req.use_saved_override,
+        execution_backend=req.execution_backend,
+        max_retries=req.max_retries,
+        stop_on_blocked=req.stop_on_blocked,
+        stop_on_failure=req.stop_on_failure,
+        config=dict(req.config),
+    )
+
+
+@router.post("/graph/run-async")
+async def run_pipeline_graph_workflow_async(
+    project_id: int,
+    req: GraphRunWorkflowRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue workflow DAG run in background and return immediately."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    shell = await create_workflow_run_shell(
+        db=db,
+        project_id=project.id,
+        execution_backend=req.execution_backend,
+        run_config={
+            "allow_fallback": req.allow_fallback,
+            "use_saved_override": req.use_saved_override,
+            "max_retries": req.max_retries,
+            "stop_on_blocked": req.stop_on_blocked,
+            "stop_on_failure": req.stop_on_failure,
+            "config": dict(req.config),
+        },
+        summary={"queued": True},
+    )
+    await db.commit()
+    await db.refresh(shell)
+
+    queued_run_id = int(shell.id)
+    queued_project_id = int(project.id)
+    queued_graph = dict(req.graph) if isinstance(req.graph, dict) else None
+    queued_config = dict(req.config)
+    queued_allow_fallback = bool(req.allow_fallback)
+    queued_use_saved_override = bool(req.use_saved_override)
+    queued_execution_backend = str(req.execution_backend)
+    queued_max_retries = int(req.max_retries)
+    queued_stop_on_blocked = bool(req.stop_on_blocked)
+    queued_stop_on_failure = bool(req.stop_on_failure)
+
+    async def _execute_workflow_run() -> None:
+        async with database_module.async_session_factory() as task_db:
+            try:
+                project_row = await task_db.get(Project, queued_project_id)
+                if project_row is None:
+                    await mark_workflow_run_failed(
+                        db=task_db,
+                        project_id=queued_project_id,
+                        run_id=queued_run_id,
+                        message="project not found during background execution",
+                    )
+                    await task_db.commit()
+                    return
+
+                await run_workflow_graph(
+                    db=task_db,
+                    project=project_row,
+                    graph_override=queued_graph,
+                    allow_fallback=queued_allow_fallback,
+                    use_saved_override=queued_use_saved_override,
+                    execution_backend=queued_execution_backend,
+                    max_retries=queued_max_retries,
+                    stop_on_blocked=queued_stop_on_blocked,
+                    stop_on_failure=queued_stop_on_failure,
+                    config=queued_config,
+                    run_id=queued_run_id,
+                    commit_progress=True,
+                )
+            except Exception as e:
+                await mark_workflow_run_failed(
+                    db=task_db,
+                    project_id=queued_project_id,
+                    run_id=queued_run_id,
+                    message=str(e),
+                )
+                await task_db.commit()
+
+    def _run_in_background_thread() -> None:
+        asyncio.run(_execute_workflow_run())
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run_in_background_thread)
+
+    return {
+        "project_id": project.id,
+        "queued": True,
+        "run_id": queued_run_id,
+        "run": serialize_workflow_run(shell, []),
+    }
+
+
+@router.get("/graph/workflow-runs")
+async def list_pipeline_workflow_runs(
+    project_id: int,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """List persisted workflow DAG runs."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+    safe_limit = max(1, min(limit, 200))
+    runs = await list_workflow_runs(db=db, project_id=project_id, limit=safe_limit)
+    return {
+        "project_id": project_id,
+        "limit": safe_limit,
+        "count": len(runs),
+        "runs": runs,
+    }
+
+
+@router.get("/graph/workflow-runs/{run_id}")
+async def get_pipeline_workflow_run(
+    project_id: int,
+    run_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get one workflow DAG run with node attempt details."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+
+    payload = await get_workflow_run(db=db, project_id=project_id, run_id=run_id)
+    if payload is None:
+        raise HTTPException(404, f"Workflow run {run_id} not found")
+    return payload
 
 
 @router.post("/advance")

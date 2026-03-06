@@ -11,8 +11,11 @@ import type {
     PipelineGraphResponse,
     PipelineGraphStageCatalogResponse,
     PipelineGraphStageTemplate,
+    PipelineGraphTemplate,
+    PipelineGraphTemplateListResponse,
     PipelineGraphValidationResponse,
     PipelineStage,
+    StepRuntimeRequirements,
 } from '../../types';
 import './PipelineGraphEditor.css';
 
@@ -27,6 +30,22 @@ function parseArtifacts(value: string): string[] {
         .map((item) => item.trim())
         .filter(Boolean);
 }
+
+function parseList(value: string): string[] {
+    return value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+const DEFAULT_RUNTIME_REQUIREMENTS: StepRuntimeRequirements = {
+    execution_modes: ['local'],
+    required_services: [],
+    required_env: [],
+    required_settings: [],
+    requires_gpu: false,
+    min_vram_gb: 0,
+};
 
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
@@ -49,6 +68,7 @@ function cloneGraph(graph: PipelineGraphResponse): PipelineGraphResponse {
         ...graph,
         nodes: [...graph.nodes].sort((a, b) => a.index - b.index).map((node, index) => ({
             ...node,
+            runtime_requirements: node.runtime_requirements || { ...DEFAULT_RUNTIME_REQUIREMENTS },
             index,
             position: {
                 x: index * 280,
@@ -66,6 +86,8 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
     const [statusMessage, setStatusMessage] = useState('');
 
     const [catalog, setCatalog] = useState<PipelineGraphStageTemplate[]>([]);
+    const [templates, setTemplates] = useState<PipelineGraphTemplate[]>([]);
+    const [selectedTemplateId, setSelectedTemplateId] = useState('');
     const [draftGraph, setDraftGraph] = useState<PipelineGraphResponse | null>(null);
     const [contractMeta, setContractMeta] = useState<{
         hasSavedOverride: boolean;
@@ -79,12 +101,14 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
     const loadEditorState = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [contractRes, catalogRes] = await Promise.all([
+            const [contractRes, catalogRes, templateRes] = await Promise.all([
                 api.get<PipelineGraphContractResponse>(`/projects/${projectId}/pipeline/graph/contract`),
                 api.get<PipelineGraphStageCatalogResponse>(`/projects/${projectId}/pipeline/graph/stage-catalog`),
+                api.get<PipelineGraphTemplateListResponse>(`/projects/${projectId}/pipeline/graph/templates`),
             ]);
             setDraftGraph(cloneGraph(contractRes.data.graph));
             setCatalog(catalogRes.data.stages || []);
+            setTemplates(templateRes.data.templates || []);
             setContractMeta({
                 hasSavedOverride: contractRes.data.has_saved_override,
                 requestedSource: contractRes.data.requested_source,
@@ -193,6 +217,10 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
                 input_artifacts: [...template.input_artifacts],
                 output_artifacts: [...template.output_artifacts],
                 config_schema_ref: template.config_schema_ref,
+                runtime_requirements: {
+                    ...DEFAULT_RUNTIME_REQUIREMENTS,
+                    ...(template.runtime_requirements || {}),
+                },
                 position: { x: index * 280, y: 0 },
             };
             setErrorMessage('');
@@ -229,6 +257,22 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
                 edges: [...prev.edges, edge],
             };
         });
+    };
+
+    const handleApplyTemplate = () => {
+        if (!selectedTemplateId) {
+            return;
+        }
+        const template = templates.find((item) => item.template_id === selectedTemplateId);
+        if (!template) {
+            setErrorMessage(`Template '${selectedTemplateId}' not found.`);
+            return;
+        }
+        setDraftGraph(cloneGraph(template.graph));
+        setValidateResult(null);
+        setCompileResult(null);
+        setStatusMessage(`Template '${template.display_name}' applied to draft.`);
+        setErrorMessage('');
     };
 
     const handleEdgeChange = (edgeId: string, patch: Partial<PipelineGraphEdge>) => {
@@ -377,6 +421,27 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
                     <div className="pipeline-editor-toolbar">
                         <select
                             className="input pipeline-editor-select"
+                            value={selectedTemplateId}
+                            onChange={(event) => setSelectedTemplateId(event.target.value)}
+                            disabled={isBusy !== null || templates.length === 0}
+                        >
+                            <option value="">Apply Template...</option>
+                            {templates.map((template) => (
+                                <option key={template.template_id} value={template.template_id}>
+                                    {template.display_name}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={handleApplyTemplate}
+                            disabled={isBusy !== null || !selectedTemplateId}
+                        >
+                            Apply Template
+                        </button>
+                        <select
+                            className="input pipeline-editor-select"
                             onChange={(event) => {
                                 const stage = event.target.value as PipelineStage;
                                 if (stage) {
@@ -485,6 +550,94 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
                                             />
                                         </label>
                                     </div>
+                                    <div className="pipeline-editor-grid">
+                                        <label>
+                                            Execution Modes (comma separated)
+                                            <input
+                                                className="input"
+                                                value={node.runtime_requirements?.execution_modes?.join(', ') || ''}
+                                                onChange={(e) => handleNodeChange(node.id, {
+                                                    runtime_requirements: {
+                                                        ...(node.runtime_requirements || DEFAULT_RUNTIME_REQUIREMENTS),
+                                                        execution_modes: parseList(e.target.value),
+                                                    },
+                                                })}
+                                            />
+                                        </label>
+                                        <label>
+                                            Required Services (comma separated)
+                                            <input
+                                                className="input"
+                                                value={node.runtime_requirements?.required_services?.join(', ') || ''}
+                                                onChange={(e) => handleNodeChange(node.id, {
+                                                    runtime_requirements: {
+                                                        ...(node.runtime_requirements || DEFAULT_RUNTIME_REQUIREMENTS),
+                                                        required_services: parseList(e.target.value),
+                                                    },
+                                                })}
+                                            />
+                                        </label>
+                                        <label>
+                                            Required Env Vars (comma separated)
+                                            <input
+                                                className="input"
+                                                value={node.runtime_requirements?.required_env?.join(', ') || ''}
+                                                onChange={(e) => handleNodeChange(node.id, {
+                                                    runtime_requirements: {
+                                                        ...(node.runtime_requirements || DEFAULT_RUNTIME_REQUIREMENTS),
+                                                        required_env: parseList(e.target.value),
+                                                    },
+                                                })}
+                                            />
+                                        </label>
+                                    </div>
+                                    <div className="pipeline-editor-grid">
+                                        <label>
+                                            Required Settings (comma separated)
+                                            <input
+                                                className="input"
+                                                value={node.runtime_requirements?.required_settings?.join(', ') || ''}
+                                                onChange={(e) => handleNodeChange(node.id, {
+                                                    runtime_requirements: {
+                                                        ...(node.runtime_requirements || DEFAULT_RUNTIME_REQUIREMENTS),
+                                                        required_settings: parseList(e.target.value),
+                                                    },
+                                                })}
+                                            />
+                                        </label>
+                                        <label>
+                                            Min VRAM (GB)
+                                            <input
+                                                className="input"
+                                                type="number"
+                                                min={0}
+                                                step={0.5}
+                                                value={node.runtime_requirements?.min_vram_gb ?? 0}
+                                                onChange={(e) => handleNodeChange(node.id, {
+                                                    runtime_requirements: {
+                                                        ...(node.runtime_requirements || DEFAULT_RUNTIME_REQUIREMENTS),
+                                                        min_vram_gb: Number.parseFloat(e.target.value || '0') || 0,
+                                                    },
+                                                })}
+                                            />
+                                        </label>
+                                        <label>
+                                            Requires GPU
+                                            <select
+                                                className="input"
+                                                value={node.runtime_requirements?.requires_gpu ? 'yes' : 'no'}
+                                                onChange={(e) => handleNodeChange(node.id, {
+                                                    runtime_requirements: {
+                                                        ...(node.runtime_requirements || DEFAULT_RUNTIME_REQUIREMENTS),
+                                                        requires_gpu: e.target.value === 'yes',
+                                                    },
+                                                })}
+                                            >
+                                                <option value="no">No</option>
+                                                <option value="yes">Yes</option>
+                                            </select>
+                                        </label>
+                                    </div>
                                 </article>
                             ))}
                         </div>
@@ -534,7 +687,7 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
 
                     {compileResult && (
                         <div className={`pipeline-editor-result ${compileResult.errors.length === 0 ? 'ok' : 'error'}`}>
-                            Compile: active-stage-present={compileResult.checks.active_stage_present ? 'yes' : 'no'} | ready-now={compileResult.checks.active_stage_ready_now ? 'yes' : 'no'} | errors={compileResult.errors.length} | warnings={compileResult.warnings.length}
+                            Compile: active-stage-present={compileResult.checks.active_stage_present ? 'yes' : 'no'} | runtime-ready={compileResult.checks.active_stage_runtime_ready ? 'yes' : 'no'} | ready-now={compileResult.checks.active_stage_ready_now ? 'yes' : 'no'} | errors={compileResult.errors.length} | warnings={compileResult.warnings.length}
                         </div>
                     )}
                 </>
