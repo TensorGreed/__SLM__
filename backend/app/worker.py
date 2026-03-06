@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import shlex
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,8 +16,8 @@ logger = logging.getLogger(__name__)
 # Initialize Celery app
 celery_app = Celery(
     "slm_worker",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
 )
 
 celery_app.conf.update(
@@ -27,11 +29,124 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     worker_prefetch_multiplier=1,  # ML Tasks are heavy; only take 1 at a time
     task_acks_late=True,  # Don't acknowledge task until completed so it isn't lost on crash
+    task_reject_on_worker_lost=True,
+    broker_transport_options={"visibility_timeout": settings.CELERY_VISIBILITY_TIMEOUT_SECONDS},
+    result_backend_transport_options={"visibility_timeout": settings.CELERY_VISIBILITY_TIMEOUT_SECONDS},
+    visibility_timeout=settings.CELERY_VISIBILITY_TIMEOUT_SECONDS,
 )
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 # ── Celery Task Definitions ────────────
+
+@celery_app.task(bind=True, name="run_workflow_node_job", track_started=True)
+def run_workflow_node_job(
+    self,
+    project_id: int,
+    run_id: int,
+    node_id: str,
+    stage: str,
+    step_type: str,
+    attempt: int,
+    config: dict | None = None,
+):
+    """Execute one workflow DAG node attempt via Celery worker."""
+    cfg = dict(config or {})
+    fail_stages = {
+        str(item).strip()
+        for item in cfg.get("simulate_fail_stages", [])
+        if isinstance(item, str) and str(item).strip()
+    }
+    fail_once_stages = {
+        str(item).strip()
+        for item in cfg.get("simulate_fail_once_stages", [])
+        if isinstance(item, str) and str(item).strip()
+    }
+
+    if stage in fail_stages:
+        return {
+            "success": False,
+            "log": {
+                "message": f"simulated failure for stage '{stage}'",
+                "task_id": self.request.id,
+            },
+            "error": "simulated stage failure",
+        }
+    if stage in fail_once_stages and int(attempt) == 1:
+        return {
+            "success": False,
+            "log": {
+                "message": f"simulated one-time failure for stage '{stage}'",
+                "task_id": self.request.id,
+            },
+            "error": "simulated one-time failure",
+        }
+
+    command_template = str(cfg.get("external_command_template", "")).strip()
+    timeout_seconds = max(
+        1,
+        int(cfg.get("external_timeout_seconds") or settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS),
+    )
+
+    if not command_template:
+        return {
+            "success": True,
+            "log": {
+                "message": f"celery backend completed {stage}",
+                "task_id": self.request.id,
+            },
+            "error": "",
+        }
+
+    try:
+        command = command_template.format(
+            project_id=project_id,
+            run_id=run_id,
+            node_id=node_id,
+            stage=stage,
+            step_type=step_type,
+        )
+    except KeyError as exc:
+        missing = str(exc.args[0]) if exc.args else "unknown"
+        return {
+            "success": False,
+            "log": {
+                "message": "external command template missing placeholder",
+                "task_id": self.request.id,
+            },
+            "error": f"external command missing placeholder: {missing}",
+        }
+
+    proc = subprocess.run(
+        shlex.split(command),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        cwd=str(BACKEND_DIR),
+    )
+    stdout_tail = str(proc.stdout or "").strip()[-2000:]
+    stderr_tail = str(proc.stderr or "").strip()[-2000:]
+    if proc.returncode != 0:
+        return {
+            "success": False,
+            "log": {
+                "message": f"external command failed for stage {stage}",
+                "task_id": self.request.id,
+                "stdout_tail": stdout_tail,
+            },
+            "error": stderr_tail or f"external command exited with code {proc.returncode}",
+        }
+
+    return {
+        "success": True,
+        "log": {
+            "message": f"celery backend executed {stage}",
+            "task_id": self.request.id,
+            "stdout_tail": stdout_tail,
+        },
+        "error": "",
+    }
 
 @celery_app.task(bind=True, name="run_training_job", track_started=True)
 def run_training_job(self, experiment_id: int, command: str, log_path: str, output_dir: str):

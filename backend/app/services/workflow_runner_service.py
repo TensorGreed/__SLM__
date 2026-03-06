@@ -68,7 +68,7 @@ def _dependency_map(edges: list[dict[str, Any]]) -> dict[str, list[str]]:
 
 
 def _redis_available() -> tuple[bool, str | None]:
-    parsed = urlparse(settings.REDIS_URL)
+    parsed = urlparse(settings.CELERY_BROKER_URL or settings.REDIS_URL)
     host = (parsed.hostname or "").strip()
     port = int(parsed.port or 6379)
     if not host:
@@ -117,6 +117,68 @@ def _execute_external(
     return True, stdout[-2000:], ""
 
 
+def _execute_celery_node_attempt(
+    *,
+    project_id: int,
+    run_id: int,
+    node_id: str,
+    stage: str,
+    step_type: str,
+    attempt: int,
+    config: dict[str, Any],
+) -> tuple[bool, dict[str, Any], str]:
+    ok, detail = _redis_available()
+    if not ok:
+        return False, {"message": "celery backend unavailable"}, f"redis unavailable: {detail}"
+
+    try:
+        from app.worker import celery_app
+    except Exception as exc:
+        return False, {"message": "celery backend import failed"}, str(exc)
+
+    timeout_seconds = int(
+        config.get("celery_result_timeout_seconds")
+        or config.get("external_timeout_seconds")
+        or settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS
+    )
+    timeout_seconds = max(1, timeout_seconds)
+    queue_name = str(config.get("celery_queue", "")).strip() or None
+
+    task = celery_app.send_task(
+        "run_workflow_node_job",
+        kwargs={
+            "project_id": project_id,
+            "run_id": run_id,
+            "node_id": node_id,
+            "stage": stage,
+            "step_type": step_type,
+            "attempt": attempt,
+            "config": dict(config),
+        },
+        queue=queue_name,
+    )
+
+    try:
+        payload = task.get(timeout=timeout_seconds)
+    except Exception as exc:
+        return False, {"message": "celery node task failed", "task_id": task.id}, str(exc)
+
+    if not isinstance(payload, dict):
+        return False, {"message": "celery node task returned invalid payload", "task_id": task.id}, "invalid task result"
+
+    success = bool(payload.get("success"))
+    log_payload = payload.get("log")
+    if not isinstance(log_payload, dict):
+        log_payload = {"message": str(log_payload or "")}
+    log_payload.setdefault("message", f"celery backend completed {stage}")
+    log_payload.setdefault("task_id", task.id)
+    error_text = str(payload.get("error", "")).strip()
+
+    if success:
+        return True, log_payload, ""
+    return False, log_payload, error_text or "celery node task reported failure"
+
+
 def _execute_node_attempt(
     *,
     backend: str,
@@ -151,11 +213,15 @@ def _execute_node_attempt(
         return True, {"message": f"local backend completed {stage}"}, ""
 
     if backend == "celery":
-        ok, detail = _redis_available()
-        if not ok:
-            return False, {"message": "celery backend unavailable"}, f"redis unavailable: {detail}"
-        # V1 runner executes inline even in celery mode, but still validates broker reachability.
-        return True, {"message": f"celery backend validated and completed {stage} inline"}, ""
+        return _execute_celery_node_attempt(
+            project_id=project_id,
+            run_id=run_id,
+            node_id=node_id,
+            stage=stage,
+            step_type=step_type,
+            attempt=attempt,
+            config=config,
+        )
 
     if backend == "external":
         timeout_seconds = int(config.get("external_timeout_seconds") or 120)

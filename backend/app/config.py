@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_VISIBILITY_TIMEOUT_SECONDS: int = 43200
 
     # ── CORS ────────────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]

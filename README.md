@@ -78,6 +78,8 @@ source .venv/bin/activate
 celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2
 ```
 
+If long-running tasks (for example training jobs >1 hour) are re-received repeatedly with the same task id, set `CELERY_VISIBILITY_TIMEOUT_SECONDS` in `backend/.env` to a larger value (for example `43200`).
+
 ### 3. Frontend
 
 ```bash
@@ -211,6 +213,7 @@ Pipeline graph preview endpoint:
   - per-node retries (`max_retries`)
   - stop-on-block / stop-on-failure controls
   - backend execution mode selection (`local`, `celery`, `external`)
+  - `celery` backend dispatches each node attempt to worker task `run_workflow_node_job` and waits for task result (requires worker + broker/result backend).
 - Workflow page now includes:
   - template picker in Visual Pipeline Editor (`SFT`, `LoRA`, `Distillation`, `Eval-only`)
   - Workflow Run Monitor panel with run controls, background DAG queueing, auto-refresh polling, recent run history, and per-node attempt status
@@ -395,6 +398,7 @@ Common backend env vars (see `backend/.env.example`):
 - `REDIS_URL`
 - `CELERY_BROKER_URL`
 - `CELERY_RESULT_BACKEND`
+- `CELERY_VISIBILITY_TIMEOUT_SECONDS` (increase for long-running tasks; default `43200`)
 
 ### Ingestion / synthetic / judge
 

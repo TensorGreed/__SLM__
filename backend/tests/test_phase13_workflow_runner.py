@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import app.database as database_module
 import app.main as main_module
 from app.config import settings
+import app.services.workflow_runner_service as workflow_runner_module
 
 
 class WorkflowRunnerTests(unittest.TestCase):
@@ -151,6 +152,33 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertEqual(detail.json()["id"], run_id)
         self.assertEqual(detail.json()["status"], "completed")
+
+    def test_workflow_run_celery_backend_dispatches_node_attempts(self):
+        project_id = self._create_project("phase13-celery")
+        self._publish_source_artifacts(project_id)
+
+        original_execute = workflow_runner_module._execute_celery_node_attempt
+        calls: list[str] = []
+
+        def _fake_execute_celery(**kwargs):
+            stage = str(kwargs.get("stage", ""))
+            calls.append(stage)
+            return True, {"message": f"fake celery completed {stage}"}, ""
+
+        workflow_runner_module._execute_celery_node_attempt = _fake_execute_celery
+        try:
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={"execution_backend": "celery"},
+            )
+        finally:
+            workflow_runner_module._execute_celery_node_attempt = original_execute
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertGreaterEqual(len(calls), 1)
+        self.assertTrue(all(node["execution_backend"] == "celery" for node in payload["nodes"]))
 
     def test_workflow_run_async_queue_and_poll(self):
         project_id = self._create_project("phase13-async")
