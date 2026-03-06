@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     # DOMAIN_HOOK_PLUGIN_MODULES='["app.plugins.domain_hooks.example_hooks"]'
     DOMAIN_HOOK_PLUGIN_MODULES: list[str] = []
 
+    # ── Data Adapter Plugins ────────────────────────────────────────────
+    # Example:
+    # DATA_ADAPTER_PLUGIN_MODULES='["app.plugins.data_adapters.example_adapters"]'
+    DATA_ADAPTER_PLUGIN_MODULES: list[str] = []
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @model_validator(mode="after")

@@ -42,6 +42,33 @@ interface ProjectSecretListResponse {
     secrets: ProjectSecret[];
 }
 
+interface AdapterCatalogResponse {
+    default_adapter: string;
+    adapters: Record<string, {
+        description?: string;
+        source?: string;
+    }>;
+}
+
+function parseJsonObjectInput(raw: string): { value: Record<string, unknown>; error: string } {
+    const text = raw.trim();
+    if (!text) {
+        return { value: {}, error: '' };
+    }
+    try {
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { value: {}, error: 'JSON config must be an object (e.g. {"key":"value"}).' };
+        }
+        return { value: parsed as Record<string, unknown>, error: '' };
+    } catch (error) {
+        if (error instanceof Error) {
+            return { value: {}, error: error.message };
+        }
+        return { value: {}, error: 'Invalid JSON.' };
+    }
+}
+
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
@@ -102,6 +129,9 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [importLogs, setImportLogs] = useState<string[]>([]);
     const [activeReportPath, setActiveReportPath] = useState<string | null>(null);
     const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+    const [adapterCatalog, setAdapterCatalog] = useState<AdapterCatalogResponse | null>(null);
+    const [remoteAdapterId, setRemoteAdapterId] = useState('default-canonical');
+    const [remoteAdapterConfigText, setRemoteAdapterConfigText] = useState('');
 
     const [savedHfTokenHint, setSavedHfTokenHint] = useState('');
     const [savedKaggleUserHint, setSavedKaggleUserHint] = useState('');
@@ -146,10 +176,23 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         }
     }, [projectId]);
 
+    const refreshAdapterCatalog = useCallback(async () => {
+        try {
+            const res = await api.get<AdapterCatalogResponse>(`/projects/${projectId}/dataset/adapters/catalog`);
+            setAdapterCatalog(res.data);
+            if (res.data?.default_adapter) {
+                setRemoteAdapterId((prev) => prev || res.data.default_adapter);
+            }
+        } catch {
+            setAdapterCatalog(null);
+        }
+    }, [projectId]);
+
     useEffect(() => {
         void fetchDocs();
         void refreshSecrets();
-    }, [fetchDocs, refreshSecrets]);
+        void refreshAdapterCatalog();
+    }, [fetchDocs, refreshSecrets, refreshAdapterCatalog]);
 
     useEffect(() => {
         if (!activeReportPath) {
@@ -325,11 +368,19 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
             }
 
             const remoteSource = activeTab as RemoteSourceTab;
+            const parsedAdapterConfig = parseJsonObjectInput(remoteAdapterConfigText);
+            if (parsedAdapterConfig.error) {
+                setImportStatus(`Import failed: adapter config JSON error: ${parsedAdapterConfig.error}`);
+                setIsImporting(false);
+                return;
+            }
             const payload: {
                 source_type: RemoteSourceTab;
                 identifier: string;
                 split: string;
                 max_samples: number | null;
+                adapter_id: string;
+                adapter_config?: Record<string, unknown>;
                 use_saved_secrets: boolean;
                 hf_token?: string;
                 kaggle_username?: string;
@@ -339,6 +390,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 identifier: remoteId.trim(),
                 split: remoteSource === 'huggingface' ? (remoteSplit || 'train') : 'train',
                 max_samples: parsedMaxSamples,
+                adapter_id: remoteAdapterId,
                 use_saved_secrets:
                     remoteSource === 'huggingface'
                         ? useSavedHfToken
@@ -346,6 +398,9 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                             ? useSavedKaggleCreds
                             : true,
             };
+            if (Object.keys(parsedAdapterConfig.value).length > 0) {
+                payload.adapter_config = parsedAdapterConfig.value;
+            }
 
             if (remoteSource === 'huggingface' && hfToken.trim()) {
                 payload.hf_token = hfToken.trim();
@@ -510,18 +565,11 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 )}
 
                 {activeTab !== 'upload' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                    <div className="remote-import-panel">
                         <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: 0 }}>
                             {sourceTabConfig[activeTab].help}
                         </p>
-                        <div
-                            style={{
-                                display: 'grid',
-                                gridTemplateColumns: '1fr auto auto',
-                                gap: 'var(--space-md)',
-                                alignItems: 'end',
-                            }}
-                        >
+                        <div className="remote-import-grid">
                             <div className="form-group" style={{ margin: 0 }}>
                                 <label className="form-label">Dataset Identifier</label>
                                 <input
@@ -557,6 +605,37 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                     style={{ width: 100 }}
                                 />
                             </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">Adapter</label>
+                                <select
+                                    className="input"
+                                    value={remoteAdapterId}
+                                    onChange={(e) => setRemoteAdapterId(e.target.value)}
+                                    style={{ minWidth: 180 }}
+                                >
+                                    <option value="auto">auto</option>
+                                    {Object.keys(adapterCatalog?.adapters || {})
+                                        .filter((adapterKey) => adapterKey !== 'auto')
+                                        .map((adapterKey) => (
+                                        <option key={adapterKey} value={adapterKey}>
+                                            {adapterKey}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="remote-import-adapter-box">
+                            <div className="remote-import-adapter-head">
+                                <strong>Adapter Mapping</strong>
+                                <span>Optional JSON overrides for adapter behavior.</span>
+                            </div>
+                            <label className="form-label" style={{ marginBottom: 4 }}>Adapter Config JSON (optional)</label>
+                            <textarea
+                                className="input remote-import-json"
+                                value={remoteAdapterConfigText}
+                                onChange={(e) => setRemoteAdapterConfigText(e.target.value)}
+                                placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
+                            />
                         </div>
 
                         {activeTab === 'huggingface' && (

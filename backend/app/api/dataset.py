@@ -1,12 +1,24 @@
 """Dataset preparation API routes."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.dataset import DatasetType
-from app.services.dataset_service import combine_datasets, profile_project_dataset, split_dataset
+from app.services.data_adapter_service import (
+    clear_plugin_data_adapters,
+    list_data_adapter_catalog,
+    load_data_adapter_plugins_from_settings,
+)
+from app.services.dataset_service import (
+    combine_datasets,
+    preview_project_data_adapter,
+    profile_project_dataset,
+    split_dataset,
+)
 from app.services.domain_profile_service import get_dataset_split_defaults
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 
@@ -20,6 +32,9 @@ class SplitRequest(BaseModel):
     seed: int = 42
     include_types: list[DatasetType] | None = None
     chat_template: str = "llama3"
+    adapter_id: str = "default-canonical"
+    adapter_config: dict[str, Any] | None = None
+    field_mapping: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -42,6 +57,16 @@ class SplitEffectiveConfigRequest(BaseModel):
     seed: int | None = None
     include_types: list[DatasetType] | None = None
     chat_template: str | None = None
+
+
+class AdapterPreviewRequest(BaseModel):
+    dataset_type: DatasetType = DatasetType.RAW
+    sample_size: int = Field(default=200, ge=10, le=5000)
+    adapter_id: str = "auto"
+    adapter_config: dict[str, Any] | None = None
+    field_mapping: dict[str, str] | None = None
+    document_id: int | None = None
+    preview_limit: int = Field(default=20, ge=5, le=100)
 
 
 def _resolve_split_config(
@@ -173,6 +198,9 @@ async def split(
             seed=int(resolved["seed"]),
             include_types=[t.value for t in req.include_types] if req.include_types else None,
             chat_template=str(resolved["chat_template"]),
+            adapter_id=req.adapter_id,
+            adapter_config=req.adapter_config,
+            field_mapping=req.field_mapping,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")
@@ -205,6 +233,46 @@ async def preview(
         "chat_template": chat_template,
         "included_types": [t.value for t in include_types] if include_types else None,
     }
+
+
+@router.get("/adapters/catalog")
+async def adapter_catalog():
+    """List available dataset adapters and plugin load status."""
+    return list_data_adapter_catalog()
+
+
+@router.post("/adapters/reload")
+async def reload_adapter_plugins():
+    """Reload dataset adapter plugin modules configured in settings."""
+    clear_plugin_data_adapters()
+    load_result = load_data_adapter_plugins_from_settings(force_reload=True)
+    return {
+        "reload": load_result,
+        "catalog": list_data_adapter_catalog(),
+    }
+
+
+@router.post("/adapters/preview")
+async def adapter_preview(
+    project_id: int,
+    req: AdapterPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview adapter mapping output and validation for sampled project records."""
+    try:
+        return await preview_project_data_adapter(
+            db=db,
+            project_id=project_id,
+            dataset_type=req.dataset_type,
+            sample_size=req.sample_size,
+            adapter_id=req.adapter_id,
+            adapter_config=req.adapter_config,
+            field_mapping=req.field_mapping,
+            document_id=req.document_id,
+            preview_limit=req.preview_limit,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/profile")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 import socket
 import subprocess
@@ -14,6 +15,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.dataset import DatasetType
+from app.models.experiment import Experiment, ExperimentStatus, TrainingMode
+from app.models.export import ExportFormat
 from app.models.project import Project
 from app.models.workflow_run import (
     WorkflowNodeStatus,
@@ -78,6 +82,551 @@ def _redis_available() -> tuple[bool, str | None]:
             return True, None
     except OSError as exc:
         return False, str(exc)
+
+
+def _coerce_int(value: object, *, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
+def _coerce_float(
+    value: object,
+    *,
+    default: float,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
+def _coerce_bool(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _coerce_dataset_type(value: object) -> DatasetType:
+    token = str(value or "").strip().lower()
+    if not token:
+        return DatasetType.RAW
+    try:
+        return DatasetType(token)
+    except ValueError:
+        return DatasetType.RAW
+
+
+def _coerce_training_mode(value: object) -> TrainingMode:
+    token = str(value or "").strip().lower()
+    if not token:
+        return TrainingMode.SFT
+    try:
+        return TrainingMode(token)
+    except ValueError:
+        return TrainingMode.SFT
+
+
+def _coerce_export_format(value: object) -> ExportFormat:
+    token = str(value or "").strip().lower()
+    if not token:
+        return ExportFormat.GGUF
+    try:
+        return ExportFormat(token)
+    except ValueError:
+        return ExportFormat.GGUF
+
+
+def _resolve_step_config(
+    config: dict[str, Any],
+    *,
+    step_key: str,
+    node_config: object | None = None,
+) -> dict[str, Any]:
+    base: dict[str, Any] = {}
+    defaults = config.get(step_key)
+    if isinstance(defaults, dict):
+        base.update(defaults)
+    if isinstance(node_config, dict):
+        base.update(node_config)
+    return base
+
+
+async def _resolve_latest_experiment_id(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    require_completed: bool,
+) -> int | None:
+    stmt = select(Experiment).where(Experiment.project_id == project_id)
+    if require_completed:
+        stmt = stmt.where(Experiment.status == ExperimentStatus.COMPLETED)
+    stmt = stmt.order_by(Experiment.created_at.desc(), Experiment.id.desc()).limit(1)
+    row = await db.execute(stmt)
+    exp = row.scalar_one_or_none()
+    return int(exp.id) if exp else None
+
+
+async def _execute_local_adapter_preview_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.dataset_service import preview_project_data_adapter
+
+    base_cfg = _resolve_step_config(
+        config,
+        step_key="data_adapter_preview",
+        node_config=node_config,
+    )
+
+    dataset_type = _coerce_dataset_type(base_cfg.get("dataset_type"))
+    sample_size = _coerce_int(base_cfg.get("sample_size"), default=200, minimum=10, maximum=5000)
+    preview_limit = _coerce_int(base_cfg.get("preview_limit"), default=20, minimum=5, maximum=100)
+    adapter_id = str(base_cfg.get("adapter_id") or "auto").strip() or "auto"
+    adapter_config = base_cfg.get("adapter_config")
+    field_mapping = base_cfg.get("field_mapping")
+    document_id_raw = base_cfg.get("document_id")
+    document_id: int | None = None
+    try:
+        if document_id_raw not in (None, "", 0):
+            document_id = int(document_id_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        document_id = None
+
+    preview = await preview_project_data_adapter(
+        db=db,
+        project_id=project_id,
+        dataset_type=dataset_type,
+        sample_size=sample_size,
+        adapter_id=adapter_id,
+        adapter_config=adapter_config if isinstance(adapter_config, dict) else None,
+        document_id=document_id,
+        field_mapping=field_mapping if isinstance(field_mapping, dict) else None,
+        preview_limit=preview_limit,
+    )
+    sampled = int(preview.get("sampled_records", 0) or 0)
+    mapped = int(preview.get("mapped_records", 0) or 0)
+    errors = int(preview.get("error_count", 0) or 0)
+    mapping_ratio = (mapped / sampled) if sampled > 0 else 0.0
+    validation_report = preview.get("validation_report") if isinstance(preview.get("validation_report"), dict) else {}
+    validation_status = str(validation_report.get("status", "")).strip().lower()
+
+    min_mapping_ratio = _coerce_float(base_cfg.get("min_mapping_ratio"), default=0.7, minimum=0.0, maximum=1.0)
+    max_error_count = _coerce_int(base_cfg.get("max_error_count"), default=-1, minimum=-1)
+    fail_on_validation_warning = _coerce_bool(base_cfg.get("fail_on_validation_warning"), default=False)
+
+    failure_reasons: list[str] = []
+    if sampled == 0:
+        failure_reasons.append("adapter preview sampled 0 rows")
+    if mapping_ratio < min_mapping_ratio:
+        failure_reasons.append(
+            (
+                "mapping ratio below threshold "
+                f"({mapping_ratio:.3f} < {min_mapping_ratio:.3f})"
+            )
+        )
+    if max_error_count >= 0 and errors > max_error_count:
+        failure_reasons.append(f"error_count exceeded threshold ({errors} > {max_error_count})")
+    if fail_on_validation_warning and validation_status and validation_status != "ok":
+        failure_reasons.append(f"validation status is '{validation_status}'")
+
+    log_payload = {
+        "message": f"local adapter preview completed for {node_id}",
+        "preview_summary": {
+            "dataset_type": dataset_type.value,
+            "requested_adapter_id": preview.get("requested_adapter_id"),
+            "resolved_adapter_id": preview.get("resolved_adapter_id"),
+            "sampled_records": sampled,
+            "mapped_records": mapped,
+            "dropped_records": int(preview.get("dropped_records", 0) or 0),
+            "error_count": errors,
+            "mapping_ratio": round(mapping_ratio, 6),
+            "validation_status": validation_status or "unknown",
+        },
+        "gate": {
+            "min_mapping_ratio": min_mapping_ratio,
+            "max_error_count": max_error_count,
+            "fail_on_validation_warning": fail_on_validation_warning,
+        },
+    }
+    if failure_reasons:
+        return False, log_payload, "; ".join(failure_reasons)
+    return True, log_payload, ""
+
+
+async def _execute_local_training_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.training_service import create_experiment, get_training_status, start_training
+
+    base_cfg = _resolve_step_config(config, step_key="training", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "noop").strip().lower()
+
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local training step skipped for {node_id}",
+            "training": {
+                "mode": mode,
+                "hint": "Set mode=create_and_start or mode=start_existing to execute training.",
+            },
+        }, ""
+
+    experiment_id_raw = base_cfg.get("experiment_id")
+    experiment_id: int | None = None
+    try:
+        if experiment_id_raw not in (None, "", 0):
+            experiment_id = int(experiment_id_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        experiment_id = None
+
+    created_experiment_id: int | None = None
+    if mode == "create_and_start":
+        name = str(base_cfg.get("name") or f"Workflow {node_id}").strip() or f"Workflow {node_id}"
+        description = str(base_cfg.get("description") or "").strip()
+        base_model = str(base_cfg.get("base_model") or "microsoft/phi-2").strip() or "microsoft/phi-2"
+        training_mode = _coerce_training_mode(base_cfg.get("training_mode"))
+        training_cfg = base_cfg.get("config")
+        resolved_training_cfg = dict(training_cfg) if isinstance(training_cfg, dict) else {}
+        resolved_training_cfg.setdefault("base_model", base_model)
+
+        created = await create_experiment(
+            db=db,
+            project_id=project_id,
+            name=name,
+            base_model=base_model,
+            config=resolved_training_cfg,
+            description=description,
+            training_mode=training_mode,
+        )
+        experiment_id = int(created.id)
+        created_experiment_id = experiment_id
+
+    if mode == "start_existing" and experiment_id is None:
+        return False, {"message": f"training step failed for {node_id}"}, "training.experiment_id is required for mode=start_existing"
+
+    if mode not in {"create_and_start", "start_existing"}:
+        return False, {"message": f"training step failed for {node_id}"}, f"unsupported training mode '{mode}'"
+
+    if experiment_id is None:
+        return False, {"message": f"training step failed for {node_id}"}, "unable to resolve experiment for training step"
+
+    start_payload = await start_training(db=db, project_id=project_id, experiment_id=experiment_id)
+    wait_for_terminal = _coerce_bool(base_cfg.get("wait_for_terminal"), default=False)
+
+    terminal_status: str | None = None
+    poll_count = 0
+    if wait_for_terminal:
+        timeout_seconds = _coerce_float(base_cfg.get("timeout_seconds"), default=3600, minimum=10)
+        poll_interval_seconds = _coerce_float(base_cfg.get("poll_interval_seconds"), default=5.0, minimum=0.2, maximum=60.0)
+        started = _utcnow()
+        while True:
+            poll_count += 1
+            status_payload = await get_training_status(db=db, project_id=project_id, experiment_id=experiment_id)
+            terminal_status = str(status_payload.get("status") or "").strip().lower() or None
+            if terminal_status in {"completed", "failed", "cancelled"}:
+                break
+            elapsed = (_utcnow() - started).total_seconds()
+            if elapsed >= timeout_seconds:
+                return False, {
+                    "message": f"training wait timed out for {node_id}",
+                    "training": {
+                        "mode": mode,
+                        "experiment_id": experiment_id,
+                        "created_experiment_id": created_experiment_id,
+                        "wait_for_terminal": True,
+                        "poll_count": poll_count,
+                    },
+                }, (
+                    f"training wait timed out after {int(timeout_seconds)}s "
+                    f"(experiment_id={experiment_id})"
+                )
+            await asyncio.sleep(poll_interval_seconds)
+
+        if terminal_status != "completed":
+            return False, {
+                "message": f"training finished with non-success status for {node_id}",
+                "training": {
+                    "mode": mode,
+                    "experiment_id": experiment_id,
+                    "created_experiment_id": created_experiment_id,
+                    "terminal_status": terminal_status,
+                    "wait_for_terminal": True,
+                    "poll_count": poll_count,
+                },
+            }, f"training status is '{terminal_status}'"
+
+    return True, {
+        "message": f"local training step completed for {node_id}",
+        "training": {
+            "mode": mode,
+            "experiment_id": experiment_id,
+            "created_experiment_id": created_experiment_id,
+            "wait_for_terminal": wait_for_terminal,
+            "terminal_status": terminal_status,
+            "task_id": start_payload.get("task_id"),
+            "backend": start_payload.get("backend"),
+            "status": start_payload.get("status"),
+        },
+    }, ""
+
+
+async def _execute_local_evaluation_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.evaluation_service import run_heldout_evaluation
+
+    base_cfg = _resolve_step_config(config, step_key="evaluation", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "noop").strip().lower()
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local evaluation step skipped for {node_id}",
+            "evaluation": {
+                "mode": mode,
+                "hint": "Set mode=heldout to execute evaluation.",
+            },
+        }, ""
+
+    if mode not in {"heldout", "run_heldout"}:
+        return False, {"message": f"evaluation step failed for {node_id}"}, f"unsupported evaluation mode '{mode}'"
+
+    experiment_id_raw = base_cfg.get("experiment_id")
+    experiment_id: int | None = None
+    try:
+        if experiment_id_raw not in (None, "", 0):
+            experiment_id = int(experiment_id_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        experiment_id = None
+    if experiment_id is None:
+        require_completed = _coerce_bool(base_cfg.get("require_completed_experiment"), default=True)
+        experiment_id = await _resolve_latest_experiment_id(
+            db,
+            project_id=project_id,
+            require_completed=require_completed,
+        )
+    if experiment_id is None:
+        return False, {"message": f"evaluation step failed for {node_id}"}, "evaluation experiment could not be resolved"
+
+    eval_type = str(base_cfg.get("eval_type") or "exact_match").strip().lower()
+    if eval_type not in {"exact_match", "f1", "llm_judge"}:
+        return False, {"message": f"evaluation step failed for {node_id}"}, f"unsupported eval_type '{eval_type}'"
+
+    result = await run_heldout_evaluation(
+        db=db,
+        project_id=project_id,
+        experiment_id=experiment_id,
+        dataset_name=str(base_cfg.get("dataset_name") or "test"),
+        eval_type=eval_type,
+        max_samples=_coerce_int(base_cfg.get("max_samples"), default=100, minimum=1, maximum=5000),
+        max_new_tokens=_coerce_int(base_cfg.get("max_new_tokens"), default=128, minimum=1, maximum=4096),
+        temperature=_coerce_float(base_cfg.get("temperature"), default=0.0, minimum=0.0, maximum=2.0),
+        model_path=str(base_cfg.get("model_path")).strip() if base_cfg.get("model_path") else None,
+        judge_model=str(base_cfg.get("judge_model") or "meta-llama/Meta-Llama-3-70B-Instruct").strip(),
+    )
+
+    metrics = dict(result.metrics or {})
+    return True, {
+        "message": f"local evaluation step completed for {node_id}",
+        "evaluation": {
+            "mode": mode,
+            "experiment_id": experiment_id,
+            "eval_result_id": int(result.id),
+            "dataset_name": result.dataset_name,
+            "eval_type": result.eval_type,
+            "pass_rate": result.pass_rate,
+            "metrics_keys": sorted(metrics.keys()),
+        },
+    }, ""
+
+
+async def _execute_local_export_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.export_service import create_export, run_export
+
+    base_cfg = _resolve_step_config(config, step_key="export", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "noop").strip().lower()
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local export step skipped for {node_id}",
+            "export": {
+                "mode": mode,
+                "hint": "Set mode=create_and_run or mode=run_existing to execute export.",
+            },
+        }, ""
+
+    export_id_raw = base_cfg.get("export_id")
+    export_id: int | None = None
+    try:
+        if export_id_raw not in (None, "", 0):
+            export_id = int(export_id_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        export_id = None
+
+    created_export_id: int | None = None
+    if mode == "create_and_run":
+        experiment_id_raw = base_cfg.get("experiment_id")
+        experiment_id: int | None = None
+        try:
+            if experiment_id_raw not in (None, "", 0):
+                experiment_id = int(experiment_id_raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            experiment_id = None
+        if experiment_id is None:
+            require_completed = _coerce_bool(base_cfg.get("require_completed_experiment"), default=True)
+            experiment_id = await _resolve_latest_experiment_id(
+                db,
+                project_id=project_id,
+                require_completed=require_completed,
+            )
+        if experiment_id is None:
+            return False, {"message": f"export step failed for {node_id}"}, "export experiment could not be resolved"
+
+        export_format = _coerce_export_format(base_cfg.get("export_format"))
+        quantization = base_cfg.get("quantization")
+        quantization_value = str(quantization).strip() if quantization is not None else None
+
+        created = await create_export(
+            db=db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            export_format=export_format,
+            quantization=quantization_value or None,
+        )
+        export_id = int(created.id)
+        created_export_id = export_id
+    elif mode != "run_existing":
+        return False, {"message": f"export step failed for {node_id}"}, f"unsupported export mode '{mode}'"
+
+    if export_id is None:
+        return False, {"message": f"export step failed for {node_id}"}, "export.export_id is required for mode=run_existing"
+
+    eval_report = base_cfg.get("eval_report")
+    safety_scorecard = base_cfg.get("safety_scorecard")
+    export_row = await run_export(
+        db=db,
+        project_id=project_id,
+        export_id=export_id,
+        eval_report=eval_report if isinstance(eval_report, dict) else None,
+        safety_scorecard=safety_scorecard if isinstance(safety_scorecard, dict) else None,
+    )
+
+    manifest = dict(export_row.manifest or {})
+    return True, {
+        "message": f"local export step completed for {node_id}",
+        "export": {
+            "mode": mode,
+            "export_id": export_id,
+            "created_export_id": created_export_id,
+            "status": export_row.status.value,
+            "output_path": export_row.output_path,
+            "run_id": manifest.get("run_id"),
+        },
+    }, ""
+
+
+async def execute_local_core_step_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    step_type: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    """Execute a supported core workflow step in local mode."""
+    if step_type == "core.data_adapter_preview":
+        return await _execute_local_adapter_preview_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+    if step_type == "core.training":
+        return await _execute_local_training_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+    if step_type == "core.evaluation":
+        return await _execute_local_evaluation_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+    if step_type == "core.export":
+        return await _execute_local_export_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+
+    return True, {"message": f"local backend completed {step_type}"}, ""
+
+
+async def _execute_local_node_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node: dict[str, Any],
+    config: dict[str, Any],
+) -> tuple[bool, dict[str, Any], str]:
+    node_id = str(node.get("id", "")).strip()
+    step_type = str(node.get("step_type", "")).strip()
+    return await execute_local_core_step_attempt(
+        db=db,
+        project_id=project_id,
+        node_id=node_id,
+        step_type=step_type,
+        config=config,
+        node_config=node.get("config"),
+    )
 
 
 def _execute_external(
@@ -179,8 +728,9 @@ def _execute_celery_node_attempt(
     return False, log_payload, error_text or "celery node task reported failure"
 
 
-def _execute_node_attempt(
+async def _execute_node_attempt(
     *,
+    db: AsyncSession,
     backend: str,
     project_id: int,
     run_id: int,
@@ -210,9 +760,18 @@ def _execute_node_attempt(
         return False, {"message": f"simulated one-time failure for stage '{stage}'"}, "simulated one-time failure"
 
     if backend == "local":
-        return True, {"message": f"local backend completed {stage}"}, ""
+        return await _execute_local_node_attempt(
+            db=db,
+            project_id=project_id,
+            node=node,
+            config=config,
+        )
 
     if backend == "celery":
+        celery_cfg = dict(config or {})
+        node_cfg = node.get("config")
+        if isinstance(node_cfg, dict):
+            celery_cfg["node_config"] = dict(node_cfg)
         return _execute_celery_node_attempt(
             project_id=project_id,
             run_id=run_id,
@@ -220,7 +779,7 @@ def _execute_node_attempt(
             stage=stage,
             step_type=step_type,
             attempt=attempt,
-            config=config,
+            config=celery_cfg,
         )
 
     if backend == "external":
@@ -540,7 +1099,8 @@ async def run_workflow_graph(
             row.status = WorkflowNodeStatus.RUNNING
             if row.started_at is None:
                 row.started_at = _utcnow()
-            ok, log_payload, error_text = _execute_node_attempt(
+            ok, log_payload, error_text = await _execute_node_attempt(
+                db=db,
                 backend=execution_backend,
                 project_id=project.id,
                 run_id=run.id,

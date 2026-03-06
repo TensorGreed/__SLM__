@@ -110,6 +110,29 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
             "min_vram_gb": 0.0,
         },
     },
+    "data_adapter_preview": {
+        "step_type": "core.data_adapter_preview",
+        "description": "Run adapter mapping preview diagnostics and optional gating thresholds.",
+        "input_artifacts": [
+            "dataset.raw",
+            "dataset.cleaned",
+            "dataset.synthetic",
+            "dataset.gold_dev",
+            "dataset.train",
+            "dataset.validation",
+            "dataset.test",
+        ],
+        "output_artifacts": ["analysis.data_adapter"],
+        "config_schema_ref": "slm.step.data_adapter_preview/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
+    },
     "tokenization": {
         "step_type": "core.tokenization",
         "description": "Analyze token lengths and tokenizer coverage for target model.",
@@ -297,7 +320,9 @@ def delete_workflow_graph_override(project_id: int) -> bool:
 
 def get_step_contract_catalog() -> list[dict[str, Any]]:
     """Expose built-in stage contracts for editor/tooling UIs."""
-    stages = [stage.value for stage in STAGE_ORDER if stage.value in _STEP_CONTRACTS]
+    ordered_stages = [stage.value for stage in STAGE_ORDER if stage.value in _STEP_CONTRACTS]
+    extra_stages = sorted(stage for stage in _STEP_CONTRACTS.keys() if stage not in ordered_stages)
+    stages = [*ordered_stages, *extra_stages]
     catalog: list[dict[str, Any]] = []
     for index, stage_name in enumerate(stages):
         contract = _STEP_CONTRACTS[stage_name]

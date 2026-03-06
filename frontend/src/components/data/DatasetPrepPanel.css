@@ -4,6 +4,34 @@
     gap: 1.5rem;
 }
 
+.dp-view-tabs {
+    display: flex;
+    gap: .6rem;
+    flex-wrap: wrap;
+}
+
+.dp-view-tab {
+    border: 1px solid rgba(255 255 255 / .14);
+    background: rgba(255 255 255 / .04);
+    color: rgba(255 255 255 / .76);
+    border-radius: 999px;
+    padding: .45rem .9rem;
+    font-size: .8rem;
+    cursor: pointer;
+    transition: all .15s ease;
+}
+
+.dp-view-tab:hover {
+    border-color: rgba(255 255 255 / .24);
+    color: rgba(255 255 255 / .95);
+}
+
+.dp-view-tab.active {
+    border-color: rgba(108, 92, 231, .55);
+    background: rgba(108, 92, 231, .16);
+    color: #fff;
+}
+
 /* ── Section Cards ─────────────────────────────────────────── */
 .dp-section {
     background: var(--card-bg, rgba(255 255 255 / .04));
@@ -76,6 +104,27 @@
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
+}
+
+.dp-json-field {
+    display: grid;
+    gap: .4rem;
+    font-size: .78rem;
+    color: rgba(255 255 255 / .65);
+    margin-bottom: .9rem;
+}
+
+.dp-json-input {
+    min-height: 92px;
+    resize: vertical;
+    border-radius: 8px;
+    border: 1px solid rgba(255 255 255 / .12);
+    background: rgba(12 18 34 / .7);
+    color: rgba(255 255 255 / .9);
+    font-size: .76rem;
+    line-height: 1.35;
+    padding: .65rem .75rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* ── Stats Grid ────────────────────────────────────────────── */

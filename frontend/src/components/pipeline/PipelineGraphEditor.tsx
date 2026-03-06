@@ -46,6 +46,13 @@ interface NodeAddPosition {
     y: number;
 }
 
+interface NodeConfigPreset {
+    id: string;
+    label: string;
+    description: string;
+    config: Record<string, unknown>;
+}
+
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 170;
 const DEFAULT_NODE_SPACING_X = 320;
@@ -96,6 +103,138 @@ function extractErrorMessage(error: unknown): string {
         return error.message;
     }
     return 'Operation failed.';
+}
+
+function stringifyJsonObject(value: unknown): string {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return JSON.stringify(value, null, 2);
+    }
+    return '{}';
+}
+
+function parseJsonObjectInput(raw: string): { value: Record<string, unknown>; error: string } {
+    const text = raw.trim();
+    if (!text) {
+        return { value: {}, error: '' };
+    }
+    try {
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { value: {}, error: 'Config JSON must be an object.' };
+        }
+        return { value: parsed as Record<string, unknown>, error: '' };
+    } catch (error) {
+        if (error instanceof Error) {
+            return { value: {}, error: error.message };
+        }
+        return { value: {}, error: 'Invalid JSON.' };
+    }
+}
+
+function getNodeConfigPresets(stepType: string): NodeConfigPreset[] {
+    const normalized = (stepType || '').trim().toLowerCase();
+    if (normalized === 'core.training') {
+        return [
+            {
+                id: 'training.noop',
+                label: 'Training No-op',
+                description: 'Safe default: keep stage non-executing.',
+                config: {
+                    mode: 'noop',
+                },
+            },
+            {
+                id: 'training.create-start',
+                label: 'Create + Start',
+                description: 'Create a new experiment and dispatch training.',
+                config: {
+                    mode: 'create_and_start',
+                    name: 'workflow-train',
+                    base_model: 'microsoft/phi-3-mini-4k-instruct',
+                    training_mode: 'sft',
+                    config: {
+                        num_epochs: 3,
+                        batch_size: 2,
+                        gradient_accumulation_steps: 8,
+                        learning_rate: 0.0002,
+                        max_seq_length: 2048,
+                        use_lora: true,
+                        lora_r: 16,
+                    },
+                    wait_for_terminal: false,
+                },
+            },
+            {
+                id: 'training.start-existing',
+                label: 'Start Existing',
+                description: 'Start an already-created experiment by id.',
+                config: {
+                    mode: 'start_existing',
+                    experiment_id: 1,
+                    wait_for_terminal: false,
+                },
+            },
+        ];
+    }
+    if (normalized === 'core.evaluation') {
+        return [
+            {
+                id: 'evaluation.noop',
+                label: 'Evaluation No-op',
+                description: 'Safe default: keep stage non-executing.',
+                config: {
+                    mode: 'noop',
+                },
+            },
+            {
+                id: 'evaluation.heldout',
+                label: 'Heldout Eval',
+                description: 'Run heldout evaluation on latest completed experiment.',
+                config: {
+                    mode: 'heldout',
+                    dataset_name: 'test',
+                    eval_type: 'exact_match',
+                    max_samples: 100,
+                    max_new_tokens: 128,
+                    temperature: 0,
+                    require_completed_experiment: true,
+                },
+            },
+        ];
+    }
+    if (normalized === 'core.export') {
+        return [
+            {
+                id: 'export.noop',
+                label: 'Export No-op',
+                description: 'Safe default: keep stage non-executing.',
+                config: {
+                    mode: 'noop',
+                },
+            },
+            {
+                id: 'export.create-run',
+                label: 'Create + Run',
+                description: 'Create an export and run packaging.',
+                config: {
+                    mode: 'create_and_run',
+                    export_format: 'gguf',
+                    quantization: '4bit',
+                    require_completed_experiment: true,
+                },
+            },
+            {
+                id: 'export.run-existing',
+                label: 'Run Existing',
+                description: 'Run an existing export record by id.',
+                config: {
+                    mode: 'run_existing',
+                    export_id: 1,
+                },
+            },
+        ];
+    }
+    return [];
 }
 
 function computeNodePosition(index: number): { x: number; y: number } {
@@ -173,6 +312,8 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
     const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
     const [isInspectorOpen, setIsInspectorOpen] = useState(true);
     const [isCanvasDragOver, setIsCanvasDragOver] = useState(false);
+    const [nodeConfigDraft, setNodeConfigDraft] = useState('{}');
+    const [nodeConfigError, setNodeConfigError] = useState('');
 
     const [validateResult, setValidateResult] = useState<PipelineGraphValidationResponse | null>(null);
     const [compileResult, setCompileResult] = useState<PipelineGraphCompileResponse | null>(null);
@@ -255,11 +396,25 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
         () => (selectedNodeId ? nodeMap.get(selectedNodeId) || null : null),
         [nodeMap, selectedNodeId],
     );
+    const selectedNodePresets = useMemo(
+        () => getNodeConfigPresets(selectedNode?.step_type || ''),
+        [selectedNode?.step_type],
+    );
 
     const selectedEdge = useMemo(
         () => draftGraph?.edges.find((edge) => edge.id === selectedEdgeId) || null,
         [draftGraph, selectedEdgeId],
     );
+
+    useEffect(() => {
+        if (!selectedNode) {
+            setNodeConfigDraft('{}');
+            setNodeConfigError('');
+            return;
+        }
+        setNodeConfigDraft(stringifyJsonObject(selectedNode.config));
+        setNodeConfigError('');
+    }, [selectedNode]);
 
     const canvasEdges = useMemo<CanvasEdgePath[]>(() => {
         if (!draftGraph) {
@@ -488,6 +643,7 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
                 input_artifacts: [...template.input_artifacts],
                 output_artifacts: [...template.output_artifacts],
                 config_schema_ref: template.config_schema_ref,
+                config: {},
                 runtime_requirements: normalizeRuntimeRequirements(template.runtime_requirements),
                 position,
             };
@@ -667,6 +823,31 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
             setIsBusy(null);
         }
     }, [loadEditorState, projectId]);
+
+    const handleApplyNodeConfig = useCallback(() => {
+        if (!selectedNode) {
+            return;
+        }
+        const parsed = parseJsonObjectInput(nodeConfigDraft);
+        if (parsed.error) {
+            setNodeConfigError(parsed.error);
+            return;
+        }
+        updateNodePatch(selectedNode.id, { config: parsed.value });
+        setNodeConfigError('');
+        setStatusMessage(`Updated node config for ${selectedNode.display_name}.`);
+    }, [nodeConfigDraft, selectedNode, updateNodePatch]);
+
+    const handleApplyNodePreset = useCallback((preset: NodeConfigPreset) => {
+        if (!selectedNode) {
+            return;
+        }
+        const nextText = JSON.stringify(preset.config, null, 2);
+        setNodeConfigDraft(nextText);
+        updateNodePatch(selectedNode.id, { config: preset.config });
+        setNodeConfigError('');
+        setStatusMessage(`Applied preset '${preset.label}' to ${selectedNode.display_name}.`);
+    }, [selectedNode, updateNodePatch]);
 
     const graphStats = useMemo(() => {
         const nodeCount = draftGraph?.nodes.length || 0;
@@ -1006,6 +1187,46 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
                                             onChange={(event) => updateNodePatch(selectedNode.id, { config_schema_ref: event.target.value })}
                                         />
                                     </label>
+                                    <label>
+                                        Node Config (JSON object)
+                                        <textarea
+                                            className="input pipeline-editor-textarea"
+                                            value={nodeConfigDraft}
+                                            onChange={(event) => {
+                                                setNodeConfigDraft(event.target.value);
+                                                if (nodeConfigError) {
+                                                    setNodeConfigError('');
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                    {selectedNodePresets.length > 0 && (
+                                        <div className="pipeline-editor-node-config-presets">
+                                            {selectedNodePresets.map((preset) => (
+                                                <button
+                                                    key={preset.id}
+                                                    type="button"
+                                                    className="pipeline-editor-node-config-preset"
+                                                    title={preset.description}
+                                                    onClick={() => handleApplyNodePreset(preset)}
+                                                >
+                                                    {preset.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="pipeline-editor-inline-actions">
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={handleApplyNodeConfig}
+                                        >
+                                            Apply Node Config
+                                        </button>
+                                        {nodeConfigError && (
+                                            <span className="pipeline-editor-inline-error">{nodeConfigError}</span>
+                                        )}
+                                    </div>
                                     <label>
                                         Input Artifacts (comma separated)
                                         <input

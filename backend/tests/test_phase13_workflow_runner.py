@@ -5,6 +5,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -108,6 +110,221 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(first["stage"], "ingestion")
         self.assertEqual(first["status"], "blocked")
         self.assertIn("source.file", first["missing_inputs"])
+
+    def test_stage_catalog_includes_data_adapter_preview(self):
+        project_id = self._create_project("phase13-stage-catalog")
+        catalog = self.client.get(f"/api/projects/{project_id}/pipeline/graph/stage-catalog")
+        self.assertEqual(catalog.status_code, 200, catalog.text)
+        stages = [item["stage"] for item in catalog.json()["stages"]]
+        self.assertIn("data_adapter_preview", stages)
+
+    def test_workflow_run_executes_local_data_adapter_preview_node(self):
+        project_id = self._create_project("phase13-adapter-node")
+        graph_override = {
+            "graph_id": "custom-adapter-preview",
+            "graph_label": "Adapter Preview Graph",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:data_adapter_preview",
+                    "stage": "data_adapter_preview",
+                    "display_name": "Data Adapter Preview",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.data_adapter_preview",
+                    "description": "Validate adapter coverage before splitting.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["analysis.data_adapter"],
+                    "config_schema_ref": "slm.step.data_adapter_preview/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 40, "y": 40},
+                    "config": {
+                        "dataset_type": "raw",
+                        "adapter_id": "auto",
+                        "sample_size": 100,
+                        "min_mapping_ratio": 0.6,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        preview_payload = {
+            "project_id": project_id,
+            "requested_adapter_id": "auto",
+            "resolved_adapter_id": "qa-pair",
+            "detection_scores": {"qa-pair": 1.0},
+            "sampled_records": 100,
+            "mapped_records": 95,
+            "dropped_records": 5,
+            "error_count": 0,
+            "errors": [],
+            "validation_report": {"status": "ok"},
+            "preview_rows": [],
+            "source": {"dataset_type": "raw"},
+        }
+
+        with patch(
+            "app.services.dataset_service.preview_project_data_adapter",
+            AsyncMock(return_value=preview_payload),
+        ) as mocked_preview:
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={
+                    "execution_backend": "local",
+                    "allow_fallback": False,
+                    "graph": graph_override,
+                },
+            )
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(len(payload["nodes"]), 1)
+        node = payload["nodes"][0]
+        self.assertEqual(node["stage"], "data_adapter_preview")
+        self.assertEqual(node["status"], "completed")
+        self.assertEqual(node["published_artifact_keys"], ["analysis.data_adapter"])
+        self.assertGreaterEqual(len(node["node_log"]), 1)
+        self.assertIn("preview_summary", node["node_log"][-1])
+        mocked_preview.assert_awaited()
+
+    def test_workflow_run_training_node_defaults_to_noop(self):
+        project_id = self._create_project("phase13-training-noop")
+        graph_override = {
+            "graph_id": "custom-training-noop",
+            "graph_label": "Training Node Noop",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:training",
+                    "stage": "training",
+                    "display_name": "Training",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.training",
+                    "description": "Training node with default noop execution mode.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["model.checkpoint"],
+                    "config_schema_ref": "slm.step.training/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 40, "y": 40},
+                }
+            ],
+            "edges": [],
+        }
+
+        run = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json={
+                "execution_backend": "local",
+                "allow_fallback": False,
+                "graph": graph_override,
+            },
+        )
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(len(payload["nodes"]), 1)
+        node = payload["nodes"][0]
+        self.assertEqual(node["stage"], "training")
+        self.assertEqual(node["status"], "completed")
+        self.assertGreaterEqual(len(node["node_log"]), 1)
+        training_log = node["node_log"][-1].get("training", {})
+        self.assertEqual(training_log.get("mode"), "noop")
+
+    def test_workflow_run_training_node_create_and_start(self):
+        project_id = self._create_project("phase13-training-start")
+        graph_override = {
+            "graph_id": "custom-training-start",
+            "graph_label": "Training Node Execute",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:training",
+                    "stage": "training",
+                    "display_name": "Training",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.training",
+                    "description": "Training node with create_and_start mode.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["model.checkpoint"],
+                    "config_schema_ref": "slm.step.training/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 40, "y": 40},
+                    "config": {
+                        "mode": "create_and_start",
+                        "name": "wf-train",
+                        "base_model": "microsoft/phi-2",
+                        "config": {
+                            "num_epochs": 1,
+                            "batch_size": 1,
+                        },
+                        "wait_for_terminal": False,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        with patch(
+            "app.services.training_service.create_experiment",
+            AsyncMock(return_value=SimpleNamespace(id=777)),
+        ) as mocked_create, patch(
+            "app.services.training_service.start_training",
+            AsyncMock(
+                return_value={
+                    "experiment_id": 777,
+                    "status": "running",
+                    "backend": "external",
+                    "task_id": "task-777",
+                }
+            ),
+        ) as mocked_start:
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={
+                    "execution_backend": "local",
+                    "allow_fallback": False,
+                    "graph": graph_override,
+                },
+            )
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        node = payload["nodes"][0]
+        self.assertEqual(node["status"], "completed")
+        training_log = node["node_log"][-1].get("training", {})
+        self.assertEqual(training_log.get("mode"), "create_and_start")
+        self.assertEqual(training_log.get("experiment_id"), 777)
+        mocked_create.assert_awaited()
+        mocked_start.assert_awaited()
 
     def test_workflow_run_completes_and_publishes_outputs(self):
         project_id = self._create_project("phase13-complete")

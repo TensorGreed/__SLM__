@@ -146,6 +146,52 @@ def run_workflow_node_job(
             "error": "simulated one-time failure",
         }
 
+    executable_core_steps = {
+        "core.data_adapter_preview",
+        "core.training",
+        "core.evaluation",
+        "core.export",
+    }
+    if step_type in executable_core_steps:
+        async def _run_core_step():
+            from app.database import async_session_factory
+            from app.services.workflow_runner_service import execute_local_core_step_attempt
+
+            async with async_session_factory() as db:
+                return await execute_local_core_step_attempt(
+                    db=db,
+                    project_id=project_id,
+                    node_id=node_id,
+                    step_type=step_type,
+                    config=cfg,
+                    node_config=cfg.get("node_config"),
+                )
+
+        core_loop = asyncio.new_event_loop()
+        try:
+            success, log_payload, error_text = core_loop.run_until_complete(_run_core_step())
+            if not isinstance(log_payload, dict):
+                log_payload = {"message": str(log_payload or "")}
+            log_payload.setdefault("task_id", self.request.id)
+            if success:
+                return {"success": True, "log": log_payload, "error": ""}
+            return {
+                "success": False,
+                "log": log_payload,
+                "error": error_text or f"{step_type} execution failed",
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "log": {
+                    "message": f"celery {step_type} execution failed",
+                    "task_id": self.request.id,
+                },
+                "error": str(exc),
+            }
+        finally:
+            core_loop.close()
+
     command_template = str(cfg.get("external_command_template", "")).strip()
     timeout_seconds = max(
         1,
@@ -521,6 +567,8 @@ def run_remote_import_job(
                 "split": str(request_payload.get("split", "train")),
                 "max_samples": request_payload.get("max_samples"),
                 "config_name": request_payload.get("config_name"),
+                "adapter_id": str(request_payload.get("adapter_id", "default-canonical")),
+                "adapter_config": request_payload.get("adapter_config") or {},
                 "normalize_for_training": bool(request_payload.get("normalize_for_training", True)),
             }
             started_at = datetime.now(timezone.utc).isoformat()
@@ -539,6 +587,8 @@ def run_remote_import_job(
                         max_samples=request_payload.get("max_samples"),
                         config_name=request_payload.get("config_name"),
                         field_mapping=request_payload.get("field_mapping") or None,
+                        adapter_id=str(request_payload.get("adapter_id", "default-canonical")),
+                        adapter_config=request_payload.get("adapter_config") or None,
                         normalize_for_training=bool(request_payload.get("normalize_for_training", True)),
                         hf_token=str(request_payload.get("hf_token", "")).strip() or None,
                         kaggle_username=str(request_payload.get("kaggle_username", "")).strip() or None,

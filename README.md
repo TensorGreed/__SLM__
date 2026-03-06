@@ -246,8 +246,16 @@ Pipeline graph preview endpoint:
   - stop-on-block / stop-on-failure controls
   - backend execution mode selection (`local`, `celery`, `external`)
   - `celery` backend dispatches each node attempt to worker task `run_workflow_node_job` and waits for task result (requires worker + broker/result backend).
+  - executable custom step type `core.data_adapter_preview` for adapter coverage gating in DAG runs (`local` and `celery` backends).
 - Workflow page now includes:
   - template picker in Visual Pipeline Editor (`SFT`, `LoRA`, `Distillation`, `Eval-only`)
+  - stage palette entry for `data_adapter_preview` and node-level JSON config editing in inspector
+  - node config presets in inspector for `core.training`, `core.evaluation`, and `core.export` to avoid manual JSON authoring
+  - executable node config modes (local + celery):
+    - `core.training`: `noop` (default), `create_and_start`, `start_existing`
+    - `core.evaluation`: `noop` (default), `heldout`
+    - `core.export`: `noop` (default), `create_and_run`, `run_existing`
+  - conservative defaults to preserve existing behavior: if no mode is set, these nodes remain `noop`
   - Workflow Run Monitor panel with run controls, background DAG queueing, auto-refresh polling, recent run history, and per-node attempt status
 - Phase 3 adds persisted per-project graph overrides and compile-time graph diagnostics before save/run.
 
@@ -357,6 +365,14 @@ Current enforced behavior:
   - Response now includes:
     - `domain_hooks`
     - `validator_report`
+- Dataset adapter SDK + preview:
+  - `GET /api/projects/{project_id}/dataset/adapters/catalog` lists built-in/plugin adapters and schema hints.
+  - `POST /api/projects/{project_id}/dataset/adapters/preview` samples project data and reports adapter mapping coverage, drop/error counts, and mapped-row previews.
+  - `POST /api/projects/{project_id}/dataset/adapters/reload` reloads adapter plugins from env-configured modules.
+  - `POST /api/projects/{project_id}/dataset/split` now accepts `adapter_id`, `adapter_config`, and `field_mapping` (all optional; default adapter fallback remains active).
+  - Dataset Prep UI now has dedicated views (`Overview`, `Adapter Lab`, `Split`) to reduce clutter.
+  - Adapter Lab and split flows both support JSON adapter config input.
+  - Split UI can run with explicit adapter contract (`adapter_id` + `adapter_config`) instead of only default normalization.
 - Cleaning behavior:
   - Remote-imported structured documents (`jsonl/json/csv`) can be cleaned directly.
   - If `.extracted.txt` is missing, cleaning will synthesize extractable text from structured rows.
@@ -393,6 +409,8 @@ Current enforced behavior:
 Remote import request notes:
 - `source_type` accepts `huggingface`, `kaggle`, `url` (also normalizes `hf` and minor formatting variants).
 - `max_samples <= 0` is treated as omitted/default instead of failing request validation.
+- Remote import request supports `adapter_id` and `adapter_config`; default fallback is `default-canonical`.
+- Ingestion UI includes an **Adapter Mapping** block for optional `adapter_config` JSON overrides during remote imports.
 
 ## Production-Oriented Capabilities
 
@@ -467,6 +485,11 @@ Common backend env vars (see `backend/.env.example`):
 
 - `DOMAIN_HOOK_PLUGIN_MODULES` (JSON array of Python module paths)
 - Example: `["app.plugins.domain_hooks.example_hooks"]`
+
+### Data adapter plugins
+
+- `DATA_ADAPTER_PLUGIN_MODULES` (JSON array of Python module paths)
+- Example: `["app.plugins.data_adapters.example_adapters"]`
 
 ---
 

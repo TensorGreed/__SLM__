@@ -31,6 +31,8 @@ class RemoteImportRequest(BaseModel):
     max_samples: int | None = None
     config_name: str | None = None
     field_mapping: dict[str, str] | None = None
+    adapter_id: str = "default-canonical"
+    adapter_config: dict[str, object] | None = None
     normalize_for_training: bool = True
     hf_token: str | None = Field(default=None, max_length=4096)
     kaggle_username: str | None = Field(default=None, max_length=255)
@@ -66,6 +68,13 @@ class RemoteImportRequest(BaseModel):
     def normalize_split(cls, value: object) -> str:
         token = str(value or "").strip()
         return token or "train"
+
+    @field_validator("adapter_id", mode="before")
+    @classmethod
+    def normalize_adapter_id(cls, value: object) -> str:
+        token = str(value or "").strip().lower()
+        normalized = token.replace("_", "-").replace(" ", "-")
+        return normalized or "default-canonical"
 
     @field_validator("max_samples", mode="before")
     @classmethod
@@ -171,6 +180,8 @@ async def import_remote_dataset(
             max_samples=req.max_samples,
             config_name=req.config_name,
             field_mapping=req.field_mapping,
+            adapter_id=req.adapter_id,
+            adapter_config=req.adapter_config,
             normalize_for_training=req.normalize_for_training,
             hf_token=req.hf_token,
             kaggle_username=req.kaggle_username,
@@ -197,6 +208,8 @@ async def import_remote_dataset_queue(
             max_samples=req.max_samples,
             config_name=req.config_name,
             field_mapping=req.field_mapping,
+            adapter_id=req.adapter_id,
+            adapter_config=req.adapter_config,
             normalize_for_training=req.normalize_for_training,
             hf_token=req.hf_token,
             kaggle_username=req.kaggle_username,

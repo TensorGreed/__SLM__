@@ -6,6 +6,52 @@
     gap: var(--space-xl);
 }
 
+.remote-import-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.remote-import-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) repeat(3, minmax(120px, auto));
+    gap: var(--space-md);
+    align-items: end;
+}
+
+.remote-import-adapter-box {
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    background: rgba(15, 23, 42, 0.32);
+    padding: var(--space-sm) var(--space-md);
+}
+
+.remote-import-adapter-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-xs);
+}
+
+.remote-import-adapter-head strong {
+    font-size: var(--font-size-sm);
+}
+
+.remote-import-adapter-head span {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+}
+
+.remote-import-json {
+    width: 100%;
+    min-height: 84px;
+    resize: vertical;
+    font-size: var(--font-size-xs);
+    line-height: 1.35;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
 /* Upload Zone */
 .upload-zone {
     padding: var(--space-2xl);
@@ -141,4 +187,21 @@
 .doc-actions {
     display: flex;
     gap: var(--space-xs);
+}
+
+@media (max-width: 980px) {
+    .remote-import-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 700px) {
+    .remote-import-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .remote-import-adapter-head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
 }

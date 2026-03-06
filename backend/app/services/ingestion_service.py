@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,12 @@ from app.services.domain_hook_service import (
     resolve_project_domain_hooks,
     run_validator_hook,
 )
-from app.services.record_normalization import build_schema_profile, canonicalize_record
+from app.services.data_adapter_service import (
+    DEFAULT_ADAPTER_ID,
+    map_record_with_adapter,
+    resolve_data_adapter_for_records,
+)
+from app.services.record_normalization import build_schema_profile
 from app.utils.file_parsers import (
     SUPPORTED_EXTENSIONS,
     compute_file_hash,
@@ -281,6 +286,8 @@ async def queue_remote_import(
     max_samples: int | None = None,
     config_name: str | None = None,
     field_mapping: dict[str, str] | None = None,
+    adapter_id: str = DEFAULT_ADAPTER_ID,
+    adapter_config: dict[str, Any] | None = None,
     normalize_for_training: bool = True,
     hf_token: str | None = None,
     kaggle_username: str | None = None,
@@ -300,6 +307,8 @@ async def queue_remote_import(
         "max_samples": max_samples,
         "config_name": config_name,
         "field_mapping": field_mapping or {},
+        "adapter_id": adapter_id,
+        "adapter_config": dict(adapter_config or {}),
         "normalize_for_training": normalize_for_training,
         "hf_token": hf_token or "",
         "kaggle_username": kaggle_username or "",
@@ -320,6 +329,7 @@ async def queue_remote_import(
         "status": "queued",
         "source_type": source_type,
         "identifier": identifier,
+        "adapter_id": adapter_id,
         "report_path": str(report_path),
         "task_id": task.id,
     }
@@ -364,6 +374,8 @@ async def ingest_remote_dataset(
     max_samples: int | None = None,
     config_name: str | None = None,
     field_mapping: dict[str, str] | None = None,
+    adapter_id: str = DEFAULT_ADAPTER_ID,
+    adapter_config: dict[str, Any] | None = None,
     normalize_for_training: bool = True,
     hf_token: str | None = None,
     kaggle_username: str | None = None,
@@ -412,6 +424,9 @@ async def ingest_remote_dataset(
     await _progress(
         f"[import] hooks normalizer={(normalizer_hook_spec or {}).get('id')} "
         f"validator={(validator_hook_spec or {}).get('id')}"
+    )
+    await _progress(
+        f"[import] adapter requested={adapter_id or DEFAULT_ADAPTER_ID}"
     )
 
     if use_saved_secrets and source_type == "huggingface" and not hf_token:
@@ -617,25 +632,44 @@ async def ingest_remote_dataset(
 
     await _progress(f"[import] normalizing {len(raw_samples)} rows for training...")
     if normalize_for_training:
+        source_rows = [sample for sample in raw_samples if isinstance(sample, dict)]
+        dropped_records = len(raw_samples) - len(source_rows)
+        resolved_adapter_id, detection_scores = resolve_data_adapter_for_records(
+            source_rows,
+            adapter_id=adapter_id,
+            adapter_config=adapter_config,
+            field_mapping=field_mapping,
+        )
+        await _progress(
+            f"[import] adapter resolved={resolved_adapter_id} scores={detection_scores}"
+        )
+
         rows_to_write: list[dict] = []
-        dropped_records = 0
-        for sample in raw_samples:
-            if not isinstance(sample, dict):
-                dropped_records += 1
-                continue
-            canonical = canonicalize_record(sample, field_mapping=field_mapping)
-            normalized = apply_normalizer_hook(sample, canonical, normalizer_hook_spec)
+        for sample in source_rows:
+            mapped = map_record_with_adapter(
+                sample,
+                adapter_id=resolved_adapter_id,
+                adapter_config=adapter_config,
+                field_mapping=field_mapping,
+            )
+            normalized = apply_normalizer_hook(sample, mapped, normalizer_hook_spec)
             if normalized:
+                normalized["_adapter_id"] = resolved_adapter_id
                 rows_to_write.append(normalized)
             else:
                 dropped_records += 1
         if not rows_to_write:
             raise ValueError(
-                "Unable to normalize imported records. Provide field_mapping for question/answer/text columns."
+                (
+                    "Unable to normalize imported records. Provide field_mapping or "
+                    "switch adapter_id to match your source schema."
+                )
             )
     else:
         rows_to_write = [s if isinstance(s, dict) else {"value": s} for s in raw_samples]
         dropped_records = 0
+        resolved_adapter_id = "none"
+        detection_scores: dict[str, float] = {}
     await _progress(f"[import] normalized rows={len(rows_to_write)} dropped={dropped_records}")
 
     schema_profile = build_schema_profile(
@@ -697,6 +731,10 @@ async def ingest_remote_dataset(
             "dropped_records": dropped_records,
             "normalize_for_training": normalize_for_training,
             "field_mapping": field_mapping or {},
+            "adapter_id_requested": adapter_id,
+            "adapter_id_resolved": resolved_adapter_id,
+            "adapter_config": dict(adapter_config or {}),
+            "adapter_detection_scores": detection_scores,
             "schema_profile": schema_profile,
             "domain_hooks": hook_state,
             "validator_report": validator_report,
@@ -725,6 +763,9 @@ async def ingest_remote_dataset(
         "raw_samples": len(raw_samples),
         "samples_ingested": len(rows_to_write),
         "dropped_records": dropped_records,
+        "adapter_id_requested": adapter_id,
+        "adapter_id_resolved": resolved_adapter_id,
+        "adapter_detection_scores": detection_scores,
         "file_size_bytes": len(file_content),
         "source_mode": source_mode,
         "schema_profile": schema_profile,

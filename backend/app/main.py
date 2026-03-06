@@ -34,6 +34,7 @@ from app.api.artifacts import router as artifacts_router
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
+from app.services.data_adapter_service import load_data_adapter_plugins_from_settings
 
 
 @asynccontextmanager
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     settings.ensure_dirs()
     load_hook_plugins_from_settings()
+    load_data_adapter_plugins_from_settings()
     await init_db()
     await ensure_bootstrap_auth()
     async with async_session_factory() as db:

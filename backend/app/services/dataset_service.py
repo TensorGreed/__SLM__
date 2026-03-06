@@ -20,9 +20,14 @@ from app.services.domain_hook_service import (
     resolve_project_domain_hooks,
     run_validator_hook,
 )
+from app.services.data_adapter_service import (
+    DEFAULT_ADAPTER_ID,
+    map_record_with_adapter,
+    preview_data_adapter,
+    resolve_data_adapter_for_records,
+)
 from app.services.record_normalization import (
     build_schema_profile,
-    canonicalize_record,
 )
 
 
@@ -126,10 +131,24 @@ def _normalize_rows_for_training(
     source_dataset: DatasetType,
     chat_template: str,
     normalizer_hook_spec: dict[str, Any] | None = None,
+    adapter_id: str = DEFAULT_ADAPTER_ID,
+    adapter_config: dict[str, Any] | None = None,
+    field_mapping: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_entries: list[dict[str, Any]] = []
+    resolved_adapter_id, _ = resolve_data_adapter_for_records(
+        rows,
+        adapter_id=adapter_id,
+        adapter_config=adapter_config,
+        field_mapping=field_mapping,
+    )
     for row in rows:
-        canonical = canonicalize_record(row)
+        canonical = map_record_with_adapter(
+            row,
+            adapter_id=resolved_adapter_id,
+            adapter_config=adapter_config,
+            field_mapping=field_mapping,
+        )
         canonical = apply_normalizer_hook(row, canonical, normalizer_hook_spec)
         if not canonical:
             continue
@@ -141,6 +160,7 @@ def _normalize_rows_for_training(
             if rendered:
                 merged["text"] = rendered
         merged["_source_dataset"] = source_dataset.value
+        merged["_adapter_id"] = resolved_adapter_id
         normalized_entries.append(merged)
     return normalized_entries
 
@@ -150,6 +170,9 @@ async def combine_datasets(
     project_id: int,
     include_types: list[DatasetType] | None = None,
     chat_template: str = "llama3",
+    adapter_id: str = DEFAULT_ADAPTER_ID,
+    adapter_config: dict[str, Any] | None = None,
+    field_mapping: dict[str, str] | None = None,
 ) -> list[dict]:
     """
     Combine entries from cleaned/synthetic/gold datasets.
@@ -207,6 +230,9 @@ async def combine_datasets(
                     ds.dataset_type,
                     chat_template,
                     normalizer_hook_spec=normalizer_hook_spec,
+                    adapter_id=adapter_id,
+                    adapter_config=adapter_config,
+                    field_mapping=field_mapping,
                 )
                 for entry in normalized:
                     entry["_source_document_id"] = doc.id
@@ -223,6 +249,9 @@ async def combine_datasets(
             ds.dataset_type,
             chat_template,
             normalizer_hook_spec=normalizer_hook_spec,
+            adapter_id=adapter_id,
+            adapter_config=adapter_config,
+            field_mapping=field_mapping,
         )
         all_entries.extend(normalized)
 
@@ -238,6 +267,9 @@ async def split_dataset(
     seed: int = 42,
     include_types: list[str] | None = None,
     chat_template: str = "llama3",
+    adapter_id: str = DEFAULT_ADAPTER_ID,
+    adapter_config: dict[str, Any] | None = None,
+    field_mapping: dict[str, str] | None = None,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL."""
     if train_ratio <= 0 or val_ratio < 0 or test_ratio < 0:
@@ -254,7 +286,15 @@ async def split_dataset(
     if include_types:
         types = [DatasetType(t) for t in include_types]
 
-    entries = await combine_datasets(db, project_id, types, chat_template)
+    entries = await combine_datasets(
+        db,
+        project_id,
+        types,
+        chat_template,
+        adapter_id=adapter_id,
+        adapter_config=adapter_config,
+        field_mapping=field_mapping,
+    )
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
 
@@ -345,6 +385,9 @@ async def split_dataset(
         "dataset_versions": dataset_versions,
         "chat_template": chat_template,
         "included_types": included_source_types,
+        "adapter_id": adapter_id,
+        "adapter_config": dict(adapter_config or {}),
+        "field_mapping": dict(field_mapping or {}),
     }
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -353,23 +396,17 @@ async def split_dataset(
     return manifest
 
 
-async def profile_project_dataset(
+async def _sample_records_for_dataset(
     db: AsyncSession,
     project_id: int,
     dataset_type: DatasetType,
-    sample_size: int = 500,
+    sample_size: int,
+    *,
     document_id: int | None = None,
-    field_mapping: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Create schema/profile diagnostics for a project dataset."""
-    hook_state = await resolve_project_domain_hooks(db, project_id)
-    normalizer_hook_spec = hook_state.get("normalizer")
-    validator_hook_spec = hook_state.get("validator")
-
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    source: dict[str, Any] = {"dataset_type": dataset_type.value}
     if dataset_type == DatasetType.RAW:
-        records: list[dict[str, Any]] = []
-        source: dict[str, Any] = {"dataset_type": dataset_type.value}
-
         if document_id is not None:
             doc_result = await db.execute(
                 select(RawDocument)
@@ -432,6 +469,63 @@ async def profile_project_dataset(
             "dataset_name": dataset.name,
             "file_path": str(path),
         }
+    return records, source
+
+
+async def preview_project_data_adapter(
+    db: AsyncSession,
+    project_id: int,
+    dataset_type: DatasetType,
+    *,
+    sample_size: int = 200,
+    adapter_id: str = "auto",
+    adapter_config: dict[str, Any] | None = None,
+    document_id: int | None = None,
+    field_mapping: dict[str, str] | None = None,
+    preview_limit: int = 20,
+) -> dict[str, Any]:
+    """Preview adapter mapping quality and per-row output for a sampled dataset slice."""
+    records, source = await _sample_records_for_dataset(
+        db,
+        project_id,
+        dataset_type,
+        sample_size,
+        document_id=document_id,
+    )
+
+    preview = preview_data_adapter(
+        records,
+        adapter_id=adapter_id,
+        adapter_config=adapter_config,
+        field_mapping=field_mapping,
+        preview_limit=preview_limit,
+    )
+    return {
+        "project_id": project_id,
+        "source": source,
+        **preview,
+    }
+
+
+async def profile_project_dataset(
+    db: AsyncSession,
+    project_id: int,
+    dataset_type: DatasetType,
+    sample_size: int = 500,
+    document_id: int | None = None,
+    field_mapping: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Create schema/profile diagnostics for a project dataset."""
+    hook_state = await resolve_project_domain_hooks(db, project_id)
+    normalizer_hook_spec = hook_state.get("normalizer")
+    validator_hook_spec = hook_state.get("validator")
+    records, source = await _sample_records_for_dataset(
+        db,
+        project_id,
+        dataset_type,
+        sample_size,
+        document_id=document_id,
+    )
 
     profile = build_schema_profile(records, field_mapping=field_mapping)
     normalized_for_validation = _normalize_rows_for_training(
@@ -439,6 +533,7 @@ async def profile_project_dataset(
         dataset_type,
         chat_template="llama3",
         normalizer_hook_spec=normalizer_hook_spec,
+        field_mapping=field_mapping,
     )
     validator_report = run_validator_hook(
         normalized_for_validation,

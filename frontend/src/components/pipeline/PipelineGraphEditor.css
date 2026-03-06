@@ -323,6 +323,40 @@
     resize: vertical;
 }
 
+.pipeline-editor-inline-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.pipeline-editor-node-config-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pipeline-editor-node-config-preset {
+    border: 1px solid rgba(56, 189, 248, 0.42);
+    border-radius: 999px;
+    background: rgba(14, 116, 144, 0.2);
+    color: rgba(186, 230, 253, 0.98);
+    padding: 4px 10px;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+}
+
+.pipeline-editor-node-config-preset:hover {
+    border-color: rgba(56, 189, 248, 0.7);
+    background: rgba(14, 116, 144, 0.34);
+}
+
+.pipeline-editor-inline-error {
+    color: var(--color-error);
+    font-size: var(--font-size-xs);
+}
+
 .pipeline-editor-result {
     border-radius: var(--radius-md);
     padding: var(--space-sm) var(--space-md);

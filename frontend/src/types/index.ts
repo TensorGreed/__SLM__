@@ -6,6 +6,7 @@ export type PipelineStage =
     | 'gold_set'
     | 'synthetic'
     | 'dataset_prep'
+    | 'data_adapter_preview'
     | 'tokenization'
     | 'training'
     | 'evaluation'
@@ -144,6 +145,7 @@ export interface PipelineGraphNode {
     input_artifacts: string[];
     output_artifacts: string[];
     config_schema_ref: string;
+    config?: Record<string, unknown>;
     runtime_requirements: StepRuntimeRequirements;
     position: PipelineGraphNodePosition;
 }
