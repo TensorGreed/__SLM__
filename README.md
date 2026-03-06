@@ -30,6 +30,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added dedicated **Resolved Defaults** panels in Dataset Prep and Training tabs.
 - Added queued **remote ingestion** jobs with task status/cancel APIs and WebSocket log streaming.
 - Added queued **compression** jobs (quantize/merge/benchmark) with task status/cancel APIs and WebSocket logs.
+- Added real GGUF/ONNX compression runtime paths in `backend/scripts/quantize.py`.
 - Added **experiment comparison** API/UI for side-by-side metrics and loss-history visualization.
 - Added auth UX updates for **SSO + local login** flow.
 - Added training runtime generalization:
@@ -479,6 +480,11 @@ Common backend env vars (see `backend/.env.example`):
 - `QUANTIZE_EXTERNAL_CMD`
 - `MERGE_LORA_EXTERNAL_CMD`
 - `BENCHMARK_EXTERNAL_CMD`
+- `LLAMA_CPP_DIR`
+- `LLAMA_CPP_CONVERT_SCRIPT`
+- `LLAMA_CPP_QUANTIZE_BIN`
+- `ONNX_EXPORT_TASK`
+- `PYTHON_EXECUTABLE`
 - `EXTERNAL_COMMAND_TIMEOUT_SECONDS`
 
 ### Domain hook plugins
@@ -511,7 +517,41 @@ COMPRESSION_BACKEND=external
 QUANTIZE_EXTERNAL_CMD='python "{backend_dir}/scripts/quantize.py" --project {project_id} --model "{model_path}" --bits {bits} --format {output_format} --out "{output_model_path}"'
 ```
 
-`backend/scripts/quantize.py` and `backend/scripts/benchmark.py` are starter external runtimes you can replace with your own production commands.
+If worker `PATH` does not include `python`, queued training/compression jobs automatically fall back to the active runtime interpreter (typically your backend `.venv` Python).
+
+Real compression notes (`output_format=gguf|onnx`):
+
+- This runtime now performs real conversion/quantization:
+  1) HF model dir/id -> FP16 GGUF (`convert_hf_to_gguf.py`)
+  2) FP16 GGUF -> quantized GGUF (`llama-quantize`)
+  3) HF model dir/id -> ONNX -> INT8 ONNX (`optimum` + `onnxruntime`)
+- Required tooling:
+  - `llama.cpp` built locally (or binaries/scripts available in `PATH`)
+  - `transformers` + `huggingface_hub` in backend env
+  - for ONNX path: `optimum`, `onnx`, `onnxruntime` (or `onnxruntime-gpu`)
+- Tool discovery (first match wins):
+  - `LLAMA_CPP_CONVERT_SCRIPT` (absolute path to `convert_hf_to_gguf.py`)
+  - `LLAMA_CPP_QUANTIZE_BIN` (absolute path to `llama-quantize`)
+  - `LLAMA_CPP_DIR` (expects `convert_hf_to_gguf.py` and `build/bin/llama-quantize`)
+- Optional:
+  - `ONNX_EXPORT_TASK` (default `auto`, example: `text-generation-with-past`)
+  - `PYTHON_EXECUTABLE` to force python used for conversion script
+- If set in `backend/.env`, these values are injected into queued compression commands automatically.
+- Supported formats in default runtime: `gguf`, `onnx`, and `merged` (LoRA merge).
+- ONNX path currently supports `bits=8` (dynamic INT8 quantization).
+- For other custom flows, provide your own command template.
+
+Quick setup example:
+
+```bash
+git clone https://github.com/ggerganov/llama.cpp.git
+cmake -S llama.cpp -B llama.cpp/build
+cmake --build llama.cpp/build -j
+export LLAMA_CPP_DIR="$(pwd)/llama.cpp"
+pip install optimum onnx onnxruntime
+```
+
+`backend/scripts/benchmark.py` remains a pluggable external runtime you can replace with your own production command.
 
 ---
 

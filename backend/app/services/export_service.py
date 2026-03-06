@@ -47,6 +47,9 @@ def _sanitize_token(value: str) -> str:
 def _matches_quantization(file_name: str, quantization: str | None) -> bool:
     if not quantization:
         return True
+    normalized = str(quantization).strip().lower()
+    if normalized in {"none", "null", "false", "off", "no"}:
+        return True
     quant_norm = _sanitize_token(quantization)
     name_norm = _sanitize_token(file_name)
     if not quant_norm:
@@ -71,14 +74,48 @@ def _collect_compressed_files(
     if not compressed_dir.exists():
         return []
 
+    all_files = [p for p in compressed_dir.rglob("*") if p.is_file()]
+
+    if export_format == ExportFormat.ONNX:
+        onnx_files = [
+            p for p in all_files
+            if p.suffix.lower() == ".onnx" and _matches_quantization(p.name, quantization)
+        ]
+        if not onnx_files:
+            return []
+
+        selected: set[Path] = set(onnx_files)
+        metadata_names = {
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "vocab.json",
+            "vocab.txt",
+            "merges.txt",
+            "added_tokens.json",
+            "preprocessor_config.json",
+        }
+        for onnx_file in onnx_files:
+            parent = onnx_file.parent
+            for sibling in parent.iterdir():
+                if not sibling.is_file():
+                    continue
+                if sibling.name in {"quantize_report.json", "quantize_result.json", "benchmark_report.json", "benchmark_results.json"}:
+                    continue
+                # Include sidecar data files and tokenizer/config metadata.
+                if sibling.name in metadata_names or sibling.name.startswith(f"{onnx_file.name}."):
+                    selected.add(sibling)
+        return sorted(selected, key=lambda p: p.stat().st_mtime, reverse=True)
+
     extension_map = {
         ExportFormat.GGUF: {".gguf"},
-        ExportFormat.ONNX: {".onnx"},
         ExportFormat.TENSORRT: {".engine", ".plan"},
     }
     allowed_ext = extension_map.get(export_format)
 
-    files = [p for p in compressed_dir.rglob("*") if p.is_file()]
+    files = all_files
     if allowed_ext:
         files = [p for p in files if p.suffix.lower() in allowed_ext]
     else:

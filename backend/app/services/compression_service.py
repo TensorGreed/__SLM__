@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
+import shutil
+import sys
 from hashlib import sha256
 from asyncio.subprocess import PIPE
 from datetime import datetime, timezone
@@ -49,6 +52,56 @@ def _render_external_command(template: str, placeholders: dict[str, str | int]) 
     except KeyError as e:
         missing = str(e).strip("'")
         raise ValueError(f"Compression command template missing placeholder: {missing}")
+
+
+def _normalize_external_python_command(command: str) -> tuple[str, str | None]:
+    """Normalize bare `python` launcher to an explicit interpreter path."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command, None
+    if not parts:
+        return command, None
+    if parts[0] != "python":
+        return command, None
+    preferred_python = str(Path(sys.executable).expanduser())
+    if preferred_python and Path(preferred_python).exists():
+        parts[0] = preferred_python
+        return (
+            shlex.join(parts),
+            f"normalized python launcher to '{preferred_python}'",
+        )
+    python3_path = shutil.which("python3")
+    if not python3_path:
+        return command, None
+    parts[0] = python3_path
+    return (
+        shlex.join(parts),
+        f"python launcher not resolved from runtime; falling back to '{python3_path}'",
+    )
+
+
+def _prepend_quantize_runtime_env(command: str) -> tuple[str, str | None]:
+    """Inject runtime env vars for external quantization scripts."""
+    env_pairs: list[tuple[str, str]] = []
+
+    def _add(key: str, value: str | None) -> None:
+        raw = str(value or "").strip()
+        if raw:
+            env_pairs.append((key, raw))
+
+    _add("LLAMA_CPP_DIR", settings.LLAMA_CPP_DIR)
+    _add("LLAMA_CPP_CONVERT_SCRIPT", settings.LLAMA_CPP_CONVERT_SCRIPT)
+    _add("LLAMA_CPP_QUANTIZE_BIN", settings.LLAMA_CPP_QUANTIZE_BIN)
+    _add("ONNX_EXPORT_TASK", settings.ONNX_EXPORT_TASK)
+    _add("PYTHON_EXECUTABLE", settings.PYTHON_EXECUTABLE)
+
+    if not env_pairs:
+        return command, None
+
+    prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in env_pairs)
+    note = "applied runtime env overrides: " + ", ".join(key for key, _ in env_pairs)
+    return f"{prefix} {command}", note
 
 
 async def _run_external_command(command: str, cwd: Path) -> dict:
@@ -122,7 +175,15 @@ async def quantize_model(
     if not template:
         raise ValueError("QUANTIZE_EXTERNAL_CMD is required when COMPRESSION_BACKEND=external")
 
-    output_model_path = output_dir / f"quantized_{bits}bit.{output_format}"
+    normalized_format = str(output_format or "gguf").strip().lower()
+    if normalized_format not in {"gguf", "onnx"}:
+        raise ValueError(
+            f"Unsupported quantize output_format '{output_format}'. Supported values: gguf, onnx."
+        )
+    if normalized_format == "onnx" and int(bits) != 8:
+        raise ValueError("ONNX quantization currently supports bits=8 only.")
+
+    output_model_path = output_dir / f"quantized_{bits}bit.{normalized_format}"
     report_path = output_dir / "quantize_report.json"
     command = _render_external_command(
         template,
@@ -130,12 +191,16 @@ async def quantize_model(
             "project_id": project_id,
             "model_path": model_path,
             "bits": bits,
-            "output_format": output_format,
+            "output_format": normalized_format,
             "output_dir": str(output_dir),
             "output_model_path": str(output_model_path),
             "backend_dir": str(BACKEND_DIR),
         },
     )
+    command, command_note = _normalize_external_python_command(command)
+    command, env_note = _prepend_quantize_runtime_env(command)
+    if env_note:
+        command_note = f"{command_note}; {env_note}" if command_note else env_note
     from app.worker import celery_app
     task = celery_app.send_task(
         "run_quantization_job",
@@ -151,13 +216,14 @@ async def quantize_model(
         "project_id": project_id,
         "source_model": model_path,
         "quantization": f"{bits}-bit",
-        "output_format": output_format,
+        "output_format": normalized_format,
         "output_dir": str(output_dir),
         "output_model_path": str(output_model_path),
         "status": "queued",
         "created_at": created_at,
         "report_path": str(report_path),
         "task_id": task.id,
+        "command_note": command_note,
     }
 
 
@@ -205,6 +271,10 @@ async def merge_lora(
             "backend_dir": str(BACKEND_DIR),
         },
     )
+    command, command_note = _normalize_external_python_command(command)
+    command, env_note = _prepend_quantize_runtime_env(command)
+    if env_note:
+        command_note = f"{command_note}; {env_note}" if command_note else env_note
     from app.worker import celery_app
     task = celery_app.send_task(
         "run_quantization_job",  # using same worker task, as merge is just quantization config
@@ -226,6 +296,7 @@ async def merge_lora(
         "created_at": created_at,
         "report_path": str(report_path),
         "task_id": task.id,
+        "command_note": command_note,
     }
 
 
@@ -285,6 +356,10 @@ async def benchmark_model(
             "backend_dir": str(BACKEND_DIR),
         },
     )
+    command, command_note = _normalize_external_python_command(command)
+    command, env_note = _prepend_quantize_runtime_env(command)
+    if env_note:
+        command_note = f"{command_note}; {env_note}" if command_note else env_note
 
     from app.worker import celery_app
     task = celery_app.send_task(
@@ -303,6 +378,7 @@ async def benchmark_model(
             "report_path": str(job_report_path),
             "benchmark_report_path": str(benchmark_output_path),
             "task_id": task.id,
+            "command_note": command_note,
         }
     )
     return result

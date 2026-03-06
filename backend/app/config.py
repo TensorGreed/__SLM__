@@ -98,6 +98,11 @@ class Settings(BaseSettings):
         '--project {project_id} --model "{model_path}" --samples {num_samples} '
         '--out "{benchmark_output_path}"'
     )
+    LLAMA_CPP_DIR: str = ""
+    LLAMA_CPP_CONVERT_SCRIPT: str = ""
+    LLAMA_CPP_QUANTIZE_BIN: str = ""
+    ONNX_EXPORT_TASK: str = "auto"
+    PYTHON_EXECUTABLE: str = ""
 
     # ── Process Runtime Controls ────────────────────────────────────────
     EXTERNAL_COMMAND_TIMEOUT_SECONDS: int = 21600

@@ -57,6 +57,87 @@ interface TrainingEffectiveConfigResponse {
   profile_defaults_applied?: string[];
 }
 
+const METRIC_PREFIX = 'SLM_METRIC ';
+
+function parseNumericField(text: string, key: string): number | null {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `[\"']${escapedKey}[\"']\\s*:\\s*[\"']?([-+]?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?)[\"']?`,
+  );
+  const match = text.match(pattern);
+  if (!match || !match[1]) {
+    return null;
+  }
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseMetricFromLogLine(text: string, experimentId: number): TrainingMetric | null {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const markerIndex = trimmed.indexOf(METRIC_PREFIX);
+  if (markerIndex >= 0) {
+    const payload = trimmed.slice(markerIndex + METRIC_PREFIX.length).trim();
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === 'object') {
+        const metric: TrainingMetric = { experiment_id: experimentId };
+        const parsedStep = Number((parsed as Record<string, unknown>).step);
+        const parsedEpoch = Number((parsed as Record<string, unknown>).epoch);
+        const parsedTrainLoss = Number((parsed as Record<string, unknown>).train_loss);
+        const parsedEvalLoss = Number((parsed as Record<string, unknown>).eval_loss);
+        if (Number.isFinite(parsedStep)) metric.step = parsedStep;
+        if (Number.isFinite(parsedEpoch)) metric.epoch = parsedEpoch;
+        if (Number.isFinite(parsedTrainLoss)) metric.train_loss = parsedTrainLoss;
+        if (Number.isFinite(parsedEvalLoss)) metric.eval_loss = parsedEvalLoss;
+        if (
+          metric.step !== undefined ||
+          metric.epoch !== undefined ||
+          metric.train_loss !== undefined ||
+          metric.eval_loss !== undefined
+        ) {
+          return metric;
+        }
+      }
+    } catch {
+      // fall through to legacy trainer log parsing
+    }
+  }
+
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return null;
+  }
+  if (
+    !trimmed.includes("'loss'") &&
+    !trimmed.includes('"loss"') &&
+    !trimmed.includes("'train_loss'") &&
+    !trimmed.includes('"train_loss"') &&
+    !trimmed.includes("'eval_loss'") &&
+    !trimmed.includes('"eval_loss"')
+  ) {
+    return null;
+  }
+
+  const epoch = parseNumericField(trimmed, 'epoch');
+  const step = parseNumericField(trimmed, 'step');
+  const trainLoss = parseNumericField(trimmed, 'train_loss') ?? parseNumericField(trimmed, 'loss');
+  const evalLoss = parseNumericField(trimmed, 'eval_loss');
+
+  if (epoch === null && step === null && trainLoss === null && evalLoss === null) {
+    return null;
+  }
+  return {
+    experiment_id: experimentId,
+    ...(epoch !== null ? { epoch } : {}),
+    ...(step !== null ? { step } : {}),
+    ...(trainLoss !== null ? { train_loss: trainLoss } : {}),
+    ...(evalLoss !== null ? { eval_loss: evalLoss } : {}),
+  };
+}
+
 type ConfigFieldKey =
   | 'task_type'
   | 'trainer_backend'
@@ -327,11 +408,41 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           return;
         }
         if (data.type === 'metric' && data.metric) {
-          setMetrics((prev) => [...prev.slice(-199), data.metric]);
+          setMetrics((prev) => {
+            const nextMetric = data.metric as TrainingMetric;
+            const last = prev[prev.length - 1];
+            if (
+              last &&
+              last.step === nextMetric.step &&
+              last.epoch === nextMetric.epoch &&
+              last.train_loss === nextMetric.train_loss &&
+              last.eval_loss === nextMetric.eval_loss
+            ) {
+              return prev;
+            }
+            return [...prev.slice(-199), nextMetric];
+          });
           return;
         }
         if (data.type === 'log' && data.text) {
-          setTrainingLogs((prev) => [...prev.slice(-999), String(data.text)]);
+          const text = String(data.text);
+          const metricFromLog = parseMetricFromLogLine(text, experimentId);
+          if (metricFromLog) {
+            setMetrics((prev) => {
+              const last = prev[prev.length - 1];
+              if (
+                last &&
+                last.step === metricFromLog.step &&
+                last.epoch === metricFromLog.epoch &&
+                last.train_loss === metricFromLog.train_loss &&
+                last.eval_loss === metricFromLog.eval_loss
+              ) {
+                return prev;
+              }
+              return [...prev.slice(-199), metricFromLog];
+            });
+          }
+          setTrainingLogs((prev) => [...prev.slice(-999), text]);
           return;
         }
         if (data.type === 'status' && data.status) {

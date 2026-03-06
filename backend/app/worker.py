@@ -1,8 +1,11 @@
 import asyncio
+import ast
 import json
 import logging
+import re
 import shlex
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +42,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 TRAINING_METRIC_PREFIX = "SLM_METRIC "
 TRAINING_EVENT_PREFIX = "SLM_EVENT "
+TQDM_PROGRESS_RE = re.compile(r"^\s*\d+%\|.*\|\s*\d+/\d+")
 
 
 def _coerce_metric_number(value):
@@ -52,13 +56,27 @@ def _parse_training_metric_line(line: str, experiment_id: int) -> dict | None:
     if not isinstance(line, str):
         return None
     text = line.strip()
-    if not text.startswith(TRAINING_METRIC_PREFIX):
-        return None
-    payload = text[len(TRAINING_METRIC_PREFIX):].strip()
-    try:
-        raw = json.loads(payload)
-    except Exception:
-        return None
+    raw = None
+
+    metric_index = text.find(TRAINING_METRIC_PREFIX)
+    if metric_index >= 0:
+        payload = text[metric_index + len(TRAINING_METRIC_PREFIX):].strip()
+        try:
+            raw = json.loads(payload)
+        except Exception:
+            raw = None
+
+    if raw is None and text.startswith("{") and text.endswith("}"):
+        # HF Trainer default logs are often plain dict repr with single quotes.
+        try:
+            raw = json.loads(text)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(text)
+            except Exception:
+                parsed = None
+            raw = parsed if isinstance(parsed, dict) else None
+
     if not isinstance(raw, dict):
         return None
 
@@ -74,6 +92,8 @@ def _parse_training_metric_line(line: str, experiment_id: int) -> dict | None:
         metric["epoch"] = round(epoch, 4)
 
     train_loss = _coerce_metric_number(raw.get("train_loss"))
+    if train_loss is None:
+        train_loss = _coerce_metric_number(raw.get("loss"))
     if train_loss is not None:
         metric["train_loss"] = train_loss
 
@@ -82,8 +102,13 @@ def _parse_training_metric_line(line: str, experiment_id: int) -> dict | None:
         metric["eval_loss"] = eval_loss
 
     learning_rate = _coerce_metric_number(raw.get("learning_rate"))
+    if learning_rate is None:
+        learning_rate = _coerce_metric_number(raw.get("lr"))
     if learning_rate is not None:
         metric["learning_rate"] = learning_rate
+
+    if not any(key in metric for key in ("step", "epoch", "train_loss", "eval_loss", "learning_rate")):
+        return None
 
     return metric
 
@@ -92,9 +117,10 @@ def _parse_training_event_line(line: str) -> dict | None:
     if not isinstance(line, str):
         return None
     text = line.strip()
-    if not text.startswith(TRAINING_EVENT_PREFIX):
+    event_index = text.find(TRAINING_EVENT_PREFIX)
+    if event_index < 0:
         return None
-    payload = text[len(TRAINING_EVENT_PREFIX):].strip()
+    payload = text[event_index + len(TRAINING_EVENT_PREFIX):].strip()
     try:
         raw = json.loads(payload)
     except Exception:
@@ -273,6 +299,11 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
         async def _run():
             channel = f"log:experiment:{experiment_id}"
             redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+            publish_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=4096)
+            publisher_stop = asyncio.Event()
+            dropped_publish_events = 0
+            dropped_log_events = 0
+            dropped_metric_events = 0
 
             async def _publish_event(payload: dict) -> None:
                 await redis_client.publish(channel, json.dumps(payload))
@@ -289,6 +320,61 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     body.update(extra)
                 await _publish_event(body)
 
+            def _queue_publish(payload: dict) -> None:
+                nonlocal dropped_publish_events, dropped_log_events, dropped_metric_events
+                event_type = str(payload.get("type", "")).strip().lower()
+                priority = event_type in {"metric", "status"}
+                try:
+                    publish_queue.put_nowait(payload)
+                except asyncio.QueueFull:
+                    if priority:
+                        # Prefer preserving metric/status events by evicting one queued item.
+                        try:
+                            _ = publish_queue.get_nowait()
+                            publish_queue.task_done()
+                            publish_queue.put_nowait(payload)
+                            dropped_publish_events += 1
+                            dropped_log_events += 1
+                            return
+                        except (asyncio.QueueEmpty, asyncio.QueueFull):
+                            pass
+                    dropped_publish_events += 1
+                    if event_type == "metric":
+                        dropped_metric_events += 1
+                    elif event_type == "log":
+                        dropped_log_events += 1
+
+            def _queue_log(text: str) -> None:
+                if text:
+                    _queue_publish({"type": "log", "text": text})
+
+            def _queue_metric(metric: dict) -> None:
+                _queue_publish({"type": "metric", "metric": metric})
+
+            async def _publisher_loop() -> None:
+                while True:
+                    if publisher_stop.is_set() and publish_queue.empty():
+                        break
+                    try:
+                        payload = await asyncio.wait_for(publish_queue.get(), timeout=0.2)
+                    except TimeoutError:
+                        continue
+                    try:
+                        event_type = str(payload.get("type", "")).strip().lower()
+                        if event_type == "metric" and isinstance(payload.get("metric"), dict):
+                            await _publish_metric(dict(payload["metric"]))
+                        elif event_type == "log":
+                            await _publish_log(str(payload.get("text", "")))
+                        else:
+                            await _publish_event(payload)
+                    except Exception:
+                        # Never block stream-draining on PubSub failures.
+                        pass
+                    finally:
+                        publish_queue.task_done()
+
+            publisher_task = asyncio.create_task(_publisher_loop())
+
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
@@ -298,42 +384,81 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
             started_at = datetime.now(timezone.utc)
 
             try:
-                await _publish_log(
+                _queue_log(
                     f"[worker] starting external training process for experiment {experiment_id}"
                 )
 
                 stdout_lines: list[str] = []
                 stderr_lines: list[str] = []
+                last_progress_emit: dict[str, float] = {"stdout": 0.0, "stderr": 0.0}
+                last_metric_signature: str | None = None
+
+                def _handle_stream_line(line: str, sink: list[str], is_stderr: bool) -> None:
+                    nonlocal last_metric_signature
+                    text_line = line.rstrip()
+                    if not text_line:
+                        return
+                    sink.append(text_line)
+                    metric = _parse_training_metric_line(text_line, experiment_id)
+                    if metric is not None:
+                        signature = json.dumps(metric, sort_keys=True, ensure_ascii=False)
+                        if signature == last_metric_signature:
+                            return
+                        last_metric_signature = signature
+                        _queue_metric(metric)
+                        return
+
+                    stream_event = _parse_training_event_line(text_line)
+                    if isinstance(stream_event, dict):
+                        event_type = str(stream_event.get("event", "")).strip().lower()
+                        if event_type == "epoch_end":
+                            epoch_value = stream_event.get("epoch")
+                            _queue_log(
+                                f"[event] epoch {epoch_value} completed"
+                                if epoch_value is not None
+                                else "[event] epoch completed"
+                            )
+                            return
+
+                    if TQDM_PROGRESS_RE.match(text_line):
+                        # Progress bars can emit very frequently (stderr with \r updates).
+                        # Throttle them so they don't starve metric/status events.
+                        key = "stderr" if is_stderr else "stdout"
+                        now_monotonic = time.monotonic()
+                        if now_monotonic - last_progress_emit[key] < 3.0:
+                            return
+                        last_progress_emit[key] = now_monotonic
+                        _queue_log(f"[progress] {text_line}")
+                        return
+
+                    _queue_log(f"[ERR] {text_line}" if is_stderr else text_line)
 
                 async def _stream_reader(stream, sink: list[str], is_stderr: bool) -> None:
                     if stream is None:
                         return
+                    buffer = ""
                     while True:
-                        raw = await stream.readline()
+                        raw = await stream.read(4096)
                         if not raw:
                             break
-                        line = raw.decode("utf-8", errors="replace").rstrip()
-                        sink.append(line)
-                        metric = _parse_training_metric_line(line, experiment_id)
-                        if metric is not None:
-                            await _publish_metric(metric)
+                        chunk = raw.decode("utf-8", errors="replace")
+                        if not chunk:
                             continue
+                        # tqdm/progress bars commonly use carriage returns; normalize to line breaks.
+                        chunk = chunk.replace("\r", "\n")
+                        buffer += chunk
 
-                        stream_event = _parse_training_event_line(line)
-                        if isinstance(stream_event, dict):
-                            event_type = str(stream_event.get("event", "")).strip().lower()
-                            if event_type == "epoch_end":
-                                epoch_value = stream_event.get("epoch")
-                                await _publish_log(
-                                    f"[event] epoch {epoch_value} completed"
-                                    if epoch_value is not None
-                                    else "[event] epoch completed"
-                                )
-                                continue
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            _handle_stream_line(line, sink, is_stderr)
 
-                        text = f"[ERR] {line}" if is_stderr else line
-                        if text:
-                            await _publish_log(text)
+                        # Avoid unbounded accumulation if stream emits long no-newline chunks.
+                        if len(buffer) > 8192:
+                            _handle_stream_line(buffer, sink, is_stderr)
+                            buffer = ""
+
+                    if buffer:
+                        _handle_stream_line(buffer, sink, is_stderr)
 
                 stdout_task = asyncio.create_task(
                     _stream_reader(process.stdout, stdout_lines, False)
@@ -367,7 +492,7 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                 )
 
                 if timed_out:
-                    await _publish_log(
+                    _queue_log(
                         (
                             "[worker] external training command timed out after "
                             f"{timeout_seconds} seconds"
@@ -379,9 +504,16 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                         str(monitor_status or ("completed" if process.returncode == 0 else "failed")),
                         {"returncode": process.returncode},
                     )
-                await _publish_log(
+                _queue_log(
                     f"[worker] training process exited with code {process.returncode}"
                 )
+                if dropped_publish_events > 0:
+                    _queue_log(
+                        (
+                            f"[worker] dropped telemetry events due full queue: "
+                            f"total={dropped_publish_events} logs={dropped_log_events} metrics={dropped_metric_events}"
+                        )
+                    )
 
                 payload = {}
                 lp = Path(log_path)
@@ -395,6 +527,13 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                     "payload": payload,
                 }
             finally:
+                publisher_stop.set()
+                try:
+                    await asyncio.wait_for(publish_queue.join(), timeout=5.0)
+                except Exception:
+                    pass
+                publisher_task.cancel()
+                await asyncio.gather(publisher_task, return_exceptions=True)
                 await redis_client.aclose()
             
         execution = loop.run_until_complete(_run())

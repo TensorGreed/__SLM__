@@ -339,6 +339,63 @@ def _build_checkpoint_index(output_dir: Path, log_history: list[dict[str, Any]])
     return checkpoints
 
 
+def _latest_checkpoint_dir(output_dir: Path) -> Path | None:
+    checkpoint_dirs = []
+    for path in output_dir.glob("checkpoint-*"):
+        if not path.is_dir():
+            continue
+        suffix = path.name.split("-", 1)[1] if "-" in path.name else ""
+        if not suffix.isdigit():
+            continue
+        checkpoint_dirs.append((int(suffix), path))
+    if not checkpoint_dirs:
+        return None
+    checkpoint_dirs.sort(key=lambda item: item[0])
+    return checkpoint_dirs[-1][1]
+
+
+def _resolve_resume_checkpoint(
+    output_dir: Path,
+    resume_value: Any,
+    warnings: list[str],
+) -> Path | None:
+    if resume_value is None:
+        return _latest_checkpoint_dir(output_dir)
+
+    if isinstance(resume_value, bool):
+        return _latest_checkpoint_dir(output_dir) if resume_value else None
+
+    token = str(resume_value).strip()
+    if not token:
+        return _latest_checkpoint_dir(output_dir)
+
+    lowered = token.lower()
+    if lowered in {"0", "false", "no", "off", "none", "null", "disable", "disabled"}:
+        return None
+    if lowered in {"1", "true", "yes", "on", "auto", "latest"}:
+        return _latest_checkpoint_dir(output_dir)
+
+    if token.isdigit():
+        candidate = output_dir / f"checkpoint-{token}"
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+        warnings.append(
+            f"Configured resume checkpoint step does not exist: {candidate}. Falling back to latest checkpoint."
+        )
+        return _latest_checkpoint_dir(output_dir)
+
+    candidate = Path(token).expanduser()
+    if not candidate.is_absolute():
+        candidate = (output_dir / candidate).resolve()
+    if candidate.exists() and candidate.is_dir():
+        return candidate
+
+    warnings.append(
+        f"Configured resume checkpoint path not found: {candidate}. Falling back to latest checkpoint."
+    )
+    return _latest_checkpoint_dir(output_dir)
+
+
 def _coerce_training_arguments_kwargs(
     kwargs: dict[str, Any],
     training_args_cls: type,
@@ -1028,7 +1085,19 @@ def _run_training_attempt(
 
     trainer.add_callback(StreamingMetricCallback())
 
-    train_result = trainer.train()
+    resume_checkpoint = _resolve_resume_checkpoint(
+        output_dir=output_dir,
+        resume_value=config.get("resume_from_checkpoint", "auto"),
+        warnings=warnings,
+    )
+    if resume_checkpoint is not None:
+        _emit_runtime_event(
+            "resume_from_checkpoint",
+            {"path": str(resume_checkpoint)},
+        )
+        train_result = trainer.train(resume_from_checkpoint=str(resume_checkpoint))
+    else:
+        train_result = trainer.train()
     eval_metrics: dict[str, Any] = {}
     if has_eval_records:
         try:
@@ -1099,6 +1168,7 @@ def _run_training_attempt(
         "attempt_index": attempt_index + 1,
         "attempts_total": total_attempts,
         "retry_history": list(retry_history),
+        "resume_from_checkpoint": str(resume_checkpoint) if resume_checkpoint is not None else None,
         "runtime_environment": runtime_environment,
         "warnings": warnings,
     }

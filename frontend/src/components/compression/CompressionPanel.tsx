@@ -14,6 +14,16 @@ interface CompressionResult {
     [key: string]: unknown;
 }
 
+const BIT_OPTIONS_BY_FORMAT: Record<string, number[]> = {
+    gguf: [2, 3, 4, 5, 6, 8, 16],
+    onnx: [8],
+};
+
+const FORMAT_OPTIONS: Array<{ value: string; label: string }> = [
+    { value: 'gguf', label: 'GGUF' },
+    { value: 'onnx', label: 'ONNX (INT8)' },
+];
+
 export default function CompressionPanel({ projectId, onNextStep }: CompressionPanelProps) {
     const [modelPath, setModelPath] = useState('');
     const [bits, setBits] = useState(4);
@@ -26,6 +36,14 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
     const [taskState, setTaskState] = useState<string>('');
     const [compressionError, setCompressionError] = useState<string>('');
+
+    const bitOptions = BIT_OPTIONS_BY_FORMAT[format] || [4];
+
+    useEffect(() => {
+        if (!bitOptions.includes(bits)) {
+            setBits(bitOptions[0]);
+        }
+    }, [bits, bitOptions]);
 
     useEffect(() => {
         if (!isCompressing) return;
@@ -138,12 +156,27 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
                     <div className="form-group">
                         <label className="form-label">Quantization Bits</label>
-                        <select className="input" value={bits} onChange={e => setBits(+e.target.value)}><option value={4}>4-bit</option><option value={8}>8-bit</option></select>
+                        <select className="input" value={bits} onChange={e => setBits(+e.target.value)}>
+                            {bitOptions.map((option) => (
+                                <option key={option} value={option}>
+                                    {option}-bit
+                                </option>
+                            ))}
+                        </select>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Output Format</label>
-                        <select className="input" value={format} onChange={e => setFormat(e.target.value)}><option value="gguf">GGUF</option><option value="onnx">ONNX</option><option value="huggingface">HuggingFace</option></select>
+                        <select className="input" value={format} onChange={e => setFormat(e.target.value)}>
+                            {FORMAT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
                     </div>
+                </div>
+                <div style={{ marginBottom: 'var(--space-md)', color: 'var(--text-tertiary)', fontSize: 'var(--font-size-sm)' }}>
+                    GGUF uses llama.cpp conversion/quantization; ONNX uses real export + dynamic INT8 quantization.
                 </div>
                 <div className="form-group"><label className="form-label">LoRA Adapter Path (for merge)</label><input className="input" value={loraPath} onChange={e => setLoraPath(e.target.value)} placeholder="Optional: path to LoRA adapter" /></div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-md)' }}>

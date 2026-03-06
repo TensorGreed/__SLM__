@@ -3,6 +3,9 @@
 import asyncio
 import json
 import random
+import shlex
+import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from asyncio.subprocess import PIPE
@@ -119,6 +122,33 @@ def _render_external_command(template: str, placeholders: dict[str, str | int]) 
     except KeyError as e:
         missing = str(e).strip("'")
         raise ValueError(f"TRAINING_EXTERNAL_CMD missing placeholder value: {missing}")
+
+
+def _normalize_external_python_command(command: str) -> tuple[str, str | None]:
+    """Normalize bare `python` launcher to an explicit interpreter path."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command, None
+    if not parts:
+        return command, None
+    if parts[0] != "python":
+        return command, None
+    preferred_python = str(Path(sys.executable).expanduser())
+    if preferred_python and Path(preferred_python).exists():
+        parts[0] = preferred_python
+        return (
+            shlex.join(parts),
+            f"normalized python launcher to '{preferred_python}'",
+        )
+    python3_path = shutil.which("python3")
+    if not python3_path:
+        return command, None
+    parts[0] = python3_path
+    return (
+        shlex.join(parts),
+        f"python launcher not resolved from runtime; falling back to '{python3_path}'",
+    )
 
 
 def _coerce_float(value) -> float | None:
@@ -497,11 +527,14 @@ async def start_training(
                 "val_file": str(val_file),
             },
         )
+        external_command, command_note = _normalize_external_python_command(external_command)
         runtime_config["command"] = external_command
         runtime_config["log_path"] = str(output_dir / "external_training.log")
         runtime_config["config_path"] = str(config_path)
         runtime_config["train_file"] = str(train_file)
         runtime_config["val_file"] = str(val_file)
+        if command_note:
+            runtime_config["command_note"] = command_note
         message = "External training command started."
 
     exp.status = ExperimentStatus.RUNNING
