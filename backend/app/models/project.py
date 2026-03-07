@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -57,6 +57,14 @@ class Project(Base):
     domain_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("domain_profiles.id"),
         default=None,
+    )
+    training_preferred_plan_profile: Mapped[str | None] = mapped_column(
+        String(32),
+        default="balanced",
+    )
+    dataset_adapter_preset: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=dict,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow

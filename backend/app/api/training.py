@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.experiment import Checkpoint, Experiment, TrainingMode
+from app.models.project import Project
 from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
 from app.services.job_service import get_task_status
 from app.services.domain_profile_service import get_training_defaults
@@ -24,12 +25,33 @@ from app.services.training_service import (
     register_websocket,
     unregister_websocket,
 )
+from app.services.training_preflight_service import (
+    TRAINING_PLAN_PROFILES,
+    run_training_preflight,
+    run_training_preflight_plan,
+)
+from app.services.training_runtime_service import list_runtime_catalog
 
 router = APIRouter(prefix="/projects/{project_id}/training", tags=["Training"])
 
 
 class TrainingEffectiveConfigRequest(BaseModel):
     config: dict[str, object] = Field(default_factory=dict)
+
+
+class TrainingPreferencesUpdateRequest(BaseModel):
+    preferred_plan_profile: str = Field(..., min_length=1, max_length=32)
+
+
+@router.get("/runtimes")
+async def get_training_runtime_catalog(
+    project_id: int,
+):
+    """List registered training runtime plugins and server default runtime."""
+    return {
+        "project_id": project_id,
+        **list_runtime_catalog(),
+    }
 
 
 def _resolve_training_config(
@@ -64,6 +86,109 @@ def _resolve_training_config(
             pass
 
     return resolved_config, resolved_training_mode, sorted(set(profile_defaults_applied))
+
+
+def _normalize_preferred_plan_profile(value: str) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in TRAINING_PLAN_PROFILES:
+        return candidate
+    allowed = ", ".join(TRAINING_PLAN_PROFILES)
+    raise HTTPException(
+        400,
+        f"Invalid preferred_plan_profile '{candidate}'. Allowed values: {allowed}",
+    )
+
+
+async def _resolve_effective_training_preview(
+    *,
+    project_id: int,
+    source_config: dict[str, object],
+    db: AsyncSession,
+) -> tuple[
+    dict,
+    dict,
+    dict,
+    TrainingMode,
+    list[str],
+]:
+    provided_config_fields = set(source_config.keys())
+    if "base_model" not in source_config:
+        source_config["base_model"] = "microsoft/phi-2"
+
+    try:
+        parsed_config = TrainingConfig.model_validate(source_config)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid training config: {e}")
+
+    try:
+        runtime = await resolve_project_domain_runtime(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+    effective_contract = runtime.get("effective_contract")
+    profile_training_defaults = get_training_defaults(effective_contract)
+    resolved_config, resolved_training_mode, profile_defaults_applied = _resolve_training_config(
+        config_payload=parsed_config.model_dump(),
+        provided_config_fields=provided_config_fields,
+        profile_training_defaults=profile_training_defaults,
+        fallback_training_mode=parsed_config.training_mode,
+    )
+    return (
+        runtime,
+        profile_training_defaults,
+        resolved_config,
+        resolved_training_mode,
+        profile_defaults_applied,
+    )
+
+
+@router.get("/preferences")
+async def get_training_preferences(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read persisted training UI/runtime preferences for a project."""
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    stored = str(project.training_preferred_plan_profile or "").strip().lower()
+    preferred = stored if stored in TRAINING_PLAN_PROFILES else "balanced"
+    source = "project" if stored in TRAINING_PLAN_PROFILES else "default"
+    return {
+        "project_id": project_id,
+        "preferred_plan_profile": preferred,
+        "profile_options": list(TRAINING_PLAN_PROFILES),
+        "source": source,
+    }
+
+
+@router.put("/preferences")
+async def set_training_preferences(
+    project_id: int,
+    req: TrainingPreferencesUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist training preferences for a project."""
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    preferred = _normalize_preferred_plan_profile(req.preferred_plan_profile)
+    project.training_preferred_plan_profile = preferred
+    await db.flush()
+
+    return {
+        "project_id": project_id,
+        "preferred_plan_profile": preferred,
+        "profile_options": list(TRAINING_PLAN_PROFILES),
+        "source": "project",
+    }
 
 
 @router.websocket("/ws/{experiment_id}")
@@ -226,29 +351,16 @@ async def effective_training_config(
 ):
     """Preview effective training config after domain runtime defaults are applied."""
     source_config = dict(req.config or {})
-    provided_config_fields = set(source_config.keys())
-    if "base_model" not in source_config:
-        source_config["base_model"] = "microsoft/phi-2"
-
-    try:
-        parsed_config = TrainingConfig.model_validate(source_config)
-    except Exception as e:
-        raise HTTPException(400, f"Invalid training config: {e}")
-
-    try:
-        runtime = await resolve_project_domain_runtime(db, project_id)
-    except ValueError as e:
-        detail = str(e)
-        if detail.startswith("Project "):
-            raise HTTPException(404, detail)
-        raise HTTPException(400, detail)
-    effective_contract = runtime.get("effective_contract")
-    profile_training_defaults = get_training_defaults(effective_contract)
-    resolved_config, resolved_training_mode, profile_defaults_applied = _resolve_training_config(
-        config_payload=parsed_config.model_dump(),
-        provided_config_fields=provided_config_fields,
-        profile_training_defaults=profile_training_defaults,
-        fallback_training_mode=parsed_config.training_mode,
+    (
+        runtime,
+        profile_training_defaults,
+        resolved_config,
+        resolved_training_mode,
+        profile_defaults_applied,
+    ) = await _resolve_effective_training_preview(
+        project_id=project_id,
+        source_config=source_config,
+        db=db,
     )
 
     return {
@@ -262,6 +374,126 @@ async def effective_training_config(
         "resolved_training_config": resolved_config,
         "resolved_training_mode": resolved_training_mode.value,
         "profile_defaults_applied": profile_defaults_applied,
+    }
+
+
+@router.post("/experiments/preflight")
+async def training_preflight(
+    project_id: int,
+    req: TrainingEffectiveConfigRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve effective config and run capability/runtime preflight checks."""
+    source_config = dict(req.config or {})
+    (
+        runtime,
+        profile_training_defaults,
+        resolved_config,
+        resolved_training_mode,
+        profile_defaults_applied,
+    ) = await _resolve_effective_training_preview(
+        project_id=project_id,
+        source_config=source_config,
+        db=db,
+    )
+
+    preflight = run_training_preflight(
+        project_id=project_id,
+        config=resolved_config,
+        base_model=str(resolved_config.get("base_model", "")),
+    )
+
+    return {
+        "domain_pack_applied": runtime.get("domain_pack_applied"),
+        "domain_pack_source": runtime.get("domain_pack_source"),
+        "domain_profile_applied": runtime.get("domain_profile_applied"),
+        "domain_profile_source": runtime.get("domain_profile_source"),
+        "profile_training_defaults": (
+            dict(profile_training_defaults) if profile_training_defaults else None
+        ),
+        "resolved_training_config": resolved_config,
+        "resolved_training_mode": resolved_training_mode.value,
+        "profile_defaults_applied": profile_defaults_applied,
+        "preflight": preflight,
+    }
+
+
+@router.post("/experiments/preflight/plan")
+async def training_preflight_plan(
+    project_id: int,
+    req: TrainingEffectiveConfigRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve effective config and generate suggested preflight tuning plans."""
+    source_config = dict(req.config or {})
+    (
+        runtime,
+        profile_training_defaults,
+        resolved_config,
+        resolved_training_mode,
+        profile_defaults_applied,
+    ) = await _resolve_effective_training_preview(
+        project_id=project_id,
+        source_config=source_config,
+        db=db,
+    )
+
+    plan = run_training_preflight_plan(
+        project_id=project_id,
+        config=resolved_config,
+        base_model=str(resolved_config.get("base_model", "")),
+    )
+
+    return {
+        "domain_pack_applied": runtime.get("domain_pack_applied"),
+        "domain_pack_source": runtime.get("domain_pack_source"),
+        "domain_profile_applied": runtime.get("domain_profile_applied"),
+        "domain_profile_source": runtime.get("domain_profile_source"),
+        "profile_training_defaults": (
+            dict(profile_training_defaults) if profile_training_defaults else None
+        ),
+        "resolved_training_config": resolved_config,
+        "resolved_training_mode": resolved_training_mode.value,
+        "profile_defaults_applied": profile_defaults_applied,
+        "plan": plan,
+    }
+
+
+@router.get("/experiments/{experiment_id}/preflight")
+async def training_preflight_for_experiment(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run preflight checks for an existing experiment config."""
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    exp = exp_result.scalar_one_or_none()
+    if not exp:
+        raise HTTPException(404, f"Experiment {experiment_id} not found in project {project_id}")
+
+    raw_config = dict(exp.config or {})
+    raw_config.setdefault("base_model", exp.base_model)
+    try:
+        parsed = TrainingConfig.model_validate(raw_config)
+    except Exception as e:
+        raise HTTPException(400, f"Experiment {experiment_id} has invalid training config: {e}")
+
+    resolved_config = parsed.model_dump()
+    preflight = run_training_preflight(
+        project_id=project_id,
+        config=resolved_config,
+        base_model=exp.base_model,
+    )
+    return {
+        "experiment_id": exp.id,
+        "status": exp.status.value,
+        "resolved_training_config": resolved_config,
+        "preflight": preflight,
     }
 
 

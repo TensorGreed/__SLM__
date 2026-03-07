@@ -37,6 +37,20 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - trainer backend abstraction (`auto`, `hf_trainer`, `trl_sft`)
   - task/data adapter contract (`causal_lm`, `seq2seq`, `classification`)
   - CUDA OOM auto-retry planner with progressive memory downscaling
+- Added **Training Capability Matrix + Preflight**:
+  - explicit config preflight endpoint before experiment creation/start
+  - model/task/trainer compatibility checks
+  - dependency/runtime/data-file preflight checks
+  - start-time server guard that blocks incompatible training runs
+- Added **Training Runtime Plugin SDK v1**:
+  - runtime registry + catalog endpoint (`/training/runtimes`)
+  - pluggable runtime selection via `training_runtime_id`
+  - built-in runtimes: `builtin.simulate`, `builtin.external_celery`
+  - legacy `TRAINING_BACKEND` remains default fallback for backward compatibility
+- Added **Preflight Plan Suggestions** (`safe`, `balanced`, `max_quality`) with one-click config apply in Training UI.
+- Added project-persisted training plan preference (`preferred_plan_profile`) so recommended profile choice is remembered per project.
+- Added project/domain-pack adapter preset resolution for dataset split defaults (`adapter_id`, `adapter_config`, `field_mapping`).
+- Added strict dataset contract checks in training preflight (task-shape coverage gate with actionable fix hints).
 - Expanded Training experiment form controls for memory/runtime tuning (`gradient_accumulation_steps`, `max_seq_length`, `save_steps`, `eval_steps`, `fp16`/`bf16`, `flash_attention`, `sequence_packing`).
 - Added split backend dependency profiles for CPU/GPU installs (`requirements-base.txt`, `requirements.txt`, `requirements-gpu.txt`, `requirements-gpu-cu128.txt`).
 - Added live external-training telemetry streaming (`epoch`, `step`, loss metrics) from Celery worker to Training dashboard via WebSocket.
@@ -45,6 +59,8 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - `20260305_0003` for domain profiles + project binding
   - `20260305_0004` for domain packs + project binding
   - `20260305_0005` for artifact registry table
+  - `20260306_0007` for project training preference persistence
+  - `20260306_0008` for project dataset adapter preset persistence
 
 ---
 
@@ -209,7 +225,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Synthetic | `/projects/{id}/synthetic` | Teacher-model generation + save workflow |
 | Dataset Prep | `/projects/{id}/dataset` | Split, preview, schema/profile diagnostics (runtime-aware defaults) |
 | Tokenization | `/projects/{id}/tokenization` | Token stats + vocab sample |
-| Training | `/projects/{id}/training` | Experiments, start/cancel, status, task status, WS telemetry/logs (runtime-aware defaults) |
+| Training | `/projects/{id}/training` | Experiments, config preflight, start/cancel, status, task status, WS telemetry/logs (runtime-aware defaults) |
 | Comparison | `/projects/{id}/training/compare` | Compare up to 5 experiments side by side |
 | Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards |
 | Compression | `/projects/{id}/compression` | Quantize/merge/benchmark queue, report status, task status/cancel, WS logs |
@@ -370,6 +386,9 @@ Current enforced behavior:
   - `GET /api/projects/{project_id}/dataset/adapters/catalog` lists built-in/plugin adapters and schema hints.
   - `POST /api/projects/{project_id}/dataset/adapters/preview` samples project data and reports adapter mapping coverage, drop/error counts, and mapped-row previews.
   - `POST /api/projects/{project_id}/dataset/adapters/reload` reloads adapter plugins from env-configured modules.
+  - `GET /api/projects/{project_id}/dataset/adapter-preference` resolves adapter preset fallback chain (`project` -> `domain_pack` -> `default`).
+  - `PUT /api/projects/{project_id}/dataset/adapter-preference` persists a project-level adapter preset.
+  - `POST /api/projects/{project_id}/dataset/adapter-preference/auto-detect` auto-detects adapter from sampled rows and can save it as project preset.
   - `POST /api/projects/{project_id}/dataset/split` now accepts `adapter_id`, `adapter_config`, and `field_mapping` (all optional; default adapter fallback remains active).
   - Dataset Prep UI now has dedicated views (`Overview`, `Adapter Lab`, `Split`) to reduce clutter.
   - Adapter Lab and split flows both support JSON adapter config input.
@@ -380,8 +399,16 @@ Current enforced behavior:
 - Training experiment defaults:
   - `POST /api/projects/{project_id}/training/experiments`
   - `POST /api/projects/{project_id}/training/experiments/effective-config` previews resolved config pre-create.
+  - `POST /api/projects/{project_id}/training/experiments/preflight` resolves config + runs capability/runtime preflight before create/start.
+    - Includes dataset contract validation against requested `task_type` (`causal_lm`, `seq2seq`, `classification`) and emits explicit fix hints when coverage is insufficient.
+  - `POST /api/projects/{project_id}/training/experiments/preflight/plan` returns suggested configs (`safe`, `balanced`, `max_quality`) with estimated VRAM risk and per-profile preflight output.
+  - `GET /api/projects/{project_id}/training/runtimes` lists registered training runtime plugins and server default runtime.
+  - `GET /api/projects/{project_id}/training/preferences` reads persisted project training UI preferences.
+  - `PUT /api/projects/{project_id}/training/preferences` updates persisted project training UI preferences (currently `preferred_plan_profile`).
+  - `GET /api/projects/{project_id}/training/experiments/{experiment_id}/preflight` runs preflight on an existing experiment.
   - For omitted config fields, defaults come from resolved runtime `training_defaults` (e.g. `batch_size`, `num_epochs`, `learning_rate`, `chat_template`, `use_lora`, `training_mode`).
   - Runtime config now also supports:
+    - `training_runtime_id`: runtime plugin id (`auto` uses server default)
     - `task_type`: `causal_lm` | `seq2seq` | `classification`
     - `trainer_backend`: `auto` | `hf_trainer` | `trl_sft`
     - `auto_oom_retry`, `max_oom_retries`, `oom_retry_seq_shrink`
@@ -390,6 +417,10 @@ Current enforced behavior:
     - `seq2seq` uses `AutoModelForSeq2SeqLM` + seq2seq collator.
     - `classification` uses `AutoModelForSequenceClassification` + label mapping + eval accuracy/macro-F1.
     - If `trainer_backend=trl_sft` is requested for non-`causal_lm`, runtime falls back to `hf_trainer` with a warning.
+  - `POST /start` now enforces preflight server-side and returns `400` with `Training preflight failed: ...` when blocked.
+  - Training UI includes:
+    - `Run Capability Preflight` for pass/fail + warnings
+    - `Run Preflight Plan` for recommended configs and one-click apply
   - Response now includes:
     - `domain_pack_applied`
     - `domain_pack_source`
@@ -472,6 +503,7 @@ Common backend env vars (see `backend/.env.example`):
 - `TRAINING_BACKEND` (`simulate` or `external`)
 - `ALLOW_SIMULATED_TRAINING`
 - `TRAINING_EXTERNAL_CMD`
+- `TRAINING_RUNTIME_PLUGIN_MODULES` (JSON array of Python module paths)
 
 ### Compression runtime
 
@@ -509,6 +541,18 @@ TRAINING_EXTERNAL_CMD='python "{backend_dir}/scripts/train.py" --project {projec
 ```
 
 `backend/scripts/train.py` performs real HuggingFace Trainer fine-tuning and expects prepared split files (for example `train.jsonl`).
+
+Runtime plugin notes:
+
+- Experiment config can set `training_runtime_id`; use `auto` to inherit server default runtime.
+- Current built-ins:
+  - `builtin.simulate`
+  - `builtin.external_celery`
+- Legacy mapping is preserved:
+  - `TRAINING_BACKEND=simulate` -> `builtin.simulate`
+  - `TRAINING_BACKEND=external` -> `builtin.external_celery`
+- Custom runtimes can be loaded with `TRAINING_RUNTIME_PLUGIN_MODULES` and should expose:
+  - `register_training_runtime_plugins(register_fn)`
 
 Example compression template:
 
@@ -579,6 +623,8 @@ Current revisions:
 - `20260305_0004` domain packs + project binding
 - `20260305_0005` artifact registry
 - `20260305_0006` workflow run tracking tables
+- `20260306_0007` project training preference persistence
+- `20260306_0008` project dataset adapter preset persistence
 
 From repo root:
 

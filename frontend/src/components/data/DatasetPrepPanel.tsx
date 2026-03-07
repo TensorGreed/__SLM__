@@ -100,6 +100,22 @@ interface AdapterPreviewResult {
     }>;
 }
 
+interface AdapterPreferenceResponse {
+    project_id: number;
+    source: string;
+    adapter_id: string;
+    adapter_config: Record<string, unknown>;
+    field_mapping: Record<string, string>;
+    domain_pack_applied?: string | null;
+    domain_profile_applied?: string | null;
+}
+
+interface AdapterPreferenceAutoDetectResponse {
+    preference: AdapterPreferenceResponse;
+    preview: AdapterPreviewResult;
+    saved: boolean;
+}
+
 const CHAT_TEMPLATES = [
     { value: 'llama3', label: 'Llama 3' },
     { value: 'chatml', label: 'ChatML' },
@@ -128,6 +144,23 @@ function parseJsonObjectInput(raw: string): { value: Record<string, unknown>; er
     }
 }
 
+function parseJsonStringMapInput(raw: string): { value: Record<string, string>; error: string } {
+    const parsed = parseJsonObjectInput(raw);
+    if (parsed.error) {
+        return { value: {}, error: parsed.error };
+    }
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed.value)) {
+        const left = String(key || '').trim();
+        const right = String(value ?? '').trim();
+        if (!left || !right) {
+            continue;
+        }
+        out[left] = right;
+    }
+    return { value: out, error: '' };
+}
+
 export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepPanelProps) {
     const [activeView, setActiveView] = useState<DatasetPrepView>('overview');
 
@@ -147,11 +180,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [adapterType, setAdapterType] = useState('raw');
     const [adapterId, setAdapterId] = useState('auto');
     const [adapterConfigText, setAdapterConfigText] = useState('');
+    const [adapterFieldMappingText, setAdapterFieldMappingText] = useState('');
     const [adapterSampleSize, setAdapterSampleSize] = useState(200);
     const [adapterPreviewLimit, setAdapterPreviewLimit] = useState(20);
     const [adapterPreviewLoading, setAdapterPreviewLoading] = useState(false);
     const [adapterPreviewError, setAdapterPreviewError] = useState('');
     const [adapterPreviewResult, setAdapterPreviewResult] = useState<AdapterPreviewResult | null>(null);
+    const [adapterPreference, setAdapterPreference] = useState<AdapterPreferenceResponse | null>(null);
+    const [adapterPreferenceLoading, setAdapterPreferenceLoading] = useState(false);
 
     // Split state
     const [trainRatio, setTrainRatio] = useState(0.8);
@@ -161,6 +197,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [splitTemplate, setSplitTemplate] = useState('llama3');
     const [splitAdapterId, setSplitAdapterId] = useState('default-canonical');
     const [splitAdapterConfigText, setSplitAdapterConfigText] = useState('');
+    const [splitFieldMappingText, setSplitFieldMappingText] = useState('');
     const [useProfileDefaults, setUseProfileDefaults] = useState(true);
     const [splitTouched, setSplitTouched] = useState({
         train_ratio: false,
@@ -188,8 +225,16 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             payload.__adapter_config_error = parsed.error;
             return payload;
         }
+        const parsedFieldMapping = parseJsonStringMapInput(splitFieldMappingText);
+        if (parsedFieldMapping.error) {
+            payload.__field_mapping_error = parsedFieldMapping.error;
+            return payload;
+        }
         if (Object.keys(parsed.value).length > 0) {
             payload.adapter_config = parsed.value;
+        }
+        if (Object.keys(parsedFieldMapping.value).length > 0) {
+            payload.field_mapping = parsedFieldMapping.value;
         }
         return payload;
     };
@@ -200,11 +245,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         try {
             const payload = buildSplitPayload();
             const adapterConfigError = payload.__adapter_config_error;
+            const fieldMappingError = payload.__field_mapping_error;
             delete payload.__adapter_config_error;
+            delete payload.__field_mapping_error;
             delete payload.adapter_id;
             delete payload.adapter_config;
+            delete payload.field_mapping;
             if (typeof adapterConfigError === 'string' && adapterConfigError.trim()) {
                 setEffectiveSplitError(`Split adapter config JSON error: ${adapterConfigError}`);
+                setEffectiveSplitConfig(null);
+                return;
+            }
+            if (typeof fieldMappingError === 'string' && fieldMappingError.trim()) {
+                setEffectiveSplitError(`Split field mapping JSON error: ${fieldMappingError}`);
                 setEffectiveSplitConfig(null);
                 return;
             }
@@ -221,9 +274,36 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
     };
 
+    const loadAdapterPreference = async () => {
+        setAdapterPreferenceLoading(true);
+        try {
+            const res = await api.get<AdapterPreferenceResponse>(`/projects/${projectId}/dataset/adapter-preference`);
+            const pref = res.data;
+            setAdapterPreference(pref);
+            if (pref?.adapter_id) {
+                setSplitAdapterId(pref.adapter_id);
+            }
+            setSplitAdapterConfigText(
+                pref?.adapter_config && Object.keys(pref.adapter_config).length > 0
+                    ? JSON.stringify(pref.adapter_config, null, 2)
+                    : '',
+            );
+            setSplitFieldMappingText(
+                pref?.field_mapping && Object.keys(pref.field_mapping).length > 0
+                    ? JSON.stringify(pref.field_mapping, null, 2)
+                    : '',
+            );
+        } catch {
+            setAdapterPreference(null);
+        } finally {
+            setAdapterPreferenceLoading(false);
+        }
+    };
+
     useEffect(() => {
         void previewEffectiveSplitConfig();
         void loadAdapterCatalog();
+        void loadAdapterPreference();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
@@ -284,11 +364,18 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 setAdapterPreviewResult(null);
                 return;
             }
+            const parsedFieldMapping = parseJsonStringMapInput(adapterFieldMappingText);
+            if (parsedFieldMapping.error) {
+                setAdapterPreviewError(`Field mapping JSON error: ${parsedFieldMapping.error}`);
+                setAdapterPreviewResult(null);
+                return;
+            }
             const res = await api.post<AdapterPreviewResult>(`/projects/${projectId}/dataset/adapters/preview`, {
                 dataset_type: adapterType,
                 sample_size: adapterSampleSize,
                 adapter_id: adapterId,
                 adapter_config: Object.keys(parsedConfig.value).length > 0 ? parsedConfig.value : undefined,
+                field_mapping: Object.keys(parsedFieldMapping.value).length > 0 ? parsedFieldMapping.value : undefined,
                 preview_limit: adapterPreviewLimit,
             });
             setAdapterPreviewResult(res.data);
@@ -306,11 +393,17 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         try {
             const payload = buildSplitPayload();
             const adapterConfigError = payload.__adapter_config_error;
+            const fieldMappingError = payload.__field_mapping_error;
             if (typeof adapterConfigError === 'string' && adapterConfigError.trim()) {
                 toast.error(`Split adapter config JSON error: ${adapterConfigError}`);
                 return;
             }
+            if (typeof fieldMappingError === 'string' && fieldMappingError.trim()) {
+                toast.error(`Split field mapping JSON error: ${fieldMappingError}`);
+                return;
+            }
             delete payload.__adapter_config_error;
+            delete payload.__field_mapping_error;
 
             const res = await api.post<SplitManifest>(`/projects/${projectId}/dataset/split`, payload);
             const manifest = res.data;
@@ -358,9 +451,86 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
     };
 
+    const saveSplitAdapterPreference = async () => {
+        try {
+            const parsedConfig = parseJsonObjectInput(splitAdapterConfigText);
+            if (parsedConfig.error) {
+                toast.error(`Split adapter config JSON error: ${parsedConfig.error}`);
+                return;
+            }
+            const parsedFieldMapping = parseJsonStringMapInput(splitFieldMappingText);
+            if (parsedFieldMapping.error) {
+                toast.error(`Split field mapping JSON error: ${parsedFieldMapping.error}`);
+                return;
+            }
+            const res = await api.put<AdapterPreferenceResponse>(
+                `/projects/${projectId}/dataset/adapter-preference`,
+                {
+                    adapter_id: splitAdapterId || 'default-canonical',
+                    adapter_config: Object.keys(parsedConfig.value).length > 0 ? parsedConfig.value : {},
+                    field_mapping: Object.keys(parsedFieldMapping.value).length > 0 ? parsedFieldMapping.value : {},
+                },
+            );
+            setAdapterPreference(res.data);
+            toast.success(`Saved adapter preset (${res.data.source}).`);
+        } catch (err: any) {
+            toast.error(err?.response?.data?.detail || 'Failed to save adapter preset.');
+        }
+    };
+
+    const autoDetectAndSaveAdapterPreference = async () => {
+        try {
+            const parsedConfig = parseJsonObjectInput(adapterConfigText);
+            if (parsedConfig.error) {
+                setAdapterPreviewError(`Adapter config JSON error: ${parsedConfig.error}`);
+                return;
+            }
+            const parsedFieldMapping = parseJsonStringMapInput(adapterFieldMappingText);
+            if (parsedFieldMapping.error) {
+                setAdapterPreviewError(`Field mapping JSON error: ${parsedFieldMapping.error}`);
+                return;
+            }
+            const res = await api.post<AdapterPreferenceAutoDetectResponse>(
+                `/projects/${projectId}/dataset/adapter-preference/auto-detect`,
+                {
+                    dataset_type: adapterType,
+                    sample_size: adapterSampleSize,
+                    adapter_config: Object.keys(parsedConfig.value).length > 0 ? parsedConfig.value : undefined,
+                    field_mapping: Object.keys(parsedFieldMapping.value).length > 0 ? parsedFieldMapping.value : undefined,
+                    save: true,
+                },
+            );
+            const nextPref = res.data?.preference;
+            const nextPreview = res.data?.preview;
+            if (nextPref) {
+                setAdapterPreference(nextPref);
+                setSplitAdapterId(nextPref.adapter_id || 'default-canonical');
+                setSplitAdapterConfigText(
+                    nextPref.adapter_config && Object.keys(nextPref.adapter_config).length > 0
+                        ? JSON.stringify(nextPref.adapter_config, null, 2)
+                        : '',
+                );
+                setSplitFieldMappingText(
+                    nextPref.field_mapping && Object.keys(nextPref.field_mapping).length > 0
+                        ? JSON.stringify(nextPref.field_mapping, null, 2)
+                        : '',
+                );
+                setAdapterId(nextPref.adapter_id || 'auto');
+            }
+            if (nextPreview) {
+                setAdapterPreviewResult(nextPreview);
+                setAdapterPreviewError('');
+            }
+            toast.success(`Auto-detected and saved adapter preset (${nextPref?.adapter_id || 'default-canonical'}).`);
+        } catch (err: any) {
+            setAdapterPreviewError(err?.response?.data?.detail || 'Auto-detect failed');
+        }
+    };
+
     const syncSplitAdapterFromPreview = () => {
         setSplitAdapterId(adapterId || 'default-canonical');
         setSplitAdapterConfigText(adapterConfigText);
+        setSplitFieldMappingText(adapterFieldMappingText);
         toast.success('Copied adapter preview settings into split configuration.');
     };
 
@@ -609,9 +779,17 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     <button className="btn-primary" onClick={runAdapterPreview} disabled={adapterPreviewLoading}>
                         {adapterPreviewLoading ? '⏳ Running...' : '🧪 Run Adapter Preview'}
                     </button>
+                    <button className="btn-secondary" onClick={autoDetectAndSaveAdapterPreference} disabled={adapterPreviewLoading}>
+                        🤖 Auto-Detect + Save Preset
+                    </button>
                     <button className="btn-secondary" onClick={loadAdapterCatalog}>
                         🔄 Refresh Catalog
                     </button>
+                </div>
+                <div style={{ fontSize: '.8rem', color: 'rgba(255,255,255,.6)', marginBottom: '.75rem' }}>
+                    Active preset source: <strong>{adapterPreference?.source || 'default'}</strong>
+                    {adapterPreference?.adapter_id ? ` • adapter: ${adapterPreference.adapter_id}` : ''}
+                    {adapterPreferenceLoading ? ' • syncing...' : ''}
                 </div>
                 <label className="dp-json-field">
                     Adapter Config JSON (optional)
@@ -620,6 +798,15 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         value={adapterConfigText}
                         onChange={(e) => setAdapterConfigText(e.target.value)}
                         placeholder='{"source_fields":["prompt"],"target_fields":["completion"]}'
+                    />
+                </label>
+                <label className="dp-json-field">
+                    Field Mapping JSON (optional)
+                    <textarea
+                        className="dp-json-input"
+                        value={adapterFieldMappingText}
+                        onChange={(e) => setAdapterFieldMappingText(e.target.value)}
+                        placeholder='{"question":"instruction","answer":"output","text":"content"}'
                     />
                 </label>
                 {adapterPreviewError && (
@@ -726,6 +913,21 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         <button type="button" className="btn-secondary" onClick={syncSplitAdapterFromPreview}>
                             Use Adapter Lab Settings
                         </button>
+                        <button type="button" className="btn-secondary" onClick={saveSplitAdapterPreference}>
+                            Save as Project Preset
+                        </button>
+                        <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => void loadAdapterPreference()}
+                            disabled={adapterPreferenceLoading}
+                        >
+                            {adapterPreferenceLoading ? 'Loading...' : 'Load Saved Preset'}
+                        </button>
+                    </div>
+                    <div style={{ fontSize: '.8rem', color: 'rgba(255,255,255,.6)', marginBottom: '.5rem' }}>
+                        Resolved preset source: <strong>{adapterPreference?.source || 'default'}</strong>
+                        {adapterPreference?.adapter_id ? ` • ${adapterPreference.adapter_id}` : ''}
                     </div>
                     <label className="dp-json-field">
                         Adapter Config JSON (optional)
@@ -734,6 +936,15 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                             value={splitAdapterConfigText}
                             onChange={(e) => setSplitAdapterConfigText(e.target.value)}
                             placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
+                        />
+                    </label>
+                    <label className="dp-json-field">
+                        Field Mapping JSON (optional)
+                        <textarea
+                            className="dp-json-input"
+                            value={splitFieldMappingText}
+                            onChange={(e) => setSplitFieldMappingText(e.target.value)}
+                            placeholder='{"question":"instruction","answer":"response"}'
                         />
                     </label>
                 </div>

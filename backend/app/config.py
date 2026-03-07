@@ -79,6 +79,10 @@ class Settings(BaseSettings):
         '--output "{output_dir}" --base-model "{base_model}" '
         '--config "{config_path}" --train-file "{train_file}" --val-file "{val_file}"'
     )
+    # JSON array of Python module paths to auto-load training runtime plugins.
+    # Example:
+    # TRAINING_RUNTIME_PLUGIN_MODULES='["app.plugins.training_runtimes.example_runtime"]'
+    TRAINING_RUNTIME_PLUGIN_MODULES: list[str] = []
 
     # ── Compression Runtime Backend ─────────────────────────────────────
     COMPRESSION_BACKEND: str = "external"  # external | stub

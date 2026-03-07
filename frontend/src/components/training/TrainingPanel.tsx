@@ -57,7 +57,83 @@ interface TrainingEffectiveConfigResponse {
   profile_defaults_applied?: string[];
 }
 
+interface TrainingPreflightReport {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  hints?: string[];
+  capability_summary?: Record<string, unknown>;
+}
+
+interface TrainingPreflightPreviewResponse extends TrainingEffectiveConfigResponse {
+  preflight?: TrainingPreflightReport;
+}
+
+interface TrainingExperimentPreflightResponse {
+  experiment_id: number;
+  status: string;
+  resolved_training_config?: Record<string, unknown> | null;
+  preflight?: TrainingPreflightReport;
+}
+
+interface TrainingPlanChange {
+  field: string;
+  from?: unknown;
+  to?: unknown;
+  reason?: string;
+}
+
+interface TrainingPreflightPlanSuggestion {
+  profile: string;
+  title: string;
+  description: string;
+  config: Record<string, unknown>;
+  changes: TrainingPlanChange[];
+  estimated_vram_risk: string;
+  estimated_vram_score: number;
+  estimated_vram_note?: string | null;
+  preflight: TrainingPreflightReport;
+}
+
+interface TrainingPreflightPlanReport {
+  base_preflight?: TrainingPreflightReport;
+  suggestions: TrainingPreflightPlanSuggestion[];
+  recommended_profile?: string;
+  profile_order?: string[];
+}
+
+interface TrainingPreflightPlanResponse extends TrainingEffectiveConfigResponse {
+  plan?: TrainingPreflightPlanReport;
+}
+
+interface TrainingPreferencesResponse {
+  project_id: number;
+  preferred_plan_profile: string;
+  profile_options?: string[];
+  source?: string;
+}
+
+interface TrainingRuntimeSpec {
+  runtime_id: string;
+  label: string;
+  description?: string;
+  execution_backend?: string;
+  required_dependencies?: string[];
+  supports_task_tracking?: boolean;
+  supports_cancellation?: boolean;
+  is_builtin?: boolean;
+}
+
+interface TrainingRuntimeCatalogResponse {
+  project_id: number;
+  default_runtime_id?: string;
+  runtime_count?: number;
+  legacy_aliases?: Record<string, string>;
+  runtimes?: TrainingRuntimeSpec[];
+}
+
 const METRIC_PREFIX = 'SLM_METRIC ';
+const PLAN_PROFILE_STORAGE_PREFIX = 'slm-training-plan-profile';
 
 function parseNumericField(text: string, key: string): number | null {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -139,6 +215,7 @@ function parseMetricFromLogLine(text: string, experimentId: number): TrainingMet
 }
 
 type ConfigFieldKey =
+  | 'training_runtime_id'
   | 'task_type'
   | 'trainer_backend'
   | 'chat_template'
@@ -176,6 +253,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
   const [name, setName] = useState('');
   const [baseModel, setBaseModel] = useState('microsoft/phi-2');
+  const [trainingRuntimeId, setTrainingRuntimeId] = useState('auto');
   const [taskType, setTaskType] = useState('causal_lm');
   const [trainerBackend, setTrainerBackend] = useState('auto');
   const [chatTemplate, setChatTemplate] = useState('llama3');
@@ -201,6 +279,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
   const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
+    training_runtime_id: false,
     task_type: false,
     trainer_backend: false,
     chat_template: false,
@@ -237,6 +316,16 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const [effectivePreview, setEffectivePreview] = useState<TrainingEffectiveConfigResponse | null>(null);
   const [effectivePreviewLoading, setEffectivePreviewLoading] = useState(false);
   const [effectivePreviewError, setEffectivePreviewError] = useState('');
+  const [preflightPreview, setPreflightPreview] = useState<TrainingPreflightReport | null>(null);
+  const [preflightPreviewLoading, setPreflightPreviewLoading] = useState(false);
+  const [preflightPreviewError, setPreflightPreviewError] = useState('');
+  const [preflightPlan, setPreflightPlan] = useState<TrainingPreflightPlanReport | null>(null);
+  const [preflightPlanLoading, setPreflightPlanLoading] = useState(false);
+  const [preflightPlanError, setPreflightPlanError] = useState('');
+  const [preferredPlanProfile, setPreferredPlanProfile] = useState('balanced');
+  const [trainingWarnings, setTrainingWarnings] = useState<string[]>([]);
+  const [runtimeCatalog, setRuntimeCatalog] = useState<TrainingRuntimeCatalogResponse | null>(null);
+  const [runtimeCatalogError, setRuntimeCatalogError] = useState('');
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -261,6 +350,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       base_model: baseModel,
     };
     const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
+    if (includeField('training_runtime_id')) config.training_runtime_id = trainingRuntimeId;
     if (includeField('task_type')) config.task_type = taskType;
     if (includeField('trainer_backend')) config.trainer_backend = trainerBackend;
     if (includeField('chat_template')) config.chat_template = chatTemplate;
@@ -289,6 +379,77 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     return config;
   };
 
+  const applySuggestedConfig = (config: Record<string, unknown>) => {
+    const parseNumber = (value: unknown, fallback: number): number => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const parseBoolean = (value: unknown, fallback: boolean): boolean => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value !== 0;
+      if (typeof value === 'string') {
+        const token = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(token)) return true;
+        if (['false', '0', 'no', 'off', ''].includes(token)) return false;
+      }
+      return fallback;
+    };
+    const parseString = (value: unknown, fallback: string): string =>
+      typeof value === 'string' && value.trim() ? value : fallback;
+
+    if (typeof config.base_model === 'string' && config.base_model.trim()) setBaseModel(config.base_model);
+    setTrainingRuntimeId(parseString(config.training_runtime_id, trainingRuntimeId));
+    setTaskType(parseString(config.task_type, taskType));
+    setTrainerBackend(parseString(config.trainer_backend, trainerBackend));
+    setChatTemplate(parseString(config.chat_template, chatTemplate));
+    setLr(String(config.learning_rate ?? lr));
+    setEpochs(Math.max(1, parseNumber(config.num_epochs, epochs)));
+    setBatchSize(Math.max(1, parseNumber(config.batch_size, batchSize)));
+    setGradientAccumulationSteps(Math.max(1, parseNumber(config.gradient_accumulation_steps, gradientAccumulationSteps)));
+    setMaxSeqLength(Math.max(128, parseNumber(config.max_seq_length, maxSeqLength)));
+    setOptimizer(parseString(config.optimizer, optimizer));
+    setSaveSteps(Math.max(1, parseNumber(config.save_steps, saveSteps)));
+    setEvalSteps(Math.max(1, parseNumber(config.eval_steps, evalSteps)));
+    setSequencePacking(parseBoolean(config.sequence_packing, sequencePacking));
+    const nextUseLora = parseBoolean(config.use_lora, useLora);
+    setUseLora(nextUseLora);
+    setLoraR(Math.max(1, parseNumber(config.lora_r, loraR)));
+    setLoraAlpha(Math.max(1, parseNumber(config.lora_alpha, loraAlpha)));
+    if (Array.isArray(config.target_modules)) {
+      setTargetModules(
+        config.target_modules
+          .map((item) => String(item).trim())
+          .filter(Boolean)
+          .join(', '),
+      );
+    }
+    const nextFp16 = parseBoolean(config.fp16, fp16);
+    const nextBf16 = parseBoolean(config.bf16, bf16);
+    if (nextFp16 && nextBf16) {
+      setFp16(false);
+      setBf16(true);
+    } else {
+      setFp16(nextFp16);
+      setBf16(nextBf16);
+    }
+    setFlashAttention(parseBoolean(config.flash_attention, flashAttention));
+    setAutoOomRetry(parseBoolean(config.auto_oom_retry, autoOomRetry));
+    setMaxOomRetries(Math.max(0, Math.min(5, parseNumber(config.max_oom_retries, maxOomRetries))));
+    setOomRetrySeqShrink(String(config.oom_retry_seq_shrink ?? oomRetrySeqShrink));
+    setGradientCheckpointing(parseBoolean(config.gradient_checkpointing, gradientCheckpointing));
+
+    setUseProfileDefaults(false);
+    setTouchedConfig((prev) => {
+      const next = { ...prev };
+      (Object.keys(next) as ConfigFieldKey[]).forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(config, key)) {
+          next[key] = true;
+        }
+      });
+      return next;
+    });
+  };
+
   const previewEffectiveConfig = async () => {
     setEffectivePreviewLoading(true);
     setEffectivePreviewError('');
@@ -304,6 +465,133 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       setEffectivePreviewError(err?.response?.data?.detail || 'Failed to preview effective training config');
     } finally {
       setEffectivePreviewLoading(false);
+    }
+  };
+
+  const runPreflightPreview = async () => {
+    setPreflightPreviewLoading(true);
+    setPreflightPreviewError('');
+    try {
+      const config = buildTrainingConfigPayload();
+      const res = await api.post<TrainingPreflightPreviewResponse>(
+        `/projects/${projectId}/training/experiments/preflight`,
+        { config },
+      );
+      setEffectivePreview({
+        domain_pack_applied: res.data?.domain_pack_applied ?? null,
+        domain_pack_source: res.data?.domain_pack_source ?? null,
+        domain_profile_applied: res.data?.domain_profile_applied ?? null,
+        domain_profile_source: res.data?.domain_profile_source ?? null,
+        profile_training_defaults: res.data?.profile_training_defaults ?? null,
+        resolved_training_config: res.data?.resolved_training_config ?? null,
+        resolved_training_mode: res.data?.resolved_training_mode ?? 'sft',
+        profile_defaults_applied: res.data?.profile_defaults_applied ?? [],
+      });
+      setPreflightPreview(res.data?.preflight || null);
+    } catch (err: any) {
+      setPreflightPreview(null);
+      setPreflightPreviewError(err?.response?.data?.detail || 'Failed to run capability preflight');
+    } finally {
+      setPreflightPreviewLoading(false);
+    }
+  };
+
+  const runPreflightPlan = async () => {
+    setPreflightPlanLoading(true);
+    setPreflightPlanError('');
+    try {
+      const config = buildTrainingConfigPayload();
+      const res = await api.post<TrainingPreflightPlanResponse>(
+        `/projects/${projectId}/training/experiments/preflight/plan`,
+        { config },
+      );
+      setEffectivePreview({
+        domain_pack_applied: res.data?.domain_pack_applied ?? null,
+        domain_pack_source: res.data?.domain_pack_source ?? null,
+        domain_profile_applied: res.data?.domain_profile_applied ?? null,
+        domain_profile_source: res.data?.domain_profile_source ?? null,
+        profile_training_defaults: res.data?.profile_training_defaults ?? null,
+        resolved_training_config: res.data?.resolved_training_config ?? null,
+        resolved_training_mode: res.data?.resolved_training_mode ?? 'sft',
+        profile_defaults_applied: res.data?.profile_defaults_applied ?? [],
+      });
+      const plan = res.data?.plan || null;
+      setPreflightPlan(plan);
+      setPreflightPreview(plan?.base_preflight || null);
+    } catch (err: any) {
+      setPreflightPlan(null);
+      setPreflightPlanError(err?.response?.data?.detail || 'Failed to generate preflight plan');
+    } finally {
+      setPreflightPlanLoading(false);
+    }
+  };
+
+  const loadPreferredPlanProfile = async () => {
+    try {
+      const res = await api.get<TrainingPreferencesResponse>(`/projects/${projectId}/training/preferences`);
+      const preferred = String(res.data?.preferred_plan_profile || '').trim().toLowerCase();
+      if (preferred) {
+        setPreferredPlanProfile(preferred);
+        try {
+          window.localStorage.setItem(`${PLAN_PROFILE_STORAGE_PREFIX}:${projectId}`, preferred);
+        } catch {
+          // no-op for storage failures
+        }
+        return;
+      }
+    } catch {
+      // fallback to cached local value
+    }
+    try {
+      const stored = window.localStorage.getItem(`${PLAN_PROFILE_STORAGE_PREFIX}:${projectId}`);
+      const fallback = String(stored || '').trim().toLowerCase();
+      setPreferredPlanProfile(fallback || 'balanced');
+    } catch {
+      setPreferredPlanProfile('balanced');
+    }
+  };
+
+  const loadTrainingRuntimes = async () => {
+    try {
+      const res = await api.get<TrainingRuntimeCatalogResponse>(`/projects/${projectId}/training/runtimes`);
+      setRuntimeCatalog(res.data || null);
+      setRuntimeCatalogError('');
+    } catch (err: any) {
+      setRuntimeCatalog(null);
+      setRuntimeCatalogError(err?.response?.data?.detail || 'Failed to load runtime catalog');
+    }
+  };
+
+  const persistPreferredPlanProfile = async (profile: string) => {
+    const normalized = String(profile || '').trim().toLowerCase();
+    if (!normalized) return;
+    setPreferredPlanProfile(normalized);
+    try {
+      await api.put<TrainingPreferencesResponse>(
+        `/projects/${projectId}/training/preferences`,
+        { preferred_plan_profile: normalized },
+      );
+    } catch {
+      // Keep local fallback if backend persistence is unavailable.
+    }
+    try {
+      window.localStorage.setItem(`${PLAN_PROFILE_STORAGE_PREFIX}:${projectId}`, normalized);
+    } catch {
+      // no-op for storage failures
+    }
+  };
+
+  const applyPlanSuggestion = (suggestion: TrainingPreflightPlanSuggestion) => {
+    applySuggestedConfig(suggestion.config || {});
+    setPreflightPreview(suggestion.preflight || null);
+    const warningItems = Array.isArray(suggestion.preflight?.warnings)
+      ? suggestion.preflight.warnings.filter(Boolean)
+      : [];
+    setTrainingWarnings(warningItems);
+
+    const profile = String(suggestion.profile || '').trim();
+    if (profile) {
+      void persistPreferredPlanProfile(profile);
     }
   };
 
@@ -328,8 +616,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setShowCreate(false);
     setTaskState('');
     setTrainingError('');
+    setTrainingRuntimeId('auto');
     setUseProfileDefaults(true);
     setTouchedConfig({
+      training_runtime_id: false,
       task_type: false,
       trainer_backend: false,
       chat_template: false,
@@ -357,6 +647,15 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setLastCreateSummary(null);
     setEffectivePreview(null);
     setEffectivePreviewError('');
+    setPreflightPreview(null);
+    setPreflightPreviewError('');
+    setPreflightPlan(null);
+    setPreflightPlanError('');
+    setTrainingWarnings([]);
+    setRuntimeCatalog(null);
+    setRuntimeCatalogError('');
+    void loadPreferredPlanProfile();
+    void loadTrainingRuntimes();
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -474,6 +773,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const handleCreate = async () => {
     if (!name.trim()) return;
     setTrainingError('');
+    setTrainingWarnings([]);
 
     const config = buildTrainingConfigPayload();
 
@@ -498,7 +798,13 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       });
       setShowCreate(false);
       setName('');
+      setTrainingRuntimeId('auto');
+      setPreflightPreview(null);
+      setPreflightPreviewError('');
+      setPreflightPlan(null);
+      setPreflightPlanError('');
       setTouchedConfig({
+        training_runtime_id: false,
         task_type: false,
         trainer_backend: false,
         chat_template: false,
@@ -530,7 +836,26 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
   const handleStart = async (experimentId: number) => {
     setTrainingError('');
+    setTrainingWarnings([]);
     try {
+      const preflightRes = await api.get<TrainingExperimentPreflightResponse>(
+        `/projects/${projectId}/training/experiments/${experimentId}/preflight`,
+      );
+      const preflight = preflightRes.data?.preflight;
+      if (preflight && !preflight.ok) {
+        const errors = Array.isArray(preflight.errors) ? preflight.errors.filter(Boolean) : [];
+        const hints = Array.isArray(preflight.hints) ? preflight.hints.filter(Boolean) : [];
+        const hintText = hints.length > 0 ? ` Fix hints: ${hints.slice(0, 2).join(' | ')}` : '';
+        setTrainingError(
+          errors.length > 0
+            ? `Preflight failed: ${errors.join(' | ')}${hintText}`
+            : 'Preflight failed due to incompatible configuration.',
+        );
+        return;
+      }
+      const warnings = Array.isArray(preflight?.warnings) ? preflight.warnings.filter(Boolean) : [];
+      setTrainingWarnings(warnings);
+
       const res = await api.post(`/projects/${projectId}/training/experiments/${experimentId}/start`);
       setExperiments((prev) =>
         prev.map((exp) => (exp.id === experimentId ? { ...exp, status: 'running' } : exp))
@@ -564,6 +889,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setMetrics([]);
     setTrainingLogs([]);
     setTaskState('');
+    setTrainingWarnings([]);
   };
 
   const toggleCompareSelection = (expId: number) => {
@@ -609,6 +935,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
             onClick={() => {
               setActiveExperiment(null);
               setTaskState('');
+              setTrainingWarnings([]);
               refreshExperiments().catch(() => undefined);
             }}
           >
@@ -659,6 +986,11 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               {trainingError}
             </div>
           )}
+          {trainingWarnings.length > 0 && (
+            <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-warning)', fontSize: 'var(--font-size-sm)' }}>
+              Preflight warnings: {trainingWarnings.join(' | ')}
+            </div>
+          )}
 
           <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
             <div className="metric-box box-blue">
@@ -690,7 +1022,23 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
           <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>Training Experiments</h3>
-          <button className="btn btn-primary" onClick={() => setShowCreate((prev) => !prev)}>+ New Experiment</button>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              setShowCreate((prev) => {
+                const next = !prev;
+                if (next) {
+                  setPreflightPreview(null);
+                  setPreflightPreviewError('');
+                  setPreflightPlan(null);
+                  setPreflightPlanError('');
+                }
+                return next;
+              });
+            }}
+          >
+            + New Experiment
+          </button>
         </div>
 
         {showCreate && (
@@ -713,17 +1061,43 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               </div>
             </div>
             <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => void previewEffectiveConfig()}
-                disabled={effectivePreviewLoading}
-              >
-                {effectivePreviewLoading ? 'Resolving...' : 'Preview Effective Config'}
-              </button>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => void previewEffectiveConfig()}
+                  disabled={effectivePreviewLoading}
+                >
+                  {effectivePreviewLoading ? 'Resolving...' : 'Preview Effective Config'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => void runPreflightPreview()}
+                  disabled={preflightPreviewLoading}
+                >
+                  {preflightPreviewLoading ? 'Checking...' : 'Run Capability Preflight'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => void runPreflightPlan()}
+                  disabled={preflightPlanLoading}
+                >
+                  {preflightPlanLoading ? 'Planning...' : 'Run Preflight Plan'}
+                </button>
+              </div>
             </div>
             {effectivePreviewError && (
               <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
                 {effectivePreviewError}
+              </div>
+            )}
+            {preflightPreviewError && (
+              <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                {preflightPreviewError}
+              </div>
+            )}
+            {preflightPlanError && (
+              <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                {preflightPlanError}
               </div>
             )}
             {effectivePreview && (
@@ -773,6 +1147,130 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                 </div>
               </div>
             )}
+            {preflightPreview && (
+              <div
+                className={`training-preflight-panel ${
+                  preflightPreview.ok ? 'training-preflight-panel--ok' : 'training-preflight-panel--error'
+                }`}
+              >
+                <div className="training-preflight-panel__title-row">
+                  <strong>Capability Preflight</strong>
+                  <span className={`badge ${preflightPreview.ok ? 'badge-success' : 'badge-error'}`}>
+                    {preflightPreview.ok ? 'PASS' : 'BLOCKED'}
+                  </span>
+                </div>
+                {preflightPreview.errors.length > 0 && (
+                  <div className="training-preflight-panel__section">
+                    <div className="training-preflight-panel__section-title">Blocking Issues</div>
+                    <ul className="training-preflight-panel__list">
+                      {preflightPreview.errors.map((item, idx) => (
+                        <li key={`preflight-error-${idx}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {preflightPreview.warnings.length > 0 && (
+                  <div className="training-preflight-panel__section">
+                    <div className="training-preflight-panel__section-title">Warnings</div>
+                    <ul className="training-preflight-panel__list">
+                      {preflightPreview.warnings.map((item, idx) => (
+                        <li key={`preflight-warning-${idx}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {Array.isArray(preflightPreview.hints) && preflightPreview.hints.length > 0 && (
+                  <div className="training-preflight-panel__section">
+                    <div className="training-preflight-panel__section-title">Fix Hints</div>
+                    <ul className="training-preflight-panel__list">
+                      {preflightPreview.hints.map((item, idx) => (
+                        <li key={`preflight-hint-${idx}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="training-preflight-panel__section">
+                  <div className="training-preflight-panel__section-title">Capability Summary</div>
+                  <pre className="resolved-defaults-panel__json">
+                    {JSON.stringify(preflightPreview.capability_summary || {}, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+            {preflightPlan && Array.isArray(preflightPlan.suggestions) && preflightPlan.suggestions.length > 0 && (
+              <div className="training-plan-panel">
+                <div className="training-plan-panel__head">
+                  <div>
+                    <strong>Preflight Plan Suggestions</strong>
+                    <div className="training-plan-panel__hint">
+                      Recommended: {preflightPlan.recommended_profile || 'balanced'}
+                    </div>
+                  </div>
+                </div>
+                <div className="training-plan-panel__grid">
+                  {preflightPlan.suggestions.map((suggestion) => {
+                    const isRecommended =
+                      String(suggestion.profile || '').trim() === String(preflightPlan.recommended_profile || '').trim();
+                    const isPreferred = String(suggestion.profile || '').trim() === preferredPlanProfile;
+                    return (
+                      <div
+                        key={`training-plan-${suggestion.profile}`}
+                        className={`training-plan-card ${
+                          suggestion.preflight?.ok ? 'training-plan-card--ok' : 'training-plan-card--error'
+                        } ${isRecommended ? 'training-plan-card--recommended' : ''}`}
+                      >
+                        <div className="training-plan-card__head">
+                          <strong>{suggestion.title || suggestion.profile}</strong>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            {isPreferred && <span className="badge badge-info">Preferred</span>}
+                            {isRecommended && <span className="badge badge-success">Recommended</span>}
+                            <span className={`badge ${suggestion.preflight?.ok ? 'badge-success' : 'badge-error'}`}>
+                              {suggestion.preflight?.ok ? 'PASS' : 'BLOCKED'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="training-plan-card__meta">
+                          VRAM risk: <strong>{String(suggestion.estimated_vram_risk || 'unknown')}</strong>
+                          {Number.isFinite(Number(suggestion.estimated_vram_score))
+                            ? ` (score ${Number(suggestion.estimated_vram_score)})`
+                            : ''}
+                        </div>
+                        {suggestion.estimated_vram_note && (
+                          <div className="training-plan-card__meta">{suggestion.estimated_vram_note}</div>
+                        )}
+                        <div className="training-plan-card__desc">
+                          {suggestion.description}
+                        </div>
+                        {Array.isArray(suggestion.changes) && suggestion.changes.length > 0 && (
+                          <div className="training-plan-card__changes">
+                            {suggestion.changes.slice(0, 8).map((change, idx) => (
+                              <div key={`plan-change-${suggestion.profile}-${idx}`}>
+                                <code>{change.field}</code>: {String(change.from)} → {String(change.to)}
+                                {change.reason ? ` (${change.reason})` : ''}
+                              </div>
+                            ))}
+                            {suggestion.changes.length > 8 && (
+                              <div>+{suggestion.changes.length - 8} more changes</div>
+                            )}
+                          </div>
+                        )}
+                        {Array.isArray(suggestion.preflight?.errors) && suggestion.preflight.errors.length > 0 && (
+                          <div className="training-plan-card__errors">
+                            {suggestion.preflight.errors.slice(0, 3).join(' | ')}
+                          </div>
+                        )}
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => applyPlanSuggestion(suggestion)}
+                        >
+                          Apply Suggested Config
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
               <div>
@@ -781,7 +1279,34 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                   <label className="form-label">Base Model</label>
                   <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                  <div className="form-group">
+                    <label className="form-label">Runtime</label>
+                    <select
+                      className="input"
+                      value={trainingRuntimeId}
+                      onChange={(e) => {
+                        setTrainingRuntimeId(e.target.value);
+                        setTouchedConfig((prev) => ({ ...prev, training_runtime_id: true }));
+                      }}
+                    >
+                      <option value="auto">
+                        Auto
+                        {runtimeCatalog?.default_runtime_id ? ` (${runtimeCatalog.default_runtime_id})` : ''}
+                      </option>
+                      {(runtimeCatalog?.runtimes || []).map((runtime) => (
+                        <option key={runtime.runtime_id} value={runtime.runtime_id}>
+                          {runtime.label}
+                          {runtime.execution_backend ? ` [${runtime.execution_backend}]` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {runtimeCatalogError && (
+                      <div className="form-hint" style={{ color: 'var(--color-warning)' }}>
+                        {runtimeCatalogError}
+                      </div>
+                    )}
+                  </div>
                   <div className="form-group">
                     <label className="form-label">Task Type</label>
                     <select
@@ -1104,7 +1629,18 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
             <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-lg)', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--space-lg)' }}>
               <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
-              <button className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowCreate(false);
+                  setPreflightPreview(null);
+                  setPreflightPreviewError('');
+                  setPreflightPlan(null);
+                  setPreflightPlanError('');
+                }}
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}
@@ -1112,6 +1648,11 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         {trainingError && (
           <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
             {trainingError}
+          </div>
+        )}
+        {trainingWarnings.length > 0 && (
+          <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-warning)', fontSize: 'var(--font-size-sm)' }}>
+            Preflight warnings: {trainingWarnings.join(' | ')}
           </div>
         )}
 

@@ -17,6 +17,8 @@ from app.services.dataset_service import (
     combine_datasets,
     preview_project_data_adapter,
     profile_project_dataset,
+    resolve_project_dataset_adapter_preference,
+    save_project_dataset_adapter_preference,
     split_dataset,
 )
 from app.services.domain_profile_service import get_dataset_split_defaults
@@ -32,7 +34,7 @@ class SplitRequest(BaseModel):
     seed: int = 42
     include_types: list[DatasetType] | None = None
     chat_template: str = "llama3"
-    adapter_id: str = "default-canonical"
+    adapter_id: str | None = None
     adapter_config: dict[str, Any] | None = None
     field_mapping: dict[str, str] | None = None
 
@@ -67,6 +69,21 @@ class AdapterPreviewRequest(BaseModel):
     field_mapping: dict[str, str] | None = None
     document_id: int | None = None
     preview_limit: int = Field(default=20, ge=5, le=100)
+
+
+class AdapterPreferenceUpdateRequest(BaseModel):
+    adapter_id: str = Field(..., min_length=1)
+    adapter_config: dict[str, Any] | None = None
+    field_mapping: dict[str, str] | None = None
+
+
+class AdapterPreferenceAutoDetectRequest(BaseModel):
+    dataset_type: DatasetType = DatasetType.RAW
+    sample_size: int = Field(default=250, ge=10, le=5000)
+    adapter_config: dict[str, Any] | None = None
+    field_mapping: dict[str, str] | None = None
+    document_id: int | None = None
+    save: bool = True
 
 
 def _resolve_split_config(
@@ -189,6 +206,20 @@ async def split(
         if abs((float(resolved["train_ratio"]) + float(resolved["val_ratio"]) + float(resolved["test_ratio"])) - 1.0) > 1e-6:
             raise HTTPException(400, "train_ratio + val_ratio + test_ratio must equal 1.0")
 
+        explicit_adapter_fields = {"adapter_id", "adapter_config", "field_mapping"}
+        has_explicit_adapter = any(field in provided for field in explicit_adapter_fields)
+        if has_explicit_adapter:
+            adapter_id = str(req.adapter_id or "default-canonical").strip() or "default-canonical"
+            adapter_config = dict(req.adapter_config or {})
+            field_mapping = dict(req.field_mapping or {})
+            adapter_source = "request"
+        else:
+            preset = await resolve_project_dataset_adapter_preference(db, project_id)
+            adapter_id = str(preset.get("adapter_id") or "default-canonical")
+            adapter_config = dict(preset.get("adapter_config") or {})
+            field_mapping = dict(preset.get("field_mapping") or {})
+            adapter_source = str(preset.get("source") or "default")
+
         manifest = await split_dataset(
             db=db,
             project_id=project_id,
@@ -198,9 +229,9 @@ async def split(
             seed=int(resolved["seed"]),
             include_types=[t.value for t in req.include_types] if req.include_types else None,
             chat_template=str(resolved["chat_template"]),
-            adapter_id=req.adapter_id,
-            adapter_config=req.adapter_config,
-            field_mapping=req.field_mapping,
+            adapter_id=adapter_id,
+            adapter_config=adapter_config,
+            field_mapping=field_mapping,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")
@@ -209,6 +240,7 @@ async def split(
         manifest["profile_split_defaults"] = profile_defaults or None
         manifest["resolved_split_config"] = resolved
         manifest["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
+        manifest["adapter_preference_source"] = adapter_source
         return manifest
     except ValueError as e:
         detail = str(e)
@@ -239,6 +271,88 @@ async def preview(
 async def adapter_catalog():
     """List available dataset adapters and plugin load status."""
     return list_data_adapter_catalog()
+
+
+@router.get("/adapter-preference")
+async def get_adapter_preference(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get resolved adapter preference (project override, pack default, or platform default)."""
+    try:
+        return await resolve_project_dataset_adapter_preference(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.put("/adapter-preference")
+async def set_adapter_preference(
+    project_id: int,
+    req: AdapterPreferenceUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist project-level adapter preference used as split default."""
+    try:
+        return await save_project_dataset_adapter_preference(
+            db,
+            project_id,
+            adapter_id=req.adapter_id,
+            adapter_config=req.adapter_config,
+            field_mapping=req.field_mapping,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/adapter-preference/auto-detect")
+async def auto_detect_adapter_preference(
+    project_id: int,
+    req: AdapterPreferenceAutoDetectRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Auto-detect best adapter from project sample and optionally persist it."""
+    try:
+        preview = await preview_project_data_adapter(
+            db=db,
+            project_id=project_id,
+            dataset_type=req.dataset_type,
+            sample_size=req.sample_size,
+            adapter_id="auto",
+            adapter_config=req.adapter_config,
+            field_mapping=req.field_mapping,
+            document_id=req.document_id,
+            preview_limit=20,
+        )
+        resolved_adapter_id = str(preview.get("resolved_adapter_id") or "default-canonical")
+        if req.save:
+            preference = await save_project_dataset_adapter_preference(
+                db,
+                project_id,
+                adapter_id=resolved_adapter_id,
+                adapter_config=req.adapter_config,
+                field_mapping=req.field_mapping,
+            )
+        else:
+            preference = {
+                "project_id": project_id,
+                "source": "auto_detect_preview",
+                "adapter_id": resolved_adapter_id,
+                "adapter_config": dict(req.adapter_config or {}),
+                "field_mapping": dict(req.field_mapping or {}),
+            }
+        return {
+            "preference": preference,
+            "preview": preview,
+            "saved": bool(req.save),
+        }
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/adapters/reload")

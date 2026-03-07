@@ -21,6 +21,10 @@ class TrainingConfig(BaseModel):
         "auto",
         description="Trainer backend (auto, hf_trainer, trl_sft)",
     )
+    training_runtime_id: str = Field(
+        "auto",
+        description="Training runtime plugin id (auto resolves server default).",
+    )
     
     # Hyperparameters
     batch_size: int = Field(4, ge=1, le=256)

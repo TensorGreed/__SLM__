@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
+from app.models.project import Project
 from app.services.domain_hook_service import (
     apply_normalizer_hook,
     resolve_project_domain_hooks,
@@ -22,10 +23,12 @@ from app.services.domain_hook_service import (
 )
 from app.services.data_adapter_service import (
     DEFAULT_ADAPTER_ID,
+    list_data_adapter_catalog,
     map_record_with_adapter,
     preview_data_adapter,
     resolve_data_adapter_for_records,
 )
+from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.record_normalization import (
     build_schema_profile,
 )
@@ -43,6 +46,75 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _normalize_adapter_id(value: Any) -> str:
+    token = str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
+    return token or DEFAULT_ADAPTER_ID
+
+
+def _normalize_field_mapping(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, str] = {}
+    for raw_key, raw_value in payload.items():
+        key = str(raw_key or "").strip()
+        value = str(raw_value or "").strip()
+        if not key or not value:
+            continue
+        out[key] = value
+    return out
+
+
+def _normalize_adapter_config(payload: Any) -> dict[str, Any]:
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _normalize_adapter_preset(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "adapter_id": DEFAULT_ADAPTER_ID,
+            "adapter_config": {},
+            "field_mapping": {},
+        }
+    return {
+        "adapter_id": _normalize_adapter_id(payload.get("adapter_id")),
+        "adapter_config": _normalize_adapter_config(payload.get("adapter_config")),
+        "field_mapping": _normalize_field_mapping(payload.get("field_mapping")),
+    }
+
+
+def _validate_adapter_id_or_raise(adapter_id: str) -> str:
+    normalized = _normalize_adapter_id(adapter_id)
+    catalog = list_data_adapter_catalog()
+    adapters = catalog.get("adapters", {}) if isinstance(catalog, dict) else {}
+    if normalized in adapters:
+        return normalized
+    available = sorted(str(key) for key in adapters.keys())
+    raise ValueError(
+        f"Unknown adapter_id '{normalized}'. Available adapters: {', '.join(available)}"
+    )
+
+
+def _extract_pack_adapter_preset(runtime: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(runtime, dict):
+        return None
+    pack_overlay = runtime.get("pack_overlay")
+    if not isinstance(pack_overlay, dict):
+        return None
+
+    for key in (
+        "dataset_adapter_preset",
+        "dataset_adapter_defaults",
+        "adapter_preset",
+        "adapter_defaults",
+    ):
+        payload = pack_overlay.get(key)
+        if isinstance(payload, dict):
+            normalized = _normalize_adapter_preset(payload)
+            if normalized.get("adapter_id"):
+                return normalized
+    return None
 
 
 def apply_chat_template(entry: dict, template_name: str = "llama3") -> str:
@@ -163,6 +235,89 @@ def _normalize_rows_for_training(
         merged["_adapter_id"] = resolved_adapter_id
         normalized_entries.append(merged)
     return normalized_entries
+
+
+async def resolve_project_dataset_adapter_preference(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Resolve adapter preference with fallback: project -> domain-pack overlay -> default."""
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
+
+    runtime = await resolve_project_domain_runtime(db, project_id)
+    project_raw = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else None
+    project_payload = _normalize_adapter_preset(project_raw)
+    has_project_override = bool(
+        isinstance(project_raw, dict)
+        and (
+            project_raw.get("adapter_id")
+            or project_raw.get("adapter_config")
+            or project_raw.get("field_mapping")
+        )
+    )
+    if has_project_override:
+        return {
+            "project_id": project_id,
+            "source": "project",
+            "adapter_id": project_payload["adapter_id"],
+            "adapter_config": project_payload["adapter_config"],
+            "field_mapping": project_payload["field_mapping"],
+            "domain_pack_applied": runtime.get("domain_pack_applied"),
+            "domain_profile_applied": runtime.get("domain_profile_applied"),
+        }
+
+    pack_payload = _extract_pack_adapter_preset(runtime)
+    if pack_payload:
+        return {
+            "project_id": project_id,
+            "source": "domain_pack",
+            "adapter_id": pack_payload["adapter_id"],
+            "adapter_config": pack_payload["adapter_config"],
+            "field_mapping": pack_payload["field_mapping"],
+            "domain_pack_applied": runtime.get("domain_pack_applied"),
+            "domain_profile_applied": runtime.get("domain_profile_applied"),
+        }
+
+    return {
+        "project_id": project_id,
+        "source": "default",
+        "adapter_id": DEFAULT_ADAPTER_ID,
+        "adapter_config": {},
+        "field_mapping": {},
+        "domain_pack_applied": runtime.get("domain_pack_applied"),
+        "domain_profile_applied": runtime.get("domain_profile_applied"),
+    }
+
+
+async def save_project_dataset_adapter_preference(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    adapter_id: str,
+    adapter_config: dict[str, Any] | None = None,
+    field_mapping: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Persist project-level adapter preset used by split/training contract checks."""
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
+
+    normalized_adapter_id = _validate_adapter_id_or_raise(adapter_id)
+    normalized_config = _normalize_adapter_config(adapter_config)
+    normalized_mapping = _normalize_field_mapping(field_mapping)
+
+    project.dataset_adapter_preset = {
+        "adapter_id": normalized_adapter_id,
+        "adapter_config": normalized_config,
+        "field_mapping": normalized_mapping,
+    }
+    await db.flush()
+
+    return await resolve_project_dataset_adapter_preference(db, project_id)
 
 
 async def combine_datasets(

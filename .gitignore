@@ -21,6 +21,11 @@ dist/
 # Runtime data
 backend/data/*.db
 backend/data/*.sqlite*
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+*.db-journal
 data/projects/
 data/exports/
 data/models/

@@ -3,12 +3,8 @@
 import asyncio
 import json
 import random
-import shlex
-import shutil
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from asyncio.subprocess import PIPE
 
 from fastapi import WebSocket
 from sqlalchemy import select
@@ -23,9 +19,16 @@ from app.models.experiment import (
     TrainingMode,
 )
 from app.models.project import Project
+from app.services.training_preflight_service import run_training_preflight
+from app.services.training_runtime_service import (
+    TrainingRuntimeStartContext,
+    get_runtime_spec,
+    resolve_training_runtime_id,
+    start_runtime,
+    validate_runtime,
+)
 
 active_websockets: dict[int, list[WebSocket]] = {}
-BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
 def register_websocket(experiment_id: int, ws: WebSocket):
     if experiment_id not in active_websockets:
@@ -114,41 +117,6 @@ async def create_experiment(
 async def broadcast_metric(experiment_id: int, metric: dict):
     """Broadcast metric to all active websockets for an experiment."""
     await broadcast_event(experiment_id, {"type": "metric", "metric": metric})
-
-
-def _render_external_command(template: str, placeholders: dict[str, str | int]) -> str:
-    try:
-        return template.format(**placeholders)
-    except KeyError as e:
-        missing = str(e).strip("'")
-        raise ValueError(f"TRAINING_EXTERNAL_CMD missing placeholder value: {missing}")
-
-
-def _normalize_external_python_command(command: str) -> tuple[str, str | None]:
-    """Normalize bare `python` launcher to an explicit interpreter path."""
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return command, None
-    if not parts:
-        return command, None
-    if parts[0] != "python":
-        return command, None
-    preferred_python = str(Path(sys.executable).expanduser())
-    if preferred_python and Path(preferred_python).exists():
-        parts[0] = preferred_python
-        return (
-            shlex.join(parts),
-            f"normalized python launcher to '{preferred_python}'",
-        )
-    python3_path = shutil.which("python3")
-    if not python3_path:
-        return command, None
-    parts[0] = python3_path
-    return (
-        shlex.join(parts),
-        f"python launcher not resolved from runtime; falling back to '{python3_path}'",
-    )
 
 
 def _coerce_float(value) -> float | None:
@@ -482,16 +450,47 @@ async def start_training(
     if exp.status == ExperimentStatus.COMPLETED:
         raise ValueError(f"Experiment {experiment_id} is already completed")
 
+    resolved_config = dict(exp.config or {})
+    resolved_config.setdefault("base_model", exp.base_model)
+    runtime_id, runtime_source = resolve_training_runtime_id(resolved_config)
+    runtime_spec = get_runtime_spec(runtime_id)
+    runtime_validation_errors = validate_runtime(runtime_id)
+    if runtime_validation_errors:
+        if len(runtime_validation_errors) == 1:
+            raise ValueError(runtime_validation_errors[0])
+        preview = "; ".join(runtime_validation_errors[:3])
+        if len(runtime_validation_errors) > 3:
+            preview = f"{preview}; (+{len(runtime_validation_errors) - 3} more)"
+        raise ValueError(preview)
+
+    resolved_config["training_runtime_id"] = runtime_id
+    exp.config = resolved_config
+    preflight = run_training_preflight(
+        project_id=project_id,
+        config=resolved_config,
+        base_model=exp.base_model,
+    )
+    if not bool(preflight.get("ok", False)):
+        preflight_errors = [str(item) for item in preflight.get("errors", []) if str(item).strip()]
+        if not preflight_errors:
+            preflight_errors = ["unknown preflight error"]
+        preview = "; ".join(preflight_errors[:3])
+        if len(preflight_errors) > 3:
+            preview = f"{preview}; (+{len(preflight_errors) - 3} more)"
+        raise ValueError(f"Training preflight failed: {preview}")
+
     epochs = int((exp.config or {}).get("num_epochs", 3))
     steps_per_epoch = 100
-    backend = settings.TRAINING_BACKEND.strip().lower()
-    if backend not in {"simulate", "external"}:
-        raise ValueError(f"Unsupported training backend '{settings.TRAINING_BACKEND}'")
 
     message = ""
     task_id: str | None = None
-    runtime_config: dict = {"backend": backend}
-    external_command = ""
+    runtime_config: dict[str, object] = {
+        "runtime_id": runtime_id,
+        "runtime_source": runtime_source,
+        "runtime_label": runtime_spec.label,
+        "execution_backend": runtime_spec.execution_backend,
+        "preflight": preflight,
+    }
     output_dir = Path(exp.output_dir) if exp.output_dir else _experiment_dir(project_id, experiment_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     config_path = output_dir / "training_config.json"
@@ -500,42 +499,6 @@ async def start_training(
     prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
     train_file = prepared_dir / "train.jsonl"
     val_file = prepared_dir / "val.jsonl"
-
-    if backend == "simulate":
-        if not settings.ALLOW_SIMULATED_TRAINING:
-            raise ValueError(
-                "Simulated training backend is disabled. "
-                "Set ALLOW_SIMULATED_TRAINING=true for demos or configure TRAINING_BACKEND=external."
-            )
-        message = "Simulated training started. Connecting to telemetry stream..."
-    else:
-        template = settings.TRAINING_EXTERNAL_CMD.strip()
-        if not template:
-            raise ValueError("TRAINING_EXTERNAL_CMD is required when TRAINING_BACKEND=external")
-        external_command = _render_external_command(
-            template,
-            {
-                "project_id": project_id,
-                "experiment_id": exp.id,
-                "output_dir": str(output_dir),
-                "base_model": exp.base_model,
-                "backend_dir": str(BACKEND_DIR),
-                "config_path": str(config_path),
-                "data_dir": str(settings.DATA_DIR),
-                "prepared_dir": str(prepared_dir),
-                "train_file": str(train_file),
-                "val_file": str(val_file),
-            },
-        )
-        external_command, command_note = _normalize_external_python_command(external_command)
-        runtime_config["command"] = external_command
-        runtime_config["log_path"] = str(output_dir / "external_training.log")
-        runtime_config["config_path"] = str(config_path)
-        runtime_config["train_file"] = str(train_file)
-        runtime_config["val_file"] = str(val_file)
-        if command_note:
-            runtime_config["command_note"] = command_note
-        message = "External training command started."
 
     exp.status = ExperimentStatus.RUNNING
     exp.started_at = datetime.now(timezone.utc)
@@ -547,42 +510,51 @@ async def start_training(
     exp.config = cfg
     await db.flush()
 
-    if backend == "simulate":
-        # Leave this as local simulation
-        asyncio.create_task(_simulate_training_loop(exp.id, exp.config or {}))
-    else:
-        # Dispatch to Celery instead of manual subprocess
-        try:
-            from app.worker import celery_app
-            task = celery_app.send_task(
-                "run_training_job",
-                kwargs={
-                    "experiment_id": exp.id,
-                    "command": external_command,
-                    "log_path": str(output_dir / "external_training.log"),
-                    "output_dir": str(output_dir),
-                }
-            )
-            task_id = task.id
-            runtime_config["task_id"] = task.id
-            cfg = dict(exp.config or {})
-            cfg["_runtime"] = runtime_config
-            exp.config = cfg
-            await db.flush()
-        except Exception as e:
-            exp.status = ExperimentStatus.FAILED
-            exp.completed_at = datetime.now(timezone.utc)
-            fail_cfg = dict(exp.config or {})
-            fail_cfg["_runtime"]["backend_dispatch_error"] = str(e)
-            exp.config = fail_cfg
-            await db.flush()
-            raise ValueError(f"Failed to dispatch external training command to Celery broker: {e}")
+    try:
+        runtime_result = await start_runtime(
+            runtime_id,
+            TrainingRuntimeStartContext(
+                project_id=project_id,
+                experiment_id=exp.id,
+                base_model=exp.base_model,
+                config=resolved_config,
+                output_dir=output_dir,
+                config_path=config_path,
+                prepared_dir=prepared_dir,
+                train_file=train_file,
+                val_file=val_file,
+                simulate_runner=_simulate_training_loop,
+            ),
+        )
+        runtime_updates = dict(runtime_result.runtime_updates or {})
+        runtime_config.update(runtime_updates)
+        task_id = runtime_result.task_id
+        if task_id:
+            runtime_config["task_id"] = task_id
+        message = str(runtime_result.message or "Training runtime started.")
+        cfg = dict(exp.config or {})
+        cfg["_runtime"] = runtime_config
+        exp.config = cfg
+        await db.flush()
+    except Exception as e:
+        exp.status = ExperimentStatus.FAILED
+        exp.completed_at = datetime.now(timezone.utc)
+        fail_cfg = dict(exp.config or {})
+        fail_runtime = dict(fail_cfg.get("_runtime") or {})
+        fail_runtime["backend_dispatch_error"] = str(e)
+        fail_runtime["runtime_id"] = runtime_id
+        fail_cfg["_runtime"] = fail_runtime
+        exp.config = fail_cfg
+        await db.flush()
+        raise ValueError(f"Failed to dispatch training runtime '{runtime_id}': {e}")
 
     return {
         "experiment_id": exp.id,
         "status": exp.status.value,
         "message": message,
-        "backend": backend,
+        "backend": str(runtime_config.get("backend") or runtime_spec.execution_backend),
+        "runtime_id": runtime_id,
+        "runtime_source": runtime_source,
         "task_id": task_id,
         "config": exp.config,
     }
