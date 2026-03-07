@@ -25,6 +25,7 @@ from app.services.artifact_registry_service import (
     publish_artifact_batch,
     serialize_artifact,
 )
+from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
 from app.services.workflow_runner_service import (
     create_workflow_run_shell,
     get_workflow_run,
@@ -207,11 +208,39 @@ async def pipeline_status(project_id: int, db: AsyncSession = Depends(get_db)):
     if not project:
         raise HTTPException(404, "Project not found")
 
+    auto_gate_summary = None
+    latest_exp = await db.execute(
+        select(Experiment.id)
+        .where(Experiment.project_id == project_id)
+        .order_by(Experiment.created_at.desc(), Experiment.id.desc())
+        .limit(1)
+    )
+    latest_experiment_id = latest_exp.scalar_one_or_none()
+    if latest_experiment_id is not None:
+        try:
+            gate_report = await evaluate_experiment_auto_gates(
+                db,
+                project_id=project_id,
+                experiment_id=int(latest_experiment_id),
+                pack_id=None,
+            )
+            auto_gate_summary = {
+                "experiment_id": int(latest_experiment_id),
+                "pack_id": gate_report.get("pack", {}).get("pack_id"),
+                "passed": bool(gate_report.get("passed")),
+                "failed_gate_ids": list(gate_report.get("failed_gate_ids") or []),
+                "missing_required_metrics": list(gate_report.get("missing_required_metrics") or []),
+                "captured_at": gate_report.get("captured_at"),
+            }
+        except ValueError:
+            auto_gate_summary = None
+
     return {
         "project_id": project.id,
         "current_stage": project.pipeline_stage.value,
         "progress_percent": get_progress_percent(project.pipeline_stage),
         "stages": get_pipeline_status(project.pipeline_stage),
+        "auto_gate": auto_gate_summary,
     }
 
 

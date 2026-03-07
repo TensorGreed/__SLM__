@@ -132,6 +132,29 @@ interface TrainingRuntimeCatalogResponse {
   runtimes?: TrainingRuntimeSpec[];
 }
 
+interface TrainingRecipe {
+  recipe_id: string;
+  display_name: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  required_fields?: string[];
+}
+
+interface TrainingRecipeCatalogResponse {
+  project_id: number;
+  recipe_count?: number;
+  recipes?: TrainingRecipe[];
+}
+
+interface TrainingRecipeResolveResponse extends TrainingEffectiveConfigResponse {
+  project_id: number;
+  recipe?: TrainingRecipe & { config_patch?: Record<string, unknown> };
+  recipe_missing_required_fields?: string[];
+  recipe_config?: Record<string, unknown>;
+  preflight?: TrainingPreflightReport;
+}
+
 const METRIC_PREFIX = 'SLM_METRIC ';
 const PLAN_PROFILE_STORAGE_PREFIX = 'slm-training-plan-profile';
 
@@ -326,6 +349,10 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   const [trainingWarnings, setTrainingWarnings] = useState<string[]>([]);
   const [runtimeCatalog, setRuntimeCatalog] = useState<TrainingRuntimeCatalogResponse | null>(null);
   const [runtimeCatalogError, setRuntimeCatalogError] = useState('');
+  const [trainingRecipes, setTrainingRecipes] = useState<TrainingRecipe[]>([]);
+  const [selectedRecipeId, setSelectedRecipeId] = useState('');
+  const [recipeResolveLoading, setRecipeResolveLoading] = useState(false);
+  const [recipeResolveError, setRecipeResolveError] = useState('');
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -562,6 +589,74 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     }
   };
 
+  const loadTrainingRecipes = async () => {
+    try {
+      const res = await api.get<TrainingRecipeCatalogResponse>(`/projects/${projectId}/training/recipes`);
+      const items = Array.isArray(res.data?.recipes) ? res.data.recipes : [];
+      setTrainingRecipes(items);
+      if (!selectedRecipeId && items.length > 0) {
+        const balanced = items.find((item) => item.recipe_id === 'recipe.sft.balanced');
+        setSelectedRecipeId((balanced || items[0]).recipe_id);
+      }
+      setRecipeResolveError('');
+    } catch (err: any) {
+      setTrainingRecipes([]);
+      setRecipeResolveError(err?.response?.data?.detail || 'Failed to load recipe catalog');
+    }
+  };
+
+  const applySelectedRecipe = async () => {
+    if (!selectedRecipeId) {
+      setRecipeResolveError('Select a recipe first.');
+      return;
+    }
+    setRecipeResolveLoading(true);
+    setRecipeResolveError('');
+    setTrainingWarnings([]);
+    try {
+      const baseConfig = buildTrainingConfigPayload();
+      const res = await api.post<TrainingRecipeResolveResponse>(
+        `/projects/${projectId}/training/recipes/resolve`,
+        {
+          recipe_id: selectedRecipeId,
+          base_config: baseConfig,
+          include_preflight: true,
+        },
+      );
+      setEffectivePreview({
+        domain_pack_applied: res.data?.domain_pack_applied ?? null,
+        domain_pack_source: res.data?.domain_pack_source ?? null,
+        domain_profile_applied: res.data?.domain_profile_applied ?? null,
+        domain_profile_source: res.data?.domain_profile_source ?? null,
+        profile_training_defaults: res.data?.profile_training_defaults ?? null,
+        resolved_training_config: res.data?.resolved_training_config ?? null,
+        resolved_training_mode: res.data?.resolved_training_mode ?? 'sft',
+        profile_defaults_applied: res.data?.profile_defaults_applied ?? [],
+      });
+      const resolvedCfg =
+        (res.data?.resolved_training_config && typeof res.data.resolved_training_config === 'object'
+          ? res.data.resolved_training_config
+          : res.data?.recipe_config) || {};
+      applySuggestedConfig(resolvedCfg);
+
+      const preflight = res.data?.preflight || null;
+      setPreflightPreview(preflight);
+      const warnings = Array.isArray(preflight?.warnings) ? preflight.warnings.filter(Boolean) : [];
+      setTrainingWarnings(warnings);
+
+      const missing = Array.isArray(res.data?.recipe_missing_required_fields)
+        ? res.data.recipe_missing_required_fields.filter(Boolean)
+        : [];
+      if (missing.length > 0) {
+        setRecipeResolveError(`Recipe applied, but missing required fields: ${missing.join(', ')}`);
+      }
+    } catch (err: any) {
+      setRecipeResolveError(err?.response?.data?.detail || 'Failed to apply recipe');
+    } finally {
+      setRecipeResolveLoading(false);
+    }
+  };
+
   const persistPreferredPlanProfile = async (profile: string) => {
     const normalized = String(profile || '').trim().toLowerCase();
     if (!normalized) return;
@@ -654,8 +749,13 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setTrainingWarnings([]);
     setRuntimeCatalog(null);
     setRuntimeCatalogError('');
+    setTrainingRecipes([]);
+    setSelectedRecipeId('');
+    setRecipeResolveLoading(false);
+    setRecipeResolveError('');
     void loadPreferredPlanProfile();
     void loadTrainingRuntimes();
+    void loadTrainingRecipes();
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -803,6 +903,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
       setPreflightPreviewError('');
       setPreflightPlan(null);
       setPreflightPlanError('');
+      setRecipeResolveError('');
       setTouchedConfig({
         training_runtime_id: false,
         task_type: false,
@@ -1042,7 +1143,13 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
         </div>
 
         {showCreate && (
-          <div style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-lg)', marginBottom: 'var(--space-lg)' }}>
+          <div className="training-create-shell">
+            <div className="training-create-shell__head">
+              <strong>Create Experiment</strong>
+              <span className="training-create-shell__hint">
+                Use recipe + defaults for quick setup, then open advanced sections only if needed.
+              </span>
+            </div>
             <div className="form-group">
               <label className="form-label">Experiment Name</label>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. llama3-sft-v1" />
@@ -1061,220 +1168,268 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
               </div>
             </div>
             <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
+              <label className="form-label">Recipe Starter</label>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <select
+                  className="input"
+                  value={selectedRecipeId}
+                  onChange={(e) => setSelectedRecipeId(e.target.value)}
+                  style={{ minWidth: 260 }}
+                >
+                  <option value="">Select recipe</option>
+                  {trainingRecipes.map((recipe) => (
+                    <option key={recipe.recipe_id} value={recipe.recipe_id}>
+                      {recipe.display_name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   className="btn btn-secondary"
-                  onClick={() => void previewEffectiveConfig()}
-                  disabled={effectivePreviewLoading}
+                  onClick={() => void applySelectedRecipe()}
+                  disabled={recipeResolveLoading || !selectedRecipeId}
                 >
-                  {effectivePreviewLoading ? 'Resolving...' : 'Preview Effective Config'}
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => void runPreflightPreview()}
-                  disabled={preflightPreviewLoading}
-                >
-                  {preflightPreviewLoading ? 'Checking...' : 'Run Capability Preflight'}
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => void runPreflightPlan()}
-                  disabled={preflightPlanLoading}
-                >
-                  {preflightPlanLoading ? 'Planning...' : 'Run Preflight Plan'}
+                  {recipeResolveLoading ? 'Applying...' : 'Apply Recipe'}
                 </button>
               </div>
+              <div className="form-hint">
+                Recipe applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
+              </div>
+              {recipeResolveError && (
+                <div style={{ marginTop: 8, color: 'var(--color-warning)', fontSize: 'var(--font-size-sm)' }}>
+                  {recipeResolveError}
+                </div>
+              )}
             </div>
-            {effectivePreviewError && (
-              <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
-                {effectivePreviewError}
-              </div>
-            )}
-            {preflightPreviewError && (
-              <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
-                {preflightPreviewError}
-              </div>
-            )}
-            {preflightPlanError && (
-              <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
-                {preflightPlanError}
-              </div>
-            )}
-            {effectivePreview && (
-              <div className="resolved-defaults-panel">
-                <div className="resolved-defaults-panel__title">Effective Config Preview (Pre-create)</div>
-                <div className="resolved-defaults-panel__kv">
-                  <span>Applied Pack</span>
-                  <strong>
-                    {effectivePreview.domain_pack_applied
-                      ? `${effectivePreview.domain_pack_applied} (${effectivePreview.domain_pack_source || 'unknown'})`
-                      : 'none'}
-                  </strong>
-                </div>
-                <div className="resolved-defaults-panel__kv">
-                  <span>Applied Profile</span>
-                  <strong>
-                    {effectivePreview.domain_profile_applied
-                      ? `${effectivePreview.domain_profile_applied} (${effectivePreview.domain_profile_source || 'unknown'})`
-                      : 'none'}
-                  </strong>
-                </div>
-                <div className="resolved-defaults-panel__kv">
-                  <span>Resolved Training Mode</span>
-                  <strong>{effectivePreview.resolved_training_mode || 'sft'}</strong>
-                </div>
-                <div className="resolved-defaults-panel__kv">
-                  <span>Runtime Fields Applied</span>
-                  <strong>
-                    {effectivePreview.profile_defaults_applied && effectivePreview.profile_defaults_applied.length > 0
-                      ? effectivePreview.profile_defaults_applied.join(', ')
-                      : 'none'}
-                  </strong>
-                </div>
-                <div className="resolved-defaults-panel__grid">
-                  <div>
-                    <div className="resolved-defaults-panel__subtitle">Resolved Training Config</div>
-                    <pre className="resolved-defaults-panel__json">
-                      {JSON.stringify(effectivePreview.resolved_training_config || {}, null, 2)}
-                    </pre>
-                  </div>
-                  <div>
-                    <div className="resolved-defaults-panel__subtitle">Runtime Training Defaults</div>
-                    <pre className="resolved-defaults-panel__json">
-                      {JSON.stringify(effectivePreview.profile_training_defaults || {}, null, 2)}
-                    </pre>
+
+            <details className="training-collapsible">
+              <summary>
+                <span>Validation & Planning</span>
+                <small>Preflight, effective config, and suggested plans</small>
+              </summary>
+              <div className="training-collapsible__content">
+                <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void previewEffectiveConfig()}
+                      disabled={effectivePreviewLoading}
+                    >
+                      {effectivePreviewLoading ? 'Resolving...' : 'Preview Effective Config'}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void runPreflightPreview()}
+                      disabled={preflightPreviewLoading}
+                    >
+                      {preflightPreviewLoading ? 'Checking...' : 'Run Capability Preflight'}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void runPreflightPlan()}
+                      disabled={preflightPlanLoading}
+                    >
+                      {preflightPlanLoading ? 'Planning...' : 'Run Preflight Plan'}
+                    </button>
                   </div>
                 </div>
-              </div>
-            )}
-            {preflightPreview && (
-              <div
-                className={`training-preflight-panel ${
-                  preflightPreview.ok ? 'training-preflight-panel--ok' : 'training-preflight-panel--error'
-                }`}
-              >
-                <div className="training-preflight-panel__title-row">
-                  <strong>Capability Preflight</strong>
-                  <span className={`badge ${preflightPreview.ok ? 'badge-success' : 'badge-error'}`}>
-                    {preflightPreview.ok ? 'PASS' : 'BLOCKED'}
-                  </span>
-                </div>
-                {preflightPreview.errors.length > 0 && (
-                  <div className="training-preflight-panel__section">
-                    <div className="training-preflight-panel__section-title">Blocking Issues</div>
-                    <ul className="training-preflight-panel__list">
-                      {preflightPreview.errors.map((item, idx) => (
-                        <li key={`preflight-error-${idx}`}>{item}</li>
-                      ))}
-                    </ul>
+                {effectivePreviewError && (
+                  <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                    {effectivePreviewError}
                   </div>
                 )}
-                {preflightPreview.warnings.length > 0 && (
-                  <div className="training-preflight-panel__section">
-                    <div className="training-preflight-panel__section-title">Warnings</div>
-                    <ul className="training-preflight-panel__list">
-                      {preflightPreview.warnings.map((item, idx) => (
-                        <li key={`preflight-warning-${idx}`}>{item}</li>
-                      ))}
-                    </ul>
+                {preflightPreviewError && (
+                  <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                    {preflightPreviewError}
                   </div>
                 )}
-                {Array.isArray(preflightPreview.hints) && preflightPreview.hints.length > 0 && (
-                  <div className="training-preflight-panel__section">
-                    <div className="training-preflight-panel__section-title">Fix Hints</div>
-                    <ul className="training-preflight-panel__list">
-                      {preflightPreview.hints.map((item, idx) => (
-                        <li key={`preflight-hint-${idx}`}>{item}</li>
-                      ))}
-                    </ul>
+                {preflightPlanError && (
+                  <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                    {preflightPlanError}
                   </div>
                 )}
-                <div className="training-preflight-panel__section">
-                  <div className="training-preflight-panel__section-title">Capability Summary</div>
-                  <pre className="resolved-defaults-panel__json">
-                    {JSON.stringify(preflightPreview.capability_summary || {}, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            )}
-            {preflightPlan && Array.isArray(preflightPlan.suggestions) && preflightPlan.suggestions.length > 0 && (
-              <div className="training-plan-panel">
-                <div className="training-plan-panel__head">
-                  <div>
-                    <strong>Preflight Plan Suggestions</strong>
-                    <div className="training-plan-panel__hint">
-                      Recommended: {preflightPlan.recommended_profile || 'balanced'}
+                {effectivePreview && (
+                  <div className="resolved-defaults-panel">
+                    <div className="resolved-defaults-panel__title">Effective Config Preview (Pre-create)</div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Applied Pack</span>
+                      <strong>
+                        {effectivePreview.domain_pack_applied
+                          ? `${effectivePreview.domain_pack_applied} (${effectivePreview.domain_pack_source || 'unknown'})`
+                          : 'none'}
+                      </strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Applied Profile</span>
+                      <strong>
+                        {effectivePreview.domain_profile_applied
+                          ? `${effectivePreview.domain_profile_applied} (${effectivePreview.domain_profile_source || 'unknown'})`
+                          : 'none'}
+                      </strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Resolved Training Mode</span>
+                      <strong>{effectivePreview.resolved_training_mode || 'sft'}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Runtime Fields Applied</span>
+                      <strong>
+                        {effectivePreview.profile_defaults_applied && effectivePreview.profile_defaults_applied.length > 0
+                          ? effectivePreview.profile_defaults_applied.join(', ')
+                          : 'none'}
+                      </strong>
+                    </div>
+                    <div className="resolved-defaults-panel__grid">
+                      <div>
+                        <div className="resolved-defaults-panel__subtitle">Resolved Training Config</div>
+                        <pre className="resolved-defaults-panel__json">
+                          {JSON.stringify(effectivePreview.resolved_training_config || {}, null, 2)}
+                        </pre>
+                      </div>
+                      <div>
+                        <div className="resolved-defaults-panel__subtitle">Runtime Training Defaults</div>
+                        <pre className="resolved-defaults-panel__json">
+                          {JSON.stringify(effectivePreview.profile_training_defaults || {}, null, 2)}
+                        </pre>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="training-plan-panel__grid">
-                  {preflightPlan.suggestions.map((suggestion) => {
-                    const isRecommended =
-                      String(suggestion.profile || '').trim() === String(preflightPlan.recommended_profile || '').trim();
-                    const isPreferred = String(suggestion.profile || '').trim() === preferredPlanProfile;
-                    return (
-                      <div
-                        key={`training-plan-${suggestion.profile}`}
-                        className={`training-plan-card ${
-                          suggestion.preflight?.ok ? 'training-plan-card--ok' : 'training-plan-card--error'
-                        } ${isRecommended ? 'training-plan-card--recommended' : ''}`}
-                      >
-                        <div className="training-plan-card__head">
-                          <strong>{suggestion.title || suggestion.profile}</strong>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            {isPreferred && <span className="badge badge-info">Preferred</span>}
-                            {isRecommended && <span className="badge badge-success">Recommended</span>}
-                            <span className={`badge ${suggestion.preflight?.ok ? 'badge-success' : 'badge-error'}`}>
-                              {suggestion.preflight?.ok ? 'PASS' : 'BLOCKED'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="training-plan-card__meta">
-                          VRAM risk: <strong>{String(suggestion.estimated_vram_risk || 'unknown')}</strong>
-                          {Number.isFinite(Number(suggestion.estimated_vram_score))
-                            ? ` (score ${Number(suggestion.estimated_vram_score)})`
-                            : ''}
-                        </div>
-                        {suggestion.estimated_vram_note && (
-                          <div className="training-plan-card__meta">{suggestion.estimated_vram_note}</div>
-                        )}
-                        <div className="training-plan-card__desc">
-                          {suggestion.description}
-                        </div>
-                        {Array.isArray(suggestion.changes) && suggestion.changes.length > 0 && (
-                          <div className="training-plan-card__changes">
-                            {suggestion.changes.slice(0, 8).map((change, idx) => (
-                              <div key={`plan-change-${suggestion.profile}-${idx}`}>
-                                <code>{change.field}</code>: {String(change.from)} → {String(change.to)}
-                                {change.reason ? ` (${change.reason})` : ''}
-                              </div>
-                            ))}
-                            {suggestion.changes.length > 8 && (
-                              <div>+{suggestion.changes.length - 8} more changes</div>
-                            )}
-                          </div>
-                        )}
-                        {Array.isArray(suggestion.preflight?.errors) && suggestion.preflight.errors.length > 0 && (
-                          <div className="training-plan-card__errors">
-                            {suggestion.preflight.errors.slice(0, 3).join(' | ')}
-                          </div>
-                        )}
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => applyPlanSuggestion(suggestion)}
-                        >
-                          Apply Suggested Config
-                        </button>
+                )}
+                {preflightPreview && (
+                  <div
+                    className={`training-preflight-panel ${
+                      preflightPreview.ok ? 'training-preflight-panel--ok' : 'training-preflight-panel--error'
+                    }`}
+                  >
+                    <div className="training-preflight-panel__title-row">
+                      <strong>Capability Preflight</strong>
+                      <span className={`badge ${preflightPreview.ok ? 'badge-success' : 'badge-error'}`}>
+                        {preflightPreview.ok ? 'PASS' : 'BLOCKED'}
+                      </span>
+                    </div>
+                    {preflightPreview.errors.length > 0 && (
+                      <div className="training-preflight-panel__section">
+                        <div className="training-preflight-panel__section-title">Blocking Issues</div>
+                        <ul className="training-preflight-panel__list">
+                          {preflightPreview.errors.map((item, idx) => (
+                            <li key={`preflight-error-${idx}`}>{item}</li>
+                          ))}
+                        </ul>
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                    {preflightPreview.warnings.length > 0 && (
+                      <div className="training-preflight-panel__section">
+                        <div className="training-preflight-panel__section-title">Warnings</div>
+                        <ul className="training-preflight-panel__list">
+                          {preflightPreview.warnings.map((item, idx) => (
+                            <li key={`preflight-warning-${idx}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {Array.isArray(preflightPreview.hints) && preflightPreview.hints.length > 0 && (
+                      <div className="training-preflight-panel__section">
+                        <div className="training-preflight-panel__section-title">Fix Hints</div>
+                        <ul className="training-preflight-panel__list">
+                          {preflightPreview.hints.map((item, idx) => (
+                            <li key={`preflight-hint-${idx}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div className="training-preflight-panel__section">
+                      <div className="training-preflight-panel__section-title">Capability Summary</div>
+                      <pre className="resolved-defaults-panel__json">
+                        {JSON.stringify(preflightPreview.capability_summary || {}, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+                {preflightPlan && Array.isArray(preflightPlan.suggestions) && preflightPlan.suggestions.length > 0 && (
+                  <div className="training-plan-panel">
+                    <div className="training-plan-panel__head">
+                      <div>
+                        <strong>Preflight Plan Suggestions</strong>
+                        <div className="training-plan-panel__hint">
+                          Recommended: {preflightPlan.recommended_profile || 'balanced'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="training-plan-panel__grid">
+                      {preflightPlan.suggestions.map((suggestion) => {
+                        const isRecommended =
+                          String(suggestion.profile || '').trim() === String(preflightPlan.recommended_profile || '').trim();
+                        const isPreferred = String(suggestion.profile || '').trim() === preferredPlanProfile;
+                        return (
+                          <div
+                            key={`training-plan-${suggestion.profile}`}
+                            className={`training-plan-card ${
+                              suggestion.preflight?.ok ? 'training-plan-card--ok' : 'training-plan-card--error'
+                            } ${isRecommended ? 'training-plan-card--recommended' : ''}`}
+                          >
+                            <div className="training-plan-card__head">
+                              <strong>{suggestion.title || suggestion.profile}</strong>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                {isPreferred && <span className="badge badge-info">Preferred</span>}
+                                {isRecommended && <span className="badge badge-success">Recommended</span>}
+                                <span className={`badge ${suggestion.preflight?.ok ? 'badge-success' : 'badge-error'}`}>
+                                  {suggestion.preflight?.ok ? 'PASS' : 'BLOCKED'}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="training-plan-card__meta">
+                              VRAM risk: <strong>{String(suggestion.estimated_vram_risk || 'unknown')}</strong>
+                              {Number.isFinite(Number(suggestion.estimated_vram_score))
+                                ? ` (score ${Number(suggestion.estimated_vram_score)})`
+                                : ''}
+                            </div>
+                            {suggestion.estimated_vram_note && (
+                              <div className="training-plan-card__meta">{suggestion.estimated_vram_note}</div>
+                            )}
+                            <div className="training-plan-card__desc">
+                              {suggestion.description}
+                            </div>
+                            {Array.isArray(suggestion.changes) && suggestion.changes.length > 0 && (
+                              <div className="training-plan-card__changes">
+                                {suggestion.changes.slice(0, 8).map((change, idx) => (
+                                  <div key={`plan-change-${suggestion.profile}-${idx}`}>
+                                    <code>{change.field}</code>: {String(change.from)} → {String(change.to)}
+                                    {change.reason ? ` (${change.reason})` : ''}
+                                  </div>
+                                ))}
+                                {suggestion.changes.length > 8 && (
+                                  <div>+{suggestion.changes.length - 8} more changes</div>
+                                )}
+                              </div>
+                            )}
+                            {Array.isArray(suggestion.preflight?.errors) && suggestion.preflight.errors.length > 0 && (
+                              <div className="training-plan-card__errors">
+                                {suggestion.preflight.errors.slice(0, 3).join(' | ')}
+                              </div>
+                            )}
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => applyPlanSuggestion(suggestion)}
+                            >
+                              Apply Suggested Config
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            </details>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
-              <div>
-                <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Basic HParams</h4>
+            <details className="training-collapsible" open>
+              <summary>
+                <span>Model & Hyperparameters</span>
+                <small>Core settings plus advanced memory/PEFT controls</small>
+              </summary>
+              <div className="training-collapsible__content">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
+                  <div>
+                    <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Basic HParams</h4>
                 <div className="form-group">
                   <label className="form-label">Base Model</label>
                   <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
@@ -1465,8 +1620,8 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                 </div>
               </div>
 
-              <div>
-                <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Advanced & PEFT</h4>
+                  <div>
+                    <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Advanced & PEFT</h4>
                 <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
                     type="checkbox"
@@ -1624,10 +1779,12 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
                     />
                   </div>
                 </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            </details>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-lg)', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--space-lg)' }}>
+            <div className="training-create-shell__actions">
               <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
               <button
                 className="btn btn-secondary"

@@ -199,3 +199,69 @@
     font-size: var(--font-size-xs);
     color: var(--color-error);
 }
+
+.training-create-shell {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.training-create-shell__head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.training-create-shell__hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.training-collapsible {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: rgba(15, 23, 42, 0.3);
+    overflow: hidden;
+}
+
+.training-collapsible > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.training-collapsible > summary::-webkit-details-marker {
+    display: none;
+}
+
+.training-collapsible > summary span {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.training-collapsible > summary small {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.training-collapsible__content {
+    padding: 12px;
+}
+
+.training-create-shell__actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border-color);
+    padding-top: var(--space-md);
+}

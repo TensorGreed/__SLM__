@@ -61,6 +61,51 @@ interface HeldoutEvalRequest {
     judge_model?: string;
 }
 
+interface EvaluationPackSummary {
+    pack_id: string;
+    display_name: string;
+    description: string;
+    gate_count: number;
+}
+
+interface EvaluationPackListResponse {
+    packs: EvaluationPackSummary[];
+}
+
+interface EvaluationPackPreferenceResponse {
+    preferred_pack_id: string | null;
+    active_pack_id: string | null;
+    active_pack_source: string;
+    active_pack?: {
+        display_name?: string;
+    };
+}
+
+interface GateCheck {
+    gate_id: string;
+    metric_id: string;
+    operator: 'gte' | 'lte' | string;
+    threshold: number | null;
+    required: boolean;
+    actual: number | null;
+    passed: boolean;
+    reason: string;
+}
+
+interface GateReport {
+    captured_at: string;
+    passed: boolean;
+    failed_gate_ids: string[];
+    missing_required_metrics: string[];
+    checks: GateCheck[];
+    pack?: {
+        pack_id?: string;
+        display_name?: string;
+    };
+}
+
+const AUTO_PACK_VALUE = '__auto__';
+
 function getErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const maybeDetail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -93,12 +138,29 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [loadingExperiments, setLoadingExperiments] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [evaluationPacks, setEvaluationPacks] = useState<EvaluationPackSummary[]>([]);
+    const [preferredPackId, setPreferredPackId] = useState<string | null>(null);
+    const [activePackId, setActivePackId] = useState<string | null>(null);
+    const [activePackLabel, setActivePackLabel] = useState('');
+    const [activePackSource, setActivePackSource] = useState('default');
+    const [loadingPackState, setLoadingPackState] = useState(false);
+    const [isSavingPackPreference, setIsSavingPackPreference] = useState(false);
+    const [gateReport, setGateReport] = useState<GateReport | null>(null);
+    const [isLoadingGateReport, setIsLoadingGateReport] = useState(false);
+    const [gateErrorMessage, setGateErrorMessage] = useState<string | null>(null);
 
     useEffect(() => {
         setSelectedExp(null);
         setEvalResults([]);
         setScorecard(null);
         setErrorMessage(null);
+        setGateErrorMessage(null);
+        setEvaluationPacks([]);
+        setPreferredPackId(null);
+        setActivePackId(null);
+        setActivePackLabel('');
+        setActivePackSource('default');
+        setGateReport(null);
         setShowRunForm(false);
     }, [projectId]);
 
@@ -128,6 +190,70 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         };
     }, [projectId]);
 
+    const loadPackState = async () => {
+        setLoadingPackState(true);
+        try {
+            const [packsRes, prefRes] = await Promise.all([
+                api.get<EvaluationPackListResponse>(`/projects/${projectId}/evaluation/packs`),
+                api.get<EvaluationPackPreferenceResponse>(`/projects/${projectId}/evaluation/pack-preference`),
+            ]);
+            setEvaluationPacks(Array.isArray(packsRes.data?.packs) ? packsRes.data.packs : []);
+            setPreferredPackId(prefRes.data?.preferred_pack_id ?? null);
+            setActivePackId(prefRes.data?.active_pack_id ?? null);
+            setActivePackSource(prefRes.data?.active_pack_source || 'default');
+            setActivePackLabel(prefRes.data?.active_pack?.display_name || '');
+        } catch {
+            // Keep evaluation flow functional even if pack endpoints are unavailable.
+            setEvaluationPacks([]);
+            setPreferredPackId(null);
+            setActivePackId(null);
+            setActivePackSource('default');
+            setActivePackLabel('');
+        } finally {
+            setLoadingPackState(false);
+        }
+    };
+
+    const loadGateReport = async (expId: number) => {
+        setIsLoadingGateReport(true);
+        setGateErrorMessage(null);
+        try {
+            const res = await api.get<GateReport>(`/projects/${projectId}/evaluation/gates/${expId}`);
+            setGateReport(res.data);
+        } catch (error) {
+            setGateReport(null);
+            setGateErrorMessage(getErrorMessage(error));
+        } finally {
+            setIsLoadingGateReport(false);
+        }
+    };
+
+    useEffect(() => {
+        void loadPackState();
+    }, [projectId]);
+
+    const savePackPreference = async (packId: string | null) => {
+        setIsSavingPackPreference(true);
+        setGateErrorMessage(null);
+        try {
+            const res = await api.put<EvaluationPackPreferenceResponse>(
+                `/projects/${projectId}/evaluation/pack-preference`,
+                { pack_id: packId },
+            );
+            setPreferredPackId(res.data?.preferred_pack_id ?? null);
+            setActivePackId(res.data?.active_pack_id ?? null);
+            setActivePackSource(res.data?.active_pack_source || 'default');
+            setActivePackLabel(res.data?.active_pack?.display_name || '');
+            if (selectedExp) {
+                await loadGateReport(selectedExp);
+            }
+        } catch (error) {
+            setErrorMessage(getErrorMessage(error));
+        } finally {
+            setIsSavingPackPreference(false);
+        }
+    };
+
     const handleProviderChange = (nextProvider: Provider) => {
         setProvider(nextProvider);
         if (nextProvider === 'ollama') {
@@ -152,7 +278,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         setErrorMessage(null);
         setSelectedExp(expId);
         try {
-            await listResults(expId);
+            await Promise.all([listResults(expId), loadGateReport(expId)]);
         } catch (error) {
             setErrorMessage(getErrorMessage(error));
         }
@@ -184,7 +310,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
         try {
             await api.post(`/projects/${projectId}/evaluation/run-heldout`, payload);
-            await listResults(selectedExp);
+            await Promise.all([listResults(selectedExp), loadGateReport(selectedExp)]);
             setShowRunForm(false);
         } catch (error) {
             setErrorMessage(getErrorMessage(error));
@@ -229,6 +355,31 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         return null;
     }, [evalResults]);
 
+    const activePackDisplayName = useMemo(() => {
+        if (activePackLabel.trim()) {
+            return activePackLabel;
+        }
+        if (!activePackId) {
+            return 'Auto';
+        }
+        const found = evaluationPacks.find((pack) => pack.pack_id === activePackId);
+        return found?.display_name || activePackId;
+    }, [activePackId, activePackLabel, evaluationPacks]);
+
+    const gateStatusBadge = useMemo(() => {
+        if (!gateReport) {
+            return { className: 'badge-info', label: 'NO REPORT' };
+        }
+        return gateReport.passed
+            ? { className: 'badge-success', label: 'PASS' }
+            : { className: 'badge-error', label: 'FAIL' };
+    }, [gateReport]);
+
+    const onPackPreferenceSelect = (value: string) => {
+        const nextPackId = value === AUTO_PACK_VALUE ? null : value;
+        void savePackPreference(nextPackId);
+    };
+
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <div className="card">
@@ -270,6 +421,111 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)}>
                         + Run Held-out Evaluation
                     </button>
+                </div>
+            )}
+
+            {selectedExp && (
+                <div className="card eval-pack-card">
+                    <div className="eval-pack-header">
+                        <div>
+                            <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 4 }}>
+                                Evaluation Pack & Auto Gates
+                            </h3>
+                            <p className="eval-pack-subtitle">
+                                Choose a project-level gate profile and review pass/fail checks for the selected experiment.
+                            </p>
+                        </div>
+                        <span className={`badge ${gateStatusBadge.className}`}>{gateStatusBadge.label}</span>
+                    </div>
+
+                    <div className="eval-pack-controls">
+                        <div className="form-group">
+                            <label className="form-label">Project Gate Pack</label>
+                            <select
+                                className="input"
+                                value={preferredPackId ?? AUTO_PACK_VALUE}
+                                onChange={(e) => onPackPreferenceSelect(e.target.value)}
+                                disabled={loadingPackState || isSavingPackPreference}
+                            >
+                                <option value={AUTO_PACK_VALUE}>Auto (domain profile fallback)</option>
+                                {evaluationPacks.map((pack, index) => (
+                                    <option key={`${pack.pack_id}:${index}`} value={pack.pack_id}>
+                                        {pack.display_name} ({pack.gate_count} gates)
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="eval-pack-meta">
+                            <div>
+                                <span>Active Pack</span>
+                                <strong>{activePackDisplayName}</strong>
+                            </div>
+                            <div>
+                                <span>Source</span>
+                                <strong>{activePackSource.replace(/_/g, ' ')}</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    {(loadingPackState || isSavingPackPreference) && (
+                        <div className="eval-pack-note">
+                            {loadingPackState ? 'Loading evaluation pack settings...' : 'Saving pack preference...'}
+                        </div>
+                    )}
+
+                    {isLoadingGateReport ? (
+                        <div className="eval-pack-note">Running gate checks...</div>
+                    ) : gateErrorMessage ? (
+                        <div className="eval-pack-error">{gateErrorMessage}</div>
+                    ) : gateReport ? (
+                        <>
+                            <div className="eval-gate-summary">
+                                <span>
+                                    Required gate failures: <strong>{gateReport.failed_gate_ids.length}</strong>
+                                </span>
+                                <span>
+                                    Missing required metrics: <strong>{gateReport.missing_required_metrics.length}</strong>
+                                </span>
+                                <span>
+                                    Checked at: <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong>
+                                </span>
+                            </div>
+                            <div className="table-container eval-gate-table">
+                                <table className="docs-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Gate</th>
+                                            <th>Metric</th>
+                                            <th>Threshold</th>
+                                            <th>Actual</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {gateReport.checks.map((check) => (
+                                            <tr key={check.gate_id}>
+                                                <td>{check.gate_id}</td>
+                                                <td>{check.metric_id}</td>
+                                                <td>
+                                                    {check.threshold == null
+                                                        ? '—'
+                                                        : `${check.operator === 'lte' ? '≤' : '≥'} ${check.threshold}`}
+                                                </td>
+                                                <td>{check.actual == null ? '—' : check.actual}</td>
+                                                <td>
+                                                    <span className={`badge ${check.passed ? 'badge-success' : 'badge-error'}`}>
+                                                        {check.passed ? 'pass' : check.reason}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="eval-pack-note">Select an experiment to compute gate checks.</div>
+                    )}
                 </div>
             )}
 

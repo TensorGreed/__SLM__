@@ -117,6 +117,14 @@ export interface PipelineStatusResponse {
     current_stage: PipelineStage;
     progress_percent: number;
     stages: PipelineStageInfo[];
+    auto_gate?: {
+        experiment_id: number;
+        pack_id: string | null;
+        passed: boolean;
+        failed_gate_ids: string[];
+        missing_required_metrics: string[];
+        captured_at: string | null;
+    } | null;
 }
 
 export interface PipelineGraphNodePosition {

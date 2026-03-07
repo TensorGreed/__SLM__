@@ -47,6 +47,14 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - pluggable runtime selection via `training_runtime_id`
   - built-in runtimes: `builtin.simulate`, `builtin.external_celery`
   - legacy `TRAINING_BACKEND` remains default fallback for backward compatibility
+- Added **Training Recipe System v1**:
+  - built-in domain-agnostic recipe catalog (safe/balanced SFT, LoRA-fast, classification, seq2seq)
+  - recipe resolve endpoint with runtime/profile default merge + optional preflight
+  - Training UI recipe starter picker with one-click apply
+- Added **Evaluation Packs + Auto Gates v1**:
+  - built-in gate packs (`general`, `strict`, `fast-iteration`) + domain-profile-derived dynamic pack
+  - project-level evaluation pack preference with fallback to defaults
+  - experiment gate evaluation endpoint and pipeline status auto-gate summary
 - Added **Preflight Plan Suggestions** (`safe`, `balanced`, `max_quality`) with one-click config apply in Training UI.
 - Added project-persisted training plan preference (`preferred_plan_profile`) so recommended profile choice is remembered per project.
 - Added project/domain-pack adapter preset resolution for dataset split defaults (`adapter_id`, `adapter_config`, `field_mapping`).
@@ -61,6 +69,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - `20260305_0005` for artifact registry table
   - `20260306_0007` for project training preference persistence
   - `20260306_0008` for project dataset adapter preset persistence
+  - `20260307_0009` for project evaluation pack preference persistence
 
 ---
 
@@ -90,7 +99,7 @@ pip install -r requirements.txt
 # pip install -r requirements-gpu-cu128.txt
 cp .env.example .env
 
-# Optional (recommended for Postgres/prod-like setups):
+# Recommended whenever you pull latest backend schema changes on an existing DB:
 # alembic upgrade head
 
 uvicorn app.main:app --reload --port 8000
@@ -218,7 +227,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Projects | `/projects` | CRUD, stats, base model metadata |
 | Domain Packs | `/domain-packs` | Create/list/get/update pack overlays, hook catalog/reload |
 | Domain Profiles | `/domain-profiles` | Create/list/get/update contract profiles |
-| Pipeline | `/projects/{id}/pipeline` | Stage status, read-only graph preview, graph runtime actions, advance, rollback |
+| Pipeline | `/projects/{id}/pipeline` | Stage status (+ auto-gate summary), read-only graph preview, graph runtime actions, advance, rollback |
 | Ingestion | `/projects/{id}/ingestion` | Upload/batch upload, remote import (sync + queued), document lifecycle, job status/cancel, WS logs |
 | Cleaning | `/projects/{id}/cleaning` | Clean, clean-batch, chunk inspection |
 | Gold Set | `/projects/{id}/gold` | Add/import/list/lock evaluation gold data |
@@ -227,7 +236,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Tokenization | `/projects/{id}/tokenization` | Token stats + vocab sample |
 | Training | `/projects/{id}/training` | Experiments, config preflight, start/cancel, status, task status, WS telemetry/logs (runtime-aware defaults) |
 | Comparison | `/projects/{id}/training/compare` | Compare up to 5 experiments side by side |
-| Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards |
+| Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards, eval pack preferences, auto-gate reports |
 | Compression | `/projects/{id}/compression` | Quantize/merge/benchmark queue, report status, task status/cancel, WS logs |
 | Export | `/projects/{id}/export` | Create/run/list exports with manifests |
 | Artifacts | `/projects/{id}/artifacts` | Publish/list/version typed artifacts and resolve latest keys |
@@ -403,6 +412,8 @@ Current enforced behavior:
     - Includes dataset contract validation against requested `task_type` (`causal_lm`, `seq2seq`, `classification`) and emits explicit fix hints when coverage is insufficient.
   - `POST /api/projects/{project_id}/training/experiments/preflight/plan` returns suggested configs (`safe`, `balanced`, `max_quality`) with estimated VRAM risk and per-profile preflight output.
   - `GET /api/projects/{project_id}/training/runtimes` lists registered training runtime plugins and server default runtime.
+  - `GET /api/projects/{project_id}/training/recipes` lists built-in training recipes.
+  - `POST /api/projects/{project_id}/training/recipes/resolve` applies recipe patch over base config, then resolves runtime defaults and preflight.
   - `GET /api/projects/{project_id}/training/preferences` reads persisted project training UI preferences.
   - `PUT /api/projects/{project_id}/training/preferences` updates persisted project training UI preferences (currently `preferred_plan_profile`).
   - `GET /api/projects/{project_id}/training/experiments/{experiment_id}/preflight` runs preflight on an existing experiment.
@@ -432,7 +443,14 @@ Current enforced behavior:
 - Evaluation hook application:
   - `POST /api/projects/{project_id}/evaluation/run`
   - `POST /api/projects/{project_id}/evaluation/llm-judge`
+  - `GET /api/projects/{project_id}/evaluation/packs`
+  - `GET /api/projects/{project_id}/evaluation/pack-preference`
+  - `PUT /api/projects/{project_id}/evaluation/pack-preference`
+  - `GET /api/projects/{project_id}/evaluation/gates/{experiment_id}`
   - Metrics are post-processed by the active pack evaluator hook (for example adds `quality_band`).
+- Pipeline status now returns `auto_gate` summary:
+  - `GET /api/projects/{project_id}/pipeline/status`
+  - includes latest experiment gate pass/fail, failed gate IDs, and missing required metrics.
 - Registry promotion gates:
   - `POST /api/projects/{project_id}/registry/models/{model_id}/promote`
   - Gate defaults are pulled from resolved runtime `registry_gates.to_staging` / `registry_gates.to_production`.

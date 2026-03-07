@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.domain_profile_service import get_registry_gate_defaults
+from app.services.domain_profile_service import (
+    get_project_domain_profile_contract,
+    get_registry_gate_defaults,
+)
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.models.experiment import EvalResult, Experiment
 from app.models.export import Export
@@ -177,7 +180,10 @@ async def evaluate_promotion_gates(
 ) -> dict:
     runtime = await resolve_project_domain_runtime(db, project_id)
     effective_contract = runtime.get("effective_contract")
-    profile_defaults = get_registry_gate_defaults(effective_contract, target_stage.value)
+    profile_contract = await get_project_domain_profile_contract(db, project_id)
+    profile_defaults = get_registry_gate_defaults(profile_contract, target_stage.value)
+    if not profile_defaults:
+        profile_defaults = get_registry_gate_defaults(effective_contract, target_stage.value)
     effective = _effective_gates(gates, profile_defaults)
     readiness = await build_readiness_snapshot(db, entry.experiment_id)
     metrics = readiness.get("metrics", {})

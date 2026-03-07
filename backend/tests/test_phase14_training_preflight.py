@@ -239,6 +239,40 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         errors = [str(item) for item in preflight.get("errors", [])]
         self.assertTrue(any("Unknown training_runtime_id" in item for item in errors), errors)
 
+    def test_training_recipe_catalog_lists_defaults(self):
+        project_id = self._create_project("phase14-recipe-catalog-1")
+
+        resp = self.client.get(f"/api/projects/{project_id}/training/recipes")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        recipes = payload.get("recipes", [])
+        recipe_ids = {str(item.get("recipe_id")) for item in recipes if isinstance(item, dict)}
+        self.assertIn("recipe.sft.safe", recipe_ids)
+        self.assertIn("recipe.sft.balanced", recipe_ids)
+        self.assertIn("recipe.lora.fast", recipe_ids)
+
+    def test_training_recipe_resolve_returns_config_and_preflight(self):
+        project_id = self._create_project("phase14-recipe-catalog-2")
+        self._create_prepared_split(project_id)
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/recipes/resolve",
+            json={
+                "recipe_id": "recipe.sft.balanced",
+                "base_config": {"base_model": "microsoft/phi-2"},
+                "include_preflight": True,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        recipe = payload.get("recipe", {})
+        self.assertEqual(recipe.get("recipe_id"), "recipe.sft.balanced")
+        resolved = payload.get("resolved_training_config", {})
+        self.assertEqual(resolved.get("task_type"), "causal_lm")
+        self.assertEqual(resolved.get("base_model"), "microsoft/phi-2")
+        preflight = payload.get("preflight", {})
+        self.assertIn("ok", preflight)
+
     def test_adapter_preference_defaults_then_updates(self):
         project_id = self._create_project("phase14-adapter-pref-1")
 

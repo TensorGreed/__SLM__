@@ -62,6 +62,10 @@ class Project(Base):
         String(32),
         default="balanced",
     )
+    evaluation_preferred_pack_id: Mapped[str | None] = mapped_column(
+        String(128),
+        default=None,
+    )
     dataset_adapter_preset: Mapped[dict | None] = mapped_column(
         JSON,
         default=dict,

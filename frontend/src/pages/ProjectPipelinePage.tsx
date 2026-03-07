@@ -90,6 +90,7 @@ export default function ProjectPipelinePage() {
     }, [resolvedTab, navigate, projectId]);
 
     const currentStageIndex = pipelineStatus ? getStageIndex(pipelineStatus.current_stage) : 0;
+    const autoGate = pipelineStatus?.auto_gate ?? null;
 
     const isTabUnlocked = (key: TabKey): boolean => {
         const requiredIndex = TAB_PREREQ_INDEX[key];
@@ -185,6 +186,40 @@ export default function ProjectPipelinePage() {
                         stages={pipelineStatus.stages}
                         progressPercent={pipelineStatus.progress_percent}
                     />
+                </div>
+            )}
+
+            {autoGate && (
+                <div className="card pipeline-auto-gate-card">
+                    <div className="pipeline-auto-gate-header">
+                        <h3>Auto Gate</h3>
+                        <span className={`badge ${autoGate.passed ? 'badge-success' : 'badge-error'}`}>
+                            {autoGate.passed ? 'PASS' : 'FAIL'}
+                        </span>
+                    </div>
+                    <div className="pipeline-auto-gate-meta">
+                        <span>
+                            Experiment: <strong>#{autoGate.experiment_id}</strong>
+                        </span>
+                        <span>
+                            Pack: <strong>{autoGate.pack_id || 'auto'}</strong>
+                        </span>
+                        {autoGate.captured_at && (
+                            <span>
+                                Checked: <strong>{new Date(autoGate.captured_at).toLocaleString()}</strong>
+                            </span>
+                        )}
+                    </div>
+                    {autoGate.failed_gate_ids.length > 0 && (
+                        <div className="pipeline-auto-gate-warn">
+                            Failed required gates: {autoGate.failed_gate_ids.join(', ')}
+                        </div>
+                    )}
+                    {autoGate.missing_required_metrics.length > 0 && (
+                        <div className="pipeline-auto-gate-warn">
+                            Missing required metrics: {autoGate.missing_required_metrics.join(', ')}
+                        </div>
+                    )}
                 </div>
             )}
 

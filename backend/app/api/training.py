@@ -30,6 +30,10 @@ from app.services.training_preflight_service import (
     run_training_preflight,
     run_training_preflight_plan,
 )
+from app.services.training_recipe_service import (
+    list_training_recipes,
+    resolve_training_recipe,
+)
 from app.services.training_runtime_service import list_runtime_catalog
 
 router = APIRouter(prefix="/projects/{project_id}/training", tags=["Training"])
@@ -43,6 +47,13 @@ class TrainingPreferencesUpdateRequest(BaseModel):
     preferred_plan_profile: str = Field(..., min_length=1, max_length=32)
 
 
+class TrainingRecipeResolveRequest(BaseModel):
+    recipe_id: str = Field(..., min_length=1, max_length=128)
+    base_config: dict[str, object] = Field(default_factory=dict)
+    overrides: dict[str, object] = Field(default_factory=dict)
+    include_preflight: bool = True
+
+
 @router.get("/runtimes")
 async def get_training_runtime_catalog(
     project_id: int,
@@ -51,6 +62,74 @@ async def get_training_runtime_catalog(
     return {
         "project_id": project_id,
         **list_runtime_catalog(),
+    }
+
+
+@router.get("/recipes")
+async def get_training_recipe_catalog(
+    project_id: int,
+):
+    """List built-in training recipes."""
+    return {
+        "project_id": project_id,
+        "recipe_count": len(list_training_recipes(include_patch=False)),
+        "recipes": list_training_recipes(include_patch=False),
+    }
+
+
+@router.post("/recipes/resolve")
+async def resolve_training_recipe_config(
+    project_id: int,
+    req: TrainingRecipeResolveRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve recipe config with runtime defaults and optional preflight."""
+    try:
+        recipe_resolution = resolve_training_recipe(
+            req.recipe_id,
+            base_config=dict(req.base_config or {}),
+            overrides=dict(req.overrides or {}),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    candidate_config = dict(recipe_resolution.get("resolved_config") or {})
+    (
+        runtime,
+        profile_training_defaults,
+        resolved_config,
+        resolved_training_mode,
+        profile_defaults_applied,
+    ) = await _resolve_effective_training_preview(
+        project_id=project_id,
+        source_config=candidate_config,
+        db=db,
+    )
+
+    preflight = None
+    if bool(req.include_preflight):
+        preflight = run_training_preflight(
+            project_id=project_id,
+            config=resolved_config,
+            base_model=str(resolved_config.get("base_model", "")),
+        )
+
+    return {
+        "project_id": project_id,
+        "recipe": recipe_resolution.get("recipe"),
+        "recipe_missing_required_fields": recipe_resolution.get("missing_required_fields", []),
+        "recipe_config": candidate_config,
+        "domain_pack_applied": runtime.get("domain_pack_applied"),
+        "domain_pack_source": runtime.get("domain_pack_source"),
+        "domain_profile_applied": runtime.get("domain_profile_applied"),
+        "domain_profile_source": runtime.get("domain_profile_source"),
+        "profile_training_defaults": (
+            dict(profile_training_defaults) if profile_training_defaults else None
+        ),
+        "resolved_training_config": resolved_config,
+        "resolved_training_mode": resolved_training_mode.value,
+        "profile_defaults_applied": profile_defaults_applied,
+        "preflight": preflight,
     }
 
 
