@@ -71,11 +71,20 @@ interface SplitEffectiveConfig {
 
 interface AdapterCatalogResponse {
     default_adapter: string;
+    contract_version?: string;
+    supported_task_profiles?: string[];
     adapters: Record<string, {
         description?: string;
         source?: string;
         is_default?: boolean;
         schema_hint?: Record<string, unknown>;
+        contract?: {
+            version?: string;
+            adapter_id?: string;
+            task_profiles?: string[];
+            preferred_training_tasks?: string[];
+            output_contract?: Record<string, unknown>;
+        };
     }>;
     loaded_plugin_modules?: string[];
     plugin_load_errors?: Record<string, string>;
@@ -86,6 +95,17 @@ interface AdapterPreviewResult {
     source: Record<string, unknown>;
     requested_adapter_id: string;
     resolved_adapter_id: string;
+    requested_task_profile?: string | null;
+    resolved_task_profile?: string | null;
+    task_profile_compatible?: boolean;
+    compatibility_warnings?: string[];
+    adapter_contract?: {
+        version?: string;
+        adapter_id?: string;
+        task_profiles?: string[];
+        preferred_training_tasks?: string[];
+        output_contract?: Record<string, unknown>;
+    };
     detection_scores: Record<string, number>;
     sampled_records: number;
     mapped_records: number;
@@ -106,6 +126,7 @@ interface AdapterPreferenceResponse {
     adapter_id: string;
     adapter_config: Record<string, unknown>;
     field_mapping: Record<string, string>;
+    task_profile?: string | null;
     domain_pack_applied?: string | null;
     domain_profile_applied?: string | null;
 }
@@ -124,6 +145,17 @@ const CHAT_TEMPLATES = [
 ];
 
 type DatasetPrepView = 'overview' | 'adapters' | 'split';
+
+const DEFAULT_TASK_PROFILE_OPTIONS = [
+    'auto',
+    'instruction_sft',
+    'chat_sft',
+    'qa',
+    'seq2seq',
+    'classification',
+    'preference',
+    'language_modeling',
+];
 
 function parseJsonObjectInput(raw: string): { value: Record<string, unknown>; error: string } {
     const text = raw.trim();
@@ -179,6 +211,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [adapterCatalog, setAdapterCatalog] = useState<AdapterCatalogResponse | null>(null);
     const [adapterType, setAdapterType] = useState('raw');
     const [adapterId, setAdapterId] = useState('auto');
+    const [adapterTaskProfile, setAdapterTaskProfile] = useState('auto');
     const [adapterConfigText, setAdapterConfigText] = useState('');
     const [adapterFieldMappingText, setAdapterFieldMappingText] = useState('');
     const [adapterSampleSize, setAdapterSampleSize] = useState(200);
@@ -196,6 +229,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [splitSeed, setSplitSeed] = useState(42);
     const [splitTemplate, setSplitTemplate] = useState('llama3');
     const [splitAdapterId, setSplitAdapterId] = useState('default-canonical');
+    const [splitTaskProfile, setSplitTaskProfile] = useState('auto');
     const [splitAdapterConfigText, setSplitAdapterConfigText] = useState('');
     const [splitFieldMappingText, setSplitFieldMappingText] = useState('');
     const [useProfileDefaults, setUseProfileDefaults] = useState(true);
@@ -220,6 +254,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         if (!useProfileDefaults || splitTouched.seed) payload.seed = splitSeed;
         if (!useProfileDefaults || splitTouched.chat_template) payload.chat_template = splitTemplate;
         payload.adapter_id = splitAdapterId || 'default-canonical';
+        if (splitTaskProfile && splitTaskProfile !== 'auto') {
+            payload.task_profile = splitTaskProfile;
+        }
         const parsed = parseJsonObjectInput(splitAdapterConfigText);
         if (parsed.error) {
             payload.__adapter_config_error = parsed.error;
@@ -283,6 +320,8 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             if (pref?.adapter_id) {
                 setSplitAdapterId(pref.adapter_id);
             }
+            setSplitTaskProfile(pref?.task_profile ? String(pref.task_profile) : 'auto');
+            setAdapterTaskProfile(pref?.task_profile ? String(pref.task_profile) : 'auto');
             setSplitAdapterConfigText(
                 pref?.adapter_config && Object.keys(pref.adapter_config).length > 0
                     ? JSON.stringify(pref.adapter_config, null, 2)
@@ -374,6 +413,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 dataset_type: adapterType,
                 sample_size: adapterSampleSize,
                 adapter_id: adapterId,
+                task_profile: adapterTaskProfile !== 'auto' ? adapterTaskProfile : undefined,
                 adapter_config: Object.keys(parsedConfig.value).length > 0 ? parsedConfig.value : undefined,
                 field_mapping: Object.keys(parsedFieldMapping.value).length > 0 ? parsedFieldMapping.value : undefined,
                 preview_limit: adapterPreviewLimit,
@@ -469,6 +509,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     adapter_id: splitAdapterId || 'default-canonical',
                     adapter_config: Object.keys(parsedConfig.value).length > 0 ? parsedConfig.value : {},
                     field_mapping: Object.keys(parsedFieldMapping.value).length > 0 ? parsedFieldMapping.value : {},
+                    task_profile: splitTaskProfile !== 'auto' ? splitTaskProfile : undefined,
                 },
             );
             setAdapterPreference(res.data);
@@ -495,6 +536,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 {
                     dataset_type: adapterType,
                     sample_size: adapterSampleSize,
+                    task_profile: adapterTaskProfile !== 'auto' ? adapterTaskProfile : undefined,
                     adapter_config: Object.keys(parsedConfig.value).length > 0 ? parsedConfig.value : undefined,
                     field_mapping: Object.keys(parsedFieldMapping.value).length > 0 ? parsedFieldMapping.value : undefined,
                     save: true,
@@ -505,6 +547,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             if (nextPref) {
                 setAdapterPreference(nextPref);
                 setSplitAdapterId(nextPref.adapter_id || 'default-canonical');
+                setSplitTaskProfile(nextPref.task_profile ? String(nextPref.task_profile) : 'auto');
                 setSplitAdapterConfigText(
                     nextPref.adapter_config && Object.keys(nextPref.adapter_config).length > 0
                         ? JSON.stringify(nextPref.adapter_config, null, 2)
@@ -516,10 +559,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         : '',
                 );
                 setAdapterId(nextPref.adapter_id || 'auto');
+                setAdapterTaskProfile(nextPref.task_profile ? String(nextPref.task_profile) : 'auto');
             }
             if (nextPreview) {
                 setAdapterPreviewResult(nextPreview);
                 setAdapterPreviewError('');
+                if (nextPreview.resolved_task_profile) {
+                    setAdapterTaskProfile(String(nextPreview.resolved_task_profile));
+                }
             }
             toast.success(`Auto-detected and saved adapter preset (${nextPref?.adapter_id || 'default-canonical'}).`);
         } catch (err: any) {
@@ -529,6 +576,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
 
     const syncSplitAdapterFromPreview = () => {
         setSplitAdapterId(adapterId || 'default-canonical');
+        setSplitTaskProfile(adapterTaskProfile || 'auto');
         setSplitAdapterConfigText(adapterConfigText);
         setSplitFieldMappingText(adapterFieldMappingText);
         toast.success('Copied adapter preview settings into split configuration.');
@@ -545,6 +593,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     };
 
     const ratioSum = +(trainRatio + valRatio + testRatio).toFixed(4);
+    const taskProfileOptions = [
+        ...new Set([
+            ...(adapterCatalog?.supported_task_profiles || []),
+            ...DEFAULT_TASK_PROFILE_OPTIONS,
+        ]),
+    ];
 
     return (
         <div className="dataprep-panel">
@@ -758,6 +812,11 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                             <option key={key} value={key}>{key}</option>
                         ))}
                     </select>
+                    <select value={adapterTaskProfile} onChange={e => setAdapterTaskProfile(e.target.value)}>
+                        {taskProfileOptions.map((profile) => (
+                            <option key={profile} value={profile}>{profile}</option>
+                        ))}
+                    </select>
                     <input
                         type="number"
                         min={10}
@@ -789,6 +848,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                 <div style={{ fontSize: '.8rem', color: 'rgba(255,255,255,.6)', marginBottom: '.75rem' }}>
                     Active preset source: <strong>{adapterPreference?.source || 'default'}</strong>
                     {adapterPreference?.adapter_id ? ` • adapter: ${adapterPreference.adapter_id}` : ''}
+                    {adapterPreference?.task_profile ? ` • task_profile: ${adapterPreference.task_profile}` : ''}
                     {adapterPreferenceLoading ? ' • syncing...' : ''}
                 </div>
                 <label className="dp-json-field">
@@ -837,7 +897,16 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 <div className="label">Errors</div>
                                 <div className="value">{adapterPreviewResult.error_count}</div>
                             </div>
+                            <div className="dp-stat">
+                                <div className="label">Task Profile</div>
+                                <div className="value">{adapterPreviewResult.resolved_task_profile || 'n/a'}</div>
+                            </div>
                         </div>
+                        {Array.isArray(adapterPreviewResult.compatibility_warnings) && adapterPreviewResult.compatibility_warnings.length > 0 && (
+                            <div style={{ color: '#fbbf24', fontSize: '.8rem', marginBottom: '.75rem' }}>
+                                {adapterPreviewResult.compatibility_warnings.join(' | ')}
+                            </div>
+                        )}
                         <div className="dp-resolved-panel">
                             <div className="dp-resolved-title">Adapter Diagnostics</div>
                             <div className="dp-resolved-grid">
@@ -851,6 +920,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                     <div className="dp-resolved-subtitle">Detection Scores</div>
                                     <pre className="dp-resolved-json">
                                         {JSON.stringify(adapterPreviewResult.detection_scores || {}, null, 2)}
+                                    </pre>
+                                </div>
+                                <div>
+                                    <div className="dp-resolved-subtitle">Adapter Contract (v2)</div>
+                                    <pre className="dp-resolved-json">
+                                        {JSON.stringify(adapterPreviewResult.adapter_contract || {}, null, 2)}
                                     </pre>
                                 </div>
                             </div>
@@ -910,6 +985,11 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 <option key={key} value={key}>{key}</option>
                             ))}
                         </select>
+                        <select value={splitTaskProfile} onChange={e => setSplitTaskProfile(e.target.value)}>
+                            {taskProfileOptions.map((profile) => (
+                                <option key={profile} value={profile}>{profile}</option>
+                            ))}
+                        </select>
                         <button type="button" className="btn-secondary" onClick={syncSplitAdapterFromPreview}>
                             Use Adapter Lab Settings
                         </button>
@@ -928,6 +1008,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                     <div style={{ fontSize: '.8rem', color: 'rgba(255,255,255,.6)', marginBottom: '.5rem' }}>
                         Resolved preset source: <strong>{adapterPreference?.source || 'default'}</strong>
                         {adapterPreference?.adapter_id ? ` • ${adapterPreference.adapter_id}` : ''}
+                        {adapterPreference?.task_profile ? ` • ${adapterPreference.task_profile}` : ''}
                     </div>
                     <label className="dp-json-field">
                         Adapter Config JSON (optional)

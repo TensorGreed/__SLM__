@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.services.data_adapter_service import (
+    is_training_task_compatible,
+    normalize_task_profile,
+    task_profile_training_tasks,
+)
 
 
 SUPPORTED_DATASET_SHAPES = (
@@ -219,6 +224,15 @@ def analyze_prepared_dataset_contract(
     required_shapes = list(TASK_SHAPE_REQUIREMENTS.get(task, ()))
     manifest_adapter_id = str(manifest.get("adapter_id") or "").strip() or None
     manifest_mapping = manifest.get("field_mapping") if isinstance(manifest.get("field_mapping"), dict) else {}
+    manifest_task_profile = normalize_task_profile(
+        str(manifest.get("task_profile") or ""),
+        default="",
+    ) or None
+    manifest_profile_training_tasks = (
+        task_profile_training_tasks(manifest_task_profile)
+        if manifest_task_profile
+        else []
+    )
 
     if coverage < float(min_coverage):
         shape_snapshot = ", ".join(
@@ -257,6 +271,25 @@ def analyze_prepared_dataset_contract(
                 f"consider adapter '{suggested_adapter}' for stricter mapping."
             )
         )
+    if manifest_task_profile:
+        if not is_training_task_compatible(manifest_task_profile, task):
+            warnings.append(
+                (
+                    f"manifest task_profile={manifest_task_profile} is not directly aligned with "
+                    f"task_type={task}. Compatible training tasks: {', '.join(manifest_profile_training_tasks)}."
+                )
+            )
+        elif coverage < 0.98:
+            warnings.append(
+                (
+                    f"manifest task_profile={manifest_task_profile} looks compatible with task_type={task}; "
+                    "remaining coverage loss likely comes from row-level schema quality."
+                )
+            )
+    elif coverage < float(min_coverage):
+        hints.append(
+            "Set adapter task_profile in Adapter Lab/Split preset to tighten task-specific mapping."
+        )
 
     return {
         "ok": len(errors) == 0,
@@ -272,4 +305,6 @@ def analyze_prepared_dataset_contract(
         "hints": hints,
         "manifest_adapter_id": manifest_adapter_id,
         "manifest_field_mapping": manifest_mapping,
+        "manifest_task_profile": manifest_task_profile,
+        "manifest_task_profile_training_tasks": manifest_profile_training_tasks,
     }

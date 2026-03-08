@@ -170,7 +170,32 @@ export default function ProjectPipelinePage() {
             case 'synthetic': return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'dataprep': return <DatasetPrepPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'tokenization': return <TokenizationPanel projectId={projectId} onNextStep={goToNextTab} />;
-            case 'training': return <TrainingPanel projectId={projectId} onNextStep={goToNextTab} />;
+            case 'training':
+                return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+                        <div className="card pipeline-training-config-card">
+                            <div>
+                                <h3>Training Config moved to dedicated page</h3>
+                                <p>
+                                    Use the new Training Config menu item for model selection, hyperparameters,
+                                    recipes, and preflight planning. This stage now focuses on runs and monitoring.
+                                </p>
+                            </div>
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => navigate(`/project/${projectId}/training-config`)}
+                            >
+                                Open Training Config
+                            </button>
+                        </div>
+                        <TrainingPanel
+                            projectId={projectId}
+                            onNextStep={goToNextTab}
+                            title="Training Runs"
+                            hideCreateControls
+                        />
+                    </div>
+                );
             case 'eval': return <EvalPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'compression': return <CompressionPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'export': return <ExportPanel projectId={projectId} />;

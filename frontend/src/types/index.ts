@@ -127,6 +127,83 @@ export interface PipelineStatusResponse {
     } | null;
 }
 
+export interface PipelineRecipeSummary {
+    recipe_id: string;
+    display_name: string;
+    description: string;
+    version: string;
+    category: string;
+    tags: string[];
+}
+
+export interface PipelineRecipeCatalogResponse {
+    project_id: number;
+    default_recipe_id: string;
+    training_recipe_ids: string[];
+    recipes: PipelineRecipeSummary[];
+    active_state: Record<string, unknown> | null;
+}
+
+export interface PipelineRecipeStateResponse {
+    project_id: number;
+    has_state: boolean;
+    state: Record<string, unknown> | null;
+}
+
+export interface PipelineRecipeResolveResponse {
+    project_id: number;
+    recipe: Record<string, unknown>;
+    resolved: Record<string, unknown>;
+    preflight: Record<string, unknown> | null;
+    warnings: string[];
+}
+
+export interface PipelineRecipeApplyResponse extends PipelineRecipeResolveResponse {
+    saved_workflow_graph_path: string | null;
+    manifest_path: string;
+    state_path: string;
+    state: Record<string, unknown> | null;
+    artifact: Record<string, unknown>;
+    project: Record<string, unknown>;
+}
+
+export interface PipelineRecipeRunRecord {
+    project_id: number;
+    recipe_run_id: string;
+    recipe_id: string;
+    workflow_run_id: number;
+    execution_backend: string;
+    status: string;
+    workflow_status: string;
+    created_at: string;
+    started_at: string;
+    updated_at: string;
+    finished_at?: string;
+    manifest_path?: string;
+    state_path?: string;
+    warnings?: string[];
+    workflow_summary?: Record<string, unknown>;
+    workflow_run?: WorkflowRun | null;
+    [key: string]: unknown;
+}
+
+export interface PipelineRecipeRunResponse {
+    project_id: number;
+    queued: boolean;
+    recipe_run_id: string;
+    execution_path: string;
+    state_path: string;
+    state: Record<string, unknown> | null;
+    execution: PipelineRecipeRunRecord;
+}
+
+export interface PipelineRecipeRunListResponse {
+    project_id: number;
+    limit: number;
+    count: number;
+    runs: PipelineRecipeRunRecord[];
+}
+
 export interface PipelineGraphNodePosition {
     x: number;
     y: number;

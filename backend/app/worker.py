@@ -707,6 +707,7 @@ def run_remote_import_job(
                 "max_samples": request_payload.get("max_samples"),
                 "config_name": request_payload.get("config_name"),
                 "adapter_id": str(request_payload.get("adapter_id", "default-canonical")),
+                "task_profile": str(request_payload.get("task_profile", "")).strip() or None,
                 "adapter_config": request_payload.get("adapter_config") or {},
                 "normalize_for_training": bool(request_payload.get("normalize_for_training", True)),
             }
@@ -727,6 +728,7 @@ def run_remote_import_job(
                         config_name=request_payload.get("config_name"),
                         field_mapping=request_payload.get("field_mapping") or None,
                         adapter_id=str(request_payload.get("adapter_id", "default-canonical")),
+                        task_profile=str(request_payload.get("task_profile", "")).strip() or None,
                         adapter_config=request_payload.get("adapter_config") or None,
                         normalize_for_training=bool(request_payload.get("normalize_for_training", True)),
                         hf_token=str(request_payload.get("hf_token", "")).strip() or None,

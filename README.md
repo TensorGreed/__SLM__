@@ -22,8 +22,13 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Workflow Templates + Run Monitor UI (Phase 6)** on the Workflow page.
 - Refactored project UI into a cleaner workspace IA:
   - `Pipeline` page
+  - `Training Config` page
   - `Workflow Graph` page
-  - `Domain Contracts` page
+  - `Domain Packs` page
+  - `Domain Profiles` page
+  - `Domain Contracts` legacy combined page (backward-compatible route)
+  - `Pipeline Recipes` page
+  - Training run monitoring remains in the `Pipeline -> Training` stage
   - left sidebar navigation with pipeline stages as submenu
 - Added runtime transparency in split/training responses (applied profile + resolved defaults).
 - Added **Duplicate-as-new-version** flow for domain profiles from the project UI.
@@ -55,9 +60,27 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - built-in gate packs (`general`, `strict`, `fast-iteration`) + domain-profile-derived dynamic pack
   - project-level evaluation pack preference with fallback to defaults
   - experiment gate evaluation endpoint and pipeline status auto-gate summary
+- Added **Pipeline Recipes / Blueprints v1**:
+  - built-in end-to-end recipes (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, `recipe.pipeline.eval_gate`)
+  - resolve/apply APIs that wire domain pack/profile, workflow template graph, dataset adapter preset, training recipe, and evaluation pack
+  - persisted active recipe state + versioned reproducibility manifest artifact (`manifest.pipeline_recipe`)
+  - dedicated `Pipeline Recipes` page in project workspace navigation (separate from Pipeline and Workflow pages)
+- Added top-right **User Menu** in workspace:
+  - profile identity (username/role)
+  - logout action
+  - runtime **Settings** modal for editable system config fields (persisted overrides)
 - Added **Preflight Plan Suggestions** (`safe`, `balanced`, `max_quality`) with one-click config apply in Training UI.
 - Added project-persisted training plan preference (`preferred_plan_profile`) so recommended profile choice is remembered per project.
 - Added project/domain-pack adapter preset resolution for dataset split defaults (`adapter_id`, `adapter_config`, `field_mapping`).
+- Added **Universal Task/Dataset Adapter v2**:
+  - typed adapter contracts (`task_profiles`, `preferred_training_tasks`, `output_contract`)
+  - new built-in adapters: `chat-messages`, `preference-pair`
+  - `task_profile` wiring across adapter preview, project adapter preference, split manifests, workflow adapter-preview node, and remote import
+- Added **Pipeline Recipe Executable Runs (Phase 18)**:
+  - `POST /pipeline/recipes/run` to apply + execute recipe-backed workflow DAG (sync or async)
+  - persisted recipe-run lineage records (`recipe_run_id -> workflow_run_id -> manifest snapshot`)
+  - `GET /pipeline/recipes/runs` and `GET /pipeline/recipes/runs/{recipe_run_id}` for status/history
+  - Recipe page now includes one-click run controls and recipe-run monitor
 - Added strict dataset contract checks in training preflight (task-shape coverage gate with actionable fix hints).
 - Expanded Training experiment form controls for memory/runtime tuning (`gradient_accumulation_steps`, `max_seq_length`, `save_steps`, `eval_steps`, `fp16`/`bf16`, `flash_attention`, `sequence_packing`).
 - Added split backend dependency profiles for CPU/GPU installs (`requirements-base.txt`, `requirements.txt`, `requirements-gpu.txt`, `requirements-gpu-cu128.txt`).
@@ -227,7 +250,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Projects | `/projects` | CRUD, stats, base model metadata |
 | Domain Packs | `/domain-packs` | Create/list/get/update pack overlays, hook catalog/reload |
 | Domain Profiles | `/domain-profiles` | Create/list/get/update contract profiles |
-| Pipeline | `/projects/{id}/pipeline` | Stage status (+ auto-gate summary), read-only graph preview, graph runtime actions, advance, rollback |
+| Pipeline | `/projects/{id}/pipeline` | Stage status (+ auto-gate summary), graph preview/runtime actions, workflow runs, pipeline recipe resolve/apply |
 | Ingestion | `/projects/{id}/ingestion` | Upload/batch upload, remote import (sync + queued), document lifecycle, job status/cancel, WS logs |
 | Cleaning | `/projects/{id}/cleaning` | Clean, clean-batch, chunk inspection |
 | Gold Set | `/projects/{id}/gold` | Add/import/list/lock evaluation gold data |
@@ -243,6 +266,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Registry | `/projects/{id}/registry` | Register, readiness snapshot, promote with gates, deploy metadata (runtime-aware gate defaults) |
 | Secrets | `/projects/{id}/secrets` | Upsert/list/delete project secrets with encrypted storage |
 | Auth | `/auth` | Config, me, SSO flow, local login, user/member management |
+| Settings | `/settings` | Runtime-manageable system settings (UI-editable subset of env/config) |
 | Audit | `/audit` | Audit log listing |
 
 Pipeline graph preview endpoint:
@@ -284,6 +308,24 @@ Pipeline graph preview endpoint:
   - conservative defaults to preserve existing behavior: if no mode is set, these nodes remain `noop`
   - Workflow Run Monitor panel with run controls, background DAG queueing, auto-refresh polling, recent run history, and per-node attempt status
 - Phase 3 adds persisted per-project graph overrides and compile-time graph diagnostics before save/run.
+
+Pipeline recipe endpoints:
+- `GET /api/projects/{project_id}/pipeline/recipes`
+- `GET /api/projects/{project_id}/pipeline/recipes/state`
+- `POST /api/projects/{project_id}/pipeline/recipes/resolve`
+- `POST /api/projects/{project_id}/pipeline/recipes/apply`
+- `POST /api/projects/{project_id}/pipeline/recipes/run`
+- `GET /api/projects/{project_id}/pipeline/recipes/runs`
+- `GET /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}`
+- `resolve` returns the concrete merged blueprint (`domain`, `workflow`, `dataset_adapter`, `training`, `evaluation`, `export`) plus optional preflight diagnostics.
+- `apply` persists resolved project preferences and workflow graph override, writes a manifest under `data/projects/{project_id}/pipeline_recipes/runs/.../manifest.json`, and publishes typed artifact key `manifest.pipeline_recipe`.
+- `run` applies the blueprint then launches workflow DAG execution, writing execution records under `data/projects/{project_id}/pipeline_recipes/executions/{recipe_run_id}/run.json`.
+
+Runtime settings endpoints:
+- `GET /api/settings/runtime`
+- `PUT /api/settings/runtime`
+- Settings modal in the top-right user menu writes persisted overrides to `data/system/runtime_overrides.json`.
+- Fields that affect worker/broker bootstrapping are marked `requires_restart`; restart backend/worker after changing those.
 
 Artifact registry endpoints:
 - `POST /api/projects/{project_id}/artifacts/publish`
@@ -392,16 +434,16 @@ Current enforced behavior:
     - `domain_hooks`
     - `validator_report`
 - Dataset adapter SDK + preview:
-  - `GET /api/projects/{project_id}/dataset/adapters/catalog` lists built-in/plugin adapters and schema hints.
-  - `POST /api/projects/{project_id}/dataset/adapters/preview` samples project data and reports adapter mapping coverage, drop/error counts, and mapped-row previews.
+  - `GET /api/projects/{project_id}/dataset/adapters/catalog` lists built-in/plugin adapters, schema hints, and adapter v2 contracts.
+  - `POST /api/projects/{project_id}/dataset/adapters/preview` samples project data and reports adapter mapping coverage, drop/error counts, mapped-row previews, resolved task profile, and adapter contract diagnostics.
   - `POST /api/projects/{project_id}/dataset/adapters/reload` reloads adapter plugins from env-configured modules.
-  - `GET /api/projects/{project_id}/dataset/adapter-preference` resolves adapter preset fallback chain (`project` -> `domain_pack` -> `default`).
-  - `PUT /api/projects/{project_id}/dataset/adapter-preference` persists a project-level adapter preset.
-  - `POST /api/projects/{project_id}/dataset/adapter-preference/auto-detect` auto-detects adapter from sampled rows and can save it as project preset.
-  - `POST /api/projects/{project_id}/dataset/split` now accepts `adapter_id`, `adapter_config`, and `field_mapping` (all optional; default adapter fallback remains active).
+  - `GET /api/projects/{project_id}/dataset/adapter-preference` resolves adapter preset fallback chain (`project` -> `domain_pack` -> `default`) including optional `task_profile`.
+  - `PUT /api/projects/{project_id}/dataset/adapter-preference` persists a project-level adapter preset (`adapter_id`, `adapter_config`, `field_mapping`, optional `task_profile`).
+  - `POST /api/projects/{project_id}/dataset/adapter-preference/auto-detect` auto-detects adapter from sampled rows and can save it as project preset (including resolved task profile).
+  - `POST /api/projects/{project_id}/dataset/split` accepts `adapter_id`, `adapter_config`, `field_mapping`, and optional `task_profile` (default adapter fallback remains active).
   - Dataset Prep UI now has dedicated views (`Overview`, `Adapter Lab`, `Split`) to reduce clutter.
-  - Adapter Lab and split flows both support JSON adapter config input.
-  - Split UI can run with explicit adapter contract (`adapter_id` + `adapter_config`) instead of only default normalization.
+  - Adapter Lab and split flows support JSON adapter config + explicit task profile selection.
+  - Split UI can run with explicit adapter contract (`adapter_id` + `adapter_config` + `task_profile`) instead of only default normalization.
 - Cleaning behavior:
   - Remote-imported structured documents (`jsonl/json/csv`) can be cleaned directly.
   - If `.extracted.txt` is missing, cleaning will synthesize extractable text from structured rows.
@@ -459,7 +501,7 @@ Current enforced behavior:
 Remote import request notes:
 - `source_type` accepts `huggingface`, `kaggle`, `url` (also normalizes `hf` and minor formatting variants).
 - `max_samples <= 0` is treated as omitted/default instead of failing request validation.
-- Remote import request supports `adapter_id` and `adapter_config`; default fallback is `default-canonical`.
+- Remote import request supports `adapter_id`, optional `task_profile`, and `adapter_config`; default fallback is `default-canonical`.
 - Ingestion UI includes an **Adapter Mapping** block for optional `adapter_config` JSON overrides during remote imports.
 
 ## Production-Oriented Capabilities

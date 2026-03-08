@@ -42,7 +42,12 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
 
     const isPipelineRoute = location.pathname.startsWith(`/project/${projectId}/pipeline/`);
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
-    const isDomainRoute = location.pathname === `/project/${projectId}/domain`;
+    const isRecipesRoute = location.pathname === `/project/${projectId}/recipes`;
+    const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
+    const isDomainPacksRoute =
+        location.pathname === `/project/${projectId}/domain/packs`
+        || location.pathname === `/project/${projectId}/domain`;
+    const isDomainProfilesRoute = location.pathname === `/project/${projectId}/domain/profiles`;
 
     const getStageStatus = (stageKey: string) => {
         if (!pipelineStatus) {
@@ -86,6 +91,13 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                     <span className="nav-label">Pipeline</span>
                 </button>
                 <button
+                    className={`workspace-nav-item ${isTrainingConfigRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/training-config`)}
+                >
+                    <span className="nav-icon">🛠️</span>
+                    <span className="nav-label">Training Config</span>
+                </button>
+                <button
                     className={`workspace-nav-item ${isWorkflowRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/workflow`)}
                 >
@@ -93,11 +105,25 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                     <span className="nav-label">Workflow Graph</span>
                 </button>
                 <button
-                    className={`workspace-nav-item ${isDomainRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/domain`)}
+                    className={`workspace-nav-item ${isRecipesRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/recipes`)}
+                >
+                    <span className="nav-icon">🧪</span>
+                    <span className="nav-label">Pipeline Recipes</span>
+                </button>
+                <button
+                    className={`workspace-nav-item ${isDomainPacksRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/domain/packs`)}
                 >
                     <span className="nav-icon">🧩</span>
-                    <span className="nav-label">Domain Contracts</span>
+                    <span className="nav-label">Domain Packs</span>
+                </button>
+                <button
+                    className={`workspace-nav-item ${isDomainProfilesRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/domain/profiles`)}
+                >
+                    <span className="nav-icon">📘</span>
+                    <span className="nav-label">Domain Profiles</span>
                 </button>
 
                 {isPipelineRoute && (

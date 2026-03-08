@@ -32,6 +32,7 @@ class RemoteImportRequest(BaseModel):
     config_name: str | None = None
     field_mapping: dict[str, str] | None = None
     adapter_id: str = "default-canonical"
+    task_profile: str | None = None
     adapter_config: dict[str, object] | None = None
     normalize_for_training: bool = True
     hf_token: str | None = Field(default=None, max_length=4096)
@@ -75,6 +76,14 @@ class RemoteImportRequest(BaseModel):
         token = str(value or "").strip().lower()
         normalized = token.replace("_", "-").replace(" ", "-")
         return normalized or "default-canonical"
+
+    @field_validator("task_profile", mode="before")
+    @classmethod
+    def normalize_task_profile(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        token = str(value).strip().lower().replace("_", "-").replace(" ", "-")
+        return token or None
 
     @field_validator("max_samples", mode="before")
     @classmethod
@@ -181,6 +190,7 @@ async def import_remote_dataset(
             config_name=req.config_name,
             field_mapping=req.field_mapping,
             adapter_id=req.adapter_id,
+            task_profile=req.task_profile,
             adapter_config=req.adapter_config,
             normalize_for_training=req.normalize_for_training,
             hf_token=req.hf_token,
@@ -209,6 +219,7 @@ async def import_remote_dataset_queue(
             config_name=req.config_name,
             field_mapping=req.field_mapping,
             adapter_id=req.adapter_id,
+            task_profile=req.task_profile,
             adapter_config=req.adapter_config,
             normalize_for_training=req.normalize_for_training,
             hf_token=req.hf_token,

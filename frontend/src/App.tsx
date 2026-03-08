@@ -3,7 +3,11 @@ import ProjectListPage from './pages/ProjectListPage';
 import ProjectWorkspaceLayout from './pages/ProjectWorkspaceLayout';
 import ProjectPipelinePage from './pages/ProjectPipelinePage';
 import ProjectDomainPage from './pages/ProjectDomainPage';
+import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
+import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
+import ProjectRecipesPage from './pages/ProjectRecipesPage';
+import ProjectTrainingConfigPage from './pages/ProjectTrainingConfigPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -27,6 +31,10 @@ function App() {
               <Route path="pipeline/:tabKey" element={<ProjectPipelinePage />} />
               <Route path="workflow" element={<ProjectWorkflowPage />} />
               <Route path="domain" element={<ProjectDomainPage />} />
+              <Route path="domain/packs" element={<ProjectDomainPacksPage />} />
+              <Route path="domain/profiles" element={<ProjectDomainProfilesPage />} />
+              <Route path="recipes" element={<ProjectRecipesPage />} />
+              <Route path="training-config" element={<ProjectTrainingConfigPage />} />
             </Route>
           </>
         ) : (

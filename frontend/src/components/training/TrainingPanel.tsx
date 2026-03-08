@@ -10,6 +10,11 @@ import './TrainingPanel.css';
 interface TrainingPanelProps {
   projectId: number;
   onNextStep?: () => void;
+  title?: string;
+  hideStepFooter?: boolean;
+  hideCreateControls?: boolean;
+  hideExperimentList?: boolean;
+  forceCreateVisible?: boolean;
 }
 
 interface ExperimentConfig {
@@ -263,9 +268,17 @@ type ConfigFieldKey =
   | 'oom_retry_seq_shrink'
   | 'gradient_checkpointing';
 
-export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelProps) {
+export default function TrainingPanel({
+  projectId,
+  onNextStep,
+  title = 'Training Experiments',
+  hideStepFooter = false,
+  hideCreateControls = false,
+  hideExperimentList = false,
+  forceCreateVisible = false,
+}: TrainingPanelProps) {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
-  const [showCreate, setShowCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(Boolean(forceCreateVisible && !hideCreateControls));
   const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
   const [metrics, setMetrics] = useState<TrainingMetric[]>([]);
   const [trainingLogs, setTrainingLogs] = useState<string[]>([]);
@@ -364,6 +377,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           : 'badge-warning';
 
   const activeExperimentKey = activeExperiment ? `${activeExperiment.id}:${activeExperiment.status}` : '';
+  const createFormVisible = !hideCreateControls && (forceCreateVisible || showCreate);
 
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
@@ -708,7 +722,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     setTrainingLogs([]);
     setSelectedForCompare([]);
     setShowCompare(false);
-    setShowCreate(false);
+    setShowCreate(Boolean(forceCreateVisible && !hideCreateControls));
     setTaskState('');
     setTrainingError('');
     setTrainingRuntimeId('auto');
@@ -758,7 +772,7 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     void loadTrainingRecipes();
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, forceCreateVisible, hideCreateControls]);
 
   useEffect(() => {
     if (!activeExperiment || activeExperiment.status !== 'running') {
@@ -863,12 +877,12 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
   }, [activeExperimentKey, projectId]);
 
   useEffect(() => {
-    if (!showCreate) {
+    if (!(forceCreateVisible || showCreate)) {
       return;
     }
     void previewEffectiveConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showCreate, projectId]);
+  }, [showCreate, forceCreateVisible, projectId]);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -896,7 +910,9 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
             ? created.resolved_training_config
             : null,
       });
-      setShowCreate(false);
+      if (!forceCreateVisible) {
+        setShowCreate(false);
+      }
       setName('');
       setTrainingRuntimeId('auto');
       setPreflightPreview(null);
@@ -1122,27 +1138,29 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
-          <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>Training Experiments</h3>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setShowCreate((prev) => {
-                const next = !prev;
-                if (next) {
-                  setPreflightPreview(null);
-                  setPreflightPreviewError('');
-                  setPreflightPlan(null);
-                  setPreflightPlanError('');
-                }
-                return next;
-              });
-            }}
-          >
-            + New Experiment
-          </button>
+          <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>{title}</h3>
+          {!hideCreateControls && !forceCreateVisible && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setShowCreate((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    setPreflightPreview(null);
+                    setPreflightPreviewError('');
+                    setPreflightPlan(null);
+                    setPreflightPlanError('');
+                  }
+                  return next;
+                });
+              }}
+            >
+              + New Experiment
+            </button>
+          )}
         </div>
 
-        {showCreate && (
+        {createFormVisible && (
           <div className="training-create-shell">
             <div className="training-create-shell__head">
               <strong>Create Experiment</strong>
@@ -1786,18 +1804,20 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
 
             <div className="training-create-shell__actions">
               <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setShowCreate(false);
-                  setPreflightPreview(null);
-                  setPreflightPreviewError('');
-                  setPreflightPlan(null);
-                  setPreflightPlanError('');
-                }}
-              >
-                Cancel
-              </button>
+              {!forceCreateVisible && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setShowCreate(false);
+                    setPreflightPreview(null);
+                    setPreflightPreviewError('');
+                    setPreflightPlan(null);
+                    setPreflightPlanError('');
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1857,77 +1877,83 @@ export default function TrainingPanel({ projectId, onNextStep }: TrainingPanelPr
           </div>
         )}
 
-        {experiments.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">🔬</div>
-            <div className="empty-state-title">No experiments</div>
-            <div className="empty-state-text">Create a training experiment to start fine-tuning.</div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {selectedForCompare.length > 1 && (
-              <div style={{ padding: 'var(--space-sm) 0', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: 8 }}>
-                <button className="btn btn-primary" onClick={() => setShowCompare(true)}>
-                  Compare Selected ({selectedForCompare.length})
-                </button>
+        {!hideExperimentList && (
+          experiments.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🔬</div>
+              <div className="empty-state-title">No experiments</div>
+              <div className="empty-state-text">
+                {hideCreateControls
+                  ? 'No runs yet. Create one from the Training Config menu item.'
+                  : 'Create a training experiment to start fine-tuning.'}
               </div>
-            )}
-            {experiments.map((exp) => (
-              <div
-                key={exp.id}
-                style={{
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: 'var(--space-md)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedForCompare.includes(exp.id)}
-                    onChange={() => toggleCompareSelection(exp.id)}
-                    style={{ width: 16, height: 16, cursor: 'pointer' }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{exp.name}</div>
-                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
-                      {exp.base_model} • {exp.training_mode}
-                    </div>
-                    {exp.domain_pack_applied && (
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
-                        Pack: {exp.domain_pack_applied}
-                        {exp.domain_pack_source ? ` (${exp.domain_pack_source})` : ''}
-                      </div>
-                    )}
-                    {exp.domain_profile_applied && (
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
-                        Profile: {exp.domain_profile_applied}
-                        {exp.domain_profile_source ? ` (${exp.domain_profile_source})` : ''}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                  <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
-                  {exp.status === 'pending' && (
-                    <button className="btn btn-primary btn-sm" onClick={() => handleStart(exp.id)}>
-                      Start
-                    </button>
-                  )}
-                  <button className="btn btn-secondary btn-sm" onClick={() => viewDashboard(exp)}>
-                    Dashboard
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {selectedForCompare.length > 1 && (
+                <div style={{ padding: 'var(--space-sm) 0', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: 8 }}>
+                  <button className="btn btn-primary" onClick={() => setShowCompare(true)}>
+                    Compare Selected ({selectedForCompare.length})
                   </button>
                 </div>
-              </div>
-            ))}
-          </div>
+              )}
+              {experiments.map((exp) => (
+                <div
+                  key={exp.id}
+                  style={{
+                    background: 'var(--bg-tertiary)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-md)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedForCompare.includes(exp.id)}
+                      onChange={() => toggleCompareSelection(exp.id)}
+                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{exp.name}</div>
+                      <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                        {exp.base_model} • {exp.training_mode}
+                      </div>
+                      {exp.domain_pack_applied && (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                          Pack: {exp.domain_pack_applied}
+                          {exp.domain_pack_source ? ` (${exp.domain_pack_source})` : ''}
+                        </div>
+                      )}
+                      {exp.domain_profile_applied && (
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                          Profile: {exp.domain_profile_applied}
+                          {exp.domain_profile_source ? ` (${exp.domain_profile_source})` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
+                    {exp.status === 'pending' && (
+                      <button className="btn btn-primary btn-sm" onClick={() => handleStart(exp.id)}>
+                        Start
+                      </button>
+                    )}
+                    <button className="btn btn-secondary btn-sm" onClick={() => viewDashboard(exp)}>
+                      Dashboard
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         )}
       </div>
 
-      {onNextStep && (
+      {onNextStep && !hideStepFooter && (
         <StepFooter
           currentStep="Training"
           nextStep="Compression"

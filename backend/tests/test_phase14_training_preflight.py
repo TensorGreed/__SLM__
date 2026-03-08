@@ -280,12 +280,14 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(initial.status_code, 200, initial.text)
         self.assertEqual(initial.json().get("source"), "default")
         self.assertEqual(initial.json().get("adapter_id"), "default-canonical")
+        self.assertIsNone(initial.json().get("task_profile"))
 
         updated = self.client.put(
             f"/api/projects/{project_id}/dataset/adapter-preference",
             json={
                 "adapter_id": "seq2seq-pair",
                 "field_mapping": {"question": "prompt", "answer": "completion"},
+                "task_profile": "seq2seq",
             },
         )
         self.assertEqual(updated.status_code, 200, updated.text)
@@ -293,13 +295,14 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(payload.get("source"), "project")
         self.assertEqual(payload.get("adapter_id"), "seq2seq-pair")
         self.assertEqual(payload.get("field_mapping", {}).get("question"), "prompt")
+        self.assertEqual(payload.get("task_profile"), "seq2seq")
 
     def test_dataset_split_uses_saved_adapter_preference_when_request_omits_adapter(self):
         project_id = self._create_project("phase14-adapter-pref-2")
 
         save_pref = self.client.put(
             f"/api/projects/{project_id}/dataset/adapter-preference",
-            json={"adapter_id": "qa-pair"},
+            json={"adapter_id": "qa-pair", "task_profile": "qa"},
         )
         self.assertEqual(save_pref.status_code, 200, save_pref.text)
 
@@ -317,6 +320,7 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
 
         kwargs = mocked_split.await_args.kwargs
         self.assertEqual(kwargs.get("adapter_id"), "qa-pair")
+        self.assertEqual(kwargs.get("task_profile"), "qa")
 
     def test_preflight_blocks_classification_when_dataset_contract_is_incompatible(self):
         project_id = self._create_project("phase14-preflight-contract-1")

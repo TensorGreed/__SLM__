@@ -1,0 +1,359 @@
+.pipeline-recipes-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.pipeline-recipes-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-lg);
+}
+
+.pipeline-recipes-header h3 {
+    margin: 0;
+    font-size: var(--font-size-lg);
+}
+
+.pipeline-recipes-subtitle {
+    margin-top: var(--space-xs);
+    color: var(--text-secondary);
+    max-width: 68ch;
+}
+
+.pipeline-recipes-header-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.pipeline-recipes-layout {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.9fr) minmax(400px, 1.1fr);
+    gap: var(--space-lg);
+    align-items: start;
+}
+
+.pipeline-recipes-catalog h4,
+.pipeline-recipes-controls h4,
+.pipeline-recipes-results h4 {
+    margin: 0 0 var(--space-md);
+    font-size: var(--font-size-md);
+}
+
+.pipeline-recipes-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    max-height: 560px;
+    overflow: auto;
+}
+
+.pipeline-recipe-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.pipeline-recipe-card:hover {
+    border-color: var(--border-primary);
+}
+
+.pipeline-recipe-card.active {
+    border-color: var(--accent-primary);
+    background: rgba(99, 102, 241, 0.08);
+}
+
+.pipeline-recipe-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-xs);
+}
+
+.pipeline-recipe-card-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.pipeline-recipe-card-desc {
+    margin-top: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.pipeline-recipe-card-meta {
+    margin-top: var(--space-sm);
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.pipeline-recipes-footnote {
+    margin-top: var(--space-md);
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+}
+
+.pipeline-recipes-label {
+    display: block;
+    margin: var(--space-sm) 0 var(--space-xs);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.pipeline-recipes-json {
+    min-height: 156px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.pipeline-recipes-toggle-grid {
+    margin-top: var(--space-md);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-sm);
+}
+
+.pipeline-recipes-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.pipeline-recipes-actions {
+    margin-top: var(--space-md);
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.pipeline-recipes-run-options {
+    margin-top: var(--space-md);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+    align-items: end;
+}
+
+.pipeline-recipes-selected-meta {
+    margin-top: var(--space-lg);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border-secondary);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.pipeline-recipes-meta-label {
+    display: block;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--space-xs);
+}
+
+.pipeline-recipes-results-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+}
+
+.pipeline-recipes-state-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+}
+
+.pipeline-recipes-runs {
+    margin-top: var(--space-lg);
+    border-top: 1px solid var(--border-secondary);
+    padding-top: var(--space-md);
+}
+
+.pipeline-recipes-runs-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+}
+
+.pipeline-recipes-runs-head h5 {
+    margin: 0;
+    font-size: var(--font-size-sm);
+}
+
+.pipeline-recipes-runs-grid {
+    margin-top: var(--space-md);
+    display: grid;
+    grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1.15fr);
+    gap: var(--space-md);
+}
+
+.pipeline-recipes-runs-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    max-height: 320px;
+    overflow: auto;
+}
+
+.pipeline-recipe-run-card {
+    text-align: left;
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    padding: var(--space-sm) var(--space-md);
+    cursor: pointer;
+}
+
+.pipeline-recipe-run-card.active {
+    border-color: var(--accent-primary);
+}
+
+.pipeline-recipe-run-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+}
+
+.pipeline-recipe-run-status {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.pipeline-recipe-run-id {
+    margin-top: var(--space-xs);
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.pipeline-recipe-run-meta {
+    margin-top: var(--space-xs);
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.pipeline-recipes-run-detail {
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    padding: var(--space-md);
+}
+
+.pipeline-recipes-run-detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.pipeline-recipes-run-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.pipeline-recipes-run-links {
+    margin-top: var(--space-md);
+}
+
+.pipeline-recipes-status,
+.pipeline-recipes-warning,
+.pipeline-recipes-error {
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.pipeline-recipes-status {
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.1);
+    color: #93c5fd;
+}
+
+.pipeline-recipes-warning {
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.1);
+    color: #fbbf24;
+}
+
+.pipeline-recipes-error {
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
+}
+
+.pipeline-recipes-json-view {
+    margin-top: var(--space-md);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    padding: var(--space-md);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: var(--font-size-xs);
+    line-height: 1.55;
+    max-height: 520px;
+    overflow: auto;
+}
+
+.pipeline-recipes-empty {
+    color: var(--text-tertiary);
+    margin-top: var(--space-md);
+}
+
+@media (max-width: 1200px) {
+    .pipeline-recipes-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .pipeline-recipes-header {
+        flex-direction: column;
+    }
+
+    .pipeline-recipes-header-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 768px) {
+    .pipeline-recipes-selected-meta,
+    .pipeline-recipes-state-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pipeline-recipes-run-options,
+    .pipeline-recipes-runs-grid,
+    .pipeline-recipes-run-detail-grid {
+        grid-template-columns: 1fr;
+    }
+}

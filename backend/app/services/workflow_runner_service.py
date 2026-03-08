@@ -208,6 +208,7 @@ async def _execute_local_adapter_preview_attempt(
     sample_size = _coerce_int(base_cfg.get("sample_size"), default=200, minimum=10, maximum=5000)
     preview_limit = _coerce_int(base_cfg.get("preview_limit"), default=20, minimum=5, maximum=100)
     adapter_id = str(base_cfg.get("adapter_id") or "auto").strip() or "auto"
+    task_profile = str(base_cfg.get("task_profile") or "").strip() or None
     adapter_config = base_cfg.get("adapter_config")
     field_mapping = base_cfg.get("field_mapping")
     document_id_raw = base_cfg.get("document_id")
@@ -224,6 +225,7 @@ async def _execute_local_adapter_preview_attempt(
         dataset_type=dataset_type,
         sample_size=sample_size,
         adapter_id=adapter_id,
+        task_profile=task_profile,
         adapter_config=adapter_config if isinstance(adapter_config, dict) else None,
         document_id=document_id,
         field_mapping=field_mapping if isinstance(field_mapping, dict) else None,
@@ -261,6 +263,8 @@ async def _execute_local_adapter_preview_attempt(
             "dataset_type": dataset_type.value,
             "requested_adapter_id": preview.get("requested_adapter_id"),
             "resolved_adapter_id": preview.get("resolved_adapter_id"),
+            "requested_task_profile": preview.get("requested_task_profile"),
+            "resolved_task_profile": preview.get("resolved_task_profile"),
             "sampled_records": sampled,
             "mapped_records": mapped,
             "dropped_records": int(preview.get("dropped_records", 0) or 0),
@@ -987,8 +991,20 @@ async def run_workflow_graph(
         run.graph_version = str(graph.get("graph_version") or "1.0.0")
         run.execution_backend = execution_backend
         run.status = WorkflowRunStatus.RUNNING
-        run.run_config = run_config_payload
-        run.summary = summary_payload
+        existing_run_config = dict(run.run_config or {})
+        existing_step_config = existing_run_config.get("config")
+        if isinstance(existing_step_config, dict):
+            merged_step_config = dict(existing_step_config)
+            merged_step_config.update(cfg)
+            run_config_payload["config"] = merged_step_config
+        run.run_config = {
+            **existing_run_config,
+            **run_config_payload,
+        }
+        run.summary = {
+            **dict(run.summary or {}),
+            **summary_payload,
+        }
         run.started_at = _utcnow()
         run.finished_at = None
         await db.execute(delete(WorkflowRunNode).where(WorkflowRunNode.run_id == run.id))

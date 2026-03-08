@@ -19,6 +19,7 @@ from app.services.domain_hook_service import (
 from app.services.data_adapter_service import (
     DEFAULT_ADAPTER_ID,
     map_record_with_adapter,
+    resolve_task_profile_for_adapter,
     resolve_data_adapter_for_records,
 )
 from app.services.record_normalization import build_schema_profile
@@ -287,6 +288,7 @@ async def queue_remote_import(
     config_name: str | None = None,
     field_mapping: dict[str, str] | None = None,
     adapter_id: str = DEFAULT_ADAPTER_ID,
+    task_profile: str | None = None,
     adapter_config: dict[str, Any] | None = None,
     normalize_for_training: bool = True,
     hf_token: str | None = None,
@@ -308,6 +310,7 @@ async def queue_remote_import(
         "config_name": config_name,
         "field_mapping": field_mapping or {},
         "adapter_id": adapter_id,
+        "task_profile": task_profile or None,
         "adapter_config": dict(adapter_config or {}),
         "normalize_for_training": normalize_for_training,
         "hf_token": hf_token or "",
@@ -330,6 +333,7 @@ async def queue_remote_import(
         "source_type": source_type,
         "identifier": identifier,
         "adapter_id": adapter_id,
+        "task_profile": task_profile or None,
         "report_path": str(report_path),
         "task_id": task.id,
     }
@@ -375,6 +379,7 @@ async def ingest_remote_dataset(
     config_name: str | None = None,
     field_mapping: dict[str, str] | None = None,
     adapter_id: str = DEFAULT_ADAPTER_ID,
+    task_profile: str | None = None,
     adapter_config: dict[str, Any] | None = None,
     normalize_for_training: bool = True,
     hf_token: str | None = None,
@@ -428,6 +433,8 @@ async def ingest_remote_dataset(
     await _progress(
         f"[import] adapter requested={adapter_id or DEFAULT_ADAPTER_ID}"
     )
+    if task_profile:
+        await _progress(f"[import] task_profile requested={task_profile}")
 
     if use_saved_secrets and source_type == "huggingface" and not hf_token:
         saved_hf_token = await get_project_secret_value(db, project_id, "huggingface", "token")
@@ -639,6 +646,11 @@ async def ingest_remote_dataset(
             adapter_id=adapter_id,
             adapter_config=adapter_config,
             field_mapping=field_mapping,
+            task_profile=task_profile,
+        )
+        resolved_task_profile = resolve_task_profile_for_adapter(
+            resolved_adapter_id,
+            requested_task_profile=task_profile,
         )
         await _progress(
             f"[import] adapter resolved={resolved_adapter_id} scores={detection_scores}"
@@ -651,10 +663,12 @@ async def ingest_remote_dataset(
                 adapter_id=resolved_adapter_id,
                 adapter_config=adapter_config,
                 field_mapping=field_mapping,
+                task_profile=resolved_task_profile,
             )
             normalized = apply_normalizer_hook(sample, mapped, normalizer_hook_spec)
             if normalized:
                 normalized["_adapter_id"] = resolved_adapter_id
+                normalized["_task_profile"] = resolved_task_profile
                 rows_to_write.append(normalized)
             else:
                 dropped_records += 1
@@ -669,6 +683,7 @@ async def ingest_remote_dataset(
         rows_to_write = [s if isinstance(s, dict) else {"value": s} for s in raw_samples]
         dropped_records = 0
         resolved_adapter_id = "none"
+        resolved_task_profile = None
         detection_scores: dict[str, float] = {}
     await _progress(f"[import] normalized rows={len(rows_to_write)} dropped={dropped_records}")
 
@@ -733,6 +748,8 @@ async def ingest_remote_dataset(
             "field_mapping": field_mapping or {},
             "adapter_id_requested": adapter_id,
             "adapter_id_resolved": resolved_adapter_id,
+            "task_profile_requested": task_profile or None,
+            "task_profile_resolved": resolved_task_profile,
             "adapter_config": dict(adapter_config or {}),
             "adapter_detection_scores": detection_scores,
             "schema_profile": schema_profile,
@@ -765,6 +782,8 @@ async def ingest_remote_dataset(
         "dropped_records": dropped_records,
         "adapter_id_requested": adapter_id,
         "adapter_id_resolved": resolved_adapter_id,
+        "task_profile_requested": task_profile or None,
+        "task_profile_resolved": resolved_task_profile,
         "adapter_detection_scores": detection_scores,
         "file_size_bytes": len(file_content),
         "source_mode": source_mode,

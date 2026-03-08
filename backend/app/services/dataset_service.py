@@ -25,8 +25,10 @@ from app.services.data_adapter_service import (
     DEFAULT_ADAPTER_ID,
     list_data_adapter_catalog,
     map_record_with_adapter,
+    normalize_task_profile,
     preview_data_adapter,
     resolve_data_adapter_for_records,
+    resolve_task_profile_for_adapter,
 )
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.record_normalization import (
@@ -70,17 +72,24 @@ def _normalize_adapter_config(payload: Any) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, dict) else {}
 
 
+def _normalize_task_profile_value(payload: Any) -> str | None:
+    token = normalize_task_profile(str(payload or ""), default="")
+    return token or None
+
+
 def _normalize_adapter_preset(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {
             "adapter_id": DEFAULT_ADAPTER_ID,
             "adapter_config": {},
             "field_mapping": {},
+            "task_profile": None,
         }
     return {
         "adapter_id": _normalize_adapter_id(payload.get("adapter_id")),
         "adapter_config": _normalize_adapter_config(payload.get("adapter_config")),
         "field_mapping": _normalize_field_mapping(payload.get("field_mapping")),
+        "task_profile": _normalize_task_profile_value(payload.get("task_profile")),
     }
 
 
@@ -206,6 +215,7 @@ def _normalize_rows_for_training(
     adapter_id: str = DEFAULT_ADAPTER_ID,
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
 ) -> list[dict[str, Any]]:
     normalized_entries: list[dict[str, Any]] = []
     resolved_adapter_id, _ = resolve_data_adapter_for_records(
@@ -213,6 +223,11 @@ def _normalize_rows_for_training(
         adapter_id=adapter_id,
         adapter_config=adapter_config,
         field_mapping=field_mapping,
+        task_profile=task_profile,
+    )
+    resolved_task_profile = resolve_task_profile_for_adapter(
+        resolved_adapter_id,
+        requested_task_profile=task_profile,
     )
     for row in rows:
         canonical = map_record_with_adapter(
@@ -220,6 +235,7 @@ def _normalize_rows_for_training(
             adapter_id=resolved_adapter_id,
             adapter_config=adapter_config,
             field_mapping=field_mapping,
+            task_profile=resolved_task_profile,
         )
         canonical = apply_normalizer_hook(row, canonical, normalizer_hook_spec)
         if not canonical:
@@ -233,6 +249,7 @@ def _normalize_rows_for_training(
                 merged["text"] = rendered
         merged["_source_dataset"] = source_dataset.value
         merged["_adapter_id"] = resolved_adapter_id
+        merged["_task_profile"] = resolved_task_profile
         normalized_entries.append(merged)
     return normalized_entries
 
@@ -256,6 +273,7 @@ async def resolve_project_dataset_adapter_preference(
             project_raw.get("adapter_id")
             or project_raw.get("adapter_config")
             or project_raw.get("field_mapping")
+            or project_raw.get("task_profile")
         )
     )
     if has_project_override:
@@ -265,6 +283,7 @@ async def resolve_project_dataset_adapter_preference(
             "adapter_id": project_payload["adapter_id"],
             "adapter_config": project_payload["adapter_config"],
             "field_mapping": project_payload["field_mapping"],
+            "task_profile": project_payload.get("task_profile"),
             "domain_pack_applied": runtime.get("domain_pack_applied"),
             "domain_profile_applied": runtime.get("domain_profile_applied"),
         }
@@ -277,6 +296,7 @@ async def resolve_project_dataset_adapter_preference(
             "adapter_id": pack_payload["adapter_id"],
             "adapter_config": pack_payload["adapter_config"],
             "field_mapping": pack_payload["field_mapping"],
+            "task_profile": pack_payload.get("task_profile"),
             "domain_pack_applied": runtime.get("domain_pack_applied"),
             "domain_profile_applied": runtime.get("domain_profile_applied"),
         }
@@ -287,6 +307,7 @@ async def resolve_project_dataset_adapter_preference(
         "adapter_id": DEFAULT_ADAPTER_ID,
         "adapter_config": {},
         "field_mapping": {},
+        "task_profile": None,
         "domain_pack_applied": runtime.get("domain_pack_applied"),
         "domain_profile_applied": runtime.get("domain_profile_applied"),
     }
@@ -299,6 +320,7 @@ async def save_project_dataset_adapter_preference(
     adapter_id: str,
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
 ) -> dict[str, Any]:
     """Persist project-level adapter preset used by split/training contract checks."""
     project_result = await db.execute(select(Project).where(Project.id == project_id))
@@ -309,11 +331,13 @@ async def save_project_dataset_adapter_preference(
     normalized_adapter_id = _validate_adapter_id_or_raise(adapter_id)
     normalized_config = _normalize_adapter_config(adapter_config)
     normalized_mapping = _normalize_field_mapping(field_mapping)
+    normalized_task_profile = _normalize_task_profile_value(task_profile)
 
     project.dataset_adapter_preset = {
         "adapter_id": normalized_adapter_id,
         "adapter_config": normalized_config,
         "field_mapping": normalized_mapping,
+        "task_profile": normalized_task_profile,
     }
     await db.flush()
 
@@ -328,6 +352,7 @@ async def combine_datasets(
     adapter_id: str = DEFAULT_ADAPTER_ID,
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
 ) -> list[dict]:
     """
     Combine entries from cleaned/synthetic/gold datasets.
@@ -388,6 +413,7 @@ async def combine_datasets(
                     adapter_id=adapter_id,
                     adapter_config=adapter_config,
                     field_mapping=field_mapping,
+                    task_profile=task_profile,
                 )
                 for entry in normalized:
                     entry["_source_document_id"] = doc.id
@@ -407,6 +433,7 @@ async def combine_datasets(
             adapter_id=adapter_id,
             adapter_config=adapter_config,
             field_mapping=field_mapping,
+            task_profile=task_profile,
         )
         all_entries.extend(normalized)
 
@@ -425,6 +452,7 @@ async def split_dataset(
     adapter_id: str = DEFAULT_ADAPTER_ID,
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL."""
     if train_ratio <= 0 or val_ratio < 0 or test_ratio < 0:
@@ -449,6 +477,7 @@ async def split_dataset(
         adapter_id=adapter_id,
         adapter_config=adapter_config,
         field_mapping=field_mapping,
+        task_profile=task_profile,
     )
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
@@ -543,6 +572,7 @@ async def split_dataset(
         "adapter_id": adapter_id,
         "adapter_config": dict(adapter_config or {}),
         "field_mapping": dict(field_mapping or {}),
+        "task_profile": _normalize_task_profile_value(task_profile),
     }
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -637,6 +667,7 @@ async def preview_project_data_adapter(
     adapter_config: dict[str, Any] | None = None,
     document_id: int | None = None,
     field_mapping: dict[str, str] | None = None,
+    task_profile: str | None = None,
     preview_limit: int = 20,
 ) -> dict[str, Any]:
     """Preview adapter mapping quality and per-row output for a sampled dataset slice."""
@@ -653,6 +684,7 @@ async def preview_project_data_adapter(
         adapter_id=adapter_id,
         adapter_config=adapter_config,
         field_mapping=field_mapping,
+        task_profile=task_profile,
         preview_limit=preview_limit,
     )
     return {

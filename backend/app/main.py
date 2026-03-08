@@ -13,6 +13,7 @@ from app.models.auth import AuditLog
 from app.security import authorize_request, ensure_bootstrap_auth, extract_project_id_from_path
 from app.api.auth import router as auth_router
 from app.api.audit import router as audit_router
+from app.api.settings import router as settings_router
 from app.api.projects import router as projects_router
 from app.api.pipeline import router as pipeline_router
 from app.api.ingestion import router as ingestion_router
@@ -35,12 +36,14 @@ from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
 from app.services.data_adapter_service import load_data_adapter_plugins_from_settings
+from app.services.runtime_settings_service import apply_persisted_runtime_overrides
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     settings.ensure_dirs()
+    apply_persisted_runtime_overrides()
     load_hook_plugins_from_settings()
     load_data_adapter_plugins_from_settings()
     await init_db()
@@ -73,6 +76,7 @@ API_DEPENDENCIES = [Depends(authorize_request)]
 # Mount API routers
 app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(projects_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(pipeline_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(ingestion_router, prefix="/api", dependencies=API_DEPENDENCIES)

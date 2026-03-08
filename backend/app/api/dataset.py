@@ -37,6 +37,7 @@ class SplitRequest(BaseModel):
     adapter_id: str | None = None
     adapter_config: dict[str, Any] | None = None
     field_mapping: dict[str, str] | None = None
+    task_profile: str | None = None
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -67,6 +68,7 @@ class AdapterPreviewRequest(BaseModel):
     adapter_id: str = "auto"
     adapter_config: dict[str, Any] | None = None
     field_mapping: dict[str, str] | None = None
+    task_profile: str | None = None
     document_id: int | None = None
     preview_limit: int = Field(default=20, ge=5, le=100)
 
@@ -75,6 +77,7 @@ class AdapterPreferenceUpdateRequest(BaseModel):
     adapter_id: str = Field(..., min_length=1)
     adapter_config: dict[str, Any] | None = None
     field_mapping: dict[str, str] | None = None
+    task_profile: str | None = None
 
 
 class AdapterPreferenceAutoDetectRequest(BaseModel):
@@ -82,6 +85,7 @@ class AdapterPreferenceAutoDetectRequest(BaseModel):
     sample_size: int = Field(default=250, ge=10, le=5000)
     adapter_config: dict[str, Any] | None = None
     field_mapping: dict[str, str] | None = None
+    task_profile: str | None = None
     document_id: int | None = None
     save: bool = True
 
@@ -206,18 +210,20 @@ async def split(
         if abs((float(resolved["train_ratio"]) + float(resolved["val_ratio"]) + float(resolved["test_ratio"])) - 1.0) > 1e-6:
             raise HTTPException(400, "train_ratio + val_ratio + test_ratio must equal 1.0")
 
-        explicit_adapter_fields = {"adapter_id", "adapter_config", "field_mapping"}
+        explicit_adapter_fields = {"adapter_id", "adapter_config", "field_mapping", "task_profile"}
         has_explicit_adapter = any(field in provided for field in explicit_adapter_fields)
         if has_explicit_adapter:
             adapter_id = str(req.adapter_id or "default-canonical").strip() or "default-canonical"
             adapter_config = dict(req.adapter_config or {})
             field_mapping = dict(req.field_mapping or {})
+            task_profile = str(req.task_profile or "").strip() or None
             adapter_source = "request"
         else:
             preset = await resolve_project_dataset_adapter_preference(db, project_id)
             adapter_id = str(preset.get("adapter_id") or "default-canonical")
             adapter_config = dict(preset.get("adapter_config") or {})
             field_mapping = dict(preset.get("field_mapping") or {})
+            task_profile = str(preset.get("task_profile") or "").strip() or None
             adapter_source = str(preset.get("source") or "default")
 
         manifest = await split_dataset(
@@ -232,6 +238,7 @@ async def split(
             adapter_id=adapter_id,
             adapter_config=adapter_config,
             field_mapping=field_mapping,
+            task_profile=task_profile,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")
@@ -302,6 +309,7 @@ async def set_adapter_preference(
             adapter_id=req.adapter_id,
             adapter_config=req.adapter_config,
             field_mapping=req.field_mapping,
+            task_profile=req.task_profile,
         )
     except ValueError as e:
         detail = str(e)
@@ -326,10 +334,16 @@ async def auto_detect_adapter_preference(
             adapter_id="auto",
             adapter_config=req.adapter_config,
             field_mapping=req.field_mapping,
+            task_profile=req.task_profile,
             document_id=req.document_id,
             preview_limit=20,
         )
         resolved_adapter_id = str(preview.get("resolved_adapter_id") or "default-canonical")
+        resolved_task_profile = str(
+            req.task_profile
+            or preview.get("resolved_task_profile")
+            or ""
+        ).strip() or None
         if req.save:
             preference = await save_project_dataset_adapter_preference(
                 db,
@@ -337,6 +351,7 @@ async def auto_detect_adapter_preference(
                 adapter_id=resolved_adapter_id,
                 adapter_config=req.adapter_config,
                 field_mapping=req.field_mapping,
+                task_profile=resolved_task_profile,
             )
         else:
             preference = {
@@ -345,6 +360,7 @@ async def auto_detect_adapter_preference(
                 "adapter_id": resolved_adapter_id,
                 "adapter_config": dict(req.adapter_config or {}),
                 "field_mapping": dict(req.field_mapping or {}),
+                "task_profile": resolved_task_profile,
             }
         return {
             "preference": preference,
@@ -382,6 +398,7 @@ async def adapter_preview(
             adapter_id=req.adapter_id,
             adapter_config=req.adapter_config,
             field_mapping=req.field_mapping,
+            task_profile=req.task_profile,
             document_id=req.document_id,
             preview_limit=req.preview_limit,
         )
