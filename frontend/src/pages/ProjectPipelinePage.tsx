@@ -35,7 +35,7 @@ const TAB_PREREQ_INDEX: Record<TabKey, number> = {
     export: 4,
 };
 
-const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_prep', 'tokenization', 'training', 'evaluation', 'compression', 'export', 'completed'];
+const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_prep', 'data_adapter_preview', 'tokenization', 'training', 'evaluation', 'compression', 'export', 'completed'];
 const TAB_TARGET_STAGE: Record<TabKey, string> = {
     data: 'ingestion',
     cleaning: 'cleaning',

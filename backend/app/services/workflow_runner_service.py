@@ -763,6 +763,15 @@ async def _execute_node_attempt(
     if stage in fail_once_stages and attempt == 1:
         return False, {"message": f"simulated one-time failure for stage '{stage}'"}, "simulated one-time failure"
 
+    delay_seconds = _coerce_float(
+        config.get("simulate_node_delay_seconds"),
+        default=0.0,
+        minimum=0.0,
+        maximum=30.0,
+    )
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
+
     if backend == "local":
         return await _execute_local_node_attempt(
             db=db,
@@ -913,6 +922,54 @@ async def mark_workflow_run_failed(
     await db.flush()
 
 
+async def mark_workflow_run_cancelled(
+    db: AsyncSession,
+    project_id: int,
+    run_id: int,
+    *,
+    message: str = "cancel requested",
+) -> bool:
+    """Mark a workflow run as cancelled when it is not already terminal."""
+    row = await db.execute(
+        select(WorkflowRun).where(
+            WorkflowRun.project_id == project_id,
+            WorkflowRun.id == run_id,
+        )
+    )
+    run = row.scalar_one_or_none()
+    if run is None:
+        return False
+
+    if run.status in {WorkflowRunStatus.COMPLETED, WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED}:
+        return True
+
+    run.status = WorkflowRunStatus.CANCELLED
+    run.finished_at = _utcnow()
+    run.summary = {
+        **(run.summary or {}),
+        "cancel_reason": message,
+        "cancel_requested_at": _utcnow().isoformat(),
+    }
+    await db.flush()
+    return True
+
+
+async def is_workflow_run_cancelled(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    run_id: int,
+) -> bool:
+    row = await db.execute(
+        select(WorkflowRun.status).where(
+            WorkflowRun.project_id == project_id,
+            WorkflowRun.id == run_id,
+        )
+    )
+    status = row.scalar_one_or_none()
+    return status == WorkflowRunStatus.CANCELLED
+
+
 async def run_workflow_graph(
     db: AsyncSession,
     project: Project,
@@ -927,6 +984,9 @@ async def run_workflow_graph(
     config: dict[str, Any] | None = None,
     run_id: int | None = None,
     commit_progress: bool = False,
+    resume_from_run_id: int | None = None,
+    resume_from_node_id: str | None = None,
+    reuse_successful_nodes: bool = False,
 ) -> dict[str, Any]:
     """Execute workflow DAG for a project and persist run/node statuses."""
     cfg = dict(config or {})
@@ -953,6 +1013,9 @@ async def run_workflow_graph(
         "stop_on_blocked": bool(stop_on_blocked),
         "stop_on_failure": bool(stop_on_failure),
         "config": cfg,
+        "resume_from_run_id": int(resume_from_run_id) if resume_from_run_id is not None else None,
+        "resume_from_node_id": str(resume_from_node_id or "").strip() or None,
+        "reuse_successful_nodes": bool(reuse_successful_nodes),
     }
     summary_payload = {
         "requested_source": resolved.get("requested_source"),
@@ -987,6 +1050,14 @@ async def run_workflow_graph(
         run = row.scalar_one_or_none()
         if run is None:
             raise ValueError(f"Workflow run {run_id} not found for project {project.id}")
+        if run.status == WorkflowRunStatus.CANCELLED:
+            existing_nodes_row = await db.execute(
+                select(WorkflowRunNode)
+                .where(WorkflowRunNode.run_id == run.id)
+                .order_by(WorkflowRunNode.id.asc())
+            )
+            existing_nodes = list(existing_nodes_row.scalars().all())
+            return _serialize_run(run, existing_nodes)
         run.graph_id = str(graph.get("graph_id") or "unknown")
         run.graph_version = str(graph.get("graph_version") or "1.0.0")
         run.execution_backend = execution_backend
@@ -1025,9 +1096,50 @@ async def run_workflow_graph(
             await db.commit()
         return _serialize_run(run, [])
 
+    resume_source_run_id: int | None = None
+    previous_nodes_by_id: dict[str, WorkflowRunNode] = {}
+    resume_start_node_id: str | None = None
+    resume_start_index: int = 0
+    requested_resume_node = str(resume_from_node_id or "").strip()
+    if reuse_successful_nodes and resume_from_run_id is not None:
+        resume_source_run_id = int(resume_from_run_id)
+        previous_nodes_row = await db.execute(
+            select(WorkflowRunNode)
+            .where(WorkflowRunNode.run_id == resume_source_run_id)
+            .order_by(WorkflowRunNode.id.asc())
+        )
+        previous_nodes_by_id = {
+            str(item.node_id): item
+            for item in previous_nodes_row.scalars().all()
+            if str(item.node_id).strip()
+        }
+        if requested_resume_node:
+            if requested_resume_node not in node_map:
+                run.status = WorkflowRunStatus.FAILED
+                run.finished_at = _utcnow()
+                run.summary = {
+                    **(run.summary or {}),
+                    "runner_error": f"resume node '{requested_resume_node}' not found in graph",
+                }
+                await db.flush()
+                if commit_progress:
+                    await db.commit()
+                return _serialize_run(run, [])
+            resume_start_node_id = requested_resume_node
+        else:
+            for candidate in ordered_node_ids:
+                prev = previous_nodes_by_id.get(candidate)
+                if prev is None or prev.status != WorkflowNodeStatus.COMPLETED:
+                    resume_start_node_id = candidate
+                    break
+        if resume_start_node_id:
+            resume_start_index = ordered_node_ids.index(resume_start_node_id)
+        else:
+            resume_start_index = len(ordered_node_ids)
+
     deps_by_node = _dependency_map(edges)
     run_nodes: dict[str, WorkflowRunNode] = {}
-    for node_id in ordered_node_ids:
+    for node_index, node_id in enumerate(ordered_node_ids):
         node = node_map[node_id]
         runtime_check = evaluate_runtime_requirements_for_node(node)
         row = WorkflowRunNode(
@@ -1049,6 +1161,33 @@ async def run_workflow_graph(
             node_log=[],
             error_message="",
         )
+        if (
+            reuse_successful_nodes
+            and resume_source_run_id is not None
+            and node_index < resume_start_index
+        ):
+            prev = previous_nodes_by_id.get(node_id)
+            if prev is None or prev.status != WorkflowNodeStatus.COMPLETED:
+                run.status = WorkflowRunStatus.FAILED
+                run.finished_at = _utcnow()
+                run.summary = {
+                    **(run.summary or {}),
+                    "runner_error": (
+                        f"cannot resume from node '{resume_start_node_id or ''}': "
+                        f"node '{node_id}' is not completed in run {resume_source_run_id}"
+                    ),
+                }
+                await db.flush()
+                if commit_progress:
+                    await db.commit()
+                return _serialize_run(run, [])
+            row.status = WorkflowNodeStatus.COMPLETED
+            row.attempt_count = int(prev.attempt_count or 0)
+            row.published_artifact_keys = list(prev.published_artifact_keys or [])
+            row.node_log = list(prev.node_log or [])
+            row.error_message = f"reused from workflow run {resume_source_run_id}"
+            row.started_at = prev.started_at or _utcnow()
+            row.finished_at = prev.finished_at or _utcnow()
         db.add(row)
         run_nodes[node_id] = row
 
@@ -1056,9 +1195,15 @@ async def run_workflow_graph(
     if commit_progress:
         await db.commit()
     available_artifacts = await collect_available_artifacts(db, project.id)
+    for row in run_nodes.values():
+        if row.status == WorkflowNodeStatus.COMPLETED:
+            available_artifacts.update(
+                [item for item in (row.published_artifact_keys or []) if isinstance(item, str) and item.strip()]
+            )
 
     run_blocked = False
     run_failed = False
+    run_cancelled = False
     break_reason = ""
     executed_node_ids: set[str] = set()
 
@@ -1066,6 +1211,14 @@ async def run_workflow_graph(
         row = run_nodes[node_id]
         node = node_map[node_id]
         executed_node_ids.add(node_id)
+
+        if await is_workflow_run_cancelled(db, project_id=project.id, run_id=run.id):
+            run_cancelled = True
+            break_reason = "run cancelled by user"
+            break
+
+        if row.status == WorkflowNodeStatus.COMPLETED and row.error_message.startswith("reused from workflow run"):
+            continue
 
         deps = list(row.dependencies or [])
         dep_failed = any(
@@ -1110,6 +1263,11 @@ async def run_workflow_graph(
         last_error = ""
         logs = list(row.node_log or [])
         while attempt <= max(0, int(max_retries)):
+            if await is_workflow_run_cancelled(db, project_id=project.id, run_id=run.id):
+                run_cancelled = True
+                last_error = "run cancelled by user"
+                break_reason = last_error
+                break
             attempt += 1
             row.attempt_count = attempt
             row.status = WorkflowNodeStatus.RUNNING
@@ -1137,6 +1295,14 @@ async def run_workflow_graph(
                 success = True
                 break
             last_error = error_text or "node execution failed"
+
+        if run_cancelled:
+            row.status = WorkflowNodeStatus.SKIPPED
+            row.error_message = last_error or "run cancelled by user"
+            row.finished_at = _utcnow()
+            if commit_progress:
+                await db.commit()
+            break
 
         if not success:
             row.status = WorkflowNodeStatus.FAILED
@@ -1174,13 +1340,18 @@ async def run_workflow_graph(
         row = run_nodes[node_id]
         if row.status == WorkflowNodeStatus.PENDING:
             row.status = WorkflowNodeStatus.SKIPPED
-            row.error_message = "skipped after workflow termination"
+            if run_cancelled:
+                row.error_message = "skipped after workflow cancellation"
+            else:
+                row.error_message = "skipped after workflow termination"
             row.finished_at = _utcnow()
             if commit_progress:
                 await db.commit()
 
     if run_failed:
         run.status = WorkflowRunStatus.FAILED
+    elif run_cancelled:
+        run.status = WorkflowRunStatus.CANCELLED
     elif run_blocked:
         run.status = WorkflowRunStatus.BLOCKED
     else:

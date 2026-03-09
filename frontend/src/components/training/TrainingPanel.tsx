@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
@@ -268,6 +268,8 @@ type ConfigFieldKey =
   | 'oom_retry_seq_shrink'
   | 'gradient_checkpointing';
 
+type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
+
 export default function TrainingPanel({
   projectId,
   onNextStep,
@@ -366,6 +368,7 @@ export default function TrainingPanel({
   const [selectedRecipeId, setSelectedRecipeId] = useState('');
   const [recipeResolveLoading, setRecipeResolveLoading] = useState(false);
   const [recipeResolveError, setRecipeResolveError] = useState('');
+  const [workspaceView, setWorkspaceView] = useState<TrainingWorkspaceView>('overview');
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -378,6 +381,48 @@ export default function TrainingPanel({
 
   const activeExperimentKey = activeExperiment ? `${activeExperiment.id}:${activeExperiment.status}` : '';
   const createFormVisible = !hideCreateControls && (forceCreateVisible || showCreate);
+  const canConfigureExperiments = !hideCreateControls;
+  const canViewRuns = !hideExperimentList;
+  const showWorkspaceTabs = canConfigureExperiments && canViewRuns;
+
+  const experimentStats = useMemo(() => {
+    const running = experiments.filter((item) => item.status === 'running').length;
+    const completed = experiments.filter((item) => item.status === 'completed').length;
+    const failed = experiments.filter((item) => item.status === 'failed').length;
+    const pending = experiments.filter((item) => item.status === 'pending').length;
+    return {
+      total: experiments.length,
+      running,
+      completed,
+      failed,
+      pending,
+    };
+  }, [experiments]);
+
+  const recommendedAction = useMemo(() => {
+    if (canConfigureExperiments && experimentStats.total === 0) {
+      return {
+        title: 'Create your first experiment',
+        detail: 'Open Setup and use recipe + preflight before launching.',
+      };
+    }
+    if (canViewRuns && experimentStats.running > 0) {
+      return {
+        title: 'Monitor active runs',
+        detail: `${experimentStats.running} experiment(s) are running. Open Runs and launch dashboard.`,
+      };
+    }
+    if (canConfigureExperiments && canViewRuns) {
+      return {
+        title: 'Tune and iterate',
+        detail: 'Adjust config in Setup, then create another run and compare results.',
+      };
+    }
+    return {
+      title: 'Review experiment status',
+      detail: 'Open the available section and continue with the next training action.',
+    };
+  }, [canConfigureExperiments, canViewRuns, experimentStats]);
 
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
@@ -716,6 +761,14 @@ export default function TrainingPanel({
   };
 
   useEffect(() => {
+    if (forceCreateVisible || !canViewRuns) {
+      setWorkspaceView('setup');
+    } else if (!canConfigureExperiments) {
+      setWorkspaceView('runs');
+    } else {
+      setWorkspaceView('overview');
+    }
+
     setExperiments([]);
     setActiveExperiment(null);
     setMetrics([]);
@@ -772,7 +825,27 @@ export default function TrainingPanel({
     void loadTrainingRecipes();
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, forceCreateVisible, hideCreateControls]);
+  }, [projectId, forceCreateVisible, hideCreateControls, hideExperimentList]);
+
+  useEffect(() => {
+    if (forceCreateVisible || !canViewRuns) {
+      if (workspaceView !== 'setup') {
+        setWorkspaceView('setup');
+      }
+      return;
+    }
+    if (!canConfigureExperiments && workspaceView !== 'runs') {
+      setWorkspaceView('runs');
+      return;
+    }
+    if (workspaceView === 'setup' && !canConfigureExperiments) {
+      setWorkspaceView('runs');
+      return;
+    }
+    if (workspaceView === 'runs' && !canViewRuns) {
+      setWorkspaceView('setup');
+    }
+  }, [forceCreateVisible, canConfigureExperiments, canViewRuns, workspaceView]);
 
   useEffect(() => {
     if (!activeExperiment || activeExperiment.status !== 'running') {
@@ -1044,11 +1117,10 @@ export default function TrainingPanel({
     const currentEvalLoss = latestMetric.eval_loss !== undefined ? latestMetric.eval_loss : null;
 
     return (
-      <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+      <div className="animate-fade-in training-panel-stack">
         <div className="card">
           <button
-            className="btn btn-secondary btn-sm"
-            style={{ marginBottom: 16 }}
+            className="btn btn-secondary btn-sm training-back-btn"
             onClick={() => {
               setActiveExperiment(null);
               setTaskState('');
@@ -1059,31 +1131,31 @@ export default function TrainingPanel({
             ← Back to Experiments
           </button>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xl)' }}>
+          <div className="training-active-head">
             <div>
-              <h3 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600, margin: 0 }}>{activeExperiment.name}</h3>
-              <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+              <h3 className="training-active-title">{activeExperiment.name}</h3>
+              <div className="training-active-meta">
                 {activeExperiment.base_model} • {activeExperiment.training_mode}
               </div>
               {activeExperiment.domain_pack_applied && (
-                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                <div className="training-active-submeta">
                   Pack: {activeExperiment.domain_pack_applied}
                   {activeExperiment.domain_pack_source ? ` (${activeExperiment.domain_pack_source})` : ''}
                 </div>
               )}
               {activeExperiment.domain_profile_applied && (
-                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                <div className="training-active-submeta">
                   Profile: {activeExperiment.domain_profile_applied}
                   {activeExperiment.domain_profile_source ? ` (${activeExperiment.domain_profile_source})` : ''}
                 </div>
               )}
               {taskState && (
-                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                <div className="training-active-submeta">
                   Worker task state: {taskState}
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="training-inline-actions">
               {activeExperiment.status === 'running' && (
                 <button
                   className="btn btn-secondary btn-sm"
@@ -1092,28 +1164,28 @@ export default function TrainingPanel({
                   Cancel
                 </button>
               )}
-              <span className={`badge ${statusColor(activeExperiment.status)}`} style={{ fontSize: 'var(--font-size-md)', padding: '6px 16px' }}>
+              <span className={`badge ${statusColor(activeExperiment.status)} training-status-badge`}>
                 {activeExperiment.status.toUpperCase()}
               </span>
             </div>
           </div>
 
           {trainingError && (
-            <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+            <div className="training-alert training-alert--error">
               {trainingError}
             </div>
           )}
           {trainingWarnings.length > 0 && (
-            <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-warning)', fontSize: 'var(--font-size-sm)' }}>
+            <div className="training-alert training-alert--warning">
               Preflight warnings: {trainingWarnings.join(' | ')}
             </div>
           )}
 
-          <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
+          <div className="metrics-grid">
             <div className="metric-box box-blue">
               <span className="mb-label">Current Epoch</span>
               <span className="mb-value">{currentEpoch} / {totalEpochs}</span>
-              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 6 }}>
+              <div className="metric-subtext">
                 {epochState}
                 {currentStep !== null ? ` • step ${currentStep}` : ''}
               </div>
@@ -1135,24 +1207,20 @@ export default function TrainingPanel({
   }
 
   return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+    <div className="animate-fade-in training-panel-stack">
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-lg)' }}>
-          <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>{title}</h3>
+        <div className="training-panel-head">
+          <h3 className="training-panel-title">{title}</h3>
           {!hideCreateControls && !forceCreateVisible && (
             <button
               className="btn btn-primary"
               onClick={() => {
-                setShowCreate((prev) => {
-                  const next = !prev;
-                  if (next) {
-                    setPreflightPreview(null);
-                    setPreflightPreviewError('');
-                    setPreflightPlan(null);
-                    setPreflightPlanError('');
-                  }
-                  return next;
-                });
+                setWorkspaceView('setup');
+                setShowCreate(true);
+                setPreflightPreview(null);
+                setPreflightPreviewError('');
+                setPreflightPlan(null);
+                setPreflightPlanError('');
               }}
             >
               + New Experiment
@@ -1160,7 +1228,119 @@ export default function TrainingPanel({
           )}
         </div>
 
-        {createFormVisible && (
+        <div className="training-journey-strip">
+          <div className="training-journey-card">
+            <span className="training-journey-card__index">1</span>
+            <div>
+              <strong>Setup</strong>
+              <p>Recipe, profile defaults, preflight, hyperparameters.</p>
+            </div>
+          </div>
+          <div className="training-journey-card">
+            <span className="training-journey-card__index">2</span>
+            <div>
+              <strong>Run</strong>
+              <p>Create and start experiments, compare multiple runs.</p>
+            </div>
+          </div>
+          <div className="training-journey-card">
+            <span className="training-journey-card__index">3</span>
+            <div>
+              <strong>Monitor</strong>
+              <p>Open dashboard for live epoch/loss and worker logs.</p>
+            </div>
+          </div>
+        </div>
+
+        {showWorkspaceTabs && (
+          <div className="training-workspace-tabs">
+            <button
+              className={`training-workspace-tab ${workspaceView === 'overview' ? 'active' : ''}`}
+              onClick={() => setWorkspaceView('overview')}
+            >
+              Overview
+            </button>
+            <button
+              className={`training-workspace-tab ${workspaceView === 'setup' ? 'active' : ''}`}
+              onClick={() => {
+                setWorkspaceView('setup');
+                if (!forceCreateVisible) {
+                  setShowCreate(true);
+                }
+              }}
+            >
+              Setup
+            </button>
+            <button
+              className={`training-workspace-tab ${workspaceView === 'runs' ? 'active' : ''}`}
+              onClick={() => setWorkspaceView('runs')}
+            >
+              Runs
+            </button>
+          </div>
+        )}
+
+        {workspaceView === 'overview' && (
+          <>
+            <div className="training-overview-grid">
+              <article className="training-overview-card">
+                <span className="training-overview-card__label">Experiments</span>
+                <strong>{experimentStats.total}</strong>
+                <p>Total created</p>
+              </article>
+              <article className="training-overview-card">
+                <span className="training-overview-card__label">Running</span>
+                <strong>{experimentStats.running}</strong>
+                <p>Active right now</p>
+              </article>
+              <article className="training-overview-card">
+                <span className="training-overview-card__label">Completed</span>
+                <strong>{experimentStats.completed}</strong>
+                <p>Finished successfully</p>
+              </article>
+              <article className="training-overview-card">
+                <span className="training-overview-card__label">Recommended Next</span>
+                <strong>{recommendedAction.title}</strong>
+                <p>{recommendedAction.detail}</p>
+              </article>
+            </div>
+            <div className="training-overview-actions">
+              {canConfigureExperiments && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setWorkspaceView('setup');
+                    if (!forceCreateVisible) setShowCreate(true);
+                  }}
+                >
+                  Go to Setup
+                </button>
+              )}
+              {canViewRuns && (
+                <button className="btn btn-secondary" onClick={() => setWorkspaceView('runs')}>
+                  View Runs
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {canConfigureExperiments && !showWorkspaceTabs && createFormVisible && (
+          <div className="training-form-intro">
+            <span>Configure your run settings below, then create the experiment.</span>
+          </div>
+        )}
+
+        {canConfigureExperiments && workspaceView === 'setup' && !createFormVisible && !forceCreateVisible && (
+          <div className="training-empty-helper">
+            <p>Setup form is currently hidden.</p>
+            <button className="btn btn-secondary" onClick={() => setShowCreate(true)}>
+              Open Setup Form
+            </button>
+          </div>
+        )}
+
+        {canConfigureExperiments && workspaceView === 'setup' && createFormVisible && (
           <div className="training-create-shell">
             <div className="training-create-shell__head">
               <strong>Create Experiment</strong>
@@ -1172,8 +1352,8 @@ export default function TrainingPanel({
               <label className="form-label">Experiment Name</label>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. llama3-sft-v1" />
             </div>
-            <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
-              <label className="form-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <div className="form-group form-group--spaced">
+              <label className="form-label form-label-inline">
                 <input
                   type="checkbox"
                   checked={useProfileDefaults}
@@ -1185,14 +1365,13 @@ export default function TrainingPanel({
                 Base model is always sent. Other fields are only sent after you edit them.
               </div>
             </div>
-            <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
+            <div className="form-group form-group--spaced">
               <label className="form-label">Recipe Starter</label>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div className="form-inline-actions">
                 <select
-                  className="input"
+                  className="input training-recipe-select"
                   value={selectedRecipeId}
                   onChange={(e) => setSelectedRecipeId(e.target.value)}
-                  style={{ minWidth: 260 }}
                 >
                   <option value="">Select recipe</option>
                   {trainingRecipes.map((recipe) => (
@@ -1213,7 +1392,7 @@ export default function TrainingPanel({
                 Recipe applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
               </div>
               {recipeResolveError && (
-                <div style={{ marginTop: 8, color: 'var(--color-warning)', fontSize: 'var(--font-size-sm)' }}>
+                <div className="training-alert training-alert--warning training-alert--tight">
                   {recipeResolveError}
                 </div>
               )}
@@ -1225,8 +1404,8 @@ export default function TrainingPanel({
                 <small>Preflight, effective config, and suggested plans</small>
               </summary>
               <div className="training-collapsible__content">
-                <div className="form-group" style={{ marginBottom: 'var(--space-md)' }}>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div className="form-group form-group--spaced">
+                  <div className="form-inline-actions">
                     <button
                       className="btn btn-secondary"
                       onClick={() => void previewEffectiveConfig()}
@@ -1251,17 +1430,17 @@ export default function TrainingPanel({
                   </div>
                 </div>
                 {effectivePreviewError && (
-                  <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                  <div className="training-alert training-alert--error">
                     {effectivePreviewError}
                   </div>
                 )}
                 {preflightPreviewError && (
-                  <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                  <div className="training-alert training-alert--error">
                     {preflightPreviewError}
                   </div>
                 )}
                 {preflightPlanError && (
-                  <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+                  <div className="training-alert training-alert--error">
                     {preflightPlanError}
                   </div>
                 )}
@@ -1386,7 +1565,7 @@ export default function TrainingPanel({
                           >
                             <div className="training-plan-card__head">
                               <strong>{suggestion.title || suggestion.profile}</strong>
-                              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <div className="training-plan-card__badges">
                                 {isPreferred && <span className="badge badge-info">Preferred</span>}
                                 {isRecommended && <span className="badge badge-success">Recommended</span>}
                                 <span className={`badge ${suggestion.preflight?.ok ? 'badge-success' : 'badge-error'}`}>
@@ -1445,14 +1624,14 @@ export default function TrainingPanel({
                 <small>Core settings plus advanced memory/PEFT controls</small>
               </summary>
               <div className="training-collapsible__content">
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-xl)' }}>
+                <div className="training-config-grid">
                   <div>
-                    <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Basic HParams</h4>
+                    <h4 className="training-config-section-title">Basic HParams</h4>
                 <div className="form-group">
                   <label className="form-label">Base Model</label>
                   <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                <div className="training-grid-3">
                   <div className="form-group">
                     <label className="form-label">Runtime</label>
                     <select
@@ -1475,7 +1654,7 @@ export default function TrainingPanel({
                       ))}
                     </select>
                     {runtimeCatalogError && (
-                      <div className="form-hint" style={{ color: 'var(--color-warning)' }}>
+                      <div className="form-hint form-hint-warning">
                         {runtimeCatalogError}
                       </div>
                     )}
@@ -1527,7 +1706,7 @@ export default function TrainingPanel({
                     <option value="phi3">Phi-3</option>
                   </select>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Epochs</label>
                     <input
@@ -1553,7 +1732,7 @@ export default function TrainingPanel({
                     />
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Learning Rate</label>
                     <input
@@ -1580,7 +1759,7 @@ export default function TrainingPanel({
                     </select>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Grad Accum Steps</label>
                     <input
@@ -1608,7 +1787,7 @@ export default function TrainingPanel({
                     />
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Save Steps</label>
                     <input
@@ -1639,8 +1818,8 @@ export default function TrainingPanel({
               </div>
 
                   <div>
-                    <h4 style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 'var(--space-md)', textTransform: 'uppercase' }}>Advanced & PEFT</h4>
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <h4 className="training-config-section-title">Advanced & PEFT</h4>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={useLora}
@@ -1649,11 +1828,11 @@ export default function TrainingPanel({
                       setTouchedConfig((prev) => ({ ...prev, use_lora: true }));
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Enable LoRA</label>
+                  <label className="form-label form-label-inline-tight">Enable LoRA</label>
                 </div>
                 {useLora && (
-                  <div style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.03)', borderRadius: 8, marginBottom: 16 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div className="training-lora-box">
+                    <div className="training-grid-2">
                       <div className="form-group">
                         <label className="form-label">Rank (r)</label>
                         <input
@@ -1692,7 +1871,7 @@ export default function TrainingPanel({
                     </div>
                   </div>
                 )}
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={gradientCheckpointing}
@@ -1701,9 +1880,9 @@ export default function TrainingPanel({
                       setTouchedConfig((prev) => ({ ...prev, gradient_checkpointing: true }));
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Use Gradient Checkpointing</label>
+                  <label className="form-label form-label-inline-tight">Use Gradient Checkpointing</label>
                 </div>
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={sequencePacking}
@@ -1712,9 +1891,9 @@ export default function TrainingPanel({
                       setTouchedConfig((prev) => ({ ...prev, sequence_packing: true }));
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Enable Sequence Packing</label>
+                  <label className="form-label form-label-inline-tight">Enable Sequence Packing</label>
                 </div>
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={flashAttention}
@@ -1723,9 +1902,9 @@ export default function TrainingPanel({
                       setTouchedConfig((prev) => ({ ...prev, flash_attention: true }));
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Enable Flash Attention</label>
+                  <label className="form-label form-label-inline-tight">Enable Flash Attention</label>
                 </div>
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={bf16}
@@ -1739,9 +1918,9 @@ export default function TrainingPanel({
                       }
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Use BF16</label>
+                  <label className="form-label form-label-inline-tight">Use BF16</label>
                 </div>
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={fp16}
@@ -1755,9 +1934,9 @@ export default function TrainingPanel({
                       }
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Use FP16</label>
+                  <label className="form-label form-label-inline-tight">Use FP16</label>
                 </div>
-                <div className="form-group" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div className="form-group training-toggle-row">
                   <input
                     type="checkbox"
                     checked={autoOomRetry}
@@ -1766,9 +1945,9 @@ export default function TrainingPanel({
                       setTouchedConfig((prev) => ({ ...prev, auto_oom_retry: true }));
                     }}
                   />
-                  <label className="form-label" style={{ margin: 0 }}>Auto OOM Retry Planner</label>
+                  <label className="form-label form-label-inline-tight">Auto OOM Retry Planner</label>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Max OOM Retries</label>
                     <input
@@ -1823,12 +2002,12 @@ export default function TrainingPanel({
         )}
 
         {trainingError && (
-          <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-error)', fontSize: 'var(--font-size-sm)' }}>
+          <div className="training-alert training-alert--error">
             {trainingError}
           </div>
         )}
         {trainingWarnings.length > 0 && (
-          <div style={{ marginBottom: 'var(--space-md)', color: 'var(--color-warning)', fontSize: 'var(--font-size-sm)' }}>
+          <div className="training-alert training-alert--warning">
             Preflight warnings: {trainingWarnings.join(' | ')}
           </div>
         )}
@@ -1877,7 +2056,7 @@ export default function TrainingPanel({
           </div>
         )}
 
-        {!hideExperimentList && (
+        {canViewRuns && (workspaceView === 'runs' || (!showWorkspaceTabs && workspaceView !== 'setup')) && (
           experiments.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon">🔬</div>
@@ -1889,9 +2068,9 @@ export default function TrainingPanel({
               </div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="training-experiment-list">
               {selectedForCompare.length > 1 && (
-                <div style={{ padding: 'var(--space-sm) 0', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: 8 }}>
+                <div className="training-compare-bar">
                   <button className="btn btn-primary" onClick={() => setShowCompare(true)}>
                     Compare Selected ({selectedForCompare.length})
                   </button>
@@ -1900,42 +2079,35 @@ export default function TrainingPanel({
               {experiments.map((exp) => (
                 <div
                   key={exp.id}
-                  style={{
-                    background: 'var(--bg-tertiary)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: 'var(--space-md)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
+                  className="training-experiment-item"
                 >
-                  <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                  <div className="training-experiment-main">
                     <input
                       type="checkbox"
                       checked={selectedForCompare.includes(exp.id)}
                       onChange={() => toggleCompareSelection(exp.id)}
-                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                      className="training-checkbox"
                     />
                     <div>
-                      <div style={{ fontWeight: 600 }}>{exp.name}</div>
-                      <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                      <div className="training-experiment-name">{exp.name}</div>
+                      <div className="training-experiment-meta">
                         {exp.base_model} • {exp.training_mode}
                       </div>
                       {exp.domain_pack_applied && (
-                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                        <div className="training-experiment-submeta">
                           Pack: {exp.domain_pack_applied}
                           {exp.domain_pack_source ? ` (${exp.domain_pack_source})` : ''}
                         </div>
                       )}
                       {exp.domain_profile_applied && (
-                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
+                        <div className="training-experiment-submeta">
                           Profile: {exp.domain_profile_applied}
                           {exp.domain_profile_source ? ` (${exp.domain_profile_source})` : ''}
                         </div>
                       )}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div className="training-experiment-actions">
                     <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
                     {exp.status === 'pending' && (
                       <button className="btn btn-primary btn-sm" onClick={() => handleStart(exp.id)}>

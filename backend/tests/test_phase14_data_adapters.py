@@ -31,13 +31,16 @@ class DataAdapterServiceTests(unittest.TestCase):
         self.assertIn("auto", catalog["adapters"])
         self.assertIn("default-canonical", catalog["adapters"])
         self.assertIn("qa-pair", catalog["adapters"])
+        self.assertIn("rag-grounded", catalog["adapters"])
         self.assertIn("seq2seq-pair", catalog["adapters"])
+        self.assertIn("structured-extraction", catalog["adapters"])
         self.assertIn("classification-label", catalog["adapters"])
         self.assertIn("chat-messages", catalog["adapters"])
+        self.assertIn("tool-call-json", catalog["adapters"])
         self.assertIn("preference-pair", catalog["adapters"])
-        self.assertEqual(catalog.get("contract_version"), "slm.data_adapter/v2")
+        self.assertEqual(catalog.get("contract_version"), "slm.data_adapter/v3")
         contract = catalog["adapters"]["qa-pair"].get("contract") or {}
-        self.assertEqual(contract.get("version"), "slm.data_adapter/v2")
+        self.assertEqual(contract.get("version"), "slm.data_adapter/v3")
         self.assertIn("qa", contract.get("task_profiles", []))
 
     def test_preview_auto_detects_qa_pair(self):
@@ -77,8 +80,38 @@ class DataAdapterServiceTests(unittest.TestCase):
         contract = result.get("adapter_contract") or {}
         self.assertIn("causal_lm", contract.get("preferred_training_tasks", []))
 
+    def test_preview_returns_v3_conformance_and_inferred_profiles(self):
+        rows = [
+            {
+                "context": "Negligence requires duty, breach, causation, and damages.",
+                "question": "What are the elements of negligence?",
+                "answer": "Duty, breach, causation, and damages.",
+            }
+        ]
+        result = preview_data_adapter(rows, adapter_id="rag-grounded", task_profile="rag_qa")
+        self.assertEqual(result["resolved_adapter_id"], "rag-grounded")
+        conformance = result.get("conformance_report") or {}
+        self.assertTrue(bool(conformance.get("contract_pass")))
+        self.assertGreaterEqual(float(conformance.get("mapping_success_rate") or 0.0), 1.0)
+        inferred = result.get("inferred_task_profiles") or []
+        self.assertIn("rag_qa", inferred)
+
+    def test_preview_surface_auto_fix_suggestions_on_low_mapping(self):
+        rows = [
+            {"prompt_text": "Define estoppel.", "gold_response": "A legal bar against asserting something."},
+            {"prompt_text": "What is mens rea?", "gold_response": "A guilty mental state."},
+        ]
+        result = preview_data_adapter(rows, adapter_id="qa-pair", task_profile="qa")
+        self.assertEqual(result["mapped_records"], 0)
+        suggestions = result.get("auto_fix_suggestions") or []
+        self.assertGreaterEqual(len(suggestions), 1)
+        suggestion_kinds = {str(item.get("kind")) for item in suggestions if isinstance(item, dict)}
+        self.assertIn("field_mapping", suggestion_kinds)
+
     def test_contract_helpers_handle_profile_and_training_task_compatibility(self):
         self.assertEqual(normalize_task_profile("Causal_LM"), "instruction_sft")
+        self.assertEqual(normalize_task_profile("rag"), "rag_qa")
+        self.assertEqual(normalize_task_profile("function_calling"), "tool_calling")
         contract = resolve_data_adapter_contract("preference-pair")
         self.assertIn("preference", contract.get("task_profiles", []))
         self.assertEqual(

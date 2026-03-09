@@ -19,7 +19,7 @@ AdapterSchemaHintFn = Callable[[], dict[str, Any]]
 DEFAULT_ADAPTER_ID = "default-canonical"
 AUTO_ADAPTER_ID = "auto"
 
-ADAPTER_CONTRACT_VERSION = "slm.data_adapter/v2"
+ADAPTER_CONTRACT_VERSION = "slm.data_adapter/v3"
 AUTO_TASK_PROFILE = "auto"
 DEFAULT_TASK_PROFILE = "instruction_sft"
 
@@ -27,6 +27,10 @@ SUPPORTED_TASK_PROFILES: tuple[str, ...] = (
     "instruction_sft",
     "chat_sft",
     "qa",
+    "rag_qa",
+    "tool_calling",
+    "structured_extraction",
+    "summarization",
     "seq2seq",
     "classification",
     "preference",
@@ -40,6 +44,22 @@ _TASK_PROFILE_ALIASES: dict[str, str] = {
     "instruction": "instruction_sft",
     "chat": "chat_sft",
     "chat_messages": "chat_sft",
+    "rag": "rag_qa",
+    "grounded_qa": "rag_qa",
+    "retrieval_qa": "rag_qa",
+    "tool_call": "tool_calling",
+    "tool_calls": "tool_calling",
+    "tool_calling": "tool_calling",
+    "function_call": "tool_calling",
+    "function_calls": "tool_calling",
+    "function_calling": "tool_calling",
+    "structured_output": "structured_extraction",
+    "json_extraction": "structured_extraction",
+    "information_extraction": "structured_extraction",
+    "extraction": "structured_extraction",
+    "summarize": "summarization",
+    "summary": "summarization",
+    "summarization": "summarization",
     "preference_pair": "preference",
     "ranking": "preference",
     "lm": "language_modeling",
@@ -53,6 +73,10 @@ _TRAINING_TASK_ALIASES: dict[str, str] = {
     "causallm": "causal_lm",
     "instruction_sft": "causal_lm",
     "chat_sft": "causal_lm",
+    "rag_qa": "causal_lm",
+    "tool_calling": "causal_lm",
+    "structured_extraction": "seq2seq",
+    "summarization": "seq2seq",
     "sft": "causal_lm",
     "qa": "causal_lm",
     "language_modeling": "causal_lm",
@@ -67,6 +91,10 @@ _TASK_PROFILE_TRAINING_TASKS: dict[str, tuple[str, ...]] = {
     "instruction_sft": ("causal_lm",),
     "chat_sft": ("causal_lm",),
     "qa": ("causal_lm", "seq2seq"),
+    "rag_qa": ("causal_lm", "seq2seq"),
+    "tool_calling": ("causal_lm",),
+    "structured_extraction": ("seq2seq", "causal_lm", "classification"),
+    "summarization": ("seq2seq", "causal_lm"),
     "seq2seq": ("seq2seq",),
     "classification": ("classification",),
     "preference": ("dpo", "orpo"),
@@ -128,6 +156,59 @@ def _pick_text(record: dict[str, Any], aliases: list[str]) -> str:
             if token:
                 return token
     return ""
+
+
+def _is_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
+
+
+def _json_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    try:
+        import json
+
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return _coerce_text(value)
+
+
+def _pick_payload(record: dict[str, Any], aliases: list[str]) -> Any:
+    for key in aliases:
+        if key in record:
+            value = record.get(key)
+            if _is_present(value):
+                return value
+    return None
+
+
+def _payload_as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for candidate in ("text", "content", "value", "passage", "document", "chunk"):
+            token = _coerce_text(value.get(candidate))
+            if token:
+                return token
+        return _json_text(value)
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            token = _payload_as_text(item)
+            if token:
+                parts.append(token)
+        return "\n".join(parts).strip()
+    return _coerce_text(value)
 
 
 def _safe_float(value: Any) -> float:
@@ -708,6 +789,280 @@ def _validate_preference_pair(mapped_records: list[dict[str, Any]], _config: dic
     }
 
 
+def _schema_rag_grounded() -> dict[str, Any]:
+    return {
+        "input_candidates": {
+            "question": ["question", "prompt", "query", "instruction"],
+            "context": ["context", "contexts", "passage", "passages", "document", "documents", "evidence"],
+            "answer": ["answer", "response", "output", "target", "completion"],
+        },
+        "output_shape": {
+            "text": "required",
+            "question": "required",
+            "context": "required",
+            "answer": "required",
+            "source_text": "required",
+            "target_text": "required",
+        },
+    }
+
+
+def _detect_rag_grounded(record: dict[str, Any], config: dict[str, Any]) -> bool | float:
+    mapped = _map_rag_grounded(record, config)
+    return 1.0 if mapped else 0.0
+
+
+def _map_rag_grounded(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    question_fields = config.get("question_fields")
+    context_fields = config.get("context_fields")
+    answer_fields = config.get("answer_fields")
+
+    question_aliases = list(question_fields) if isinstance(question_fields, list) and question_fields else [
+        "question",
+        "prompt",
+        "query",
+        "instruction",
+    ]
+    context_aliases = list(context_fields) if isinstance(context_fields, list) and context_fields else [
+        "context",
+        "contexts",
+        "passage",
+        "passages",
+        "document",
+        "documents",
+        "evidence",
+    ]
+    answer_aliases = list(answer_fields) if isinstance(answer_fields, list) and answer_fields else [
+        "answer",
+        "response",
+        "output",
+        "target",
+        "completion",
+    ]
+
+    question = _pick_text(record, question_aliases)
+    answer = _pick_text(record, answer_aliases)
+    context_payload = _pick_payload(record, context_aliases)
+    context = _payload_as_text(context_payload)
+
+    if not question or not answer or not context:
+        canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
+        question = question or _coerce_text((canonical or {}).get("question"))
+        answer = answer or _coerce_text((canonical or {}).get("answer"))
+        context = context or _coerce_text(record.get("context"))
+    if not question or not answer or not context:
+        return None
+
+    return {
+        "text": f"Context:\n{context}\n\nQuestion: {question}\nAnswer: {answer}",
+        "question": question,
+        "context": context,
+        "answer": answer,
+        "source_text": f"{context}\n\n{question}",
+        "target_text": answer,
+    }
+
+
+def _validate_rag_grounded(mapped_records: list[dict[str, Any]], _config: dict[str, Any]) -> dict[str, Any]:
+    total = len(mapped_records)
+    if total == 0:
+        return {"status": "warning", "mapped_records": 0, "grounded_ratio": 0.0}
+    grounded = 0
+    for row in mapped_records:
+        if _coerce_text(row.get("question")) and _coerce_text(row.get("answer")) and _coerce_text(row.get("context")):
+            grounded += 1
+    ratio = grounded / total
+    return {
+        "status": "ok" if ratio >= 0.95 else "warning",
+        "mapped_records": total,
+        "grounded_ratio": round(ratio, 6),
+    }
+
+
+def _schema_tool_call_json() -> dict[str, Any]:
+    return {
+        "input_candidates": {
+            "prompt": ["prompt", "instruction", "query", "question", "input"],
+            "tool_name": ["tool_name", "function_name", "api_name", "tool"],
+            "tool_args": ["tool_args", "arguments", "function_args", "params", "tool_input"],
+            "tool_result": ["tool_result", "result", "observation", "answer", "response", "output"],
+        },
+        "output_shape": {
+            "text": "required",
+            "question": "required",
+            "answer": "required",
+            "tool_name": "required",
+            "tool_args_json": "optional",
+            "tool_result": "optional",
+            "source_text": "required",
+            "target_text": "required",
+        },
+    }
+
+
+def _detect_tool_call_json(record: dict[str, Any], config: dict[str, Any]) -> bool | float:
+    mapped = _map_tool_call_json(record, config)
+    return 1.0 if mapped else 0.0
+
+
+def _map_tool_call_json(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    prompt_fields = config.get("prompt_fields")
+    tool_name_fields = config.get("tool_name_fields")
+    tool_args_fields = config.get("tool_args_fields")
+    tool_result_fields = config.get("tool_result_fields")
+
+    prompt_aliases = list(prompt_fields) if isinstance(prompt_fields, list) and prompt_fields else [
+        "prompt",
+        "instruction",
+        "query",
+        "question",
+        "input",
+    ]
+    tool_name_aliases = list(tool_name_fields) if isinstance(tool_name_fields, list) and tool_name_fields else [
+        "tool_name",
+        "function_name",
+        "api_name",
+        "tool",
+    ]
+    tool_args_aliases = list(tool_args_fields) if isinstance(tool_args_fields, list) and tool_args_fields else [
+        "tool_args",
+        "arguments",
+        "function_args",
+        "params",
+        "tool_input",
+    ]
+    tool_result_aliases = list(tool_result_fields) if isinstance(tool_result_fields, list) and tool_result_fields else [
+        "tool_result",
+        "result",
+        "observation",
+        "answer",
+        "response",
+        "output",
+    ]
+
+    prompt = _pick_text(record, prompt_aliases)
+    tool_name = _pick_text(record, tool_name_aliases)
+    tool_args_payload = _pick_payload(record, tool_args_aliases)
+    tool_result_payload = _pick_payload(record, tool_result_aliases)
+    tool_result = _payload_as_text(tool_result_payload)
+    tool_args_json = _json_text(tool_args_payload)
+
+    if not prompt or not tool_name:
+        canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
+        prompt = prompt or _coerce_text((canonical or {}).get("question")) or _coerce_text((canonical or {}).get("text"))
+        tool_result = tool_result or _coerce_text((canonical or {}).get("answer"))
+    if not prompt or not tool_name:
+        return None
+
+    answer = tool_result or f"Tool `{tool_name}` executed."
+    rendered = f"User: {prompt}\nTool Call: {tool_name}({tool_args_json or '{}'})\nAssistant: {answer}"
+    return {
+        "text": rendered,
+        "question": prompt,
+        "answer": answer,
+        "tool_name": tool_name,
+        "tool_args_json": tool_args_json,
+        "tool_result": tool_result,
+        "source_text": prompt,
+        "target_text": answer,
+    }
+
+
+def _validate_tool_call_json(mapped_records: list[dict[str, Any]], _config: dict[str, Any]) -> dict[str, Any]:
+    total = len(mapped_records)
+    if total == 0:
+        return {"status": "warning", "mapped_records": 0, "tool_call_ratio": 0.0}
+    complete = 0
+    for row in mapped_records:
+        if _coerce_text(row.get("question")) and _coerce_text(row.get("tool_name")) and _coerce_text(row.get("answer")):
+            complete += 1
+    ratio = complete / total
+    return {
+        "status": "ok" if ratio >= 0.9 else "warning",
+        "mapped_records": total,
+        "tool_call_ratio": round(ratio, 6),
+    }
+
+
+def _schema_structured_extraction() -> dict[str, Any]:
+    return {
+        "input_candidates": {
+            "text": ["text", "content", "input", "question", "prompt", "document", "passage"],
+            "structured_output": ["structured_output", "json", "labels", "entities", "extracted", "target", "answer"],
+        },
+        "output_shape": {
+            "text": "required",
+            "source_text": "required",
+            "target_text": "required",
+            "answer": "optional",
+            "structured_output": "optional",
+        },
+    }
+
+
+def _detect_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -> bool | float:
+    mapped = _map_structured_extraction(record, config)
+    return 1.0 if mapped else 0.0
+
+
+def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    source_fields = config.get("source_fields")
+    output_fields = config.get("output_fields")
+    source_aliases = list(source_fields) if isinstance(source_fields, list) and source_fields else [
+        "text",
+        "content",
+        "input",
+        "question",
+        "prompt",
+        "document",
+        "passage",
+    ]
+    output_aliases = list(output_fields) if isinstance(output_fields, list) and output_fields else [
+        "structured_output",
+        "json",
+        "labels",
+        "entities",
+        "extracted",
+        "target",
+        "answer",
+        "output",
+    ]
+
+    source = _pick_text(record, source_aliases)
+    target_payload = _pick_payload(record, output_aliases)
+    target = _json_text(target_payload)
+    if not source:
+        canonical = canonicalize_record(record, field_mapping=config.get("field_mapping"))
+        source = source or _coerce_text((canonical or {}).get("text")) or _coerce_text((canonical or {}).get("question"))
+        target = target or _coerce_text((canonical or {}).get("answer"))
+    if not source or not target:
+        return None
+
+    return {
+        "text": f"Input: {source}\nStructured Output: {target}",
+        "source_text": source,
+        "target_text": target,
+        "answer": target,
+        "structured_output": target_payload if target_payload is not None else target,
+    }
+
+
+def _validate_structured_extraction(mapped_records: list[dict[str, Any]], _config: dict[str, Any]) -> dict[str, Any]:
+    total = len(mapped_records)
+    if total == 0:
+        return {"status": "warning", "mapped_records": 0, "structured_ratio": 0.0}
+    complete = 0
+    for row in mapped_records:
+        if _coerce_text(row.get("source_text")) and _coerce_text(row.get("target_text")):
+            complete += 1
+    ratio = complete / total
+    return {
+        "status": "ok" if ratio >= 0.95 else "warning",
+        "mapped_records": total,
+        "structured_ratio": round(ratio, 6),
+    }
+
+
 BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
     DEFAULT_ADAPTER_ID: {
         "description": "General canonical adapter (text/question/answer inference with best-effort fallback).",
@@ -737,6 +1092,20 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
             "notes": ["strict pair extraction"],
         },
     },
+    "rag-grounded": {
+        "description": "Grounded QA adapter requiring question + context + answer fields.",
+        "detect": _detect_rag_grounded,
+        "map_row": _map_rag_grounded,
+        "validate": _validate_rag_grounded,
+        "schema_hint": _schema_rag_grounded,
+        "task_profiles": ["rag_qa", "qa", "instruction_sft", "seq2seq"],
+        "preferred_training_tasks": ["causal_lm", "seq2seq"],
+        "output_contract": {
+            "required_fields": ["text", "question", "context", "answer", "source_text", "target_text"],
+            "optional_fields": [],
+            "notes": ["keeps retrieval context alongside prompt/answer"],
+        },
+    },
     "seq2seq-pair": {
         "description": "Seq2Seq adapter mapping source/target style rows.",
         "detect": _detect_seq2seq,
@@ -749,6 +1118,20 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
             "required_fields": ["text", "source_text", "target_text"],
             "optional_fields": ["question", "answer"],
             "notes": [],
+        },
+    },
+    "structured-extraction": {
+        "description": "Structured extraction adapter for text-to-JSON/labels style records.",
+        "detect": _detect_structured_extraction,
+        "map_row": _map_structured_extraction,
+        "validate": _validate_structured_extraction,
+        "schema_hint": _schema_structured_extraction,
+        "task_profiles": ["structured_extraction", "seq2seq", "classification", "instruction_sft"],
+        "preferred_training_tasks": ["seq2seq", "causal_lm", "classification"],
+        "output_contract": {
+            "required_fields": ["text", "source_text", "target_text"],
+            "optional_fields": ["answer", "structured_output"],
+            "notes": ["normalizes rich labels into stable target_text"],
         },
     },
     "classification-label": {
@@ -777,6 +1160,20 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
             "required_fields": ["text", "messages"],
             "optional_fields": ["question", "answer", "source_text", "target_text"],
             "notes": ["requires both user and assistant turns"],
+        },
+    },
+    "tool-call-json": {
+        "description": "Tool/function calling adapter for prompt + tool invocation + result records.",
+        "detect": _detect_tool_call_json,
+        "map_row": _map_tool_call_json,
+        "validate": _validate_tool_call_json,
+        "schema_hint": _schema_tool_call_json,
+        "task_profiles": ["tool_calling", "chat_sft", "instruction_sft"],
+        "preferred_training_tasks": ["causal_lm"],
+        "output_contract": {
+            "required_fields": ["text", "question", "answer", "tool_name", "source_text", "target_text"],
+            "optional_fields": ["tool_args_json", "tool_result"],
+            "notes": ["renders tool-call traces into supervised text format"],
         },
     },
     "preference-pair": {
@@ -1081,7 +1478,21 @@ def list_data_adapter_catalog() -> dict[str, Any]:
                 "preferred_training_tasks": ["causal_lm", "seq2seq", "classification", "dpo", "orpo"],
                 "output_contract": {
                     "required_fields": ["text"],
-                    "optional_fields": ["question", "answer", "source_text", "target_text", "messages"],
+                    "optional_fields": [
+                        "question",
+                        "answer",
+                        "source_text",
+                        "target_text",
+                        "messages",
+                        "context",
+                        "label",
+                        "prompt",
+                        "chosen",
+                        "rejected",
+                        "tool_name",
+                        "tool_args_json",
+                        "structured_output",
+                    ],
                     "notes": ["auto picks a concrete adapter based on sampled rows"],
                 },
             },
@@ -1245,6 +1656,260 @@ def validate_mapped_records(
     return {"status": "ok"}
 
 
+def _raw_field_frequency(rows: list[dict[str, Any]], *, limit: int = 30) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for key in row.keys():
+            field = str(key).strip()
+            if not field:
+                continue
+            counts[field] = counts.get(field, 0) + 1
+    ordered = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    return {field: count for field, count in ordered[:limit]}
+
+
+def _coverage_by_field(rows: list[dict[str, Any]], fields: list[str]) -> dict[str, dict[str, Any]]:
+    total = len(rows)
+    coverage: dict[str, dict[str, Any]] = {}
+    for field in fields:
+        present = 0
+        for row in rows:
+            if _is_present(row.get(field)):
+                present += 1
+        missing = max(0, total - present)
+        ratio = (present / total) if total > 0 else 0.0
+        coverage[field] = {
+            "present": present,
+            "missing": missing,
+            "ratio": round(ratio, 6),
+        }
+    return coverage
+
+
+def _build_conformance_report(
+    *,
+    sampled_rows: list[dict[str, Any]],
+    mapped_rows: list[dict[str, Any]],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    output_contract = contract.get("output_contract")
+    if not isinstance(output_contract, dict):
+        output_contract = {}
+    required_fields = [str(item).strip() for item in list(output_contract.get("required_fields") or []) if str(item).strip()]
+    optional_fields = [str(item).strip() for item in list(output_contract.get("optional_fields") or []) if str(item).strip()]
+
+    sampled_total = len(sampled_rows)
+    mapped_total = len(mapped_rows)
+    success_rate = (mapped_total / sampled_total) if sampled_total > 0 else 0.0
+
+    required_coverage = _coverage_by_field(mapped_rows, required_fields)
+    optional_coverage = _coverage_by_field(mapped_rows, optional_fields)
+    required_below_full = [
+        field for field, stats in required_coverage.items()
+        if float(stats.get("ratio", 0.0)) < 1.0
+    ]
+
+    failing_examples: list[dict[str, Any]] = []
+    for idx, row in enumerate(mapped_rows):
+        missing_required = [field for field in required_fields if not _is_present(row.get(field))]
+        if not missing_required:
+            continue
+        if len(failing_examples) >= 10:
+            break
+        failing_examples.append(
+            {
+                "mapped_index": idx,
+                "missing_required_fields": missing_required,
+            }
+        )
+
+    return {
+        "sampled_records": sampled_total,
+        "mapped_records": mapped_total,
+        "mapping_success_rate": round(success_rate, 6),
+        "required_fields": required_fields,
+        "optional_fields": optional_fields,
+        "required_field_coverage": required_coverage,
+        "optional_field_coverage": optional_coverage,
+        "required_fields_below_100": required_below_full,
+        "contract_pass": bool(mapped_total > 0 and not required_below_full),
+        "failing_examples": failing_examples,
+    }
+
+
+def _candidate_field_mapping(
+    *,
+    canonical_field: str,
+    schema_hint: dict[str, Any],
+    raw_field_frequency: dict[str, int],
+) -> str | None:
+    raw_fields = set(raw_field_frequency.keys())
+    input_candidates = schema_hint.get("input_candidates")
+    if not isinstance(input_candidates, dict):
+        return None
+    aliases = input_candidates.get(canonical_field)
+    if not isinstance(aliases, list):
+        return None
+    preferred: list[tuple[str, int]] = []
+    for alias in aliases:
+        candidate = str(alias).strip()
+        if not candidate or candidate == canonical_field:
+            continue
+        if candidate in raw_fields:
+            preferred.append((candidate, int(raw_field_frequency.get(candidate) or 0)))
+    if not preferred:
+        return None
+    preferred.sort(key=lambda item: item[1], reverse=True)
+    return preferred[0][0]
+
+
+def _build_auto_fix_suggestions(
+    *,
+    conformance_report: dict[str, Any],
+    validation_report: dict[str, Any],
+    contract: dict[str, Any],
+    detection_scores: dict[str, float],
+    task_profile_compatible: bool,
+    requested_task_profile: str | None,
+    resolved_task_profile: str | None,
+    resolved_adapter_id: str,
+    raw_field_frequency: dict[str, int],
+) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    mapping_success_rate = float(conformance_report.get("mapping_success_rate") or 0.0)
+    if mapping_success_rate < 0.7:
+        suggestions.append(
+            {
+                "kind": "field_mapping",
+                "severity": "warning",
+                "message": (
+                    f"Only {round(mapping_success_rate * 100, 1)}% of sampled rows mapped with "
+                    f"'{resolved_adapter_id}'. Add field_mapping overrides or choose a better adapter."
+                ),
+                "top_raw_fields": list(raw_field_frequency.items())[:8],
+            }
+        )
+
+    schema_hint = contract.get("schema_hint")
+    if not isinstance(schema_hint, dict):
+        schema_hint = {}
+    for field in list(conformance_report.get("required_fields_below_100") or []):
+        canonical_field = str(field).strip()
+        if not canonical_field:
+            continue
+        suggestion = _candidate_field_mapping(
+            canonical_field=canonical_field,
+            schema_hint=schema_hint,
+            raw_field_frequency=raw_field_frequency,
+        )
+        if not suggestion:
+            continue
+        suggestions.append(
+            {
+                "kind": "field_mapping",
+                "severity": "warning",
+                "message": f"Map canonical field '{canonical_field}' to raw field '{suggestion}'.",
+                "suggested_field_mapping": {
+                    canonical_field: suggestion,
+                },
+            }
+        )
+
+    if not task_profile_compatible and requested_task_profile:
+        suggestions.append(
+            {
+                "kind": "task_profile",
+                "severity": "warning",
+                "message": (
+                    f"Requested task_profile '{requested_task_profile}' is not compatible with "
+                    f"adapter '{resolved_adapter_id}'. Use '{resolved_task_profile}' or change adapter."
+                ),
+            }
+        )
+
+    if str(validation_report.get("status") or "").strip().lower() == "warning":
+        suggestions.append(
+            {
+                "kind": "validation",
+                "severity": "warning",
+                "message": "Adapter validation returned warning status. Inspect validation_report for weak fields.",
+            }
+        )
+
+    if not suggestions:
+        sorted_scores = sorted(detection_scores.items(), key=lambda item: item[1], reverse=True)
+        top = ", ".join(f"{adapter}:{score:.2f}" for adapter, score in sorted_scores[:3])
+        suggestions.append(
+            {
+                "kind": "info",
+                "severity": "info",
+                "message": f"Adapter mapping is stable on sampled data. Top detection scores: {top}.",
+            }
+        )
+    return suggestions[:12]
+
+
+def _infer_task_profiles_from_rows(
+    mapped_rows: list[dict[str, Any]],
+    *,
+    resolved_task_profile: str | None,
+) -> list[str]:
+    has_text = False
+    has_qa = False
+    has_context = False
+    has_messages = False
+    has_label = False
+    has_preference = False
+    has_tool_call = False
+    has_structured = False
+    has_pair = False
+
+    for row in mapped_rows[:500]:
+        if _is_present(row.get("text")):
+            has_text = True
+        if _is_present(row.get("question")) and _is_present(row.get("answer")):
+            has_qa = True
+        if _is_present(row.get("context")):
+            has_context = True
+        if isinstance(row.get("messages"), list) and len(list(row.get("messages") or [])) > 0:
+            has_messages = True
+        if _is_present(row.get("label")):
+            has_label = True
+        if _is_present(row.get("chosen")) and _is_present(row.get("rejected")):
+            has_preference = True
+        if _is_present(row.get("tool_name")):
+            has_tool_call = True
+        if _is_present(row.get("structured_output")):
+            has_structured = True
+        if _is_present(row.get("source_text")) and _is_present(row.get("target_text")):
+            has_pair = True
+
+    inferred: list[str] = []
+    if resolved_task_profile:
+        inferred.append(str(resolved_task_profile))
+    if has_messages and "chat_sft" not in inferred:
+        inferred.append("chat_sft")
+    if has_preference and "preference" not in inferred:
+        inferred.append("preference")
+    if has_tool_call and "tool_calling" not in inferred:
+        inferred.append("tool_calling")
+    if has_context and has_qa and "rag_qa" not in inferred:
+        inferred.append("rag_qa")
+    if has_structured and "structured_extraction" not in inferred:
+        inferred.append("structured_extraction")
+    if has_label and "classification" not in inferred:
+        inferred.append("classification")
+    if has_pair and "seq2seq" not in inferred:
+        inferred.append("seq2seq")
+    if has_qa and "qa" not in inferred:
+        inferred.append("qa")
+    if has_text and "instruction_sft" not in inferred:
+        inferred.append("instruction_sft")
+    if has_text and "language_modeling" not in inferred:
+        inferred.append("language_modeling")
+    return inferred[:8]
+
+
 def preview_data_adapter(
     raw_records: list[dict[str, Any]],
     *,
@@ -1311,6 +1976,12 @@ def preview_data_adapter(
         field_mapping=field_mapping,
         task_profile=resolved_task_profile,
     )
+    raw_field_frequency = _raw_field_frequency(rows)
+    conformance_report = _build_conformance_report(
+        sampled_rows=rows,
+        mapped_rows=mapped_rows,
+        contract=contract,
+    )
 
     profile_options = [str(item) for item in list(contract.get("task_profiles") or []) if str(item).strip()]
     task_profile_compatible = (
@@ -1325,6 +1996,21 @@ def preview_data_adapter(
                 f"'{resolved_adapter_id}'. Declared profiles: {', '.join(profile_options) or 'none'}."
             )
         )
+    auto_fix_suggestions = _build_auto_fix_suggestions(
+        conformance_report=conformance_report,
+        validation_report=validation,
+        contract=contract,
+        detection_scores=detection_scores,
+        task_profile_compatible=task_profile_compatible,
+        requested_task_profile=None if requested_task_profile == AUTO_TASK_PROFILE else requested_task_profile,
+        resolved_task_profile=resolved_task_profile,
+        resolved_adapter_id=resolved_adapter_id,
+        raw_field_frequency=raw_field_frequency,
+    )
+    inferred_task_profiles = _infer_task_profiles_from_rows(
+        mapped_rows,
+        resolved_task_profile=resolved_task_profile,
+    )
 
     return {
         "requested_adapter_id": _normalize_adapter_id(adapter_id) or DEFAULT_ADAPTER_ID,
@@ -1347,5 +2033,9 @@ def preview_data_adapter(
         "error_count": len(errors),
         "errors": errors[:20],
         "validation_report": validation,
+        "conformance_report": conformance_report,
+        "auto_fix_suggestions": auto_fix_suggestions,
+        "inferred_task_profiles": inferred_task_profiles,
+        "raw_field_frequency": raw_field_frequency,
         "preview_rows": preview_rows,
     }

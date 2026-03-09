@@ -113,6 +113,27 @@ interface AdapterPreviewResult {
     error_count: number;
     errors: Array<{ index: number; error: string }>;
     validation_report: Record<string, unknown>;
+    conformance_report?: {
+        sampled_records?: number;
+        mapped_records?: number;
+        mapping_success_rate?: number;
+        required_fields?: string[];
+        optional_fields?: string[];
+        required_field_coverage?: Record<string, { present?: number; missing?: number; ratio?: number }>;
+        optional_field_coverage?: Record<string, { present?: number; missing?: number; ratio?: number }>;
+        required_fields_below_100?: string[];
+        contract_pass?: boolean;
+        failing_examples?: Array<{ mapped_index?: number; missing_required_fields?: string[] }>;
+    };
+    auto_fix_suggestions?: Array<{
+        kind?: string;
+        severity?: string;
+        message?: string;
+        suggested_field_mapping?: Record<string, string>;
+        top_raw_fields?: Array<[string, number]>;
+    }>;
+    inferred_task_profiles?: string[];
+    raw_field_frequency?: Record<string, number>;
     preview_rows: Array<{
         index: number;
         raw: Record<string, unknown>;
@@ -151,6 +172,10 @@ const DEFAULT_TASK_PROFILE_OPTIONS = [
     'instruction_sft',
     'chat_sft',
     'qa',
+    'rag_qa',
+    'tool_calling',
+    'structured_extraction',
+    'summarization',
     'seq2seq',
     'classification',
     'preference',
@@ -191,6 +216,14 @@ function parseJsonStringMapInput(raw: string): { value: Record<string, string>; 
         out[left] = right;
     }
     return { value: out, error: '' };
+}
+
+function asPercent(value: unknown): string {
+    const numberValue = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numberValue)) {
+        return '0.0%';
+    }
+    return `${(numberValue * 100).toFixed(1)}%`;
 }
 
 export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepPanelProps) {
@@ -907,6 +940,72 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 {adapterPreviewResult.compatibility_warnings.join(' | ')}
                             </div>
                         )}
+                        {adapterPreviewResult.conformance_report && (
+                            <div className="dp-resolved-panel">
+                                <div className="dp-resolved-title">Contract Conformance</div>
+                                <div className="dp-resolved-kv">
+                                    <span>Contract Pass</span>
+                                    <strong style={{ color: adapterPreviewResult.conformance_report.contract_pass ? '#34d399' : '#f87171' }}>
+                                        {adapterPreviewResult.conformance_report.contract_pass ? 'yes' : 'no'}
+                                    </strong>
+                                </div>
+                                <div className="dp-resolved-kv">
+                                    <span>Mapping Success</span>
+                                    <strong>{asPercent(adapterPreviewResult.conformance_report.mapping_success_rate)}</strong>
+                                </div>
+                                <div className="dp-resolved-kv">
+                                    <span>Inferred Profiles</span>
+                                    <strong>
+                                        {(adapterPreviewResult.inferred_task_profiles || []).length > 0
+                                            ? adapterPreviewResult.inferred_task_profiles?.join(', ')
+                                            : 'n/a'}
+                                    </strong>
+                                </div>
+                                {Object.entries(adapterPreviewResult.conformance_report.required_field_coverage || {}).length > 0 && (
+                                    <div className="dp-resolved-grid">
+                                        {Object.entries(adapterPreviewResult.conformance_report.required_field_coverage || {}).map(([field, stats]) => (
+                                            <div className="dp-stat" key={`required-${field}`}>
+                                                <div className="label">{field}</div>
+                                                <div className="value" style={{ fontSize: '1.05rem' }}>{asPercent(stats?.ratio)}</div>
+                                                <div style={{ fontSize: '.72rem', color: 'rgba(255,255,255,.58)' }}>
+                                                    {stats?.present || 0} present / {stats?.missing || 0} missing
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {Array.isArray(adapterPreviewResult.conformance_report.required_fields_below_100) &&
+                                    adapterPreviewResult.conformance_report.required_fields_below_100.length > 0 && (
+                                    <div style={{ fontSize: '.78rem', color: '#fca5a5' }}>
+                                        Missing required coverage: {adapterPreviewResult.conformance_report.required_fields_below_100.join(', ')}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        {Array.isArray(adapterPreviewResult.auto_fix_suggestions) && adapterPreviewResult.auto_fix_suggestions.length > 0 && (
+                            <div className="dp-resolved-panel">
+                                <div className="dp-resolved-title">Auto-Fix Suggestions</div>
+                                <div style={{ display: 'grid', gap: '.55rem' }}>
+                                    {adapterPreviewResult.auto_fix_suggestions.map((suggestion, index) => (
+                                        <div key={`suggestion-${index}`} style={{
+                                            border: '1px solid rgba(255,255,255,.08)',
+                                            borderRadius: 8,
+                                            padding: '.5rem .65rem',
+                                            background: 'rgba(13,18,31,.45)',
+                                        }}>
+                                            <div style={{ fontSize: '.78rem', color: 'rgba(255,255,255,.9)' }}>
+                                                {suggestion.message || 'No message'}
+                                            </div>
+                                            {suggestion.suggested_field_mapping && Object.keys(suggestion.suggested_field_mapping).length > 0 && (
+                                                <pre className="dp-resolved-json" style={{ marginTop: '.45rem' }}>
+                                                    {JSON.stringify({ field_mapping: suggestion.suggested_field_mapping }, null, 2)}
+                                                </pre>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                         <div className="dp-resolved-panel">
                             <div className="dp-resolved-title">Adapter Diagnostics</div>
                             <div className="dp-resolved-grid">
@@ -923,7 +1022,9 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                     </pre>
                                 </div>
                                 <div>
-                                    <div className="dp-resolved-subtitle">Adapter Contract (v2)</div>
+                                    <div className="dp-resolved-subtitle">
+                                        Adapter Contract ({adapterPreviewResult.adapter_contract?.version || adapterCatalog?.contract_version || 'n/a'})
+                                    </div>
                                     <pre className="dp-resolved-json">
                                         {JSON.stringify(adapterPreviewResult.adapter_contract || {}, null, 2)}
                                     </pre>

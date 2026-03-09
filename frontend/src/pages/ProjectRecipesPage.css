@@ -284,6 +284,14 @@
     margin-top: var(--space-md);
 }
 
+.pipeline-recipes-run-controls {
+    margin-top: var(--space-md);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-sm);
+    align-items: center;
+}
+
 .pipeline-recipes-status,
 .pipeline-recipes-warning,
 .pipeline-recipes-error {
@@ -353,7 +361,8 @@
 
     .pipeline-recipes-run-options,
     .pipeline-recipes-runs-grid,
-    .pipeline-recipes-run-detail-grid {
+    .pipeline-recipes-run-detail-grid,
+    .pipeline-recipes-run-controls {
         grid-template-columns: 1fr;
     }
 }

@@ -75,6 +75,7 @@ export default function ProjectRecipesPage() {
     const [runAsync, setRunAsync] = useState(true);
     const [runBackend, setRunBackend] = useState('celery');
     const [runMaxRetries, setRunMaxRetries] = useState(0);
+    const [resumeNodeId, setResumeNodeId] = useState('');
     const [resolveResult, setResolveResult] = useState<PipelineRecipeResolveResponse | null>(null);
     const [applyResult, setApplyResult] = useState<PipelineRecipeApplyResponse | null>(null);
     const [recipeRuns, setRecipeRuns] = useState<PipelineRecipeRunRecord[]>([]);
@@ -87,6 +88,7 @@ export default function ProjectRecipesPage() {
     const [isResolving, setIsResolving] = useState(false);
     const [isApplying, setIsApplying] = useState(false);
     const [isRunningRecipe, setIsRunningRecipe] = useState(false);
+    const [isControllingRun, setIsControllingRun] = useState(false);
 
     const loadCatalog = useCallback(async () => {
         setIsLoadingCatalog(true);
@@ -210,6 +212,7 @@ export default function ProjectRecipesPage() {
     const selectedRunStatus = String(
         selectedRecipeRun?.workflow_status || selectedRecipeRun?.status || '',
     ).toLowerCase();
+    const canCancelSelectedRun = selectedRunStatus === 'queued' || selectedRunStatus === 'pending' || selectedRunStatus === 'running';
 
     const handleResolve = async () => {
         if (!selectedRecipeId) {
@@ -337,6 +340,84 @@ export default function ProjectRecipesPage() {
             setErrorMessage(`Run failed: ${extractErrorMessage(error)}`);
         } finally {
             setIsRunningRecipe(false);
+        }
+    };
+
+    const handleCancelRun = async () => {
+        if (!selectedRecipeRunId) {
+            return;
+        }
+        setIsControllingRun(true);
+        setErrorMessage('');
+        setStatusMessage('');
+        try {
+            await api.post(`/projects/${projectId}/pipeline/recipes/runs/${selectedRecipeRunId}/cancel`);
+            setStatusMessage(`Cancel requested for ${selectedRecipeRunId}.`);
+            await Promise.all([loadRuns(), loadState()]);
+            await loadRunDetail(selectedRecipeRunId);
+        } catch (error) {
+            setErrorMessage(`Cancel failed: ${extractErrorMessage(error)}`);
+        } finally {
+            setIsControllingRun(false);
+        }
+    };
+
+    const handleRetryRun = async () => {
+        if (!selectedRecipeRunId) {
+            return;
+        }
+        setIsControllingRun(true);
+        setErrorMessage('');
+        setStatusMessage('');
+        try {
+            const res = await api.post<PipelineRecipeRunResponse>(
+                `/projects/${projectId}/pipeline/recipes/runs/${selectedRecipeRunId}/retry`,
+                {
+                    execution_backend: runBackend,
+                    max_retries: Number.isFinite(runMaxRetries) ? Math.max(0, Math.min(5, runMaxRetries)) : 0,
+                    async_run: runAsync,
+                    config: {},
+                },
+            );
+            const nextRunId = res.data.recipe_run_id;
+            setSelectedRecipeRunId(nextRunId);
+            setStatusMessage(`Retry launched as ${nextRunId}.`);
+            await Promise.all([loadRuns(), loadState()]);
+            await loadRunDetail(nextRunId);
+        } catch (error) {
+            setErrorMessage(`Retry failed: ${extractErrorMessage(error)}`);
+        } finally {
+            setIsControllingRun(false);
+        }
+    };
+
+    const handleResumeRun = async () => {
+        if (!selectedRecipeRunId) {
+            return;
+        }
+        setIsControllingRun(true);
+        setErrorMessage('');
+        setStatusMessage('');
+        try {
+            const res = await api.post<PipelineRecipeRunResponse>(
+                `/projects/${projectId}/pipeline/recipes/runs/${selectedRecipeRunId}/resume`,
+                {
+                    execution_backend: runBackend,
+                    max_retries: Number.isFinite(runMaxRetries) ? Math.max(0, Math.min(5, runMaxRetries)) : 0,
+                    async_run: runAsync,
+                    resume_from_node_id: resumeNodeId.trim() || undefined,
+                    config: {},
+                },
+            );
+            const nextRunId = res.data.recipe_run_id;
+            setSelectedRecipeRunId(nextRunId);
+            setStatusMessage(`Resume launched as ${nextRunId}.`);
+            await Promise.all([loadRuns(), loadState()]);
+            await loadRunDetail(nextRunId);
+        } catch (error) {
+            setErrorMessage(`Resume failed: ${extractErrorMessage(error)}`);
+        } finally {
+            setIsControllingRun(false);
         }
     };
 
@@ -641,6 +722,35 @@ export default function ProjectRecipesPage() {
                                                         : 'running'}
                                                 </strong>
                                             </div>
+                                        </div>
+                                        <div className="pipeline-recipes-run-controls">
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => void handleRetryRun()}
+                                                disabled={isControllingRun || isRunningRecipe || !selectedRecipeRunId}
+                                            >
+                                                {isControllingRun ? 'Working...' : 'Retry'}
+                                            </button>
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => void handleCancelRun()}
+                                                disabled={!canCancelSelectedRun || isControllingRun || isRunningRecipe}
+                                            >
+                                                Cancel
+                                            </button>
+                                            <input
+                                                className="input"
+                                                value={resumeNodeId}
+                                                onChange={(event) => setResumeNodeId(event.target.value)}
+                                                placeholder="Resume from node id (optional)"
+                                            />
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => void handleResumeRun()}
+                                                disabled={isControllingRun || isRunningRecipe || !selectedRecipeRunId}
+                                            >
+                                                Resume
+                                            </button>
                                         </div>
                                         {selectedRecipeRun.workflow_run && (
                                             <div className="pipeline-recipes-run-links">

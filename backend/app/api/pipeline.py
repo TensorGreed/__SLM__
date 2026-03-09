@@ -44,6 +44,7 @@ from app.services.workflow_runner_service import (
     create_workflow_run_shell,
     get_workflow_run,
     list_workflow_runs,
+    mark_workflow_run_cancelled,
     mark_workflow_run_failed,
     run_workflow_graph,
     serialize_workflow_run,
@@ -133,6 +134,19 @@ class PipelineRecipeRunRequest(BaseModel):
     stop_on_failure: bool = True
     config: dict[str, object] = Field(default_factory=dict)
     async_run: bool = True
+
+
+class PipelineRecipeRunControlRequest(BaseModel):
+    execution_backend: str | None = None
+    max_retries: int | None = Field(default=None, ge=0, le=5)
+    stop_on_blocked: bool | None = None
+    stop_on_failure: bool | None = None
+    config: dict[str, object] = Field(default_factory=dict)
+    async_run: bool = True
+
+
+class PipelineRecipeResumeRequest(PipelineRecipeRunControlRequest):
+    resume_from_node_id: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 async def _ensure_stage_requirements(
@@ -430,57 +444,116 @@ def _decorate_recipe_execution_payload(
     return row
 
 
-@router.post("/recipes/run")
-async def pipeline_recipe_run(
-    project_id: int,
-    req: PipelineRecipeRunRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve/apply recipe and execute workflow DAG with persisted recipe-run lineage."""
-    try:
-        applied = await apply_pipeline_recipe_blueprint(
-            db,
-            project_id=project_id,
-            recipe_id=req.recipe_id,
-            overrides=dict(req.overrides or {}),
-            include_preflight=bool(req.include_preflight),
-            enforce_preflight_ok=bool(req.enforce_preflight_ok),
-            mark_active=bool(req.mark_active),
-        )
-    except ValueError as e:
-        detail = str(e)
-        if detail.startswith("Project "):
-            raise HTTPException(404, detail)
-        raise HTTPException(400, detail)
+def _new_recipe_run_id() -> str:
+    return f"recipe-run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    recipe_run_id = f"recipe-run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
-    recipe_payload = dict(applied.get("recipe") or {})
-    recipe_context = {
-        "recipe_run_id": recipe_run_id,
-        "recipe_id": str(recipe_payload.get("recipe_id") or req.recipe_id),
-        "recipe_manifest_path": str(applied.get("manifest_path") or ""),
-        "recipe_state_path": str(applied.get("state_path") or ""),
-        "recipe_artifact_id": (applied.get("artifact") or {}).get("id"),
+
+def _coerce_recipe_run_options(
+    *,
+    base_options: dict[str, object] | None = None,
+    execution_backend: str | None = None,
+    max_retries: int | None = None,
+    stop_on_blocked: bool | None = None,
+    stop_on_failure: bool | None = None,
+    config: dict[str, object] | None = None,
+    async_run: bool | None = None,
+) -> dict[str, object]:
+    base = dict(base_options or {})
+    backend = str(execution_backend or base.get("execution_backend") or "celery").strip() or "celery"
+    retries_raw = max_retries if max_retries is not None else base.get("max_retries", 0)
+    retries = 0
+    try:
+        retries = int(retries_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        retries = 0
+    retries = max(0, min(5, retries))
+
+    merged_config: dict[str, object] = {}
+    existing_config = base.get("config")
+    if isinstance(existing_config, dict):
+        merged_config.update(existing_config)
+    if isinstance(config, dict):
+        merged_config.update(config)
+
+    return {
+        "execution_backend": backend,
+        "max_retries": retries,
+        "stop_on_blocked": bool(
+            stop_on_blocked if stop_on_blocked is not None else base.get("stop_on_blocked", True)
+        ),
+        "stop_on_failure": bool(
+            stop_on_failure if stop_on_failure is not None else base.get("stop_on_failure", True)
+        ),
+        "config": merged_config,
+        "async_run": bool(async_run if async_run is not None else base.get("async_run", True)),
     }
 
-    run_config_payload = dict(req.config or {})
-    run_config_payload["recipe_context"] = recipe_context
+
+async def _launch_recipe_execution(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    recipe_payload: dict[str, object],
+    recipe_id: str,
+    resolved_payload: dict[str, object],
+    preflight_payload: dict[str, object] | None,
+    warnings: list[str],
+    manifest_path: str,
+    state_path: str,
+    recipe_artifact: dict[str, object],
+    run_options: dict[str, object],
+    parent_recipe_run_id: str | None = None,
+    retry_of_recipe_run_id: str | None = None,
+    resume_of_recipe_run_id: str | None = None,
+    resume_from_run_id: int | None = None,
+    resume_from_node_id: str | None = None,
+    reuse_successful_nodes: bool = False,
+) -> dict[str, object]:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    recipe_run_id = _new_recipe_run_id()
+
+    recipe_context: dict[str, object] = {
+        "recipe_run_id": recipe_run_id,
+        "recipe_id": recipe_id,
+        "recipe_manifest_path": manifest_path,
+        "recipe_state_path": state_path,
+        "recipe_artifact_id": recipe_artifact.get("id"),
+        "parent_recipe_run_id": parent_recipe_run_id,
+        "retry_of_recipe_run_id": retry_of_recipe_run_id,
+        "resume_of_recipe_run_id": resume_of_recipe_run_id,
+    }
+    if resume_from_run_id is not None:
+        recipe_context["resume_from_run_id"] = int(resume_from_run_id)
+    if resume_from_node_id:
+        recipe_context["resume_from_node_id"] = str(resume_from_node_id)
+
+    merged_step_config = dict(run_options.get("config") or {})
+    merged_step_config["recipe_context"] = recipe_context
+
+    execution_backend = str(run_options.get("execution_backend") or "celery")
+    max_retries = int(run_options.get("max_retries") or 0)
+    stop_on_blocked = bool(run_options.get("stop_on_blocked", True))
+    stop_on_failure = bool(run_options.get("stop_on_failure", True))
+    async_run = bool(run_options.get("async_run", True))
+
     shell = await create_workflow_run_shell(
         db=db,
         project_id=project_id,
-        execution_backend=str(req.execution_backend),
+        execution_backend=execution_backend,
         run_config={
             "allow_fallback": True,
             "use_saved_override": True,
-            "max_retries": int(req.max_retries),
-            "stop_on_blocked": bool(req.stop_on_blocked),
-            "stop_on_failure": bool(req.stop_on_failure),
-            "config": run_config_payload,
+            "max_retries": max_retries,
+            "stop_on_blocked": stop_on_blocked,
+            "stop_on_failure": stop_on_failure,
+            "config": merged_step_config,
             "recipe_context": recipe_context,
+            "resume_from_run_id": int(resume_from_run_id) if resume_from_run_id is not None else None,
+            "resume_from_node_id": str(resume_from_node_id or "").strip() or None,
+            "reuse_successful_nodes": bool(reuse_successful_nodes),
         },
         summary={
-            "queued": bool(req.async_run),
+            "queued": async_run,
             "recipe_context": recipe_context,
         },
     )
@@ -490,28 +563,36 @@ async def pipeline_recipe_run(
     execution_payload: dict[str, object] = {
         "project_id": project_id,
         "recipe_run_id": recipe_run_id,
-        "recipe_id": recipe_context["recipe_id"],
+        "recipe_id": recipe_id,
         "workflow_run_id": int(shell.id),
-        "execution_backend": str(req.execution_backend),
-        "status": "queued" if req.async_run else "running",
+        "execution_backend": execution_backend,
+        "status": "queued" if async_run else "running",
         "created_at": now_iso,
         "started_at": now_iso,
         "updated_at": now_iso,
         "recipe": recipe_payload,
-        "resolved": dict(applied.get("resolved") or {}),
-        "preflight": applied.get("preflight"),
-        "warnings": list(applied.get("warnings") or []),
-        "manifest_path": str(applied.get("manifest_path") or ""),
-        "state_path": str(applied.get("state_path") or ""),
-        "recipe_artifact": dict(applied.get("artifact") or {}),
+        "resolved": resolved_payload,
+        "preflight": preflight_payload,
+        "warnings": list(warnings or []),
+        "manifest_path": manifest_path,
+        "state_path": state_path,
+        "recipe_artifact": recipe_artifact,
         "workflow_run_status_endpoint": f"/api/projects/{project_id}/pipeline/graph/workflow-runs/{int(shell.id)}",
+        "parent_recipe_run_id": parent_recipe_run_id,
+        "retry_of_recipe_run_id": retry_of_recipe_run_id,
+        "resume_of_recipe_run_id": resume_of_recipe_run_id,
         "run_options": {
-            "execution_backend": str(req.execution_backend),
-            "max_retries": int(req.max_retries),
-            "stop_on_blocked": bool(req.stop_on_blocked),
-            "stop_on_failure": bool(req.stop_on_failure),
-            "async_run": bool(req.async_run),
-            "config": dict(req.config or {}),
+            "execution_backend": execution_backend,
+            "max_retries": max_retries,
+            "stop_on_blocked": stop_on_blocked,
+            "stop_on_failure": stop_on_failure,
+            "async_run": async_run,
+            "config": dict(run_options.get("config") or {}),
+        },
+        "resume": {
+            "reuse_successful_nodes": bool(reuse_successful_nodes),
+            "resume_from_run_id": int(resume_from_run_id) if resume_from_run_id is not None else None,
+            "resume_from_node_id": str(resume_from_node_id or "").strip() or None,
         },
     }
     execution_path = save_pipeline_recipe_execution(
@@ -530,7 +611,7 @@ async def pipeline_recipe_run(
         },
     )
 
-    if not req.async_run:
+    if not async_run:
         project = await db.get(Project, project_id)
         if project is None:
             raise HTTPException(404, f"Project {project_id} not found")
@@ -540,13 +621,16 @@ async def pipeline_recipe_run(
             graph_override=None,
             allow_fallback=True,
             use_saved_override=True,
-            execution_backend=str(req.execution_backend),
-            max_retries=int(req.max_retries),
-            stop_on_blocked=bool(req.stop_on_blocked),
-            stop_on_failure=bool(req.stop_on_failure),
-            config=run_config_payload,
+            execution_backend=execution_backend,
+            max_retries=max_retries,
+            stop_on_blocked=stop_on_blocked,
+            stop_on_failure=stop_on_failure,
+            config=merged_step_config,
             run_id=int(shell.id),
             commit_progress=True,
+            resume_from_run_id=resume_from_run_id,
+            resume_from_node_id=resume_from_node_id,
+            reuse_successful_nodes=bool(reuse_successful_nodes),
         )
         finished_at = datetime.now(timezone.utc).isoformat()
         execution_payload, execution_path = patch_pipeline_recipe_execution(
@@ -556,7 +640,9 @@ async def pipeline_recipe_run(
                 "status": str(run_payload.get("status") or "unknown"),
                 "finished_at": finished_at,
                 "updated_at": finished_at,
-                "workflow_summary": run_payload.get("summary") if isinstance(run_payload.get("summary"), dict) else {},
+                "workflow_summary": run_payload.get("summary")
+                if isinstance(run_payload.get("summary"), dict)
+                else {},
             },
         )
         state_payload, state_path = patch_pipeline_recipe_state(
@@ -580,11 +666,14 @@ async def pipeline_recipe_run(
     queued_project_id = int(project_id)
     queued_run_id = int(shell.id)
     queued_recipe_run_id = str(recipe_run_id)
-    queued_backend = str(req.execution_backend)
-    queued_retries = int(req.max_retries)
-    queued_stop_on_blocked = bool(req.stop_on_blocked)
-    queued_stop_on_failure = bool(req.stop_on_failure)
-    queued_config = dict(run_config_payload)
+    queued_backend = str(execution_backend)
+    queued_retries = int(max_retries)
+    queued_stop_on_blocked = bool(stop_on_blocked)
+    queued_stop_on_failure = bool(stop_on_failure)
+    queued_config = dict(merged_step_config)
+    queued_resume_from_run_id = int(resume_from_run_id) if resume_from_run_id is not None else None
+    queued_resume_from_node_id = str(resume_from_node_id or "").strip() or None
+    queued_reuse_successful_nodes = bool(reuse_successful_nodes)
 
     async def _execute_recipe_workflow_run() -> None:
         async with database_module.async_session_factory() as task_db:
@@ -632,6 +721,9 @@ async def pipeline_recipe_run(
                     config=queued_config,
                     run_id=queued_run_id,
                     commit_progress=True,
+                    resume_from_run_id=queued_resume_from_run_id,
+                    resume_from_node_id=queued_resume_from_node_id,
+                    reuse_successful_nodes=queued_reuse_successful_nodes,
                 )
                 finished_at = datetime.now(timezone.utc).isoformat()
                 status = str(run_payload.get("status") or "unknown")
@@ -698,6 +790,51 @@ async def pipeline_recipe_run(
         "state": state_payload,
         "execution": _decorate_recipe_execution_payload(execution_payload, serialize_workflow_run(shell, [])),
     }
+
+
+@router.post("/recipes/run")
+async def pipeline_recipe_run(
+    project_id: int,
+    req: PipelineRecipeRunRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve/apply recipe and execute workflow DAG with persisted recipe-run lineage."""
+    try:
+        applied = await apply_pipeline_recipe_blueprint(
+            db,
+            project_id=project_id,
+            recipe_id=req.recipe_id,
+            overrides=dict(req.overrides or {}),
+            include_preflight=bool(req.include_preflight),
+            enforce_preflight_ok=bool(req.enforce_preflight_ok),
+            mark_active=bool(req.mark_active),
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    options = _coerce_recipe_run_options(
+        execution_backend=req.execution_backend,
+        max_retries=req.max_retries,
+        stop_on_blocked=req.stop_on_blocked,
+        stop_on_failure=req.stop_on_failure,
+        config=dict(req.config or {}),
+        async_run=req.async_run,
+    )
+    return await _launch_recipe_execution(
+        db,
+        project_id=project_id,
+        recipe_payload=dict(applied.get("recipe") or {}),
+        recipe_id=str((applied.get("recipe") or {}).get("recipe_id") or req.recipe_id),
+        resolved_payload=dict(applied.get("resolved") or {}),
+        preflight_payload=applied.get("preflight") if isinstance(applied.get("preflight"), dict) else None,
+        warnings=[str(item) for item in list(applied.get("warnings") or [])],
+        manifest_path=str(applied.get("manifest_path") or ""),
+        state_path=str(applied.get("state_path") or ""),
+        recipe_artifact=dict(applied.get("artifact") or {}),
+        run_options=options,
+    )
 
 
 @router.get("/recipes/runs")
@@ -771,6 +908,196 @@ async def get_pipeline_recipe_run(
             workflow_run = None
 
     return _decorate_recipe_execution_payload(row, workflow_run)
+
+
+@router.post("/recipes/runs/{recipe_run_id}/cancel")
+async def cancel_pipeline_recipe_run(
+    project_id: int,
+    recipe_run_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Request cancellation for an in-progress recipe workflow run."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+
+    row = load_pipeline_recipe_execution(project_id, recipe_run_id=recipe_run_id)
+    if row is None:
+        raise HTTPException(404, f"Recipe run {recipe_run_id} not found")
+
+    workflow_run_id_raw = row.get("workflow_run_id")
+    try:
+        workflow_run_id = int(workflow_run_id_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Recipe run is missing workflow_run_id")
+
+    workflow_row = await get_workflow_run(db=db, project_id=project_id, run_id=workflow_run_id)
+    if workflow_row is None:
+        raise HTTPException(404, f"Workflow run {workflow_run_id} not found")
+
+    status = str(workflow_row.get("status") or "").strip().lower()
+    if status in {"completed", "failed", "blocked", "cancelled"}:
+        raise HTTPException(400, f"Cannot cancel recipe run in terminal status '{status}'")
+
+    ok = await mark_workflow_run_cancelled(
+        db=db,
+        project_id=project_id,
+        run_id=workflow_run_id,
+        message=f"cancel requested for recipe run {recipe_run_id}",
+    )
+    if not ok:
+        raise HTTPException(404, f"Workflow run {workflow_run_id} not found")
+    await db.commit()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    execution_payload, execution_path = patch_pipeline_recipe_execution(
+        project_id,
+        recipe_run_id=recipe_run_id,
+        patch={
+            "status": "cancelled",
+            "updated_at": now_iso,
+            "finished_at": row.get("finished_at") or now_iso,
+            "cancel_requested_at": now_iso,
+        },
+    )
+    state_payload, state_path = patch_pipeline_recipe_state(
+        project_id,
+        patch={
+            "last_execution_status": "cancelled",
+            "last_execution_finished_at": now_iso,
+            "last_execution_updated_at": now_iso,
+        },
+    )
+    refreshed_workflow = await get_workflow_run(db=db, project_id=project_id, run_id=workflow_run_id)
+    return {
+        "project_id": project_id,
+        "recipe_run_id": recipe_run_id,
+        "execution_path": execution_path,
+        "state_path": state_path,
+        "state": state_payload,
+        "execution": _decorate_recipe_execution_payload(execution_payload, refreshed_workflow),
+    }
+
+
+@router.post("/recipes/runs/{recipe_run_id}/retry")
+async def retry_pipeline_recipe_run(
+    project_id: int,
+    recipe_run_id: str,
+    req: PipelineRecipeRunControlRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry a completed/failed/blocked recipe run from its saved snapshot."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+
+    row = load_pipeline_recipe_execution(project_id, recipe_run_id=recipe_run_id)
+    if row is None:
+        raise HTTPException(404, f"Recipe run {recipe_run_id} not found")
+
+    source_status = str(row.get("workflow_status") or row.get("status") or "").strip().lower()
+    if source_status in {"queued", "pending", "running"}:
+        raise HTTPException(400, f"Cannot retry recipe run while status is '{source_status}'")
+
+    base_options = row.get("run_options") if isinstance(row.get("run_options"), dict) else {}
+    options = _coerce_recipe_run_options(
+        base_options=base_options if isinstance(base_options, dict) else None,
+        execution_backend=req.execution_backend,
+        max_retries=req.max_retries,
+        stop_on_blocked=req.stop_on_blocked,
+        stop_on_failure=req.stop_on_failure,
+        config=dict(req.config or {}),
+        async_run=req.async_run,
+    )
+
+    recipe_payload = dict(row.get("recipe") or {})
+    recipe_id = str(row.get("recipe_id") or recipe_payload.get("recipe_id") or "").strip()
+    if not recipe_id:
+        raise HTTPException(400, "Recipe run snapshot missing recipe_id")
+
+    return await _launch_recipe_execution(
+        db,
+        project_id=project_id,
+        recipe_payload=recipe_payload,
+        recipe_id=recipe_id,
+        resolved_payload=dict(row.get("resolved") or {}),
+        preflight_payload=row.get("preflight") if isinstance(row.get("preflight"), dict) else None,
+        warnings=[str(item) for item in list(row.get("warnings") or [])],
+        manifest_path=str(row.get("manifest_path") or ""),
+        state_path=str(row.get("state_path") or ""),
+        recipe_artifact=dict(row.get("recipe_artifact") or {}),
+        run_options=options,
+        parent_recipe_run_id=recipe_run_id,
+        retry_of_recipe_run_id=recipe_run_id,
+    )
+
+
+@router.post("/recipes/runs/{recipe_run_id}/resume")
+async def resume_pipeline_recipe_run(
+    project_id: int,
+    recipe_run_id: str,
+    req: PipelineRecipeResumeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resume a recipe run by reusing completed nodes and starting from a node boundary."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+
+    row = load_pipeline_recipe_execution(project_id, recipe_run_id=recipe_run_id)
+    if row is None:
+        raise HTTPException(404, f"Recipe run {recipe_run_id} not found")
+
+    workflow_run_id_raw = row.get("workflow_run_id")
+    try:
+        workflow_run_id = int(workflow_run_id_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Recipe run is missing workflow_run_id")
+
+    workflow_row = await get_workflow_run(db=db, project_id=project_id, run_id=workflow_run_id)
+    if workflow_row is None:
+        raise HTTPException(404, f"Workflow run {workflow_run_id} not found")
+
+    source_status = str(workflow_row.get("status") or "").strip().lower()
+    if source_status in {"queued", "pending", "running"}:
+        raise HTTPException(400, f"Cannot resume recipe run while status is '{source_status}'")
+
+    base_options = row.get("run_options") if isinstance(row.get("run_options"), dict) else {}
+    options = _coerce_recipe_run_options(
+        base_options=base_options if isinstance(base_options, dict) else None,
+        execution_backend=req.execution_backend,
+        max_retries=req.max_retries,
+        stop_on_blocked=req.stop_on_blocked,
+        stop_on_failure=req.stop_on_failure,
+        config=dict(req.config or {}),
+        async_run=req.async_run,
+    )
+
+    recipe_payload = dict(row.get("recipe") or {})
+    recipe_id = str(row.get("recipe_id") or recipe_payload.get("recipe_id") or "").strip()
+    if not recipe_id:
+        raise HTTPException(400, "Recipe run snapshot missing recipe_id")
+
+    resume_node = str(req.resume_from_node_id or "").strip() or None
+
+    return await _launch_recipe_execution(
+        db,
+        project_id=project_id,
+        recipe_payload=recipe_payload,
+        recipe_id=recipe_id,
+        resolved_payload=dict(row.get("resolved") or {}),
+        preflight_payload=row.get("preflight") if isinstance(row.get("preflight"), dict) else None,
+        warnings=[str(item) for item in list(row.get("warnings") or [])],
+        manifest_path=str(row.get("manifest_path") or ""),
+        state_path=str(row.get("state_path") or ""),
+        recipe_artifact=dict(row.get("recipe_artifact") or {}),
+        run_options=options,
+        parent_recipe_run_id=recipe_run_id,
+        resume_of_recipe_run_id=recipe_run_id,
+        resume_from_run_id=workflow_run_id,
+        resume_from_node_id=resume_node,
+        reuse_successful_nodes=True,
+    )
 
 
 @router.get("/graph/contract")

@@ -72,15 +72,22 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Preflight Plan Suggestions** (`safe`, `balanced`, `max_quality`) with one-click config apply in Training UI.
 - Added project-persisted training plan preference (`preferred_plan_profile`) so recommended profile choice is remembered per project.
 - Added project/domain-pack adapter preset resolution for dataset split defaults (`adapter_id`, `adapter_config`, `field_mapping`).
-- Added **Universal Task/Dataset Adapter v2**:
+- Added **Universal Task/Dataset Adapter v3**:
   - typed adapter contracts (`task_profiles`, `preferred_training_tasks`, `output_contract`)
-  - new built-in adapters: `chat-messages`, `preference-pair`
+  - expanded built-in adapters: `rag-grounded`, `tool-call-json`, `structured-extraction` (plus existing chat/preference adapters)
+  - richer preview diagnostics: `conformance_report`, `auto_fix_suggestions`, `inferred_task_profiles`, `raw_field_frequency`
   - `task_profile` wiring across adapter preview, project adapter preference, split manifests, workflow adapter-preview node, and remote import
 - Added **Pipeline Recipe Executable Runs (Phase 18)**:
   - `POST /pipeline/recipes/run` to apply + execute recipe-backed workflow DAG (sync or async)
   - persisted recipe-run lineage records (`recipe_run_id -> workflow_run_id -> manifest snapshot`)
   - `GET /pipeline/recipes/runs` and `GET /pipeline/recipes/runs/{recipe_run_id}` for status/history
   - Recipe page now includes one-click run controls and recipe-run monitor
+- Added **Recipe Run Control + Recovery (Phase 19)**:
+  - `POST /pipeline/recipes/runs/{recipe_run_id}/cancel`
+  - `POST /pipeline/recipes/runs/{recipe_run_id}/retry`
+  - `POST /pipeline/recipes/runs/{recipe_run_id}/resume`
+  - resume reuses completed nodes from source workflow run and can start from explicit node id
+  - Recipes run inspector now exposes Cancel/Retry/Resume actions
 - Added strict dataset contract checks in training preflight (task-shape coverage gate with actionable fix hints).
 - Expanded Training experiment form controls for memory/runtime tuning (`gradient_accumulation_steps`, `max_seq_length`, `save_steps`, `eval_steps`, `fp16`/`bf16`, `flash_attention`, `sequence_packing`).
 - Added split backend dependency profiles for CPU/GPU installs (`requirements-base.txt`, `requirements.txt`, `requirements-gpu.txt`, `requirements-gpu-cu128.txt`).
@@ -317,6 +324,9 @@ Pipeline recipe endpoints:
 - `POST /api/projects/{project_id}/pipeline/recipes/run`
 - `GET /api/projects/{project_id}/pipeline/recipes/runs`
 - `GET /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}`
+- `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/cancel`
+- `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/retry`
+- `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/resume`
 - `resolve` returns the concrete merged blueprint (`domain`, `workflow`, `dataset_adapter`, `training`, `evaluation`, `export`) plus optional preflight diagnostics.
 - `apply` persists resolved project preferences and workflow graph override, writes a manifest under `data/projects/{project_id}/pipeline_recipes/runs/.../manifest.json`, and publishes typed artifact key `manifest.pipeline_recipe`.
 - `run` applies the blueprint then launches workflow DAG execution, writing execution records under `data/projects/{project_id}/pipeline_recipes/executions/{recipe_run_id}/run.json`.
@@ -434,8 +444,8 @@ Current enforced behavior:
     - `domain_hooks`
     - `validator_report`
 - Dataset adapter SDK + preview:
-  - `GET /api/projects/{project_id}/dataset/adapters/catalog` lists built-in/plugin adapters, schema hints, and adapter v2 contracts.
-  - `POST /api/projects/{project_id}/dataset/adapters/preview` samples project data and reports adapter mapping coverage, drop/error counts, mapped-row previews, resolved task profile, and adapter contract diagnostics.
+  - `GET /api/projects/{project_id}/dataset/adapters/catalog` lists built-in/plugin adapters, schema hints, and adapter v3 contracts.
+  - `POST /api/projects/{project_id}/dataset/adapters/preview` samples project data and reports adapter mapping coverage, drop/error counts, mapped-row previews, resolved task profile, contract conformance diagnostics, and auto-fix suggestions.
   - `POST /api/projects/{project_id}/dataset/adapters/reload` reloads adapter plugins from env-configured modules.
   - `GET /api/projects/{project_id}/dataset/adapter-preference` resolves adapter preset fallback chain (`project` -> `domain_pack` -> `default`) including optional `task_profile`.
   - `PUT /api/projects/{project_id}/dataset/adapter-preference` persists a project-level adapter preset (`adapter_id`, `adapter_config`, `field_mapping`, optional `task_profile`).

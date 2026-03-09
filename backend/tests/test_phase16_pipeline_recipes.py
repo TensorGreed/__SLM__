@@ -170,3 +170,65 @@ class Phase16PipelineRecipeTests(unittest.TestCase):
             str((state_body.get("state") or {}).get("last_execution_recipe_run_id") or ""),
             recipe_run_id,
         )
+
+    def test_pipeline_recipe_run_cancel_retry_resume_controls(self):
+        project_id = self._create_project("phase16-recipes-4")
+
+        initial = self.client.post(
+            f"/api/projects/{project_id}/pipeline/recipes/run",
+            json={
+                "recipe_id": "recipe.pipeline.sft_default",
+                "include_preflight": True,
+                "execution_backend": "local",
+                "async_run": False,
+                "config": {"simulate_fail_stages": ["training"]},
+            },
+        )
+        self.assertEqual(initial.status_code, 200, initial.text)
+        initial_body = initial.json()
+        source_recipe_run_id = str(initial_body.get("recipe_run_id") or "")
+        self.assertTrue(source_recipe_run_id)
+        source_execution = initial_body.get("execution", {})
+        source_workflow = source_execution.get("workflow_run") or {}
+        source_nodes = source_workflow.get("nodes") if isinstance(source_workflow, dict) else []
+        training_node_id = ""
+        if isinstance(source_nodes, list):
+            for node in source_nodes:
+                if isinstance(node, dict) and str(node.get("stage")) == "training":
+                    training_node_id = str(node.get("node_id") or "")
+                    break
+        self.assertTrue(training_node_id)
+
+        retry = self.client.post(
+            f"/api/projects/{project_id}/pipeline/recipes/runs/{source_recipe_run_id}/retry",
+            json={
+                "execution_backend": "local",
+                "async_run": False,
+                "config": {"simulate_fail_stages": []},
+            },
+        )
+        self.assertEqual(retry.status_code, 200, retry.text)
+        retry_body = retry.json()
+        retry_recipe_run_id = str(retry_body.get("recipe_run_id") or "")
+        self.assertTrue(retry_recipe_run_id)
+        self.assertNotEqual(retry_recipe_run_id, source_recipe_run_id)
+
+        resume = self.client.post(
+            f"/api/projects/{project_id}/pipeline/recipes/runs/{source_recipe_run_id}/resume",
+            json={
+                "execution_backend": "local",
+                "async_run": False,
+                "resume_from_node_id": training_node_id,
+                "config": {"simulate_fail_stages": []},
+            },
+        )
+        self.assertEqual(resume.status_code, 200, resume.text)
+        resume_body = resume.json()
+        resume_recipe_run_id = str(resume_body.get("recipe_run_id") or "")
+        self.assertTrue(resume_recipe_run_id)
+        self.assertNotEqual(resume_recipe_run_id, source_recipe_run_id)
+
+        cancel = self.client.post(
+            f"/api/projects/{project_id}/pipeline/recipes/runs/{source_recipe_run_id}/cancel"
+        )
+        self.assertEqual(cancel.status_code, 400, cancel.text)

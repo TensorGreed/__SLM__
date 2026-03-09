@@ -11,7 +11,7 @@ interface ProjectSidebarProps {
     pipelineStatus: PipelineStatusResponse | null;
 }
 
-const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_prep', 'tokenization', 'training', 'evaluation', 'compression', 'export', 'completed'];
+const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_prep', 'data_adapter_preview', 'tokenization', 'training', 'evaluation', 'compression', 'export', 'completed'];
 
 const TAB_PREREQ_INDEX: Record<TabKey, number> = {
     data: 0,
@@ -40,7 +40,10 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
         [pipelineStatus],
     );
 
-    const isPipelineRoute = location.pathname.startsWith(`/project/${projectId}/pipeline/`);
+    const isGuideRoute = location.pathname === `/project/${projectId}/guide`;
+    const isPipelineRoute =
+        location.pathname === `/project/${projectId}/pipeline`
+        || location.pathname.startsWith(`/project/${projectId}/pipeline/`);
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
     const isRecipesRoute = location.pathname === `/project/${projectId}/recipes`;
     const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
@@ -82,48 +85,80 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
             </div>
 
             <nav className="project-sidebar-nav">
-                <div className="nav-section-label">Workspace</div>
+                <div className="nav-section-label">Guided Flow</div>
+                <button
+                    className={`workspace-nav-item ${isGuideRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/guide`)}
+                >
+                    <span className="nav-icon">1</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Start Here</span>
+                        <span className="nav-caption">Recommended next step for your project.</span>
+                    </span>
+                </button>
                 <button
                     className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
                 >
-                    <span className="nav-icon">🧭</span>
-                    <span className="nav-label">Pipeline</span>
+                    <span className="nav-icon">2</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Data Pipeline</span>
+                        <span className="nav-caption">Ingest, clean, prepare, tokenize, train.</span>
+                    </span>
                 </button>
                 <button
                     className={`workspace-nav-item ${isTrainingConfigRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/training-config`)}
                 >
-                    <span className="nav-icon">🛠️</span>
-                    <span className="nav-label">Training Config</span>
+                    <span className="nav-icon">3</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Training Setup</span>
+                        <span className="nav-caption">Model, hyperparameters, runtime profile.</span>
+                    </span>
                 </button>
+
+                <div className="nav-section-label">Automation</div>
                 <button
                     className={`workspace-nav-item ${isWorkflowRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/workflow`)}
                 >
-                    <span className="nav-icon">🕸️</span>
-                    <span className="nav-label">Workflow Graph</span>
+                    <span className="nav-icon">⚙</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Workflow Builder</span>
+                        <span className="nav-caption">Canvas DAG editor and workflow runs.</span>
+                    </span>
                 </button>
                 <button
                     className={`workspace-nav-item ${isRecipesRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/recipes`)}
                 >
                     <span className="nav-icon">🧪</span>
-                    <span className="nav-label">Pipeline Recipes</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Pipeline Recipes</span>
+                        <span className="nav-caption">Reusable end-to-end execution templates.</span>
+                    </span>
                 </button>
+
+                <div className="nav-section-label">Domain</div>
                 <button
                     className={`workspace-nav-item ${isDomainPacksRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/domain/packs`)}
                 >
                     <span className="nav-icon">🧩</span>
-                    <span className="nav-label">Domain Packs</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Domain Packs</span>
+                        <span className="nav-caption">Evaluation and policy defaults.</span>
+                    </span>
                 </button>
                 <button
                     className={`workspace-nav-item ${isDomainProfilesRoute ? 'active' : ''}`}
                     onClick={() => navigate(`/project/${projectId}/domain/profiles`)}
                 >
                     <span className="nav-icon">📘</span>
-                    <span className="nav-label">Domain Profiles</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Domain Profiles</span>
+                        <span className="nav-caption">Task intent and quality bar definitions.</span>
+                    </span>
                 </button>
 
                 {isPipelineRoute && (

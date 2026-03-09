@@ -8,6 +8,7 @@ import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
 import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import ProjectRecipesPage from './pages/ProjectRecipesPage';
 import ProjectTrainingConfigPage from './pages/ProjectTrainingConfigPage';
+import ProjectGuidePage from './pages/ProjectGuidePage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -26,7 +27,8 @@ function App() {
           <>
             <Route path="/" element={<ProjectListPage />} />
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
-              <Route index element={<Navigate to="pipeline/data" replace />} />
+              <Route index element={<Navigate to="guide" replace />} />
+              <Route path="guide" element={<ProjectGuidePage />} />
               <Route path="pipeline" element={<Navigate to="data" replace />} />
               <Route path="pipeline/:tabKey" element={<ProjectPipelinePage />} />
               <Route path="workflow" element={<ProjectWorkflowPage />} />
