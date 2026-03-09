@@ -84,6 +84,7 @@ interface EvaluationPackPreferenceResponse {
 interface GateCheck {
     gate_id: string;
     metric_id: string;
+    resolved_metric_key?: string | null;
     operator: 'gte' | 'lte' | string;
     threshold: number | null;
     required: boolean;
@@ -97,6 +98,16 @@ interface GateReport {
     passed: boolean;
     failed_gate_ids: string[];
     missing_required_metrics: string[];
+    missing_required_schema_metrics?: string[];
+    task_profile?: string;
+    task_profile_source?: string;
+    task_profile_selected?: string;
+    task_profile_fallback_used?: boolean;
+    task_spec?: {
+        task_profile?: string;
+        display_name?: string;
+        required_metric_ids?: string[];
+    };
     checks: GateCheck[];
     pack?: {
         pack_id?: string;
@@ -487,15 +498,25 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     Missing required metrics: <strong>{gateReport.missing_required_metrics.length}</strong>
                                 </span>
                                 <span>
+                                    Task profile: <strong>{gateReport.task_profile_selected || gateReport.task_profile || 'auto'}</strong>
+                                </span>
+                                <span>
                                     Checked at: <strong>{new Date(gateReport.captured_at).toLocaleString()}</strong>
                                 </span>
                             </div>
+                            {!!gateReport.task_profile_source && (
+                                <div className="eval-pack-note">
+                                    Resolved from <strong>{gateReport.task_profile_source}</strong>
+                                    {gateReport.task_profile_fallback_used ? ' (fallback task spec used)' : ''}
+                                </div>
+                            )}
                             <div className="table-container eval-gate-table">
                                 <table className="docs-table">
                                     <thead>
                                         <tr>
                                             <th>Gate</th>
                                             <th>Metric</th>
+                                            <th>Resolved</th>
                                             <th>Threshold</th>
                                             <th>Actual</th>
                                             <th>Status</th>
@@ -506,6 +527,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                             <tr key={check.gate_id}>
                                                 <td>{check.gate_id}</td>
                                                 <td>{check.metric_id}</td>
+                                                <td>{check.resolved_metric_key || '—'}</td>
                                                 <td>
                                                     {check.threshold == null
                                                         ? '—'

@@ -227,9 +227,14 @@ async def evaluate_gates_for_experiment(
     project_id: int,
     experiment_id: int,
     pack_id: str | None = None,
+    task_profile: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Evaluate experiment metrics against active/requested evaluation pack gates."""
+    """Evaluate experiment metrics against active/requested evaluation pack gates.
+
+    Optional `task_profile` lets clients force a specific task-aware spec from
+    the evaluation contract v2 pack.
+    """
     normalized_pack = normalize_evaluation_pack_id(pack_id)
     if normalized_pack is not None and not is_supported_evaluation_pack_id(normalized_pack):
         builtin = ", ".join(sorted(item["pack_id"] for item in list_evaluation_packs(include_gates=False)))
@@ -244,6 +249,7 @@ async def evaluate_gates_for_experiment(
             project_id=project_id,
             experiment_id=experiment_id,
             pack_id=normalized_pack,
+            task_profile=task_profile,
         )
     except ValueError as e:
         raise HTTPException(404, str(e))

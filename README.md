@@ -502,7 +502,11 @@ Current enforced behavior:
   - `GET /api/projects/{project_id}/evaluation/pack-preference`
   - `PUT /api/projects/{project_id}/evaluation/pack-preference`
   - `GET /api/projects/{project_id}/evaluation/gates/{experiment_id}`
-  - Metrics are post-processed by the active pack evaluator hook (for example adds `quality_band`).
+  - Evaluation Contract v2 is task-aware:
+    - packs expose `contract_version`, `default_task_profile`, `task_profiles`, and `task_specs`
+    - each task spec defines `required_metric_ids`, per-task `metric_schema` (aliases/ranges), and gates
+    - gate evaluation accepts optional `task_profile` query param for explicit task-spec routing
+  - Auto-gate responses include resolved task context (`task_profile`, source, selected/fallback spec), required-schema checks, and missing required metrics.
 - Pipeline status now returns `auto_gate` summary:
   - `GET /api/projects/{project_id}/pipeline/status`
   - includes latest experiment gate pass/fail, failed gate IDs, and missing required metrics.

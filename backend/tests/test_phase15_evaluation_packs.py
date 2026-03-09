@@ -57,14 +57,22 @@ class Phase15EvaluationPackTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 201, resp.text)
         return int(resp.json()["id"])
 
-    def _create_experiment(self, project_id: int, name: str = "phase15-exp") -> int:
+    def _create_experiment(
+        self,
+        project_id: int,
+        name: str = "phase15-exp",
+        config: dict | None = None,
+    ) -> int:
+        base_config = {
+            "base_model": "microsoft/phi-2",
+        }
+        if isinstance(config, dict):
+            base_config.update(config)
         resp = self.client.post(
             f"/api/projects/{project_id}/training/experiments",
             json={
                 "name": name,
-                "config": {
-                    "base_model": "microsoft/phi-2",
-                },
+                "config": base_config,
             },
         )
         self.assertEqual(resp.status_code, 201, resp.text)
@@ -102,6 +110,32 @@ class Phase15EvaluationPackTests(unittest.TestCase):
         self.assertEqual(clear.status_code, 200, clear.text)
         self.assertIsNone(clear.json().get("preferred_pack_id"))
         self.assertTrue(bool(clear.json().get("active_pack_id")))
+
+    def test_eval_pack_contract_v2_metadata(self):
+        project_id = self._create_project("phase15-packs-contract-v2")
+
+        packs = self.client.get(
+            f"/api/projects/{project_id}/evaluation/packs",
+            params={"include_gates": "true"},
+        )
+        self.assertEqual(packs.status_code, 200, packs.text)
+        payload = packs.json()
+        rows = [item for item in payload.get("packs", []) if isinstance(item, dict)]
+        self.assertGreaterEqual(len(rows), 3)
+
+        general = next((item for item in rows if item.get("pack_id") == "evalpack.general.default"), None)
+        self.assertIsNotNone(general)
+        self.assertEqual(general.get("contract_version"), "slm.evaluation-pack/v2")
+        self.assertEqual(general.get("default_task_profile"), "instruction_sft")
+        self.assertIn("classification", list(general.get("task_profiles") or []))
+
+        task_specs = [item for item in list(general.get("task_specs") or []) if isinstance(item, dict)]
+        self.assertTrue(task_specs)
+        classification = next((item for item in task_specs if item.get("task_profile") == "classification"), None)
+        self.assertIsNotNone(classification)
+        required = list(classification.get("required_metric_ids") or [])
+        self.assertIn("accuracy", required)
+        self.assertIn("macro_f1", required)
 
     def test_eval_gate_report_and_pipeline_auto_gate(self):
         project_id = self._create_project("phase15-packs-2")
@@ -157,6 +191,107 @@ class Phase15EvaluationPackTests(unittest.TestCase):
         self.assertEqual(auto_gate.get("experiment_id"), experiment_id)
         self.assertEqual(auto_gate.get("pack_id"), "evalpack.fast.iteration")
         self.assertTrue(auto_gate.get("passed"))
+
+    def test_task_aware_gate_resolution_uses_experiment_task_profile_and_aliases(self):
+        project_id = self._create_project("phase15-packs-task-aware-1")
+        experiment_id = self._create_experiment(
+            project_id,
+            config={
+                "task_type": "classification",
+            },
+        )
+
+        pref = self.client.put(
+            f"/api/projects/{project_id}/evaluation/pack-preference",
+            json={"pack_id": "evalpack.fast.iteration"},
+        )
+        self.assertEqual(pref.status_code, 200, pref.text)
+
+        exact_eval = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run",
+            json={
+                "experiment_id": experiment_id,
+                "dataset_name": "gold_test",
+                "eval_type": "exact_match",
+                "predictions": [
+                    {"prediction": "label_a", "reference": "label_a"},
+                    {"prediction": "label_b", "reference": "label_b"},
+                ],
+            },
+        )
+        self.assertEqual(exact_eval.status_code, 201, exact_eval.text)
+
+        gates = self.client.get(f"/api/projects/{project_id}/evaluation/gates/{experiment_id}")
+        self.assertEqual(gates.status_code, 200, gates.text)
+        payload = gates.json()
+        self.assertEqual(payload.get("task_profile"), "classification")
+        self.assertEqual(payload.get("task_profile_selected"), "classification")
+        self.assertEqual(payload.get("task_profile_source"), "experiment.config.task_type")
+        self.assertTrue(payload.get("passed"), payload)
+
+        checks = [item for item in payload.get("checks", []) if isinstance(item, dict)]
+        accuracy_gate = next((item for item in checks if item.get("gate_id") == "min_accuracy"), None)
+        self.assertIsNotNone(accuracy_gate)
+        self.assertEqual(accuracy_gate.get("metric_id"), "accuracy")
+        self.assertIsNotNone(accuracy_gate.get("actual"))
+        self.assertTrue(bool(accuracy_gate.get("passed")))
+        # Alias mapping should resolve from exact_match metric snapshots.
+        self.assertEqual(accuracy_gate.get("resolved_metric_key"), "exact_match")
+
+    def test_task_aware_required_metric_schema_flags_missing_task_metrics(self):
+        project_id = self._create_project("phase15-packs-task-aware-2")
+        experiment_id = self._create_experiment(
+            project_id,
+            config={
+                "task_type": "classification",
+            },
+        )
+
+        exact_eval = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run",
+            json={
+                "experiment_id": experiment_id,
+                "dataset_name": "gold_test",
+                "eval_type": "exact_match",
+                "predictions": [
+                    {"prediction": "label_a", "reference": "label_a"},
+                    {"prediction": "label_b", "reference": "label_b"},
+                ],
+            },
+        )
+        self.assertEqual(exact_eval.status_code, 201, exact_eval.text)
+
+        f1_eval = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run",
+            json={
+                "experiment_id": experiment_id,
+                "dataset_name": "gold_test",
+                "eval_type": "f1",
+                "predictions": [
+                    {"prediction": "label_a", "reference": "label_a"},
+                    {"prediction": "label_b", "reference": "label_b"},
+                ],
+            },
+        )
+        self.assertEqual(f1_eval.status_code, 201, f1_eval.text)
+
+        gates = self.client.get(
+            f"/api/projects/{project_id}/evaluation/gates/{experiment_id}",
+            params={
+                "pack_id": "evalpack.quality.strict",
+                "task_profile": "classification",
+            },
+        )
+        self.assertEqual(gates.status_code, 200, gates.text)
+        payload = gates.json()
+        self.assertEqual(payload.get("task_profile"), "classification")
+        self.assertEqual(payload.get("task_profile_selected"), "classification")
+        self.assertFalse(payload.get("passed"), payload)
+
+        missing_required = list(payload.get("missing_required_metrics") or [])
+        self.assertIn("safety_pass_rate", missing_required)
+        missing_schema = list(payload.get("missing_required_schema_metrics") or [])
+        self.assertIn("safety_pass_rate", missing_schema)
 
     def test_eval_pack_rejects_unknown_ids(self):
         project_id = self._create_project("phase15-packs-3")
