@@ -32,7 +32,36 @@ jobs:
           DB_AUTO_CREATE: "true"
         run: |
           . .venv/bin/activate
-          python -m unittest discover -s tests -v
+          mapfile -t test_modules < <(ls tests/test_phase*.py | grep -v 'test_phase20_' | sed 's#/#.#g; s#.py$##')
+          python -m unittest -v "${test_modules[@]}"
+
+  conformance-matrix:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run conformance + scale matrix tests
+        env:
+          DB_AUTO_CREATE: "true"
+        run: |
+          . .venv/bin/activate
+          python -m unittest tests.test_phase20_conformance_scale_matrix -v
 
   frontend-build:
     runs-on: ubuntu-latest

@@ -99,6 +99,10 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - deployment target catalog for exporters/runners (`HF`, `GGUF`, `ONNX`, `TensorRT`, `vLLM`, `TGI`, `Ollama`)
   - export-time deployability validation (artifact profile checks)
   - optional local runner smoke tests and explicit deployment reports in export manifests
+- Added **Conformance + Scale Test Matrix (Phase 20)**:
+  - automated backend matrix for `adapters x runtimes x model families x task types`
+  - scale checks for adapter mapping quality at larger sample sizes
+  - explicit guardrail assertions for model-task incompatibility and dataset-contract incompatibility
 - Added Alembic revisions:
   - `20260305_0002` for registry + secrets tables
   - `20260305_0003` for domain profiles + project binding
@@ -743,6 +747,13 @@ cd backend
 python -m unittest discover -s tests -v
 ```
 
+Run only the conformance/scale matrix suite:
+
+```bash
+cd backend
+python -m unittest tests.test_phase20_conformance_scale_matrix -v
+```
+
 Frontend production build check:
 
 ```bash
@@ -750,7 +761,7 @@ cd frontend
 npm run build
 ```
 
-CI workflow (`.github/workflows/ci.yml`) runs backend tests and frontend build on pushes/PRs.
+CI workflow (`.github/workflows/ci.yml`) runs backend tests, a dedicated conformance/scale matrix gate (`test_phase20_conformance_scale_matrix`), and frontend build on pushes/PRs.
 
 ---
 
