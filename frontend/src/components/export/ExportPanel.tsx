@@ -23,6 +23,34 @@ interface ExportRecord {
     completed_at?: string | null;
 }
 
+interface DeploymentTargetSpec {
+    target_id: string;
+    kind: string;
+    display_name: string;
+    description: string;
+    compatible: boolean;
+    smoke_supported: boolean;
+}
+
+interface DeploymentTargetCatalogResponse {
+    default_target_ids: string[];
+    targets: DeploymentTargetSpec[];
+}
+
+interface ExportRunResponse {
+    id: number;
+    status: string;
+    output_path?: string;
+    file_size_bytes?: number | null;
+    manifest?: Record<string, unknown>;
+    deployment?: {
+        summary?: {
+            deployable_artifact?: boolean;
+            local_smoke_passed?: boolean | null;
+        };
+    };
+}
+
 interface RegistryModel {
     id: number;
     experiment_id: number;
@@ -69,6 +97,13 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [selectedExp, setSelectedExp] = useState('');
     const [format, setFormat] = useState('gguf');
     const [quantization, setQuantization] = useState('4-bit');
+    const [runSmokeTests, setRunSmokeTests] = useState(true);
+
+    const [deploymentTargets, setDeploymentTargets] = useState<DeploymentTargetSpec[]>([]);
+    const [defaultDeploymentTargets, setDefaultDeploymentTargets] = useState<string[]>([]);
+    const [selectedDeploymentTargets, setSelectedDeploymentTargets] = useState<string[]>([]);
+    const [isLoadingTargets, setIsLoadingTargets] = useState(false);
+    const [targetLoadError, setTargetLoadError] = useState('');
 
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
@@ -101,9 +136,49 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setExpandedIds([]);
         setErrorMessage('');
         setStatusMessage('');
+        setTargetLoadError('');
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
+
+    useEffect(() => {
+        const loadDeploymentTargets = async () => {
+            setIsLoadingTargets(true);
+            setTargetLoadError('');
+            try {
+                const res = await api.get<DeploymentTargetCatalogResponse>(
+                    `/projects/${projectId}/export/deployment-targets`,
+                    {
+                        params: { export_format: format },
+                    },
+                );
+                const compatibleTargets = (res.data.targets || []).filter((target) => target.compatible);
+                const defaultTargetIds = (res.data.default_target_ids || []).filter((targetId) =>
+                    compatibleTargets.some((target) => target.target_id === targetId),
+                );
+                setDeploymentTargets(compatibleTargets);
+                setDefaultDeploymentTargets(defaultTargetIds);
+                setSelectedDeploymentTargets(defaultTargetIds);
+            } catch (err) {
+                setDeploymentTargets([]);
+                setDefaultDeploymentTargets([]);
+                setSelectedDeploymentTargets([]);
+                setTargetLoadError(toErrorMessage(err));
+            } finally {
+                setIsLoadingTargets(false);
+            }
+        };
+
+        void loadDeploymentTargets();
+    }, [format, projectId]);
+
+    const toggleDeploymentTarget = (targetId: string) => {
+        setSelectedDeploymentTargets((prev) => (
+            prev.includes(targetId)
+                ? prev.filter((item) => item !== targetId)
+                : [...prev, targetId]
+        ));
+    };
 
     const handleCreateExport = async () => {
         if (!selectedExp) return;
@@ -116,7 +191,10 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 export_format: format,
                 quantization,
             });
-            const runRes = await api.post(`/projects/${projectId}/export/${createRes.data.id}/run`);
+            const runRes = await api.post<ExportRunResponse>(`/projects/${projectId}/export/${createRes.data.id}/run`, {
+                deployment_targets: selectedDeploymentTargets,
+                run_smoke_tests: runSmokeTests,
+            });
             const runPayload: ExportRecord = {
                 id: runRes.data.id,
                 status: runRes.data.status,
@@ -128,7 +206,16 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 created_at: new Date().toISOString(),
             };
             setExportsList((prev) => [runPayload, ...prev]);
-            setStatusMessage('Export run completed.');
+            const deployable = runRes.data.deployment?.summary?.deployable_artifact;
+            const smokePassed = runRes.data.deployment?.summary?.local_smoke_passed;
+            const summaryParts: string[] = ['Export run completed.'];
+            if (typeof deployable === 'boolean') {
+                summaryParts.push(`Artifact deployable: ${deployable ? 'yes' : 'no'}.`);
+            }
+            if (runSmokeTests && smokePassed !== undefined && smokePassed !== null) {
+                summaryParts.push(`Smoke tests: ${smokePassed ? 'passed' : 'failed'}.`);
+            }
+            setStatusMessage(summaryParts.join(' '));
         } catch (err) {
             setErrorMessage(toErrorMessage(err));
             setStatusMessage('');
@@ -258,8 +345,77 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                         </select>
                     </div>
                 </div>
+                <div className="export-target-panel">
+                    <div className="export-target-panel-header">
+                        <div>
+                            <div className="export-target-panel-title">Deployment Targets</div>
+                            <div className="export-target-panel-subtitle">
+                                {selectedDeploymentTargets.length} selected
+                            </div>
+                        </div>
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            type="button"
+                            disabled={isLoadingTargets || defaultDeploymentTargets.length === 0}
+                            onClick={() => setSelectedDeploymentTargets(defaultDeploymentTargets)}
+                        >
+                            Use Recommended
+                        </button>
+                    </div>
+                    {isLoadingTargets && (
+                        <div className="export-target-panel-note">Loading deployment target catalog...</div>
+                    )}
+                    {!isLoadingTargets && targetLoadError && (
+                        <div className="export-target-panel-error">
+                            Failed to load target catalog: {targetLoadError}. Export will use server defaults.
+                        </div>
+                    )}
+                    {!isLoadingTargets && !targetLoadError && deploymentTargets.length === 0 && (
+                        <div className="export-target-panel-note">
+                            No compatible deployment targets available for this format.
+                        </div>
+                    )}
+                    {!isLoadingTargets && !targetLoadError && deploymentTargets.length > 0 && (
+                        <div className="export-target-grid">
+                            {deploymentTargets.map((target) => {
+                                const checked = selectedDeploymentTargets.includes(target.target_id);
+                                return (
+                                    <label
+                                        key={target.target_id}
+                                        className={`export-target-option ${checked ? 'selected' : ''}`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() => toggleDeploymentTarget(target.target_id)}
+                                        />
+                                        <div>
+                                            <div className="export-target-name">
+                                                {target.display_name}
+                                                <span className="export-target-kind">{target.kind}</span>
+                                            </div>
+                                            <div className="export-target-description">{target.description}</div>
+                                        </div>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    )}
+                    <label className="export-smoke-toggle">
+                        <input
+                            type="checkbox"
+                            checked={runSmokeTests}
+                            onChange={(e) => setRunSmokeTests(e.target.checked)}
+                        />
+                        <span>Run local smoke tests for selected runner targets</span>
+                    </label>
+                </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button className="btn btn-primary" onClick={() => void handleCreateExport()} disabled={!selectedExp || isExporting || isLoading}>
+                    <button
+                        className="btn btn-primary"
+                        onClick={() => void handleCreateExport()}
+                        disabled={!selectedExp || isExporting || isLoading || isLoadingTargets}
+                    >
                         {isExporting ? 'Exporting...' : 'Run Export'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => void handleRegisterModel()} disabled={!selectedExp || isLoading}>

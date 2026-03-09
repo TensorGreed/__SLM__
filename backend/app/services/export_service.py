@@ -10,8 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.experiment import Experiment
 from app.models.export import Export, ExportFormat, ExportStatus
+from app.models.experiment import Experiment
+from app.services.deployment_target_service import (
+    run_deployment_target_suite,
+)
 
 
 def _export_dir(project_id: int, export_id: int) -> Path:
@@ -193,6 +196,28 @@ def _resolve_source_model_files(
     return "none", [], None
 
 
+def _resolve_export_run_dir_from_export(export: Export) -> Path | None:
+    manifest = export.manifest if isinstance(export.manifest, dict) else {}
+    run_dir = manifest.get("run_dir")
+    if isinstance(run_dir, str) and run_dir.strip():
+        candidate = Path(run_dir).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    output_path = Path(export.output_path).expanduser() if export.output_path else None
+    if output_path is None or not output_path.exists():
+        return None
+
+    latest_run = output_path / "LATEST_RUN"
+    if latest_run.exists():
+        token = latest_run.read_text(encoding="utf-8").strip()
+        if token:
+            candidate = output_path / f"run-{token}"
+            if candidate.exists() and candidate.is_dir():
+                return candidate
+    return None
+
+
 async def create_export(
     db: AsyncSession,
     project_id: int,
@@ -234,6 +259,8 @@ async def run_export(
     export_id: int,
     eval_report: dict | None = None,
     safety_scorecard: dict | None = None,
+    deployment_targets: list[str] | None = None,
+    run_smoke_tests: bool = True,
 ) -> Export:
     """Execute the export process."""
     result = await db.execute(
@@ -259,6 +286,8 @@ async def run_export(
     export.status = ExportStatus.IN_PROGRESS
     await db.flush()
 
+    deployment_report: dict | None = None
+    run_dir: Path | None = None
     try:
         now = datetime.now(timezone.utc)
         run_id = now.strftime("%Y%m%dT%H%M%SZ")
@@ -369,6 +398,21 @@ async def run_export(
             "artifacts": artifacts,
         }
 
+        deployment_report = run_deployment_target_suite(
+            run_dir=run_dir,
+            export_format=export.export_format,
+            deployment_targets=deployment_targets,
+            run_smoke_tests=run_smoke_tests,
+        )
+        manifest["deployment"] = deployment_report
+        if not bool((deployment_report.get("summary") or {}).get("deployable_artifact")):
+            errors = list((deployment_report.get("artifact_validation") or {}).get("errors") or [])
+            preview = "; ".join(str(item) for item in errors[:4]) or "artifact validation failed"
+            raise ValueError(
+                "Deployment validation failed for requested export format. "
+                f"Details: {preview}"
+            )
+
         run_manifest_path = run_dir / "manifest.json"
         with open(run_manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
@@ -387,7 +431,14 @@ async def run_export(
 
     except Exception as e:
         export.status = ExportStatus.FAILED
-        export.manifest = {"error": str(e)}
+        failed_manifest = export.manifest if isinstance(export.manifest, dict) else {}
+        failed_manifest = dict(failed_manifest)
+        if run_dir is not None:
+            failed_manifest.setdefault("run_dir", str(run_dir))
+        if isinstance(deployment_report, dict):
+            failed_manifest["deployment"] = deployment_report
+        failed_manifest["error"] = str(e)
+        export.manifest = failed_manifest
 
     await db.flush()
     await db.refresh(export)
@@ -406,12 +457,58 @@ async def list_exports(
     return list(result.scalars().all())
 
 
+async def validate_export_deployment(
+    db: AsyncSession,
+    project_id: int,
+    export_id: int,
+    *,
+    deployment_targets: list[str] | None = None,
+    run_smoke_tests: bool = True,
+) -> dict:
+    """Validate deployability for an existing export run."""
+    result = await db.execute(
+        select(Export).where(
+            Export.id == export_id,
+            Export.project_id == project_id,
+        )
+    )
+    export = result.scalar_one_or_none()
+    if not export:
+        raise ValueError(f"Export {export_id} not found in project {project_id}")
+
+    run_dir = _resolve_export_run_dir_from_export(export)
+    if run_dir is None:
+        raise ValueError("Export run directory not found. Run export first.")
+
+    report = run_deployment_target_suite(
+        run_dir=run_dir,
+        export_format=export.export_format,
+        deployment_targets=deployment_targets,
+        run_smoke_tests=run_smoke_tests,
+    )
+
+    manifest = export.manifest if isinstance(export.manifest, dict) else {}
+    manifest["deployment"] = report
+    export.manifest = manifest
+    await db.flush()
+    await db.refresh(export)
+    return report
+
+
 def _generate_dockerfile(export_format: ExportFormat) -> str:
     """Generate a Dockerfile for the inference server."""
     if export_format == ExportFormat.GGUF:
         return """FROM python:3.11-slim
 WORKDIR /app
 RUN pip install llama-cpp-python fastapi uvicorn
+COPY . .
+EXPOSE 8080
+CMD ["python", "serve.py"]
+"""
+    elif export_format == ExportFormat.ONNX:
+        return """FROM python:3.11-slim
+WORKDIR /app
+RUN pip install "optimum[onnxruntime]" transformers fastapi uvicorn
 COPY . .
 EXPOSE 8080
 CMD ["python", "serve.py"]
@@ -527,13 +624,14 @@ if __name__ == "__main__":
         return '''"""Auto-generated GGUF inference server."""
 import json
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
 app = FastAPI(title="SLM Inference Server")
-MODEL_PATH = os.getenv("MODEL_PATH", "./model.gguf")
+MODEL_PATH = os.getenv("MODEL_PATH", "./model/model.gguf")
 llm = None
 load_error = None
 
@@ -554,7 +652,14 @@ async def startup():
     global llm, load_error
     try:
         from llama_cpp import Llama
-        llm = Llama(model_path=MODEL_PATH, n_ctx=4096)
+        model_path = Path(MODEL_PATH)
+        if not model_path.exists():
+            candidates = sorted(Path("./model").glob("*.gguf"))
+            if candidates:
+                model_path = candidates[0]
+        if not model_path.exists():
+            raise RuntimeError("No .gguf model file found under ./model")
+        llm = Llama(model_path=str(model_path), n_ctx=4096)
     except Exception as e:
         load_error = str(e)
 
@@ -584,6 +689,92 @@ async def health():
         "status": "ok" if llm is not None else "degraded",
         "format": "gguf",
         "model_path": MODEL_PATH,
+        "load_error": load_error,
+        "manifest": manifest,
+    }
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+'''
+
+    if export_format == ExportFormat.ONNX:
+        return '''"""Auto-generated ONNX inference server."""
+import json
+import os
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
+
+app = FastAPI(title="SLM ONNX Inference Server")
+MODEL_PATH = os.getenv("MODEL_PATH", "./model")
+model = None
+tokenizer = None
+load_error = None
+resolved_model_dir = MODEL_PATH
+
+
+class InferenceRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 128
+    temperature: float = 0.0
+
+
+class InferenceResponse(BaseModel):
+    text: str
+    tokens_used: int
+
+
+@app.on_event("startup")
+async def startup():
+    global model, tokenizer, load_error, resolved_model_dir
+    try:
+        from optimum.onnxruntime import ORTModelForCausalLM
+        from transformers import AutoTokenizer
+
+        base_path = Path(MODEL_PATH)
+        model_dir = base_path
+        file_name = None
+        if base_path.exists():
+            candidates = sorted(base_path.rglob("*.onnx"))
+            if candidates:
+                file_name = candidates[0].name
+                model_dir = candidates[0].parent
+        resolved_model_dir = str(model_dir)
+        tokenizer = AutoTokenizer.from_pretrained(resolved_model_dir, trust_remote_code=True)
+        model = ORTModelForCausalLM.from_pretrained(resolved_model_dir, file_name=file_name)
+    except Exception as e:
+        load_error = str(e)
+
+
+@app.post("/generate", response_model=InferenceResponse)
+async def generate(req: InferenceRequest):
+    if model is None or tokenizer is None:
+        raise HTTPException(status_code=503, detail=f"Model not ready: {load_error}")
+    inputs = tokenizer(req.prompt, return_tensors="pt")
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=req.max_tokens,
+        temperature=req.temperature,
+        do_sample=req.temperature > 0,
+    )
+    prompt_tokens = inputs["input_ids"].shape[-1]
+    generated_tokens = output_ids[0][prompt_tokens:]
+    text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    return InferenceResponse(text=text, tokens_used=int(generated_tokens.shape[-1]))
+
+
+@app.get("/health")
+async def health():
+    with open("manifest.json") as f:
+        manifest = json.load(f)
+    return {
+        "status": "ok" if model is not None else "degraded",
+        "format": "onnx",
+        "model_path": MODEL_PATH,
+        "resolved_model_dir": resolved_model_dir,
         "load_error": load_error,
         "manifest": manifest,
     }

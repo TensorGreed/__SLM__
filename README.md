@@ -95,6 +95,10 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Expanded Training experiment form controls for memory/runtime tuning (`gradient_accumulation_steps`, `max_seq_length`, `save_steps`, `eval_steps`, `fp16`/`bf16`, `flash_attention`, `sequence_packing`).
 - Added split backend dependency profiles for CPU/GPU installs (`requirements-base.txt`, `requirements.txt`, `requirements-gpu.txt`, `requirements-gpu-cu128.txt`).
 - Added live external-training telemetry streaming (`epoch`, `step`, loss metrics) from Celery worker to Training dashboard via WebSocket.
+- Added **Deployment Target SDK v1**:
+  - deployment target catalog for exporters/runners (`HF`, `GGUF`, `ONNX`, `TensorRT`, `vLLM`, `TGI`, `Ollama`)
+  - export-time deployability validation (artifact profile checks)
+  - optional local runner smoke tests and explicit deployment reports in export manifests
 - Added Alembic revisions:
   - `20260305_0002` for registry + secrets tables
   - `20260305_0003` for domain profiles + project binding
@@ -271,7 +275,7 @@ All project-scoped routes are under `/api/projects/{project_id}/...`.
 | Comparison | `/projects/{id}/training/compare` | Compare up to 5 experiments side by side |
 | Evaluation | `/projects/{id}/evaluation` | Exact Match/F1/Safety, LLM judge, held-out evaluation, scorecards, eval pack preferences, auto-gate reports |
 | Compression | `/projects/{id}/compression` | Quantize/merge/benchmark queue, report status, task status/cancel, WS logs |
-| Export | `/projects/{id}/export` | Create/run/list exports with manifests |
+| Export | `/projects/{id}/export` | Create/run/list exports with manifests + deployment target validation |
 | Artifacts | `/projects/{id}/artifacts` | Publish/list/version typed artifacts and resolve latest keys |
 | Registry | `/projects/{id}/registry` | Register, readiness snapshot, promote with gates, deploy metadata (runtime-aware gate defaults) |
 | Secrets | `/projects/{id}/secrets` | Upsert/list/delete project secrets with encrypted storage |
@@ -341,6 +345,17 @@ Pipeline recipe endpoints:
 - `recipes` catalog also returns `recommended_recipe_id` + `recommendation_context` resolved from project adapter/profile/runtime hints.
 - `apply` persists resolved project preferences and workflow graph override, writes a manifest under `data/projects/{project_id}/pipeline_recipes/runs/.../manifest.json`, and publishes typed artifact key `manifest.pipeline_recipe`.
 - `run` applies the blueprint then launches workflow DAG execution, writing execution records under `data/projects/{project_id}/pipeline_recipes/executions/{recipe_run_id}/run.json`.
+
+Export deployment endpoints:
+- `GET /api/projects/{project_id}/export/deployment-targets`
+- `POST /api/projects/{project_id}/export/{export_id}/deployment-validate`
+- `POST /api/projects/{project_id}/export/{export_id}/run` accepts optional:
+  - `deployment_targets` (target ids like `exporter.huggingface`, `runner.vllm`, `runner.ollama`)
+  - `run_smoke_tests` (default `true`)
+- Export runs now include a `deployment` report in `manifest.json`:
+  - `artifact_validation` confirms format-accurate files exist (`HF` config/weights, `.gguf`, `.onnx`, `.engine`/`.plan`)
+  - `target_reports` includes per-target compatibility/readiness and smoke outcomes
+  - `summary.deployable_artifact` gates export success (runner readiness is reported but does not block artifact validity)
 
 Runtime settings endpoints:
 - `GET /api/settings/runtime`

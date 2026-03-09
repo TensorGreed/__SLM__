@@ -6,7 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.export import ExportFormat
-from app.services.export_service import create_export, list_exports, run_export
+from app.services.deployment_target_service import (
+    default_deployment_targets_for_format,
+    list_deployment_targets,
+)
+from app.services.export_service import (
+    create_export,
+    list_exports,
+    run_export,
+    validate_export_deployment,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/export", tags=["Export"])
 
@@ -20,6 +29,13 @@ class ExportCreateRequest(BaseModel):
 class ExportRunRequest(BaseModel):
     eval_report: dict | None = None
     safety_scorecard: dict | None = None
+    deployment_targets: list[str] | None = None
+    run_smoke_tests: bool = True
+
+
+class ExportDeploymentValidateRequest(BaseModel):
+    deployment_targets: list[str] | None = None
+    run_smoke_tests: bool = True
 
 
 @router.post("/create", status_code=201)
@@ -54,7 +70,15 @@ async def run(
     """Execute the export process."""
     payload = req or ExportRunRequest()
     try:
-        export = await run_export(db, project_id, export_id, payload.eval_report, payload.safety_scorecard)
+        export = await run_export(
+            db,
+            project_id,
+            export_id,
+            payload.eval_report,
+            payload.safety_scorecard,
+            deployment_targets=payload.deployment_targets,
+            run_smoke_tests=bool(payload.run_smoke_tests),
+        )
         return {
             "id": export.id,
             "status": export.status.value,
@@ -62,6 +86,48 @@ async def run(
             "run_id": (export.manifest or {}).get("run_id"),
             "file_size_bytes": export.file_size_bytes,
             "manifest": export.manifest,
+            "deployment": (export.manifest or {}).get("deployment"),
+        }
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/deployment-targets")
+async def deployment_targets(
+    project_id: int,
+    export_format: ExportFormat | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """List Deployment Target SDK catalog and format-specific defaults."""
+    # Project id is retained for consistency and future project-aware target policy.
+    _ = db, project_id
+    payload = list_deployment_targets(export_format=export_format)
+    if export_format is not None:
+        payload["default_target_ids"] = default_deployment_targets_for_format(export_format)
+    return payload
+
+
+@router.post("/{export_id}/deployment-validate")
+async def validate_deployment(
+    project_id: int,
+    export_id: int,
+    req: ExportDeploymentValidateRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run deployment target validation/smoke checks on an existing export run."""
+    payload = req or ExportDeploymentValidateRequest()
+    try:
+        report = await validate_export_deployment(
+            db,
+            project_id,
+            export_id,
+            deployment_targets=payload.deployment_targets,
+            run_smoke_tests=bool(payload.run_smoke_tests),
+        )
+        return {
+            "export_id": export_id,
+            "project_id": project_id,
+            "deployment": report,
         }
     except ValueError as e:
         raise HTTPException(404, str(e))

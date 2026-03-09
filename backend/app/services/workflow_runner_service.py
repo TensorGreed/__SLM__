@@ -941,12 +941,20 @@ async def _execute_local_export_attempt(
 
     eval_report = base_cfg.get("eval_report")
     safety_scorecard = base_cfg.get("safety_scorecard")
+    deployment_targets = [
+        str(item).strip()
+        for item in list(base_cfg.get("deployment_targets") or [])
+        if str(item).strip()
+    ] or None
+    run_smoke_tests = _coerce_bool(base_cfg.get("run_smoke_tests"), default=True)
     export_row = await run_export(
         db=db,
         project_id=project_id,
         export_id=export_id,
         eval_report=eval_report if isinstance(eval_report, dict) else None,
         safety_scorecard=safety_scorecard if isinstance(safety_scorecard, dict) else None,
+        deployment_targets=deployment_targets,
+        run_smoke_tests=run_smoke_tests,
     )
 
     manifest = dict(export_row.manifest or {})
@@ -959,6 +967,7 @@ async def _execute_local_export_attempt(
             "status": export_row.status.value,
             "output_path": export_row.output_path,
             "run_id": manifest.get("run_id"),
+            "deployment": manifest.get("deployment"),
         },
     }, ""
 

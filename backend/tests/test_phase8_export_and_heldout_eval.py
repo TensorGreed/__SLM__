@@ -18,6 +18,10 @@ from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import Experiment, ExperimentStatus
 from app.models.export import ExportFormat, ExportStatus
 from app.models.project import Project
+from app.services.deployment_target_service import (
+    default_deployment_targets_for_format,
+    run_deployment_target_suite,
+)
 from app.services.evaluation_service import run_heldout_evaluation
 from app.services.export_service import create_export, run_export
 
@@ -88,6 +92,114 @@ class Phase8ExportAndHeldoutEvalTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((run_dir / "model" / "config.json").exists())
             self.assertTrue((run_dir / "model" / "tokenizer.json").exists())
             self.assertTrue((run_dir / "model" / "weights.safetensors").exists())
+
+    async def test_export_run_attaches_deployment_validation_report(self):
+        model_dir = self.tmp_root / "experiments" / "103" / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "config.json").write_text('{"model_type": "llama"}', encoding="utf-8")
+        (model_dir / "tokenizer.json").write_text('{"version": 1}', encoding="utf-8")
+        (model_dir / "weights.safetensors").write_bytes(b"model-bytes")
+
+        async with self.session_factory() as db:
+            project, exp = await self._seed_project_and_experiment(db, output_dir=model_dir.parent)
+            export = await create_export(db, project.id, exp.id, ExportFormat.HUGGINGFACE)
+            export = await run_export(
+                db,
+                project.id,
+                export.id,
+                deployment_targets=["exporter.huggingface"],
+                run_smoke_tests=False,
+            )
+            await db.commit()
+
+            self.assertEqual(export.status, ExportStatus.COMPLETED)
+            manifest = export.manifest or {}
+            deployment = manifest.get("deployment") or {}
+            summary = deployment.get("summary") or {}
+            self.assertTrue(bool(summary.get("deployable_artifact")))
+            reports = [item for item in deployment.get("target_reports", []) if isinstance(item, dict)]
+            exporter_report = next((item for item in reports if item.get("target_id") == "exporter.huggingface"), None)
+            self.assertIsNotNone(exporter_report)
+            self.assertTrue(bool(exporter_report.get("passed")))
+
+    async def test_export_run_fails_when_format_artifacts_are_missing(self):
+        model_dir = self.tmp_root / "experiments" / "104" / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        # Intentionally only HF files; no .gguf artifact.
+        (model_dir / "config.json").write_text('{"model_type": "llama"}', encoding="utf-8")
+        (model_dir / "weights.safetensors").write_bytes(b"model-bytes")
+
+        async with self.session_factory() as db:
+            project, exp = await self._seed_project_and_experiment(db, output_dir=model_dir.parent)
+            export = await create_export(db, project.id, exp.id, ExportFormat.GGUF)
+            export = await run_export(
+                db,
+                project.id,
+                export.id,
+                deployment_targets=["exporter.gguf"],
+                run_smoke_tests=False,
+            )
+            await db.commit()
+
+            self.assertEqual(export.status, ExportStatus.FAILED)
+            manifest = export.manifest or {}
+            self.assertIn("Deployment validation failed", str(manifest.get("error", "")))
+            self.assertIsInstance(manifest.get("deployment"), dict)
+
+    def test_deployment_target_defaults_for_common_formats(self):
+        hf = default_deployment_targets_for_format(ExportFormat.HUGGINGFACE)
+        gguf = default_deployment_targets_for_format(ExportFormat.GGUF)
+        onnx = default_deployment_targets_for_format(ExportFormat.ONNX)
+
+        self.assertIn("exporter.huggingface", hf)
+        self.assertIn("runner.vllm", hf)
+        self.assertIn("runner.tgi", hf)
+
+        self.assertIn("exporter.gguf", gguf)
+        self.assertIn("runner.ollama", gguf)
+
+        self.assertIn("exporter.onnx", onnx)
+
+    def test_deployment_suite_runner_checks_do_not_block_exporter_pass(self):
+        run_dir = self.tmp_root / "exports" / "run-hf"
+        model_dir = run_dir / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "config.json").write_text('{"model_type":"llama"}', encoding="utf-8")
+        (model_dir / "tokenizer.json").write_text('{"version":1}', encoding="utf-8")
+        (model_dir / "weights.safetensors").write_bytes(b"model-bytes")
+
+        report = run_deployment_target_suite(
+            run_dir=run_dir,
+            export_format=ExportFormat.HUGGINGFACE,
+            deployment_targets=None,
+            run_smoke_tests=False,
+        )
+
+        summary = report.get("summary") or {}
+        self.assertTrue(bool(summary.get("deployable_artifact")))
+        reports = [item for item in report.get("target_reports", []) if isinstance(item, dict)]
+        exporter = next((item for item in reports if item.get("target_id") == "exporter.huggingface"), None)
+        self.assertIsNotNone(exporter)
+        self.assertTrue(bool((exporter or {}).get("passed")))
+
+        runner_reports = [item for item in reports if str(item.get("kind")) == "runner"]
+        self.assertGreaterEqual(len(runner_reports), 1)
+        self.assertTrue(all(not bool(item.get("smoke_executed")) for item in runner_reports))
+
+    def test_deployment_suite_supports_tensorrt_export_profile(self):
+        run_dir = self.tmp_root / "exports" / "run-trt"
+        model_dir = run_dir / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "model.engine").write_bytes(b"0" * 4096)
+
+        report = run_deployment_target_suite(
+            run_dir=run_dir,
+            export_format=ExportFormat.TENSORRT,
+            deployment_targets=["exporter.tensorrt"],
+            run_smoke_tests=False,
+        )
+        summary = report.get("summary") or {}
+        self.assertTrue(bool(summary.get("deployable_artifact")))
 
     async def test_run_heldout_evaluation_generates_predictions(self):
         dataset_dir = self.tmp_root / "prepared"

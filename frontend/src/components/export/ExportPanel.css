@@ -4,6 +4,94 @@
     font-size: var(--font-size-sm);
 }
 
+.export-target-panel {
+    margin-bottom: var(--space-lg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.export-target-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+}
+
+.export-target-panel-title {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+}
+
+.export-target-panel-subtitle {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.export-target-panel-note {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.export-target-panel-error {
+    font-size: var(--font-size-xs);
+    color: var(--color-error);
+}
+
+.export-target-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+}
+
+.export-target-option {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: flex-start;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm);
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.01);
+}
+
+.export-target-option.selected {
+    border-color: var(--color-primary);
+    background: rgba(86, 156, 214, 0.12);
+}
+
+.export-target-name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+}
+
+.export-target-kind {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+
+.export-target-description {
+    margin-top: 2px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.export-smoke-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-top: var(--space-xs);
+}
+
 .export-history-table th,
 .export-history-table td {
     padding: var(--space-md);
