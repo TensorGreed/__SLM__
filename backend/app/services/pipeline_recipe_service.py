@@ -177,6 +177,134 @@ _BUILTIN_PIPELINE_RECIPES: list[dict[str, Any]] = [
             "target_formats": ["gguf", "onnx"],
         },
     },
+    {
+        "recipe_id": "recipe.pipeline.program.sft_sweep",
+        "display_name": "Programmatic SFT Sweep",
+        "description": "Recipe Compiler v2 program with conditional branches and training sweep loop.",
+        "version": "2.0.0",
+        "category": "advanced",
+        "tags": ["program", "conditional", "sweep", "hpo", "compiler_v2"],
+        "supports_task_profiles": [
+            "instruction_sft",
+            "chat_sft",
+            "qa",
+            "rag_qa",
+            "tool_calling",
+            "summarization",
+            "language_modeling",
+        ],
+        "speed_profile": "balanced",
+        "domain": {
+            "domain_pack_id": "general-pack-v1",
+            "domain_profile_id": "generic-domain-v1",
+        },
+        "workflow": {
+            "program": {
+                "contract_version": "slm.pipeline-program/v2",
+                "base_template_id": "template.sft",
+                "graph_id": "program.sft.sweep.v2",
+                "graph_label": "Programmatic SFT Sweep",
+                "graph_version": "2.0.0",
+                "node_overrides": {
+                    "step:training": {
+                        "retry_policy": {
+                            "max_retries": 2,
+                            "retry_on": ["execution", "transient"],
+                        },
+                        "loop": {
+                            "type": "sweep",
+                            "objective_path": "training.terminal_status_score",
+                            "objective_mode": "max",
+                            "stop_on_first_success": False,
+                            "items": [
+                                {
+                                    "label": "lr-2e4",
+                                    "node_config": {
+                                        "mode": "create_and_start",
+                                        "wait_for_terminal": False,
+                                        "config": {"learning_rate": 2e-4},
+                                    },
+                                },
+                                {
+                                    "label": "lr-1e4",
+                                    "node_config": {
+                                        "mode": "create_and_start",
+                                        "wait_for_terminal": False,
+                                        "config": {"learning_rate": 1e-4},
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                    "step:evaluation": {
+                        "condition": {
+                            "all": [
+                                {"source_status_in": ["completed"]},
+                                {"artifact_exists": "model.checkpoint"},
+                            ]
+                        }
+                    },
+                    "step:compression": {
+                        "condition": {"source_status_in": ["completed"]},
+                    },
+                    "step:export": {
+                        "condition": {"source_status_in": ["completed"]},
+                    },
+                },
+                "add_nodes": [
+                    {
+                        "id": "step:evaluation_fast_lane",
+                        "stage": "evaluation",
+                        "display_name": "Evaluation Fast Lane",
+                        "index": 100,
+                        "kind": "program_step",
+                        "status": "pending",
+                        "step_type": "core.evaluation",
+                        "description": "Fallback evaluation lane triggered when training branch fails.",
+                        "input_artifacts": [],
+                        "output_artifacts": ["report.evaluation.fast_lane"],
+                        "config_schema_ref": "slm.step.evaluation/v2",
+                        "runtime_requirements": {
+                            "execution_modes": ["local", "celery", "external"],
+                            "required_services": [],
+                            "required_env": [],
+                            "required_settings": [],
+                            "requires_gpu": False,
+                            "min_vram_gb": 0.0,
+                        },
+                        "config": {"mode": "noop"},
+                    }
+                ],
+                "add_edges": [
+                    {
+                        "id": "edge:training->evaluation_fast_lane",
+                        "source": "step:training",
+                        "target": "step:evaluation_fast_lane",
+                        "kind": "program_edge",
+                        "condition": {"source_status_in": ["failed"]},
+                    }
+                ],
+            }
+        },
+        "dataset_adapter": {
+            "adapter_id": "default-canonical",
+            "adapter_config": {},
+            "field_mapping": {},
+            "task_profile": "instruction_sft",
+        },
+        "training": {
+            "training_recipe_id": "recipe.sft.balanced",
+            "base_config": {"base_model": "microsoft/phi-2"},
+            "overrides": {},
+            "preferred_plan_profile": "balanced",
+        },
+        "evaluation": {
+            "preferred_pack_id": "evalpack.general.default",
+        },
+        "export": {
+            "target_formats": ["gguf", "onnx"],
+        },
+    },
 ]
 
 
@@ -614,6 +742,140 @@ def _resolve_workflow_template(
     return None, [f"Workflow template '{template_id}' not found. Available: {', '.join(available)}"]
 
 
+def _compile_workflow_program(
+    *,
+    project_id: int,
+    current_stage: Any,
+    program_spec: dict[str, Any],
+    template_id_hint: str | None = None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    warnings: list[str] = []
+    if not isinstance(program_spec, dict):
+        return None, ["workflow.program must be an object for recipe compiler v2."]
+
+    graph_payload = program_spec.get("graph")
+    graph: dict[str, Any] | None = None
+    if isinstance(graph_payload, dict):
+        graph = _deepcopy(graph_payload)
+
+    if graph is None:
+        base_template_id = (
+            str(program_spec.get("base_template_id") or "").strip()
+            or str(template_id_hint or "").strip()
+        )
+        if base_template_id:
+            graph, graph_warnings = _resolve_workflow_template(
+                project_id=project_id,
+                current_stage=current_stage,
+                template_id=base_template_id,
+            )
+            warnings.extend(graph_warnings)
+        else:
+            raw_nodes = program_spec.get("nodes")
+            raw_edges = program_spec.get("edges")
+            if isinstance(raw_nodes, list) and isinstance(raw_edges, list):
+                graph = {
+                    "project_id": project_id,
+                    "graph_id": "program.graph",
+                    "graph_label": "Program Graph",
+                    "graph_version": "2.0.0",
+                    "mode": "readonly_preview",
+                    "current_stage": str(getattr(current_stage, "value", current_stage) or ""),
+                    "nodes": _deepcopy(raw_nodes),
+                    "edges": _deepcopy(raw_edges),
+                }
+            else:
+                warnings.append("workflow.program missing base_template_id and graph payload; no graph generated.")
+                return None, warnings
+
+    if not isinstance(graph, dict):
+        return None, [*warnings, "workflow.program could not resolve a valid graph payload."]
+
+    nodes = [item for item in list(graph.get("nodes") or []) if isinstance(item, dict)]
+    edges = [item for item in list(graph.get("edges") or []) if isinstance(item, dict)]
+
+    remove_node_ids = {
+        str(item).strip()
+        for item in list(program_spec.get("remove_node_ids") or [])
+        if str(item).strip()
+    }
+    if remove_node_ids:
+        nodes = [node for node in nodes if str(node.get("id") or "").strip() not in remove_node_ids]
+        edges = [
+            edge
+            for edge in edges
+            if str(edge.get("source") or "").strip() not in remove_node_ids
+            and str(edge.get("target") or "").strip() not in remove_node_ids
+        ]
+
+    remove_edge_ids = {
+        str(item).strip()
+        for item in list(program_spec.get("remove_edge_ids") or [])
+        if str(item).strip()
+    }
+    if remove_edge_ids:
+        edges = [edge for edge in edges if str(edge.get("id") or "").strip() not in remove_edge_ids]
+
+    node_overrides = program_spec.get("node_overrides")
+    if isinstance(node_overrides, dict) and node_overrides:
+        by_node_id = {str(node.get("id") or "").strip(): node for node in nodes if str(node.get("id") or "").strip()}
+        for raw_node_id, raw_override in node_overrides.items():
+            node_id = str(raw_node_id or "").strip()
+            if not node_id:
+                continue
+            if not isinstance(raw_override, dict):
+                warnings.append(f"workflow.program.node_overrides['{node_id}'] must be an object.")
+                continue
+            target = by_node_id.get(node_id)
+            if target is None:
+                warnings.append(f"workflow.program.node_overrides references unknown node '{node_id}'.")
+                continue
+            target.update(_deep_merge(dict(target), dict(raw_override)))
+
+    edge_overrides = program_spec.get("edge_overrides")
+    if isinstance(edge_overrides, dict) and edge_overrides:
+        by_edge_id = {str(edge.get("id") or "").strip(): edge for edge in edges if str(edge.get("id") or "").strip()}
+        for raw_edge_id, raw_override in edge_overrides.items():
+            edge_id = str(raw_edge_id or "").strip()
+            if not edge_id:
+                continue
+            if not isinstance(raw_override, dict):
+                warnings.append(f"workflow.program.edge_overrides['{edge_id}'] must be an object.")
+                continue
+            target = by_edge_id.get(edge_id)
+            if target is None:
+                warnings.append(f"workflow.program.edge_overrides references unknown edge '{edge_id}'.")
+                continue
+            target.update(_deep_merge(dict(target), dict(raw_override)))
+
+    add_nodes = [item for item in list(program_spec.get("add_nodes") or []) if isinstance(item, dict)]
+    add_edges = [item for item in list(program_spec.get("add_edges") or []) if isinstance(item, dict)]
+    if add_nodes:
+        nodes.extend(_deepcopy(add_nodes))
+    if add_edges:
+        edges.extend(_deepcopy(add_edges))
+
+    for fallback_index, node in enumerate(nodes):
+        if "index" not in node or not isinstance(node.get("index"), int):
+            node["index"] = fallback_index
+    nodes.sort(key=lambda item: int(item.get("index", 0)))
+
+    graph_id = str(program_spec.get("graph_id") or graph.get("graph_id") or "program.graph").strip() or "program.graph"
+    graph_label = str(program_spec.get("graph_label") or graph.get("graph_label") or "Program Graph").strip() or "Program Graph"
+    graph_version = str(program_spec.get("graph_version") or graph.get("graph_version") or "2.0.0").strip() or "2.0.0"
+
+    graph.update(
+        {
+            "graph_id": graph_id,
+            "graph_label": graph_label,
+            "graph_version": graph_version,
+            "nodes": nodes,
+            "edges": edges,
+        }
+    )
+    return graph, warnings
+
+
 def _resolve_training_config(
     *,
     training_spec: dict[str, Any],
@@ -676,8 +938,19 @@ async def resolve_pipeline_recipe_blueprint(
     warnings.extend(domain_warnings)
 
     template_id = str(workflow_spec.get("template_id") or "").strip()
+    workflow_program = workflow_spec.get("program")
     graph: dict[str, Any] | None = None
-    if template_id:
+    workflow_resolution_mode = "template"
+    if isinstance(workflow_program, dict):
+        workflow_resolution_mode = "program_v2"
+        graph, graph_warnings = _compile_workflow_program(
+            project_id=project_id,
+            current_stage=project.pipeline_stage,
+            program_spec=workflow_program,
+            template_id_hint=template_id or None,
+        )
+        warnings.extend(graph_warnings)
+    elif template_id:
         graph, graph_warnings = _resolve_workflow_template(
             project_id=project_id,
             current_stage=project.pipeline_stage,
@@ -686,6 +959,7 @@ async def resolve_pipeline_recipe_blueprint(
         warnings.extend(graph_warnings)
     else:
         warnings.append("workflow.template_id is empty; workflow graph override will not be updated")
+        workflow_resolution_mode = "none"
 
     training_recipe, training_config, missing_required, training_warnings = _resolve_training_config(
         training_spec=training_spec
@@ -715,6 +989,8 @@ async def resolve_pipeline_recipe_blueprint(
             },
             "workflow": {
                 "template_id": template_id or None,
+                "resolution_mode": workflow_resolution_mode,
+                "program": _deepcopy(workflow_program) if isinstance(workflow_program, dict) else None,
                 "graph": graph,
             },
             "dataset_adapter": {

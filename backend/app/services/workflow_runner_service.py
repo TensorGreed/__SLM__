@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import shlex
 import socket
 import subprocess
@@ -171,6 +172,400 @@ def _resolve_step_config(
     if isinstance(node_config, dict):
         base.update(node_config)
     return base
+
+
+def _deep_merge_dict(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _get_path(payload: Any, path: str) -> Any:
+    if not path.strip():
+        return payload
+    current: Any = payload
+    for token in [item.strip() for item in path.split(".") if item.strip()]:
+        if isinstance(current, dict) and token in current:
+            current = current[token]
+            continue
+        if isinstance(current, list):
+            try:
+                index = int(token)
+            except ValueError:
+                return None
+            if index < 0 or index >= len(current):
+                return None
+            current = current[index]
+            continue
+        return None
+    return current
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _classify_failure_type(
+    error_text: str,
+    *,
+    missing_inputs: list[str] | None = None,
+    missing_runtime: list[str] | None = None,
+    cancelled: bool = False,
+) -> str:
+    if cancelled:
+        return "cancelled"
+    if missing_inputs:
+        return "blocked_input"
+    if missing_runtime:
+        return "blocked_runtime"
+
+    token = str(error_text or "").strip().lower()
+    if not token:
+        return "execution"
+    if any(
+        marker in token
+        for marker in (
+            "timeout",
+            "temporar",
+            "connection",
+            "unavailable",
+            "rate limit",
+            "network",
+            "redis unavailable",
+            "connection refused",
+            "try again",
+        )
+    ):
+        return "transient"
+    if any(marker in token for marker in ("cancelled", "canceled")):
+        return "cancelled"
+    if any(marker in token for marker in ("missing inputs", "missing input")):
+        return "blocked_input"
+    if any(marker in token for marker in ("missing runtime", "runtime requirement")):
+        return "blocked_runtime"
+    return "execution"
+
+
+def _normalize_retry_policy(
+    *,
+    global_max_retries: int,
+    run_config: dict[str, Any],
+    node: dict[str, Any],
+) -> dict[str, Any]:
+    defaults = {
+        "max_retries": max(0, int(global_max_retries)),
+        "retry_on": ["execution", "transient"],
+        "no_retry_on": [],
+        "backoff_seconds": 0.0,
+        "backoff_multiplier": 1.0,
+    }
+
+    run_retry = run_config.get("retry_policy")
+    if isinstance(run_retry, dict):
+        default_policy = run_retry.get("default")
+        if isinstance(default_policy, dict):
+            defaults = _deep_merge_dict(defaults, default_policy)
+        by_stage = run_retry.get("by_stage")
+        stage = str(node.get("stage") or "").strip()
+        if isinstance(by_stage, dict) and isinstance(by_stage.get(stage), dict):
+            defaults = _deep_merge_dict(defaults, by_stage.get(stage) or {})
+
+    node_retry = node.get("retry_policy")
+    if isinstance(node_retry, dict):
+        defaults = _deep_merge_dict(defaults, node_retry)
+
+    retry_on_raw = defaults.get("retry_on")
+    if isinstance(retry_on_raw, list):
+        retry_on = sorted(
+            {
+                str(item).strip().lower()
+                for item in retry_on_raw
+                if isinstance(item, str) and str(item).strip()
+            }
+        )
+    elif isinstance(retry_on_raw, str):
+        token = str(retry_on_raw).strip().lower()
+        retry_on = [token] if token else []
+    else:
+        retry_on = []
+
+    no_retry_raw = defaults.get("no_retry_on")
+    if isinstance(no_retry_raw, list):
+        no_retry_on = sorted(
+            {
+                str(item).strip().lower()
+                for item in no_retry_raw
+                if isinstance(item, str) and str(item).strip()
+            }
+        )
+    elif isinstance(no_retry_raw, str):
+        token = str(no_retry_raw).strip().lower()
+        no_retry_on = [token] if token else []
+    else:
+        no_retry_on = []
+
+    return {
+        "max_retries": _coerce_int(defaults.get("max_retries"), default=0, minimum=0, maximum=20),
+        "retry_on": retry_on,
+        "no_retry_on": no_retry_on,
+        "backoff_seconds": _coerce_float(defaults.get("backoff_seconds"), default=0.0, minimum=0.0, maximum=60.0),
+        "backoff_multiplier": _coerce_float(defaults.get("backoff_multiplier"), default=1.0, minimum=1.0, maximum=10.0),
+    }
+
+
+def _should_retry_failure(
+    *,
+    failure_type: str,
+    attempt: int,
+    policy: dict[str, Any],
+) -> bool:
+    max_retries = int(policy.get("max_retries") or 0)
+    if attempt > max_retries:
+        return False
+
+    token = str(failure_type or "").strip().lower()
+    no_retry_on = {str(item).strip().lower() for item in list(policy.get("no_retry_on") or []) if str(item).strip()}
+    if token and token in no_retry_on:
+        return False
+
+    retry_on = {str(item).strip().lower() for item in list(policy.get("retry_on") or []) if str(item).strip()}
+    if not retry_on:
+        return False
+    if "any" in retry_on:
+        return True
+    return token in retry_on
+
+
+def _normalize_loop_policy(node: dict[str, Any]) -> dict[str, Any] | None:
+    loop_payload = node.get("loop")
+    if not isinstance(loop_payload, dict):
+        return None
+    enabled = _coerce_bool(loop_payload.get("enabled"), default=True)
+    if not enabled:
+        return None
+
+    items_raw = loop_payload.get("items")
+    if not isinstance(items_raw, list) or not items_raw:
+        return None
+
+    items: list[dict[str, Any]] = []
+    for index, item in enumerate(items_raw):
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or item.get("id") or f"trial-{index + 1}").strip() or f"trial-{index + 1}"
+        node_cfg = item.get("node_config")
+        run_cfg = item.get("run_config")
+        item_retry = item.get("retry_policy")
+        items.append(
+            {
+                "label": label,
+                "node_config": dict(node_cfg) if isinstance(node_cfg, dict) else {},
+                "run_config": dict(run_cfg) if isinstance(run_cfg, dict) else {},
+                "retry_policy": dict(item_retry) if isinstance(item_retry, dict) else None,
+            }
+        )
+
+    if not items:
+        return None
+
+    return {
+        "type": str(loop_payload.get("type") or "sweep").strip().lower() or "sweep",
+        "items": items,
+        "objective_path": str(loop_payload.get("objective_path") or "").strip() or None,
+        "objective_mode": str(loop_payload.get("objective_mode") or "max").strip().lower() or "max",
+        "stop_on_first_success": _coerce_bool(loop_payload.get("stop_on_first_success"), default=False),
+        "require_all_success": _coerce_bool(loop_payload.get("require_all_success"), default=False),
+    }
+
+
+def _extract_iteration_score(iteration_payload: dict[str, Any], objective_path: str | None) -> float | None:
+    if not objective_path:
+        return None
+    value = _get_path(iteration_payload, objective_path)
+    return _to_float(value)
+
+
+def _evaluate_program_condition(
+    condition: Any,
+    *,
+    source_node_id: str | None = None,
+    available_artifacts: set[str],
+    run_config: dict[str, Any],
+    node_results: dict[str, dict[str, Any]],
+) -> bool:
+    if condition is None:
+        return True
+    if isinstance(condition, bool):
+        return condition
+    if isinstance(condition, list):
+        return all(
+            _evaluate_program_condition(
+                item,
+                source_node_id=source_node_id,
+                available_artifacts=available_artifacts,
+                run_config=run_config,
+                node_results=node_results,
+            )
+            for item in condition
+        )
+    if not isinstance(condition, dict):
+        return False
+
+    if "all" in condition:
+        rows = condition.get("all")
+        if not isinstance(rows, list):
+            return False
+        return all(
+            _evaluate_program_condition(
+                item,
+                source_node_id=source_node_id,
+                available_artifacts=available_artifacts,
+                run_config=run_config,
+                node_results=node_results,
+            )
+            for item in rows
+        )
+    if "any" in condition:
+        rows = condition.get("any")
+        if not isinstance(rows, list):
+            return False
+        return any(
+            _evaluate_program_condition(
+                item,
+                source_node_id=source_node_id,
+                available_artifacts=available_artifacts,
+                run_config=run_config,
+                node_results=node_results,
+            )
+            for item in rows
+        )
+    if "not" in condition:
+        return not _evaluate_program_condition(
+            condition.get("not"),
+            source_node_id=source_node_id,
+            available_artifacts=available_artifacts,
+            run_config=run_config,
+            node_results=node_results,
+        )
+
+    if "artifact_exists" in condition:
+        key = str(condition.get("artifact_exists") or "").strip()
+        return bool(key and key in available_artifacts)
+    if "artifact_missing" in condition:
+        key = str(condition.get("artifact_missing") or "").strip()
+        return bool(key and key not in available_artifacts)
+
+    if "source_status_in" in condition:
+        rows = condition.get("source_status_in")
+        allowed = {
+            str(item).strip().lower()
+            for item in (rows if isinstance(rows, list) else [rows])
+            if str(item).strip()
+        }
+        if not allowed or not source_node_id:
+            return False
+        source = node_results.get(source_node_id) or {}
+        status = str(source.get("status") or "").strip().lower()
+        return status in allowed
+
+    if "source_status_equals" in condition:
+        expected = str(condition.get("source_status_equals") or "").strip().lower()
+        if not expected or not source_node_id:
+            return False
+        source = node_results.get(source_node_id) or {}
+        return str(source.get("status") or "").strip().lower() == expected
+
+    if "node_status" in condition and isinstance(condition.get("node_status"), dict):
+        payload = condition.get("node_status") or {}
+        node_id = str(payload.get("node_id") or "").strip()
+        if not node_id:
+            return False
+        row = node_results.get(node_id) or {}
+        status = str(row.get("status") or "").strip().lower()
+        if "equals" in payload:
+            return status == str(payload.get("equals") or "").strip().lower()
+        if "in" in payload:
+            values = payload.get("in")
+            allowed = {
+                str(item).strip().lower()
+                for item in (values if isinstance(values, list) else [values])
+                if str(item).strip()
+            }
+            return status in allowed
+        if "not_in" in payload:
+            values = payload.get("not_in")
+            blocked = {
+                str(item).strip().lower()
+                for item in (values if isinstance(values, list) else [values])
+                if str(item).strip()
+            }
+            return status not in blocked
+        return False
+
+    if "node_metric_gte" in condition and isinstance(condition.get("node_metric_gte"), dict):
+        payload = condition.get("node_metric_gte") or {}
+        node_id = str(payload.get("node_id") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        threshold = _to_float(payload.get("value"))
+        if not node_id or not path or threshold is None:
+            return False
+        row = node_results.get(node_id) or {}
+        value = _to_float(_get_path(row, path))
+        return value is not None and value >= threshold
+
+    if "node_metric_lte" in condition and isinstance(condition.get("node_metric_lte"), dict):
+        payload = condition.get("node_metric_lte") or {}
+        node_id = str(payload.get("node_id") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        threshold = _to_float(payload.get("value"))
+        if not node_id or not path or threshold is None:
+            return False
+        row = node_results.get(node_id) or {}
+        value = _to_float(_get_path(row, path))
+        return value is not None and value <= threshold
+
+    if "config_equals" in condition and isinstance(condition.get("config_equals"), dict):
+        payload = condition.get("config_equals") or {}
+        path = str(payload.get("path") or "").strip()
+        if not path:
+            return False
+        expected = payload.get("value")
+        return _get_path(run_config, path) == expected
+
+    if "always" in condition:
+        return _coerce_bool(condition.get("always"), default=False)
+
+    # Unknown condition shape is treated as false.
+    return False
+
+
+def _edge_condition_payload(edge: dict[str, Any]) -> Any:
+    if "condition" in edge:
+        return edge.get("condition")
+    if "when" in edge:
+        return edge.get("when")
+    if "if" in edge:
+        return edge.get("if")
+    return None
+
+
+def _incoming_edges(edges: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for edge in edges:
+        target = str(edge.get("target") or "").strip()
+        if not target:
+            continue
+        rows[target].append(edge)
+    return rows
 
 
 async def _resolve_latest_experiment_id(
@@ -1138,10 +1533,16 @@ async def run_workflow_graph(
             resume_start_index = len(ordered_node_ids)
 
     deps_by_node = _dependency_map(edges)
+    incoming_edges_by_target = _incoming_edges(edges)
     run_nodes: dict[str, WorkflowRunNode] = {}
     for node_index, node_id in enumerate(ordered_node_ids):
         node = node_map[node_id]
         runtime_check = evaluate_runtime_requirements_for_node(node)
+        retry_policy = _normalize_retry_policy(
+            global_max_retries=max_retries,
+            run_config=cfg,
+            node=node,
+        )
         row = WorkflowRunNode(
             run_id=run.id,
             node_id=node_id,
@@ -1150,7 +1551,7 @@ async def run_workflow_graph(
             execution_backend=execution_backend,
             status=WorkflowNodeStatus.PENDING,
             attempt_count=0,
-            max_retries=max(0, int(max_retries)),
+            max_retries=int(retry_policy.get("max_retries") or 0),
             dependencies=list(deps_by_node.get(node_id, [])),
             input_artifacts=list(node.get("input_artifacts", [])),
             output_artifacts=list(node.get("output_artifacts", [])),
@@ -1195,11 +1596,19 @@ async def run_workflow_graph(
     if commit_progress:
         await db.commit()
     available_artifacts = await collect_available_artifacts(db, project.id)
+    node_results: dict[str, dict[str, Any]] = {}
     for row in run_nodes.values():
         if row.status == WorkflowNodeStatus.COMPLETED:
             available_artifacts.update(
                 [item for item in (row.published_artifact_keys or []) if isinstance(item, str) and item.strip()]
             )
+            node_results[row.node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+                "last_log": (list(row.node_log or [])[-1] if list(row.node_log or []) else {}),
+            }
 
     run_blocked = False
     run_failed = False
@@ -1220,6 +1629,64 @@ async def run_workflow_graph(
         if row.status == WorkflowNodeStatus.COMPLETED and row.error_message.startswith("reused from workflow run"):
             continue
 
+        node_condition = node.get("condition")
+        if node_condition is not None and not _evaluate_program_condition(
+            node_condition,
+            source_node_id=None,
+            available_artifacts=available_artifacts,
+            run_config=cfg,
+            node_results=node_results,
+        ):
+            row.status = WorkflowNodeStatus.SKIPPED
+            row.error_message = "skipped by node condition"
+            row.finished_at = _utcnow()
+            node_results[node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "failure_type": "condition_skip",
+                "last_log": {},
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+            }
+            if commit_progress:
+                await db.commit()
+            continue
+
+        incoming_edges = list(incoming_edges_by_target.get(node_id) or [])
+        active_deps: list[str] = []
+        if incoming_edges:
+            for edge in incoming_edges:
+                source = str(edge.get("source") or "").strip()
+                if not source:
+                    continue
+                condition_payload = _edge_condition_payload(edge)
+                if _evaluate_program_condition(
+                    condition_payload,
+                    source_node_id=source,
+                    available_artifacts=available_artifacts,
+                    run_config=cfg,
+                    node_results=node_results,
+                ):
+                    active_deps.append(source)
+            active_deps = sorted({dep for dep in active_deps if dep in run_nodes})
+            if not active_deps:
+                row.dependencies = []
+                row.status = WorkflowNodeStatus.SKIPPED
+                row.error_message = "skipped by branch condition"
+                row.finished_at = _utcnow()
+                node_results[node_id] = {
+                    "status": row.status.value,
+                    "attempt_count": int(row.attempt_count or 0),
+                    "error_message": row.error_message or "",
+                    "failure_type": "branch_skip",
+                    "last_log": {},
+                    "published_artifact_keys": list(row.published_artifact_keys or []),
+                }
+                if commit_progress:
+                    await db.commit()
+                continue
+            row.dependencies = active_deps
+
         deps = list(row.dependencies or [])
         dep_failed = any(
             run_nodes[dep_id].status in {WorkflowNodeStatus.FAILED, WorkflowNodeStatus.BLOCKED, WorkflowNodeStatus.SKIPPED}
@@ -1230,6 +1697,14 @@ async def run_workflow_graph(
             row.status = WorkflowNodeStatus.SKIPPED
             row.error_message = "skipped due to dependency failure/block"
             row.finished_at = _utcnow()
+            node_results[node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "failure_type": "dependency_skip",
+                "last_log": {},
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+            }
             if commit_progress:
                 await db.commit()
             continue
@@ -1250,6 +1725,28 @@ async def run_workflow_graph(
                 reasons.append(f"missing runtime requirements: {', '.join(missing_runtime)}")
             row.error_message = "; ".join(reasons)
             row.finished_at = _utcnow()
+            blocked_failure_type = _classify_failure_type(
+                row.error_message,
+                missing_inputs=missing_inputs,
+                missing_runtime=missing_runtime,
+            )
+            row.node_log = [
+                *list(row.node_log or []),
+                {
+                    "timestamp": _utcnow().isoformat(),
+                    "backend": execution_backend,
+                    "failure_type": blocked_failure_type,
+                    "message": row.error_message,
+                },
+            ]
+            node_results[node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "failure_type": blocked_failure_type,
+                "last_log": (list(row.node_log or [])[-1] if list(row.node_log or []) else {}),
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+            }
             run_blocked = True
             break_reason = row.error_message
             if commit_progress:
@@ -1258,48 +1755,249 @@ async def run_workflow_graph(
                 break
             continue
 
-        attempt = 0
         success = False
         last_error = ""
+        last_failure_type = ""
         logs = list(row.node_log or [])
-        while attempt <= max(0, int(max_retries)):
-            if await is_workflow_run_cancelled(db, project_id=project.id, run_id=run.id):
-                run_cancelled = True
-                last_error = "run cancelled by user"
-                break_reason = last_error
-                break
-            attempt += 1
-            row.attempt_count = attempt
-            row.status = WorkflowNodeStatus.RUNNING
-            if row.started_at is None:
-                row.started_at = _utcnow()
-            ok, log_payload, error_text = await _execute_node_attempt(
-                db=db,
-                backend=execution_backend,
-                project_id=project.id,
-                run_id=run.id,
-                node=node,
-                attempt=attempt,
-                config=cfg,
-            )
+        total_attempts = 0
+        best_success_payload: dict[str, Any] | None = None
+        best_success_score: float | None = None
+        loop_summaries: list[dict[str, Any]] = []
+
+        async def _run_one_execution(
+            *,
+            execution_node: dict[str, Any],
+            execution_cfg: dict[str, Any],
+            retry_policy_payload: dict[str, Any],
+            iteration_label: str | None = None,
+        ) -> dict[str, Any]:
+            nonlocal total_attempts, last_error, last_failure_type, run_cancelled, break_reason
+            attempt = 0
+            result_payload: dict[str, Any] = {}
+            while attempt <= int(retry_policy_payload.get("max_retries") or 0):
+                if await is_workflow_run_cancelled(db, project_id=project.id, run_id=run.id):
+                    run_cancelled = True
+                    last_error = "run cancelled by user"
+                    last_failure_type = "cancelled"
+                    break_reason = last_error
+                    break
+                attempt += 1
+                total_attempts += 1
+                row.attempt_count = total_attempts
+                row.status = WorkflowNodeStatus.RUNNING
+                if row.started_at is None:
+                    row.started_at = _utcnow()
+
+                ok, log_payload, error_text = await _execute_node_attempt(
+                    db=db,
+                    backend=execution_backend,
+                    project_id=project.id,
+                    run_id=run.id,
+                    node=execution_node,
+                    attempt=attempt,
+                    config=execution_cfg,
+                )
+                failure_type = "" if ok else _classify_failure_type(error_text or "")
+                should_retry = (not ok) and _should_retry_failure(
+                    failure_type=failure_type,
+                    attempt=attempt,
+                    policy=retry_policy_payload,
+                )
+                logs.append(
+                    {
+                        "attempt": attempt,
+                        "attempt_global": total_attempts,
+                        "timestamp": _utcnow().isoformat(),
+                        "backend": execution_backend,
+                        "iteration": iteration_label,
+                        "failure_type": failure_type or None,
+                        "retry_planned": bool(should_retry),
+                        "retry_policy": retry_policy_payload,
+                        **log_payload,
+                    }
+                )
+                row.node_log = logs
+                result_payload = dict(log_payload or {})
+                if ok:
+                    return {
+                        "ok": True,
+                        "attempts": attempt,
+                        "payload": result_payload,
+                        "error": "",
+                        "failure_type": "",
+                    }
+
+                last_error = error_text or "node execution failed"
+                last_failure_type = failure_type or "execution"
+                if not should_retry:
+                    break
+
+                backoff_seconds = _to_float(retry_policy_payload.get("backoff_seconds")) or 0.0
+                backoff_multiplier = _to_float(retry_policy_payload.get("backoff_multiplier")) or 1.0
+                if backoff_seconds > 0:
+                    delay = backoff_seconds * (backoff_multiplier ** (attempt - 1))
+                    await asyncio.sleep(max(0.0, min(delay, 120.0)))
+
+            return {
+                "ok": False,
+                "attempts": attempt,
+                "payload": result_payload,
+                "error": last_error,
+                "failure_type": last_failure_type or "execution",
+            }
+
+        base_retry_policy = _normalize_retry_policy(
+            global_max_retries=max_retries,
+            run_config=cfg,
+            node=node,
+        )
+        row.max_retries = int(base_retry_policy.get("max_retries") or 0)
+
+        loop_policy = _normalize_loop_policy(node)
+        if loop_policy:
+            objective_path = str(loop_policy.get("objective_path") or "").strip() or None
+            objective_mode = str(loop_policy.get("objective_mode") or "max").strip().lower() or "max"
+            stop_on_first_success = bool(loop_policy.get("stop_on_first_success"))
+            require_all_success = bool(loop_policy.get("require_all_success"))
+            success_count = 0
+            fail_count = 0
+
+            for item in list(loop_policy.get("items") or []):
+                if run_cancelled:
+                    break
+                iteration_label = str(item.get("label") or "").strip() or f"trial-{len(loop_summaries) + 1}"
+                execution_node = copy.deepcopy(node)
+                base_node_cfg = execution_node.get("config")
+                if not isinstance(base_node_cfg, dict):
+                    base_node_cfg = {}
+                node_cfg_override = item.get("node_config")
+                if isinstance(node_cfg_override, dict):
+                    execution_node["config"] = _deep_merge_dict(base_node_cfg, node_cfg_override)
+                else:
+                    execution_node["config"] = dict(base_node_cfg)
+
+                execution_cfg = dict(cfg)
+                run_cfg_override = item.get("run_config")
+                if isinstance(run_cfg_override, dict):
+                    execution_cfg = _deep_merge_dict(execution_cfg, run_cfg_override)
+
+                retry_policy = dict(base_retry_policy)
+                item_retry = item.get("retry_policy")
+                if isinstance(item_retry, dict):
+                    retry_policy = _deep_merge_dict(retry_policy, item_retry)
+                    retry_policy = {
+                        **retry_policy,
+                        "max_retries": _coerce_int(retry_policy.get("max_retries"), default=0, minimum=0, maximum=20),
+                        "backoff_seconds": _coerce_float(
+                            retry_policy.get("backoff_seconds"), default=0.0, minimum=0.0, maximum=60.0
+                        ),
+                        "backoff_multiplier": _coerce_float(
+                            retry_policy.get("backoff_multiplier"), default=1.0, minimum=1.0, maximum=10.0
+                        ),
+                    }
+
+                iteration_result = await _run_one_execution(
+                    execution_node=execution_node,
+                    execution_cfg=execution_cfg,
+                    retry_policy_payload=retry_policy,
+                    iteration_label=iteration_label,
+                )
+                iteration_payload = iteration_result.get("payload") if isinstance(iteration_result.get("payload"), dict) else {}
+                iteration_score = _extract_iteration_score(iteration_payload, objective_path)
+                loop_summaries.append(
+                    {
+                        "label": iteration_label,
+                        "success": bool(iteration_result.get("ok")),
+                        "attempts": int(iteration_result.get("attempts") or 0),
+                        "failure_type": str(iteration_result.get("failure_type") or ""),
+                        "error": str(iteration_result.get("error") or ""),
+                        "score": iteration_score,
+                    }
+                )
+
+                if bool(iteration_result.get("ok")):
+                    success_count += 1
+                    if best_success_payload is None:
+                        best_success_payload = dict(iteration_payload)
+                        best_success_score = iteration_score
+                    else:
+                        if iteration_score is not None:
+                            if best_success_score is None:
+                                best_success_payload = dict(iteration_payload)
+                                best_success_score = iteration_score
+                            elif objective_mode == "min" and iteration_score < best_success_score:
+                                best_success_payload = dict(iteration_payload)
+                                best_success_score = iteration_score
+                            elif objective_mode != "min" and iteration_score > best_success_score:
+                                best_success_payload = dict(iteration_payload)
+                                best_success_score = iteration_score
+                    if stop_on_first_success:
+                        break
+                else:
+                    fail_count += 1
+
+            if run_cancelled:
+                success = False
+            elif require_all_success and fail_count > 0:
+                success = False
+                last_error = last_error or "loop policy require_all_success failed"
+                last_failure_type = last_failure_type or "loop_failure"
+            else:
+                success = success_count > 0
+
             logs.append(
                 {
-                    "attempt": attempt,
                     "timestamp": _utcnow().isoformat(),
                     "backend": execution_backend,
-                    **log_payload,
+                    "loop_summary": {
+                        "type": loop_policy.get("type"),
+                        "total_iterations": len(loop_summaries),
+                        "successful_iterations": success_count,
+                        "failed_iterations": fail_count,
+                        "objective_path": objective_path,
+                        "objective_mode": objective_mode,
+                        "best_score": best_success_score,
+                        "iterations": loop_summaries,
+                    },
                 }
             )
             row.node_log = logs
-            if ok:
-                success = True
-                break
-            last_error = error_text or "node execution failed"
+            if success and isinstance(best_success_payload, dict):
+                # Expose selected payload in node_results and logs.
+                logs.append(
+                    {
+                        "timestamp": _utcnow().isoformat(),
+                        "backend": execution_backend,
+                        "selected_iteration_payload": best_success_payload,
+                    }
+                )
+                row.node_log = logs
+        else:
+            single_result = await _run_one_execution(
+                execution_node=node,
+                execution_cfg=cfg,
+                retry_policy_payload=base_retry_policy,
+                iteration_label=None,
+            )
+            success = bool(single_result.get("ok"))
+            if isinstance(single_result.get("payload"), dict):
+                best_success_payload = dict(single_result.get("payload") or {})
+            if not success:
+                last_error = str(single_result.get("error") or last_error or "node execution failed")
+                last_failure_type = str(single_result.get("failure_type") or last_failure_type or "execution")
 
         if run_cancelled:
             row.status = WorkflowNodeStatus.SKIPPED
             row.error_message = last_error or "run cancelled by user"
             row.finished_at = _utcnow()
+            node_results[node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "failure_type": "cancelled",
+                "last_log": (list(row.node_log or [])[-1] if list(row.node_log or []) else {}),
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+            }
             if commit_progress:
                 await db.commit()
             break
@@ -1308,6 +2006,14 @@ async def run_workflow_graph(
             row.status = WorkflowNodeStatus.FAILED
             row.error_message = last_error
             row.finished_at = _utcnow()
+            node_results[node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "failure_type": last_failure_type or "execution",
+                "last_log": (list(row.node_log or [])[-1] if list(row.node_log or []) else {}),
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+            }
             run_failed = True
             break_reason = last_error
             if commit_progress:
@@ -1324,13 +2030,28 @@ async def run_workflow_graph(
             producer_stage=row.stage,
             producer_run_id=str(run.id),
             producer_step_id=row.node_id,
-            metadata={"source": "workflow.runner", "backend": execution_backend},
+            metadata={
+                "source": "workflow.runner",
+                "backend": execution_backend,
+                "loop_enabled": bool(loop_policy),
+                "loop_iterations": len(loop_summaries),
+            },
         )
         row.published_artifact_keys = [item.artifact_key for item in published]
         available_artifacts.update(row.published_artifact_keys)
         row.status = WorkflowNodeStatus.COMPLETED
         row.error_message = ""
         row.finished_at = _utcnow()
+        node_results[node_id] = {
+            "status": row.status.value,
+            "attempt_count": int(row.attempt_count or 0),
+            "error_message": "",
+            "failure_type": "",
+            "last_log": (list(row.node_log or [])[-1] if list(row.node_log or []) else {}),
+            "published_artifact_keys": list(row.published_artifact_keys or []),
+            "loop_summary": loop_summaries,
+            "selected_payload": best_success_payload or {},
+        }
         if commit_progress:
             await db.commit()
 
@@ -1345,6 +2066,14 @@ async def run_workflow_graph(
             else:
                 row.error_message = "skipped after workflow termination"
             row.finished_at = _utcnow()
+            node_results[node_id] = {
+                "status": row.status.value,
+                "attempt_count": int(row.attempt_count or 0),
+                "error_message": row.error_message or "",
+                "failure_type": "termination_skip",
+                "last_log": (list(row.node_log or [])[-1] if list(row.node_log or []) else {}),
+                "published_artifact_keys": list(row.published_artifact_keys or []),
+            }
             if commit_progress:
                 await db.commit()
 
@@ -1362,6 +2091,7 @@ async def run_workflow_graph(
         **(run.summary or {}),
         "available_artifacts_final": sorted(available_artifacts),
         "break_reason": break_reason,
+        "program_node_results": node_results,
     }
     await db.flush()
     if commit_progress:

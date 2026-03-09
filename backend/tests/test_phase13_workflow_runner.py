@@ -397,6 +397,270 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 1)
         self.assertTrue(all(node["execution_backend"] == "celery" for node in payload["nodes"]))
 
+    def test_workflow_run_branching_conditions_skip_inactive_path(self):
+        project_id = self._create_project("phase13-branching")
+        graph_override = {
+            "graph_id": "custom-branching",
+            "graph_label": "Conditional Branching Graph",
+            "graph_version": "2.0.0",
+            "nodes": [
+                {
+                    "id": "step:start",
+                    "stage": "ingestion",
+                    "display_name": "Start",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.ingestion",
+                    "description": "Branch source node.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["dataset.raw"],
+                    "config_schema_ref": "slm.step.ingestion/v2",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 0, "y": 0},
+                },
+                {
+                    "id": "step:branch_ok",
+                    "stage": "cleaning",
+                    "display_name": "Branch Success",
+                    "index": 1,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.cleaning",
+                    "description": "Runs when upstream is completed.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["dataset.cleaned"],
+                    "config_schema_ref": "slm.step.cleaning/v2",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 280, "y": 0},
+                },
+                {
+                    "id": "step:branch_fail",
+                    "stage": "synthetic",
+                    "display_name": "Branch Failure",
+                    "index": 2,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.synthetic",
+                    "description": "Runs only when upstream fails.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["dataset.synthetic"],
+                    "config_schema_ref": "slm.step.synthetic/v2",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 560, "y": 0},
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge:start->ok",
+                    "source": "step:start",
+                    "target": "step:branch_ok",
+                    "kind": "branch",
+                    "condition": {"source_status_in": ["completed"]},
+                },
+                {
+                    "id": "edge:start->fail",
+                    "source": "step:start",
+                    "target": "step:branch_fail",
+                    "kind": "branch",
+                    "condition": {"source_status_in": ["failed"]},
+                },
+            ],
+        }
+
+        run = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json={
+                "execution_backend": "local",
+                "allow_fallback": False,
+                "graph": graph_override,
+            },
+        )
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        by_node = {row["node_id"]: row for row in payload["nodes"]}
+        self.assertEqual(by_node["step:start"]["status"], "completed")
+        self.assertEqual(by_node["step:branch_ok"]["status"], "completed")
+        self.assertEqual(by_node["step:branch_fail"]["status"], "skipped")
+        self.assertIn("branch condition", str(by_node["step:branch_fail"]["error_message"]))
+
+    def test_workflow_retry_policy_honors_failure_types(self):
+        project_id = self._create_project("phase13-retry-policy")
+        graph_override = {
+            "graph_id": "custom-retry-policy",
+            "graph_label": "Retry Policy Graph",
+            "graph_version": "2.0.0",
+            "nodes": [
+                {
+                    "id": "step:ingestion",
+                    "stage": "ingestion",
+                    "display_name": "Ingestion",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.ingestion",
+                    "description": "Ingestion with failure-type retry policy.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["dataset.raw"],
+                    "config_schema_ref": "slm.step.ingestion/v2",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 20, "y": 20},
+                    "retry_policy": {
+                        "max_retries": 3,
+                        "retry_on": ["transient"],
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        run = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json={
+                "execution_backend": "local",
+                "allow_fallback": False,
+                "graph": graph_override,
+                "config": {"simulate_fail_once_stages": ["ingestion"]},
+            },
+        )
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "failed")
+        node = payload["nodes"][0]
+        self.assertEqual(node["status"], "failed")
+        self.assertEqual(node["attempt_count"], 1)
+        self.assertIn("simulated one-time failure", str(node.get("error_message", "")))
+
+    def test_workflow_sweep_loop_runs_multiple_iterations(self):
+        project_id = self._create_project("phase13-sweep-loop")
+        graph_override = {
+            "graph_id": "custom-sweep-loop",
+            "graph_label": "Sweep Loop Graph",
+            "graph_version": "2.0.0",
+            "nodes": [
+                {
+                    "id": "step:data_adapter_preview",
+                    "stage": "data_adapter_preview",
+                    "display_name": "Data Adapter Preview",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.data_adapter_preview",
+                    "description": "Data adapter preview with sweep loop.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["analysis.data_adapter"],
+                    "config_schema_ref": "slm.step.data_adapter_preview/v2",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 30, "y": 30},
+                    "config": {
+                        "dataset_type": "raw",
+                        "adapter_id": "baseline",
+                        "sample_size": 100,
+                        "min_mapping_ratio": 0.1,
+                    },
+                    "loop": {
+                        "type": "sweep",
+                        "objective_path": "preview_summary.mapping_ratio",
+                        "objective_mode": "max",
+                        "items": [
+                            {
+                                "label": "trial-low",
+                                "node_config": {"adapter_id": "trial-low"},
+                            },
+                            {
+                                "label": "trial-high",
+                                "node_config": {"adapter_id": "trial-high"},
+                            },
+                        ],
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        def _mock_preview(*, adapter_id: str, **kwargs):
+            mapped = 60 if adapter_id == "trial-low" else 95
+            return {
+                "project_id": project_id,
+                "requested_adapter_id": adapter_id,
+                "resolved_adapter_id": adapter_id,
+                "detection_scores": {adapter_id: 1.0},
+                "sampled_records": 100,
+                "mapped_records": mapped,
+                "dropped_records": 100 - mapped,
+                "error_count": 0,
+                "errors": [],
+                "validation_report": {"status": "ok"},
+                "preview_rows": [],
+                "source": {"dataset_type": "raw"},
+            }
+
+        with patch(
+            "app.services.dataset_service.preview_project_data_adapter",
+            AsyncMock(side_effect=_mock_preview),
+        ):
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={
+                    "execution_backend": "local",
+                    "allow_fallback": False,
+                    "graph": graph_override,
+                },
+            )
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        node = payload["nodes"][0]
+        self.assertEqual(node["status"], "completed")
+        self.assertEqual(node["attempt_count"], 2)
+        loop_entry = next((item for item in node.get("node_log", []) if "loop_summary" in item), None)
+        self.assertIsNotNone(loop_entry)
+        summary = loop_entry.get("loop_summary") or {}
+        self.assertEqual(int(summary.get("total_iterations", 0)), 2)
+        self.assertEqual(int(summary.get("successful_iterations", 0)), 2)
+        selected_entry = next((item for item in node.get("node_log", []) if "selected_iteration_payload" in item), None)
+        self.assertIsNotNone(selected_entry)
+        selected_payload = selected_entry.get("selected_iteration_payload") or {}
+        preview_summary = selected_payload.get("preview_summary") or {}
+        self.assertEqual(preview_summary.get("resolved_adapter_id"), "trial-high")
+
     def test_workflow_run_async_queue_and_poll(self):
         project_id = self._create_project("phase13-async")
         self._publish_source_artifacts(project_id)

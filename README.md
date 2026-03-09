@@ -60,9 +60,11 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - built-in gate packs (`general`, `strict`, `fast-iteration`) + domain-profile-derived dynamic pack
   - project-level evaluation pack preference with fallback to defaults
   - experiment gate evaluation endpoint and pipeline status auto-gate summary
-- Added **Pipeline Recipes / Blueprints v1**:
-  - built-in end-to-end recipes (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, `recipe.pipeline.eval_gate`)
-  - resolve/apply APIs that wire domain pack/profile, workflow template graph, dataset adapter preset, training recipe, and evaluation pack
+- Added **Pipeline Recipes / Blueprints v2 (Recipe Compiler)**:
+  - built-in end-to-end recipes (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, `recipe.pipeline.eval_gate`, `recipe.pipeline.program.sft_sweep`)
+  - resolve/apply APIs that wire domain pack/profile, dataset adapter preset, training recipe, and evaluation pack
+  - workflow resolution now supports `workflow.template_id` and executable `workflow.program` contracts
+  - Recipe Compiler v2 supports conditional nodes/edges, failure-type retry policies, and loop/sweep node execution plans
   - task-profile-aware recipe recommendation context (`recommended_recipe_id`) for faster defaults on the Recipes page
   - persisted active recipe state + versioned reproducibility manifest artifact (`manifest.pipeline_recipe`)
   - dedicated `Pipeline Recipes` page in project workspace navigation (separate from Pipeline and Workflow pages)
@@ -300,9 +302,11 @@ Pipeline graph preview endpoint:
 - Compile and run-step now also enforce active-node runtime requirements (missing env/settings/services/GPU checks surface in API responses).
 - Workflow DAG runs persist in DB (`workflow_runs` + `workflow_run_nodes`) and support:
   - dependency-aware node ordering
-  - per-node retries (`max_retries`)
+  - per-node failure-type retry policies (`retry_policy.max_retries`, `retry_on`, `no_retry_on`, backoff)
   - stop-on-block / stop-on-failure controls
   - backend execution mode selection (`local`, `celery`, `external`)
+  - conditional node/edge execution (`condition` on nodes and edges for branching)
+  - loop/sweep execution (`loop.items`) with per-iteration config overrides and objective-based selection
   - `celery` backend dispatches each node attempt to worker task `run_workflow_node_job` and waits for task result (requires worker + broker/result backend).
   - executable custom step type `core.data_adapter_preview` for adapter coverage gating in DAG runs (`local` and `celery` backends).
 - Workflow page now includes:
@@ -330,6 +334,10 @@ Pipeline recipe endpoints:
 - `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/retry`
 - `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/resume`
 - `resolve` returns the concrete merged blueprint (`domain`, `workflow`, `dataset_adapter`, `training`, `evaluation`, `export`) plus optional preflight diagnostics.
+- `resolve` supports Recipe Compiler v2:
+  - `workflow.template_id` (legacy template path)
+  - `workflow.program` (pipeline program contract with base template + graph patch ops)
+  - program ops include `node_overrides`, `edge_overrides`, `add_nodes`, `add_edges`, and removals.
 - `recipes` catalog also returns `recommended_recipe_id` + `recommendation_context` resolved from project adapter/profile/runtime hints.
 - `apply` persists resolved project preferences and workflow graph override, writes a manifest under `data/projects/{project_id}/pipeline_recipes/runs/.../manifest.json`, and publishes typed artifact key `manifest.pipeline_recipe`.
 - `run` applies the blueprint then launches workflow DAG execution, writing execution records under `data/projects/{project_id}/pipeline_recipes/executions/{recipe_run_id}/run.json`.

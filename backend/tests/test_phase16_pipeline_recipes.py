@@ -82,6 +82,38 @@ class Phase16PipelineRecipeTests(unittest.TestCase):
         self.assertEqual(workflow.get("template_id"), "template.sft")
         self.assertIn("preflight", payload)
 
+    def test_pipeline_recipe_program_v2_resolves_compiled_graph(self):
+        project_id = self._create_project("phase16-recipes-program-v2")
+
+        resolved = self.client.post(
+            f"/api/projects/{project_id}/pipeline/recipes/resolve",
+            json={
+                "recipe_id": "recipe.pipeline.program.sft_sweep",
+                "include_preflight": True,
+            },
+        )
+        self.assertEqual(resolved.status_code, 200, resolved.text)
+        payload = resolved.json()
+        workflow = payload.get("resolved", {}).get("workflow", {})
+        self.assertEqual(workflow.get("resolution_mode"), "program_v2")
+        graph = workflow.get("graph") or {}
+        self.assertEqual(str(graph.get("graph_id") or ""), "program.sft.sweep.v2")
+        nodes = [item for item in graph.get("nodes", []) if isinstance(item, dict)]
+        node_by_id = {str(item.get("id")): item for item in nodes}
+        self.assertIn("step:training", node_by_id)
+        self.assertIn("step:evaluation_fast_lane", node_by_id)
+        training = node_by_id["step:training"]
+        self.assertIsInstance(training.get("retry_policy"), dict)
+        self.assertIsInstance(training.get("loop"), dict)
+        edges = [item for item in graph.get("edges", []) if isinstance(item, dict)]
+        self.assertTrue(
+            any(
+                str(item.get("source")) == "step:training"
+                and str(item.get("target")) == "step:evaluation_fast_lane"
+                for item in edges
+            )
+        )
+
     def test_pipeline_recipe_recommend_endpoint_respects_context(self):
         project_id = self._create_project("phase16-recipes-1b")
 

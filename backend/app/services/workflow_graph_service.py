@@ -846,6 +846,52 @@ def _topological_order(node_ids: set[str], edges: list[dict[str, Any]]) -> list[
     return ordered
 
 
+def _has_program_condition(node_or_edge: dict[str, Any]) -> bool:
+    if any(key in node_or_edge for key in ("condition", "when", "if")):
+        return True
+    program_payload = node_or_edge.get("program")
+    return isinstance(program_payload, dict) and any(
+        key in program_payload for key in ("condition", "when", "if")
+    )
+
+
+def _extract_program_condition(node_or_edge: dict[str, Any]) -> Any:
+    for key in ("condition", "when", "if"):
+        if key in node_or_edge:
+            return node_or_edge.get(key)
+    program_payload = node_or_edge.get("program")
+    if isinstance(program_payload, dict):
+        for key in ("condition", "when", "if"):
+            if key in program_payload:
+                return program_payload.get(key)
+    return None
+
+
+def _is_condition_payload(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, dict):
+        return True
+    if isinstance(value, list):
+        return all(_is_condition_payload(item) for item in value)
+    return False
+
+
+def _is_retry_policy_payload(value: object) -> bool:
+    return isinstance(value, dict)
+
+
+def _is_loop_policy_payload(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    items = value.get("items")
+    if items is None:
+        return True
+    return isinstance(items, list)
+
+
 def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -860,7 +906,7 @@ def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str]
         return errors, warnings
 
     node_ids: set[str] = set()
-    stage_names: set[str] = set()
+    stage_counts: dict[str, int] = {}
     for index, node in enumerate(nodes):
         if not isinstance(node, dict):
             errors.append(f"nodes[{index}] must be an object")
@@ -878,17 +924,33 @@ def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str]
 
         if not stage_name:
             errors.append(f"nodes[{index}].stage is required")
-        elif stage_name in stage_names:
-            errors.append(f"Duplicate stage in graph: {stage_name}")
         else:
-            stage_names.add(stage_name)
+            stage_counts[stage_name] = int(stage_counts.get(stage_name, 0)) + 1
             if stage_name not in _STEP_CONTRACTS:
                 errors.append(f"nodes[{index}].stage '{stage_name}' is not supported by core contracts")
-            continue
 
-        node_warnings, node_errors, _ = _validate_step_contract_node(node, stage_name)
-        warnings.extend(f"nodes[{index}].{message}" for message in node_warnings)
-        errors.extend(f"nodes[{index}].{message}" for message in node_errors)
+        if stage_name:
+            node_warnings, node_errors, _ = _validate_step_contract_node(node, stage_name)
+            warnings.extend(f"nodes[{index}].{message}" for message in node_warnings)
+            errors.extend(f"nodes[{index}].{message}" for message in node_errors)
+
+        if _has_program_condition(node):
+            condition_payload = _extract_program_condition(node)
+            if not _is_condition_payload(condition_payload):
+                errors.append(
+                    (
+                        f"nodes[{index}] condition must be bool/object/list; "
+                        f"received {type(condition_payload).__name__}"
+                    )
+                )
+
+        retry_policy = node.get("retry_policy")
+        if retry_policy is not None and not _is_retry_policy_payload(retry_policy):
+            errors.append(f"nodes[{index}].retry_policy must be an object")
+
+        loop_policy = node.get("loop")
+        if loop_policy is not None and not _is_loop_policy_payload(loop_policy):
+            errors.append(f"nodes[{index}].loop must be an object with optional list 'items'")
 
     for index, edge in enumerate(edges):
         if not isinstance(edge, dict):
@@ -905,8 +967,24 @@ def _validate_override_graph_structure(graph: dict[str, Any]) -> tuple[list[str]
         if target and target not in node_ids:
             errors.append(f"edges[{index}].target '{target}' does not reference an existing node")
 
+        if _has_program_condition(edge):
+            condition_payload = _extract_program_condition(edge)
+            if not _is_condition_payload(condition_payload):
+                errors.append(
+                    (
+                        f"edges[{index}] condition must be bool/object/list; "
+                        f"received {type(condition_payload).__name__}"
+                    )
+                )
+
     if not errors and _graph_has_cycle(node_ids, edges):
         errors.append("graph must be acyclic (cycle detected)")
+
+    for stage_name, count in sorted(stage_counts.items()):
+        if count > 1:
+            warnings.append(
+                f"stage '{stage_name}' appears {count} times; compiler will treat nodes independently."
+            )
 
     if isinstance(graph.get("mode"), str) and graph.get("mode") != "readonly_preview":
         warnings.append("graph.mode is ignored for runtime and resolved as readonly_preview in phase 2")
@@ -936,6 +1014,16 @@ def _normalize_override_graph(
             "y": int(y) if isinstance(y, int) else 0,
         }
         _, _, normalized_contract = _validate_step_contract_node(node, stage_name)
+        program_payload = node.get("program")
+        if not isinstance(program_payload, dict):
+            program_payload = {}
+        condition_payload = _extract_program_condition(node)
+        retry_policy = node.get("retry_policy")
+        if retry_policy is None:
+            retry_policy = program_payload.get("retry_policy")
+        loop_policy = node.get("loop")
+        if loop_policy is None:
+            loop_policy = program_payload.get("loop")
         nodes.append(
             {
                 **node,
@@ -945,6 +1033,9 @@ def _normalize_override_graph(
                 "kind": str(node.get("kind") or "custom_step"),
                 "status": status_by_stage.get(stage_name, "pending"),
                 "position": resolved_position,
+                "condition": condition_payload if _is_condition_payload(condition_payload) else None,
+                "retry_policy": retry_policy if isinstance(retry_policy, dict) else None,
+                "loop": loop_policy if isinstance(loop_policy, dict) else None,
             }
         )
 
@@ -953,6 +1044,7 @@ def _normalize_override_graph(
         source = str(edge.get("source", "")).strip()
         target = str(edge.get("target", "")).strip()
         edge_id = str(edge.get("id", "")).strip() or f"edge:{source}->{target}:{edge_index}"
+        edge_condition = _extract_program_condition(edge)
         edges.append(
             {
                 **edge,
@@ -960,6 +1052,7 @@ def _normalize_override_graph(
                 "kind": str(edge.get("kind") or "contract_edge"),
                 "source": source,
                 "target": target,
+                "condition": edge_condition if _is_condition_payload(edge_condition) else None,
             }
         )
 
