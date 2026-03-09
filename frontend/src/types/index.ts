@@ -134,6 +134,8 @@ export interface PipelineRecipeSummary {
     version: string;
     category: string;
     tags: string[];
+    supports_task_profiles?: string[];
+    speed_profile?: string;
 }
 
 export interface PipelineRecipeCatalogResponse {
@@ -142,6 +144,8 @@ export interface PipelineRecipeCatalogResponse {
     training_recipe_ids: string[];
     recipes: PipelineRecipeSummary[];
     active_state: Record<string, unknown> | null;
+    recommended_recipe_id?: string | null;
+    recommendation_context?: Record<string, unknown> | null;
 }
 
 export interface PipelineRecipeStateResponse {

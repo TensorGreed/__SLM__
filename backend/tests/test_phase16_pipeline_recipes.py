@@ -64,6 +64,7 @@ class Phase16PipelineRecipeTests(unittest.TestCase):
         self.assertEqual(catalog.status_code, 200, catalog.text)
         catalog_payload = catalog.json()
         self.assertEqual(catalog_payload.get("default_recipe_id"), "recipe.pipeline.sft_default")
+        self.assertTrue(bool(catalog_payload.get("recommended_recipe_id")))
         recipe_ids = {str(item.get("recipe_id")) for item in catalog_payload.get("recipes", []) if isinstance(item, dict)}
         self.assertIn("recipe.pipeline.sft_default", recipe_ids)
         self.assertIn("recipe.pipeline.lora_fast", recipe_ids)
@@ -80,6 +81,34 @@ class Phase16PipelineRecipeTests(unittest.TestCase):
         workflow = payload.get("resolved", {}).get("workflow", {})
         self.assertEqual(workflow.get("template_id"), "template.sft")
         self.assertIn("preflight", payload)
+
+    def test_pipeline_recipe_recommend_endpoint_respects_context(self):
+        project_id = self._create_project("phase16-recipes-1b")
+
+        fast_resp = self.client.get(
+            f"/api/projects/{project_id}/pipeline/recipes/recommend",
+            params={
+                "task_profile": "instruction_sft",
+                "preferred_plan_profile": "safe",
+                "prefer_fast": "true",
+            },
+        )
+        self.assertEqual(fast_resp.status_code, 200, fast_resp.text)
+        fast_payload = fast_resp.json()
+        self.assertEqual(fast_payload.get("recommended_recipe_id"), "recipe.pipeline.lora_fast")
+        self.assertEqual(fast_payload.get("context", {}).get("task_profile"), "instruction_sft")
+
+        balanced_resp = self.client.get(
+            f"/api/projects/{project_id}/pipeline/recipes/recommend",
+            params={
+                "task_profile": "instruction_sft",
+                "preferred_plan_profile": "balanced",
+                "prefer_fast": "false",
+            },
+        )
+        self.assertEqual(balanced_resp.status_code, 200, balanced_resp.text)
+        balanced_payload = balanced_resp.json()
+        self.assertEqual(balanced_payload.get("recommended_recipe_id"), "recipe.pipeline.sft_default")
 
     def test_pipeline_recipe_apply_updates_project_and_state(self):
         project_id = self._create_project("phase16-recipes-2")

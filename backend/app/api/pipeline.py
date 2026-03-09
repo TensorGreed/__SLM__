@@ -37,6 +37,7 @@ from app.services.pipeline_recipe_service import (
     load_pipeline_recipe_execution,
     patch_pipeline_recipe_execution,
     patch_pipeline_recipe_state,
+    recommend_pipeline_recipes_for_project,
     resolve_pipeline_recipe_blueprint,
     save_pipeline_recipe_execution,
 )
@@ -364,13 +365,43 @@ async def pipeline_recipe_catalog(
         raise HTTPException(404, "Project not found")
 
     state = await get_pipeline_recipe_state(db, project_id=project_id)
+    recommendation = await recommend_pipeline_recipes_for_project(
+        db,
+        project_id=project_id,
+    )
     return {
         "project_id": project_id,
         "default_recipe_id": DEFAULT_PIPELINE_RECIPE_ID,
         "training_recipe_ids": list_available_training_recipe_ids(),
         "recipes": list_pipeline_recipes(include_blueprint=False),
         "active_state": state.get("state"),
+        "recommended_recipe_id": recommendation.get("recommended_recipe_id"),
+        "recommendation_context": recommendation.get("context"),
     }
+
+
+@router.get("/recipes/recommend")
+async def pipeline_recipe_recommend(
+    project_id: int,
+    task_profile: str | None = None,
+    preferred_plan_profile: str | None = None,
+    prefer_fast: bool | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recommend pipeline recipes for the project context and optional runtime preferences."""
+    try:
+        return await recommend_pipeline_recipes_for_project(
+            db,
+            project_id=project_id,
+            task_profile=task_profile,
+            preferred_plan_profile=preferred_plan_profile,
+            prefer_fast=prefer_fast,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.get("/recipes/state")

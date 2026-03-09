@@ -19,12 +19,14 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.models.domain_pack import DomainPack
 from app.models.domain_profile import DomainProfile
 from app.models.project import Project
 from app.services.artifact_registry_service import publish_artifact, serialize_artifact
+from app.services.data_adapter_service import normalize_task_profile
 from app.services.dataset_service import save_project_dataset_adapter_preference
 from app.services.evaluation_pack_service import normalize_evaluation_pack_id
 from app.services.training_preflight_service import run_training_preflight
@@ -49,6 +51,17 @@ _BUILTIN_PIPELINE_RECIPES: list[dict[str, Any]] = [
         "version": "1.0.0",
         "category": "general",
         "tags": ["default", "sft", "end_to_end"],
+        "supports_task_profiles": [
+            "instruction_sft",
+            "chat_sft",
+            "qa",
+            "rag_qa",
+            "tool_calling",
+            "structured_extraction",
+            "summarization",
+            "language_modeling",
+        ],
+        "speed_profile": "balanced",
         "domain": {
             "domain_pack_id": "general-pack-v1",
             "domain_profile_id": "generic-domain-v1",
@@ -82,6 +95,16 @@ _BUILTIN_PIPELINE_RECIPES: list[dict[str, Any]] = [
         "version": "1.0.0",
         "category": "lora",
         "tags": ["lora", "fast", "iteration"],
+        "supports_task_profiles": [
+            "instruction_sft",
+            "chat_sft",
+            "qa",
+            "rag_qa",
+            "tool_calling",
+            "summarization",
+            "language_modeling",
+        ],
+        "speed_profile": "fast",
         "domain": {
             "domain_pack_id": "general-pack-v1",
             "domain_profile_id": "generic-domain-v1",
@@ -115,6 +138,19 @@ _BUILTIN_PIPELINE_RECIPES: list[dict[str, Any]] = [
         "version": "1.0.0",
         "category": "evaluation",
         "tags": ["eval", "gate", "release"],
+        "supports_task_profiles": [
+            "instruction_sft",
+            "chat_sft",
+            "qa",
+            "rag_qa",
+            "tool_calling",
+            "structured_extraction",
+            "summarization",
+            "classification",
+            "language_modeling",
+            "preference",
+        ],
+        "speed_profile": "balanced",
         "domain": {
             "domain_pack_id": "general-pack-v1",
             "domain_profile_id": "generic-domain-v1",
@@ -142,6 +178,25 @@ _BUILTIN_PIPELINE_RECIPES: list[dict[str, Any]] = [
         },
     },
 ]
+
+
+_DOMAIN_TASK_TO_PROFILE: dict[str, str] = {
+    "qa": "qa",
+    "question_answering": "qa",
+    "classification": "classification",
+    "sequence_classification": "classification",
+    "seq2seq": "seq2seq",
+    "summarization": "summarization",
+    "chat": "chat_sft",
+    "chat_sft": "chat_sft",
+    "rag": "rag_qa",
+    "rag_qa": "rag_qa",
+    "retrieval_qa": "rag_qa",
+    "tool_calling": "tool_calling",
+    "function_calling": "tool_calling",
+    "preference": "preference",
+    "language_modeling": "language_modeling",
+}
 
 
 def _utcnow() -> datetime:
@@ -174,6 +229,12 @@ def _recipe_summary(recipe: dict[str, Any], *, include_blueprint: bool) -> dict[
         "version": str(recipe.get("version", "")),
         "category": str(recipe.get("category", "general")),
         "tags": [str(item) for item in list(recipe.get("tags") or []) if str(item).strip()],
+        "supports_task_profiles": [
+            normalize_task_profile(str(item), default="")
+            for item in list(recipe.get("supports_task_profiles") or [])
+            if normalize_task_profile(str(item), default="")
+        ],
+        "speed_profile": str(recipe.get("speed_profile") or "balanced").strip().lower() or "balanced",
     }
     if include_blueprint:
         payload["blueprint"] = _deepcopy(recipe)
@@ -192,6 +253,176 @@ def get_pipeline_recipe(recipe_id: str) -> dict[str, Any] | None:
         if _normalize_token(str(recipe.get("recipe_id"))) == token:
             return _deepcopy(recipe)
     return None
+
+
+def _extract_profile_from_domain_contract(contract: Any) -> str | None:
+    if not isinstance(contract, dict):
+        return None
+    tasks = contract.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("task_id") or "").strip().lower()
+        mapped = _DOMAIN_TASK_TO_PROFILE.get(task_id, task_id)
+        normalized = normalize_task_profile(mapped, default="")
+        if normalized:
+            return normalized
+    return None
+
+
+def _extract_project_task_profile(project: Project) -> tuple[str | None, str]:
+    preset = project.dataset_adapter_preset if isinstance(project.dataset_adapter_preset, dict) else {}
+    preset_profile = normalize_task_profile(str(preset.get("task_profile") or ""), default="")
+    if preset_profile:
+        return preset_profile, "project.dataset_adapter_preset.task_profile"
+
+    domain_profile = getattr(project, "domain_profile", None)
+    contract = domain_profile.contract if getattr(domain_profile, "contract", None) else None
+    contract_profile = _extract_profile_from_domain_contract(contract)
+    if contract_profile:
+        return contract_profile, "project.domain_profile.contract.tasks[0].task_id"
+
+    return None, "default"
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _score_recipe_for_context(
+    recipe: dict[str, Any],
+    *,
+    task_profile: str | None,
+    preferred_plan_profile: str | None,
+    prefer_fast: bool | None,
+    project_base_model: str | None,
+    default_bias: bool = False,
+) -> tuple[float, list[str], bool]:
+    score = 0.0
+    reasons: list[str] = []
+    summary = _recipe_summary(recipe, include_blueprint=False)
+    supports_profiles = [str(item) for item in list(summary.get("supports_task_profiles") or []) if str(item).strip()]
+
+    compatible = True
+    if task_profile:
+        if task_profile in supports_profiles:
+            score += 4.0
+            reasons.append(f"supports task_profile '{task_profile}'")
+        elif supports_profiles:
+            compatible = False
+            score -= 1.5
+            reasons.append(f"does not explicitly list task_profile '{task_profile}'")
+
+    training = dict(recipe.get("training") or {})
+    recipe_plan_profile = str(training.get("preferred_plan_profile") or "").strip().lower() or None
+    if preferred_plan_profile and recipe_plan_profile == preferred_plan_profile:
+        score += 1.8
+        reasons.append(f"matches preferred plan profile '{preferred_plan_profile}'")
+
+    tags = {str(item).strip().lower() for item in list(recipe.get("tags") or []) if str(item).strip()}
+    speed_profile = str(recipe.get("speed_profile") or "balanced").strip().lower() or "balanced"
+    is_fast = speed_profile == "fast" or "fast" in tags
+    if prefer_fast is True and is_fast:
+        score += 2.2
+        reasons.append("optimized for fast iteration")
+    elif prefer_fast is False and is_fast:
+        score -= 0.6
+        reasons.append("fast iteration profile deprioritized by context")
+    elif prefer_fast is False and speed_profile == "balanced":
+        score += 0.4
+        reasons.append("balanced profile preferred")
+
+    base_config = dict(training.get("base_config") or {})
+    recipe_base_model = str(base_config.get("base_model") or "").strip().lower() or None
+    project_model = str(project_base_model or "").strip().lower() or None
+    if recipe_base_model and project_model and recipe_base_model == project_model:
+        score += 0.8
+        reasons.append("base model aligns with current project")
+
+    if default_bias:
+        score += 0.2
+        reasons.append("default fallback preference")
+
+    if not reasons:
+        reasons.append("neutral fit")
+    return round(score, 4), reasons, compatible
+
+
+async def recommend_pipeline_recipes_for_project(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    task_profile: str | None = None,
+    preferred_plan_profile: str | None = None,
+    prefer_fast: bool | None = None,
+) -> dict[str, Any]:
+    project = await _get_project(db, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    resolved_task_profile = normalize_task_profile(task_profile, default="")
+    task_profile_source = "request"
+    if not resolved_task_profile:
+        extracted_profile, extracted_source = _extract_project_task_profile(project)
+        resolved_task_profile = extracted_profile or ""
+        task_profile_source = extracted_source
+
+    resolved_plan_profile = str(preferred_plan_profile or project.training_preferred_plan_profile or "").strip().lower() or None
+    resolved_prefer_fast = _coerce_bool(prefer_fast)
+    project_base_model = str(project.base_model_name or "").strip() or None
+
+    scored: list[dict[str, Any]] = []
+    for recipe in _BUILTIN_PIPELINE_RECIPES:
+        recipe_id = str(recipe.get("recipe_id") or "").strip()
+        if not recipe_id:
+            continue
+        score, reasons, compatible = _score_recipe_for_context(
+            recipe,
+            task_profile=resolved_task_profile or None,
+            preferred_plan_profile=resolved_plan_profile,
+            prefer_fast=resolved_prefer_fast,
+            project_base_model=project_base_model,
+            default_bias=(recipe_id == DEFAULT_PIPELINE_RECIPE_ID),
+        )
+        row = _recipe_summary(recipe, include_blueprint=False)
+        row.update(
+            {
+                "score": score,
+                "reasons": reasons,
+                "task_profile_compatible": compatible,
+            }
+        )
+        scored.append(row)
+
+    order = {str(item.get("recipe_id") or ""): idx for idx, item in enumerate(_BUILTIN_PIPELINE_RECIPES)}
+    scored.sort(key=lambda item: (-float(item.get("score") or 0.0), order.get(str(item.get("recipe_id") or ""), 9999)))
+
+    recommended_recipe_id = DEFAULT_PIPELINE_RECIPE_ID
+    if scored:
+        recommended_recipe_id = str(scored[0].get("recipe_id") or DEFAULT_PIPELINE_RECIPE_ID)
+
+    return {
+        "project_id": project_id,
+        "recommended_recipe_id": recommended_recipe_id,
+        "context": {
+            "task_profile": resolved_task_profile or None,
+            "task_profile_source": task_profile_source,
+            "preferred_plan_profile": resolved_plan_profile,
+            "prefer_fast": resolved_prefer_fast,
+            "project_base_model": project_base_model,
+        },
+        "recommendations": scored,
+    }
 
 
 def _project_recipe_dir(project_id: int) -> Path:
@@ -327,7 +558,11 @@ def list_pipeline_recipe_executions(
 
 
 async def _get_project(db: AsyncSession, project_id: int) -> Project | None:
-    row = await db.execute(select(Project).where(Project.id == project_id))
+    row = await db.execute(
+        select(Project)
+        .options(selectinload(Project.domain_profile))
+        .where(Project.id == project_id)
+    )
     return row.scalar_one_or_none()
 
 

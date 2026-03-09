@@ -63,6 +63,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Pipeline Recipes / Blueprints v1**:
   - built-in end-to-end recipes (`recipe.pipeline.sft_default`, `recipe.pipeline.lora_fast`, `recipe.pipeline.eval_gate`)
   - resolve/apply APIs that wire domain pack/profile, workflow template graph, dataset adapter preset, training recipe, and evaluation pack
+  - task-profile-aware recipe recommendation context (`recommended_recipe_id`) for faster defaults on the Recipes page
   - persisted active recipe state + versioned reproducibility manifest artifact (`manifest.pipeline_recipe`)
   - dedicated `Pipeline Recipes` page in project workspace navigation (separate from Pipeline and Workflow pages)
 - Added top-right **User Menu** in workspace:
@@ -318,6 +319,7 @@ Pipeline graph preview endpoint:
 
 Pipeline recipe endpoints:
 - `GET /api/projects/{project_id}/pipeline/recipes`
+- `GET /api/projects/{project_id}/pipeline/recipes/recommend`
 - `GET /api/projects/{project_id}/pipeline/recipes/state`
 - `POST /api/projects/{project_id}/pipeline/recipes/resolve`
 - `POST /api/projects/{project_id}/pipeline/recipes/apply`
@@ -328,6 +330,7 @@ Pipeline recipe endpoints:
 - `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/retry`
 - `POST /api/projects/{project_id}/pipeline/recipes/runs/{recipe_run_id}/resume`
 - `resolve` returns the concrete merged blueprint (`domain`, `workflow`, `dataset_adapter`, `training`, `evaluation`, `export`) plus optional preflight diagnostics.
+- `recipes` catalog also returns `recommended_recipe_id` + `recommendation_context` resolved from project adapter/profile/runtime hints.
 - `apply` persists resolved project preferences and workflow graph override, writes a manifest under `data/projects/{project_id}/pipeline_recipes/runs/.../manifest.json`, and publishes typed artifact key `manifest.pipeline_recipe`.
 - `run` applies the blueprint then launches workflow DAG execution, writing execution records under `data/projects/{project_id}/pipeline_recipes/executions/{recipe_run_id}/run.json`.
 

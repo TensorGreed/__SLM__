@@ -79,6 +79,12 @@
     margin-bottom: var(--space-xs);
 }
 
+.pipeline-recipe-badges {
+    display: inline-flex;
+    gap: var(--space-xs);
+    align-items: center;
+}
+
 .pipeline-recipe-card-id {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
     font-size: var(--font-size-xs);

@@ -167,8 +167,11 @@ export default function ProjectRecipesPage() {
             return;
         }
         const activeRecipe = stateRecipeId(catalog.active_state);
+        const recommendedRecipe =
+            typeof catalog.recommended_recipe_id === 'string' ? catalog.recommended_recipe_id : '';
         const fallback =
             activeRecipe
+            || recommendedRecipe
             || catalog.default_recipe_id
             || (catalog.recipes.length > 0 ? catalog.recipes[0].recipe_id : '');
         if (fallback) {
@@ -457,6 +460,7 @@ export default function ProjectRecipesPage() {
                         {catalog?.recipes.map((recipe) => {
                             const active = recipe.recipe_id === selectedRecipeId;
                             const selected = stateRecipeId(activeState) === recipe.recipe_id;
+                            const recommended = catalog.recommended_recipe_id === recipe.recipe_id;
                             return (
                                 <button
                                     key={recipe.recipe_id}
@@ -465,7 +469,10 @@ export default function ProjectRecipesPage() {
                                 >
                                     <div className="pipeline-recipe-card-head">
                                         <strong>{recipe.display_name}</strong>
-                                        {selected && <span className="badge badge-accent">Active</span>}
+                                        <div className="pipeline-recipe-badges">
+                                            {recommended && <span className="badge badge-success">Recommended</span>}
+                                            {selected && <span className="badge badge-accent">Active</span>}
+                                        </div>
                                     </div>
                                     <div className="pipeline-recipe-card-id">{recipe.recipe_id}</div>
                                     <div className="pipeline-recipe-card-desc">{recipe.description}</div>
@@ -480,6 +487,20 @@ export default function ProjectRecipesPage() {
                     {catalog?.training_recipe_ids && (
                         <p className="pipeline-recipes-footnote">
                             Available training recipe ids: {catalog.training_recipe_ids.join(', ')}
+                        </p>
+                    )}
+                    {catalog?.recommendation_context && (
+                        <p className="pipeline-recipes-footnote">
+                            Recommendation context:
+                            {' '}
+                            task_profile=
+                            {String(catalog.recommendation_context.task_profile || 'auto')}
+                            {' '}
+                            • plan=
+                            {String(catalog.recommendation_context.preferred_plan_profile || 'balanced')}
+                            {' '}
+                            • prefer_fast=
+                            {String(catalog.recommendation_context.prefer_fast ?? 'auto')}
                         </p>
                     )}
                 </section>
