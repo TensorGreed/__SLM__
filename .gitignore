@@ -33,3 +33,4 @@ data/models/
 # Misc
 *.log
 .DS_Store
+roadmap.md

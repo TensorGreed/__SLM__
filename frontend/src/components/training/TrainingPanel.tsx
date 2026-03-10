@@ -160,8 +160,55 @@ interface TrainingRecipeResolveResponse extends TrainingEffectiveConfigResponse 
   preflight?: TrainingPreflightReport;
 }
 
+interface ModelWizardRecommendation {
+  model_id: string;
+  family?: string;
+  params_b?: number;
+  estimated_min_vram_gb?: number;
+  estimated_ideal_vram_gb?: number;
+  supported_languages?: string[];
+  strengths?: string[];
+  caveats?: string[];
+  match_reasons?: string[];
+  match_score?: number;
+  suggested_defaults?: {
+    task_type?: string;
+    chat_template?: string;
+    use_lora?: boolean;
+    batch_size?: number;
+    max_seq_length?: number;
+  };
+}
+
+interface ModelWizardResponse {
+  project_id: number;
+  request?: {
+    target_device?: string;
+    primary_language?: string;
+    available_vram_gb?: number | null;
+    task_profile?: string | null;
+    top_k?: number;
+  };
+  recommendation_count?: number;
+  recommendations?: ModelWizardRecommendation[];
+  warnings?: string[];
+}
+
 const METRIC_PREFIX = 'SLM_METRIC ';
 const PLAN_PROFILE_STORAGE_PREFIX = 'slm-training-plan-profile';
+const MODEL_WIZARD_TASK_PROFILES = [
+  'auto',
+  'instruction_sft',
+  'chat_sft',
+  'qa',
+  'rag_qa',
+  'tool_calling',
+  'structured_extraction',
+  'summarization',
+  'seq2seq',
+  'classification',
+  'preference',
+];
 
 function parseNumericField(text: string, key: string): number | null {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -369,6 +416,13 @@ export default function TrainingPanel({
   const [recipeResolveLoading, setRecipeResolveLoading] = useState(false);
   const [recipeResolveError, setRecipeResolveError] = useState('');
   const [workspaceView, setWorkspaceView] = useState<TrainingWorkspaceView>('overview');
+  const [wizardTargetDevice, setWizardTargetDevice] = useState('laptop');
+  const [wizardPrimaryLanguage, setWizardPrimaryLanguage] = useState('english');
+  const [wizardVramGb, setWizardVramGb] = useState('8');
+  const [wizardTaskProfile, setWizardTaskProfile] = useState('auto');
+  const [wizardLoading, setWizardLoading] = useState(false);
+  const [wizardError, setWizardError] = useState('');
+  const [wizardResult, setWizardResult] = useState<ModelWizardResponse | null>(null);
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -716,6 +770,54 @@ export default function TrainingPanel({
     }
   };
 
+  const runModelWizard = async () => {
+    setWizardLoading(true);
+    setWizardError('');
+    try {
+      const vramValue = Number.parseFloat(wizardVramGb);
+      const payload = {
+        target_device: wizardTargetDevice,
+        primary_language: wizardPrimaryLanguage,
+        available_vram_gb: Number.isFinite(vramValue) && vramValue > 0 ? vramValue : undefined,
+        task_profile: wizardTaskProfile !== 'auto' ? wizardTaskProfile : undefined,
+        top_k: 3,
+      };
+      const res = await api.post<ModelWizardResponse>(
+        `/projects/${projectId}/training/model-selection/recommend`,
+        payload,
+      );
+      setWizardResult(res.data || null);
+    } catch (err: any) {
+      setWizardResult(null);
+      setWizardError(err?.response?.data?.detail || 'Failed to load model recommendations');
+    } finally {
+      setWizardLoading(false);
+    }
+  };
+
+  const applyModelWizardRecommendation = (item: ModelWizardRecommendation) => {
+    const defaults = item.suggested_defaults || {};
+    const nextConfig: Record<string, unknown> = {
+      base_model: item.model_id,
+    };
+    if (typeof defaults.task_type === 'string' && defaults.task_type.trim()) {
+      nextConfig.task_type = defaults.task_type;
+    }
+    if (typeof defaults.chat_template === 'string' && defaults.chat_template.trim()) {
+      nextConfig.chat_template = defaults.chat_template;
+    }
+    if (typeof defaults.use_lora === 'boolean') {
+      nextConfig.use_lora = defaults.use_lora;
+    }
+    if (typeof defaults.batch_size === 'number' && Number.isFinite(defaults.batch_size)) {
+      nextConfig.batch_size = Math.max(1, defaults.batch_size);
+    }
+    if (typeof defaults.max_seq_length === 'number' && Number.isFinite(defaults.max_seq_length)) {
+      nextConfig.max_seq_length = Math.max(128, defaults.max_seq_length);
+    }
+    applySuggestedConfig(nextConfig);
+  };
+
   const persistPreferredPlanProfile = async (profile: string) => {
     const normalized = String(profile || '').trim().toLowerCase();
     if (!normalized) return;
@@ -820,6 +922,13 @@ export default function TrainingPanel({
     setSelectedRecipeId('');
     setRecipeResolveLoading(false);
     setRecipeResolveError('');
+    setWizardTargetDevice('laptop');
+    setWizardPrimaryLanguage('english');
+    setWizardVramGb('8');
+    setWizardTaskProfile('auto');
+    setWizardLoading(false);
+    setWizardError('');
+    setWizardResult(null);
     void loadPreferredPlanProfile();
     void loadTrainingRuntimes();
     void loadTrainingRecipes();
@@ -1627,10 +1736,123 @@ export default function TrainingPanel({
                 <div className="training-config-grid">
                   <div>
                     <h4 className="training-config-section-title">Basic HParams</h4>
-                <div className="form-group">
-                  <label className="form-label">Base Model</label>
-                  <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
-                </div>
+                    <div className="training-model-wizard">
+                      <div className="training-model-wizard__head">
+                        <strong>Model Selection Wizard</strong>
+                        <span>Pick hardware + goal, then apply a recommended base model.</span>
+                      </div>
+                      <div className="training-model-wizard__controls">
+                        <div className="form-group">
+                          <label className="form-label">Target Device</label>
+                          <select
+                            className="input"
+                            value={wizardTargetDevice}
+                            onChange={(e) => setWizardTargetDevice(e.target.value)}
+                          >
+                            <option value="mobile">Mobile</option>
+                            <option value="laptop">Laptop</option>
+                            <option value="server">Server</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Primary Goal</label>
+                          <select
+                            className="input"
+                            value={wizardPrimaryLanguage}
+                            onChange={(e) => setWizardPrimaryLanguage(e.target.value)}
+                          >
+                            <option value="english">English</option>
+                            <option value="multilingual">Multilingual</option>
+                            <option value="coding">Coding</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Available VRAM (GB)</label>
+                          <input
+                            className="input"
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={wizardVramGb}
+                            onChange={(e) => setWizardVramGb(e.target.value)}
+                            placeholder="Optional"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Task Profile</label>
+                          <select
+                            className="input"
+                            value={wizardTaskProfile}
+                            onChange={(e) => setWizardTaskProfile(e.target.value)}
+                          >
+                            {MODEL_WIZARD_TASK_PROFILES.map((profile) => (
+                              <option key={profile} value={profile}>
+                                {profile}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="training-model-wizard__actions">
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => void runModelWizard()}
+                          disabled={wizardLoading}
+                        >
+                          {wizardLoading ? 'Finding Models...' : 'Recommend Models'}
+                        </button>
+                        <span className="training-model-wizard__hint">
+                          Uses lightweight heuristics from model size, VRAM fit, and task goal.
+                        </span>
+                      </div>
+                      {wizardError && (
+                        <div className="training-alert training-alert--warning training-alert--tight">
+                          {wizardError}
+                        </div>
+                      )}
+                      {Array.isArray(wizardResult?.warnings) && wizardResult.warnings.length > 0 && (
+                        <div className="training-model-wizard__warnings">
+                          {wizardResult.warnings.join(' | ')}
+                        </div>
+                      )}
+                      {Array.isArray(wizardResult?.recommendations) && wizardResult.recommendations.length > 0 && (
+                        <div className="training-model-wizard__results">
+                          {wizardResult.recommendations.map((item) => (
+                            <div className="training-model-wizard__card" key={item.model_id}>
+                              <div className="training-model-wizard__card-head">
+                                <strong>{item.model_id}</strong>
+                                {Number.isFinite(Number(item.match_score)) && (
+                                  <span className="badge badge-info">score {Number(item.match_score).toFixed(2)}</span>
+                                )}
+                              </div>
+                              <div className="training-model-wizard__card-meta">
+                                {item.params_b ? `${item.params_b}B params` : 'unknown size'} • min VRAM{' '}
+                                {Number.isFinite(Number(item.estimated_min_vram_gb))
+                                  ? `${Number(item.estimated_min_vram_gb)} GB`
+                                  : 'n/a'}
+                              </div>
+                              {Array.isArray(item.match_reasons) && item.match_reasons.length > 0 && (
+                                <div className="training-model-wizard__reasons">
+                                  {item.match_reasons.slice(0, 3).map((reason, idx) => (
+                                    <div key={`${item.model_id}-reason-${idx}`}>{reason}</div>
+                                  ))}
+                                </div>
+                              )}
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => applyModelWizardRecommendation(item)}
+                              >
+                                Apply Model + Defaults
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Base Model</label>
+                      <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
+                    </div>
                 <div className="training-grid-3">
                   <div className="form-group">
                     <label className="form-label">Runtime</label>

@@ -30,6 +30,7 @@ from app.services.training_preflight_service import (
     run_training_preflight,
     run_training_preflight_plan,
 )
+from app.services.model_selection_service import recommend_training_base_models
 from app.services.training_recipe_service import (
     list_training_recipes,
     resolve_training_recipe,
@@ -52,6 +53,14 @@ class TrainingRecipeResolveRequest(BaseModel):
     base_config: dict[str, object] = Field(default_factory=dict)
     overrides: dict[str, object] = Field(default_factory=dict)
     include_preflight: bool = True
+
+
+class ModelSelectionRecommendRequest(BaseModel):
+    target_device: str = Field(default="laptop", min_length=1, max_length=32)
+    primary_language: str = Field(default="english", min_length=1, max_length=32)
+    available_vram_gb: float | None = Field(default=None, ge=0)
+    task_profile: str | None = Field(default=None, max_length=64)
+    top_k: int = Field(default=3, ge=1, le=5)
 
 
 @router.get("/runtimes")
@@ -130,6 +139,30 @@ async def resolve_training_recipe_config(
         "resolved_training_mode": resolved_training_mode.value,
         "profile_defaults_applied": profile_defaults_applied,
         "preflight": preflight,
+    }
+
+
+@router.post("/model-selection/recommend")
+async def recommend_training_models(
+    project_id: int,
+    req: ModelSelectionRecommendRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recommend base models for a project based on hardware/task wizard inputs."""
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    payload = recommend_training_base_models(
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+        task_profile=req.task_profile,
+        top_k=req.top_k,
+    )
+    return {
+        "project_id": project_id,
+        **payload,
     }
 
 

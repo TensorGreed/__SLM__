@@ -460,6 +460,37 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
     };
 
+    const applySuggestedFieldMapping = (mapping: Record<string, string>) => {
+        const nextMapping: Record<string, string> = {};
+        for (const [rawKey, rawValue] of Object.entries(mapping || {})) {
+            const key = String(rawKey || '').trim();
+            const value = String(rawValue || '').trim();
+            if (!key || !value) {
+                continue;
+            }
+            nextMapping[key] = value;
+        }
+        if (Object.keys(nextMapping).length === 0) {
+            toast.error('Suggested mapping is empty.');
+            return;
+        }
+
+        const parsedCurrent = parseJsonStringMapInput(adapterFieldMappingText);
+        if (parsedCurrent.error) {
+            setAdapterPreviewError(`Field mapping JSON error: ${parsedCurrent.error}`);
+            return;
+        }
+        const merged = {
+            ...parsedCurrent.value,
+            ...nextMapping,
+        };
+        const mergedText = JSON.stringify(merged, null, 2);
+        setAdapterFieldMappingText(mergedText);
+        setSplitFieldMappingText(mergedText);
+        setAdapterPreviewError('');
+        toast.success('Applied suggested mapping to adapter and split field mappings.');
+    };
+
     // ── Split ──────────────────────────────────────────────────
     const runSplit = async () => {
         setSplitLoading(true);
@@ -997,9 +1028,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                                 {suggestion.message || 'No message'}
                                             </div>
                                             {suggestion.suggested_field_mapping && Object.keys(suggestion.suggested_field_mapping).length > 0 && (
-                                                <pre className="dp-resolved-json" style={{ marginTop: '.45rem' }}>
-                                                    {JSON.stringify({ field_mapping: suggestion.suggested_field_mapping }, null, 2)}
-                                                </pre>
+                                                <>
+                                                    <pre className="dp-resolved-json" style={{ marginTop: '.45rem' }}>
+                                                        {JSON.stringify({ field_mapping: suggestion.suggested_field_mapping }, null, 2)}
+                                                    </pre>
+                                                    <button
+                                                        type="button"
+                                                        className="btn-secondary"
+                                                        style={{ marginTop: '.45rem' }}
+                                                        onClick={() => applySuggestedFieldMapping(suggestion.suggested_field_mapping || {})}
+                                                    >
+                                                        Apply Mapping
+                                                    </button>
+                                                </>
                                             )}
                                         </div>
                                     ))}
