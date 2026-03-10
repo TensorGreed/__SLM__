@@ -5,6 +5,7 @@ import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import ExperimentCompare from './ExperimentCompare';
 import { buildWsUrl } from '../../utils/ws';
+import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import './TrainingPanel.css';
 
 interface TrainingPanelProps {
@@ -199,6 +200,61 @@ interface ModelWizardResponse {
     context_apply_events?: number;
     boosted_model_count?: number;
   };
+}
+
+interface CloudBurstProvider {
+  provider_id: string;
+  display_name?: string;
+  description?: string;
+  supports_spot?: boolean;
+  regions?: string[];
+}
+
+interface CloudBurstGpuSku {
+  gpu_sku: string;
+  display_name?: string;
+  vram_gb?: number;
+  hourly_usd?: Record<string, number>;
+}
+
+interface CloudBurstCatalogResponse {
+  project_id: number;
+  providers?: CloudBurstProvider[];
+  gpu_skus?: CloudBurstGpuSku[];
+  provider_count?: number;
+  gpu_sku_count?: number;
+}
+
+interface CloudBurstQuoteResponse {
+  project_id: number;
+  provider_id?: string;
+  provider_name?: string;
+  gpu_sku?: string;
+  duration_hours?: number;
+  spot_effective?: boolean;
+  effective_hourly_usd?: number;
+  cost_breakdown_usd?: {
+    compute?: number;
+    storage?: number;
+    egress?: number;
+    total?: number;
+  };
+  warnings?: string[];
+}
+
+interface CloudBurstLaunchPlanResponse {
+  project_id: number;
+  launch_id?: string;
+  provider_id?: string;
+  gpu_sku?: string;
+  quote?: CloudBurstQuoteResponse;
+  credentials?: {
+    ready?: boolean;
+    missing_keys?: string[];
+    present_keys?: string[];
+  };
+  request_template?: Record<string, unknown>;
+  record_path?: string;
 }
 
 const METRIC_PREFIX = 'SLM_METRIC ';
@@ -455,6 +511,24 @@ export default function TrainingPanel({
   const [wizardError, setWizardError] = useState('');
   const [wizardResult, setWizardResult] = useState<ModelWizardResponse | null>(null);
   const [wizardAutoRan, setWizardAutoRan] = useState(false);
+  const [cloudBurstCatalog, setCloudBurstCatalog] = useState<CloudBurstCatalogResponse | null>(null);
+  const [cloudBurstProviderId, setCloudBurstProviderId] = useState('');
+  const [cloudBurstGpuSku, setCloudBurstGpuSku] = useState('');
+  const [cloudBurstDurationHours, setCloudBurstDurationHours] = useState('2');
+  const [cloudBurstStorageGb, setCloudBurstStorageGb] = useState('50');
+  const [cloudBurstEgressGb, setCloudBurstEgressGb] = useState('0');
+  const [cloudBurstSpot, setCloudBurstSpot] = useState(true);
+  const [cloudBurstRegion, setCloudBurstRegion] = useState('');
+  const [cloudBurstImage, setCloudBurstImage] = useState('');
+  const [cloudBurstStartupScript, setCloudBurstStartupScript] = useState('');
+  const [cloudBurstExperimentId, setCloudBurstExperimentId] = useState('');
+  const [cloudBurstLoadingCatalog, setCloudBurstLoadingCatalog] = useState(false);
+  const [cloudBurstLoadingQuote, setCloudBurstLoadingQuote] = useState(false);
+  const [cloudBurstLoadingPlan, setCloudBurstLoadingPlan] = useState(false);
+  const [cloudBurstError, setCloudBurstError] = useState('');
+  const [cloudBurstQuote, setCloudBurstQuote] = useState<CloudBurstQuoteResponse | null>(null);
+  const [cloudBurstPlan, setCloudBurstPlan] = useState<CloudBurstLaunchPlanResponse | null>(null);
+  const [cloudBurstPrefillStage, setCloudBurstPrefillStage] = useState('');
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -510,6 +584,10 @@ export default function TrainingPanel({
       detail: 'Open the available section and continue with the next training action.',
     };
   }, [canConfigureExperiments, canViewRuns, experimentStats]);
+
+  const cloudProviders = Array.isArray(cloudBurstCatalog?.providers) ? cloudBurstCatalog.providers : [];
+  const cloudGpuSkus = Array.isArray(cloudBurstCatalog?.gpu_skus) ? cloudBurstCatalog.gpu_skus : [];
+  const selectedCloudProvider = cloudProviders.find((item) => item.provider_id === cloudBurstProviderId) || null;
 
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
@@ -784,6 +862,100 @@ export default function TrainingPanel({
     }
   };
 
+  const loadCloudBurstCatalog = async () => {
+    setCloudBurstLoadingCatalog(true);
+    try {
+      const res = await api.get<CloudBurstCatalogResponse>(`/projects/${projectId}/training/cloud-burst/catalog`);
+      const payload = res.data || null;
+      setCloudBurstCatalog(payload);
+      const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+      const gpuSkus = Array.isArray(payload?.gpu_skus) ? payload.gpu_skus : [];
+      const providerSelected = Boolean(
+        cloudBurstProviderId && providers.some((item) => item.provider_id === cloudBurstProviderId),
+      );
+      const gpuSelected = Boolean(
+        cloudBurstGpuSku && gpuSkus.some((item) => item.gpu_sku === cloudBurstGpuSku),
+      );
+      if (!providerSelected && providers.length > 0) {
+        setCloudBurstProviderId(providers[0].provider_id);
+      }
+      if (!gpuSelected && gpuSkus.length > 0) {
+        setCloudBurstGpuSku(gpuSkus[0].gpu_sku);
+      }
+      setCloudBurstError('');
+    } catch (err: any) {
+      setCloudBurstCatalog(null);
+      setCloudBurstError(err?.response?.data?.detail || 'Failed to load cloud burst catalog');
+    } finally {
+      setCloudBurstLoadingCatalog(false);
+    }
+  };
+
+  const requestCloudBurstQuote = async () => {
+    if (!cloudBurstProviderId || !cloudBurstGpuSku) {
+      setCloudBurstError('Select provider and GPU SKU before requesting quote.');
+      return;
+    }
+    setCloudBurstLoadingQuote(true);
+    setCloudBurstError('');
+    try {
+      const durationValue = Number.parseFloat(cloudBurstDurationHours);
+      const storageValue = Number.parseInt(cloudBurstStorageGb, 10);
+      const egressValue = Number.parseFloat(cloudBurstEgressGb);
+      const res = await api.post<CloudBurstQuoteResponse>(
+        `/projects/${projectId}/training/cloud-burst/quote`,
+        {
+          provider_id: cloudBurstProviderId,
+          gpu_sku: cloudBurstGpuSku,
+          duration_hours: Number.isFinite(durationValue) ? durationValue : 2.0,
+          storage_gb: Number.isFinite(storageValue) ? storageValue : 50,
+          egress_gb: Number.isFinite(egressValue) ? egressValue : 0.0,
+          spot: cloudBurstSpot,
+        },
+      );
+      setCloudBurstQuote(res.data || null);
+    } catch (err: any) {
+      setCloudBurstQuote(null);
+      setCloudBurstError(err?.response?.data?.detail || 'Failed to estimate cloud burst quote');
+    } finally {
+      setCloudBurstLoadingQuote(false);
+    }
+  };
+
+  const requestCloudBurstPlan = async () => {
+    if (!cloudBurstProviderId || !cloudBurstGpuSku) {
+      setCloudBurstError('Select provider and GPU SKU before building launch plan.');
+      return;
+    }
+    setCloudBurstLoadingPlan(true);
+    setCloudBurstError('');
+    try {
+      const durationValue = Number.parseFloat(cloudBurstDurationHours);
+      const parsedExperimentId = Number.parseInt(cloudBurstExperimentId, 10);
+      const res = await api.post<CloudBurstLaunchPlanResponse>(
+        `/projects/${projectId}/training/cloud-burst/launch-plan`,
+        {
+          provider_id: cloudBurstProviderId,
+          gpu_sku: cloudBurstGpuSku,
+          duration_hours: Number.isFinite(durationValue) ? durationValue : 2.0,
+          experiment_id: Number.isFinite(parsedExperimentId) && parsedExperimentId > 0
+            ? parsedExperimentId
+            : undefined,
+          region: cloudBurstRegion.trim() || undefined,
+          image: cloudBurstImage.trim(),
+          startup_script: cloudBurstStartupScript.trim(),
+          spot: cloudBurstSpot,
+        },
+      );
+      setCloudBurstPlan(res.data || null);
+    } catch (err: any) {
+      setCloudBurstPlan(null);
+      setCloudBurstError(err?.response?.data?.detail || 'Failed to build cloud burst launch plan');
+    } finally {
+      setCloudBurstLoadingPlan(false);
+    }
+  };
+
   const applySelectedRecipe = async () => {
     if (!selectedRecipeId) {
       setRecipeResolveError('Select a recipe first.');
@@ -1055,12 +1227,77 @@ export default function TrainingPanel({
     setWizardError('');
     setWizardResult(null);
     setWizardAutoRan(false);
+    setCloudBurstCatalog(null);
+    setCloudBurstProviderId('');
+    setCloudBurstGpuSku('');
+    setCloudBurstDurationHours('2');
+    setCloudBurstStorageGb('50');
+    setCloudBurstEgressGb('0');
+    setCloudBurstSpot(true);
+    setCloudBurstRegion('');
+    setCloudBurstImage('');
+    setCloudBurstStartupScript('');
+    setCloudBurstExperimentId('');
+    setCloudBurstLoadingCatalog(false);
+    setCloudBurstLoadingQuote(false);
+    setCloudBurstLoadingPlan(false);
+    setCloudBurstError('');
+    setCloudBurstQuote(null);
+    setCloudBurstPlan(null);
+    setCloudBurstPrefillStage('');
     void loadPreferredPlanProfile();
     void loadTrainingRuntimes();
     void loadTrainingRecipes();
+    void loadCloudBurstCatalog();
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, forceCreateVisible, hideCreateControls, hideExperimentList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const applyCloudBurstPrefill = async () => {
+      const prefill = await loadWorkflowStagePrefill(projectId, ['cloud_burst']);
+      if (cancelled || !prefill) {
+        return;
+      }
+      const cfg = prefill.config || {};
+      const providerToken = String(cfg.provider_id || '').trim();
+      if (providerToken) setCloudBurstProviderId(providerToken);
+      const skuToken = String(cfg.gpu_sku || '').trim();
+      if (skuToken) setCloudBurstGpuSku(skuToken);
+
+      const durationValue = Number(cfg.duration_hours);
+      if (Number.isFinite(durationValue) && durationValue > 0) {
+        setCloudBurstDurationHours(String(durationValue));
+      }
+      const storageValue = Number(cfg.storage_gb);
+      if (Number.isFinite(storageValue) && storageValue > 0) {
+        setCloudBurstStorageGb(String(Math.round(storageValue)));
+      }
+      const egressValue = Number(cfg.egress_gb);
+      if (Number.isFinite(egressValue) && egressValue >= 0) {
+        setCloudBurstEgressGb(String(egressValue));
+      }
+      if (typeof cfg.spot === 'boolean') {
+        setCloudBurstSpot(cfg.spot);
+      }
+      const regionToken = String(cfg.region || '').trim();
+      if (regionToken) setCloudBurstRegion(regionToken);
+      const imageToken = String(cfg.image || '').trim();
+      if (imageToken) setCloudBurstImage(imageToken);
+      const startupToken = String(cfg.startup_script || '').trim();
+      if (startupToken) setCloudBurstStartupScript(startupToken);
+      const experimentValue = Number(cfg.experiment_id);
+      if (Number.isFinite(experimentValue) && experimentValue > 0) {
+        setCloudBurstExperimentId(String(Math.round(experimentValue)));
+      }
+      setCloudBurstPrefillStage(prefill.stage);
+    };
+    void applyCloudBurstPrefill();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   useEffect(() => {
     if (workspaceView !== 'setup' || !createFormVisible) {
@@ -1870,6 +2107,225 @@ export default function TrainingPanel({
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
+
+            <details className="training-collapsible">
+              <summary>
+                <span>Cloud Burst Planning</span>
+                <small>Estimate remote GPU lease cost and generate one-click launch plans</small>
+              </summary>
+              <div className="training-collapsible__content">
+                {cloudBurstPrefillStage && (
+                  <div className="form-hint">
+                    Prefilled from workflow template stage: {cloudBurstPrefillStage}
+                  </div>
+                )}
+                <div className="form-group form-group--spaced">
+                  <div className="form-inline-actions">
+                    <select
+                      className="input training-recipe-select"
+                      value={cloudBurstProviderId}
+                      onChange={(e) => setCloudBurstProviderId(e.target.value)}
+                    >
+                      <option value="">Select provider</option>
+                      {cloudProviders.map((provider) => (
+                        <option key={provider.provider_id} value={provider.provider_id}>
+                          {provider.display_name || provider.provider_id}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="input training-recipe-select"
+                      value={cloudBurstGpuSku}
+                      onChange={(e) => setCloudBurstGpuSku(e.target.value)}
+                    >
+                      <option value="">Select GPU SKU</option>
+                      {cloudGpuSkus.map((sku) => (
+                        <option key={sku.gpu_sku} value={sku.gpu_sku}>
+                          {sku.display_name || sku.gpu_sku}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0.25}
+                      max={72}
+                      step={0.25}
+                      value={cloudBurstDurationHours}
+                      onChange={(e) => setCloudBurstDurationHours(e.target.value)}
+                      placeholder="hours"
+                    />
+                    <label className="form-label form-label-inline">
+                      <input
+                        type="checkbox"
+                        checked={cloudBurstSpot}
+                        onChange={(e) => setCloudBurstSpot(e.target.checked)}
+                      />
+                      Spot
+                    </label>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void loadCloudBurstCatalog()}
+                      disabled={cloudBurstLoadingCatalog}
+                    >
+                      {cloudBurstLoadingCatalog ? 'Refreshing...' : 'Refresh Catalog'}
+                    </button>
+                  </div>
+                </div>
+                <div className="training-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Storage (GB)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={10}
+                      max={2000}
+                      value={cloudBurstStorageGb}
+                      onChange={(e) => setCloudBurstStorageGb(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Egress (GB)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={5000}
+                      step={0.5}
+                      value={cloudBurstEgressGb}
+                      onChange={(e) => setCloudBurstEgressGb(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="training-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Region (optional)</label>
+                    <input
+                      className="input"
+                      value={cloudBurstRegion}
+                      onChange={(e) => setCloudBurstRegion(e.target.value)}
+                      placeholder={
+                        Array.isArray(selectedCloudProvider?.regions) && selectedCloudProvider.regions.length > 0
+                          ? selectedCloudProvider.regions.join(', ')
+                          : 'provider default'
+                      }
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Experiment ID (optional)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      value={cloudBurstExperimentId}
+                      onChange={(e) => setCloudBurstExperimentId(e.target.value)}
+                      placeholder="latest or manual id"
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Image (optional override)</label>
+                  <input
+                    className="input"
+                    value={cloudBurstImage}
+                    onChange={(e) => setCloudBurstImage(e.target.value)}
+                    placeholder="ghcr.io/slm/platform-trainer:latest"
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Startup Script (optional override)</label>
+                  <textarea
+                    className="input"
+                    value={cloudBurstStartupScript}
+                    onChange={(e) => setCloudBurstStartupScript(e.target.value)}
+                    rows={3}
+                    placeholder="bash /workspace/entrypoint.sh"
+                  />
+                </div>
+                <div className="form-inline-actions">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => void requestCloudBurstQuote()}
+                    disabled={cloudBurstLoadingQuote}
+                  >
+                    {cloudBurstLoadingQuote ? 'Estimating...' : 'Estimate Quote'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => void requestCloudBurstPlan()}
+                    disabled={cloudBurstLoadingPlan}
+                  >
+                    {cloudBurstLoadingPlan ? 'Planning...' : 'Build Launch Plan'}
+                  </button>
+                </div>
+                {cloudBurstError && (
+                  <div className="training-alert training-alert--error">
+                    {cloudBurstError}
+                  </div>
+                )}
+                {cloudBurstQuote && (
+                  <div className="resolved-defaults-panel">
+                    <div className="resolved-defaults-panel__title">Cloud Burst Quote</div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Provider</span>
+                      <strong>{cloudBurstQuote.provider_name || cloudBurstQuote.provider_id || '-'}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>GPU</span>
+                      <strong>{cloudBurstQuote.gpu_sku || '-'}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Total Cost (USD)</span>
+                      <strong>
+                        {Number.isFinite(Number(cloudBurstQuote.cost_breakdown_usd?.total))
+                          ? `$${Number(cloudBurstQuote.cost_breakdown_usd?.total).toFixed(2)}`
+                          : 'n/a'}
+                      </strong>
+                    </div>
+                    {Array.isArray(cloudBurstQuote.warnings) && cloudBurstQuote.warnings.length > 0 && (
+                      <div className="training-alert training-alert--warning training-alert--tight">
+                        {cloudBurstQuote.warnings.join(' | ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {cloudBurstPlan && (
+                  <div className="resolved-defaults-panel">
+                    <div className="resolved-defaults-panel__title">Cloud Burst Launch Plan</div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Launch ID</span>
+                      <strong>{cloudBurstPlan.launch_id || '-'}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Credentials Ready</span>
+                      <strong>{cloudBurstPlan.credentials?.ready ? 'yes' : 'no'}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Missing Credentials</span>
+                      <strong>
+                        {Array.isArray(cloudBurstPlan.credentials?.missing_keys) && cloudBurstPlan.credentials?.missing_keys.length > 0
+                          ? cloudBurstPlan.credentials?.missing_keys.join(', ')
+                          : 'none'}
+                      </strong>
+                    </div>
+                    <div className="resolved-defaults-panel__grid">
+                      <div>
+                        <div className="resolved-defaults-panel__subtitle">Request Template</div>
+                        <pre className="resolved-defaults-panel__json">
+                          {JSON.stringify(cloudBurstPlan.request_template || {}, null, 2)}
+                        </pre>
+                      </div>
+                      <div>
+                        <div className="resolved-defaults-panel__subtitle">Full Plan</div>
+                        <pre className="resolved-defaults-panel__json">
+                          {JSON.stringify(cloudBurstPlan || {}, null, 2)}
+                        </pre>
+                      </div>
                     </div>
                   </div>
                 )}

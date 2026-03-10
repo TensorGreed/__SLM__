@@ -4,6 +4,7 @@ import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { buildWsUrl } from '../../utils/ws';
+import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 
 interface CompressionPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -29,6 +30,11 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     const [bits, setBits] = useState(4);
     const [format, setFormat] = useState('gguf');
     const [loraPath, setLoraPath] = useState('');
+    const [mergeMethod, setMergeMethod] = useState<'ties' | 'dex'>('ties');
+    const [modelMergePathsText, setModelMergePathsText] = useState('');
+    const [modelMergeWeightsText, setModelMergeWeightsText] = useState('');
+    const [tiesDensity, setTiesDensity] = useState('0.2');
+    const [mergePrefillStage, setMergePrefillStage] = useState('');
     const [result, setResult] = useState<CompressionResult | null>(null);
     const [isCompressing, setIsCompressing] = useState(false);
     const [compressionLogs, setCompressionLogs] = useState<string[]>([]);
@@ -38,6 +44,44 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
     const [compressionError, setCompressionError] = useState<string>('');
 
     const bitOptions = BIT_OPTIONS_BY_FORMAT[format] || [4];
+
+    useEffect(() => {
+        let cancelled = false;
+        const applyMergePrefill = async () => {
+            const prefill = await loadWorkflowStagePrefill(projectId, ['model_merge']);
+            if (cancelled || !prefill) {
+                return;
+            }
+            const cfg = prefill.config || {};
+            const methodToken = String(cfg.merge_method || '').trim().toLowerCase();
+            if (methodToken === 'ties' || methodToken === 'dex') {
+                setMergeMethod(methodToken);
+            }
+            const modelPaths = Array.isArray(cfg.model_paths)
+                ? cfg.model_paths.map((item) => String(item || '').trim()).filter(Boolean)
+                : [];
+            if (modelPaths.length >= 2) {
+                setModelMergePathsText(modelPaths.join('\n'));
+            }
+            const weights = Array.isArray(cfg.weights)
+                ? cfg.weights
+                    .map((item) => Number(item))
+                    .filter((item) => Number.isFinite(item) && item > 0)
+                : [];
+            if (weights.length > 0) {
+                setModelMergeWeightsText(weights.map((item) => String(item)).join(','));
+            }
+            const densityValue = Number(cfg.ties_density);
+            if (Number.isFinite(densityValue) && densityValue > 0) {
+                setTiesDensity(String(densityValue));
+            }
+            setMergePrefillStage(prefill.stage);
+        };
+        void applyMergePrefill();
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
 
     useEffect(() => {
         if (!bitOptions.includes(bits)) {
@@ -148,10 +192,39 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
         await handleAction(() => api.post<CompressionResult>(`/projects/${projectId}/compression/benchmark`, { model_path: modelPath }));
     };
 
+    const handleModelMerge = async () => {
+        const modelPaths = modelMergePathsText
+            .split(/\n|,/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+        if (modelPaths.length < 2) {
+            setCompressionError('Model merge requires at least two model paths.');
+            return;
+        }
+        const weightValues = modelMergeWeightsText
+            .split(/,|\s+/)
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .map((item) => Number(item))
+            .filter((item) => Number.isFinite(item) && item > 0);
+        const parsedTiesDensity = Number.parseFloat(tiesDensity);
+        await handleAction(() => api.post<CompressionResult>(`/projects/${projectId}/compression/merge-models`, {
+            model_paths: modelPaths,
+            merge_method: mergeMethod,
+            weights: weightValues.length > 0 ? weightValues : undefined,
+            ties_density: Number.isFinite(parsedTiesDensity) ? parsedTiesDensity : 0.2,
+        }));
+    };
+
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>Compression Engine</h3>
+                {mergePrefillStage && (
+                    <div style={{ marginBottom: 'var(--space-md)', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                        Prefilled from workflow template stage: <strong>{mergePrefillStage}</strong>
+                    </div>
+                )}
                 <div className="form-group"><label className="form-label">Model Path</label><input className="input" value={modelPath} onChange={e => setModelPath(e.target.value)} placeholder="Path to model directory" /></div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
                     <div className="form-group">
@@ -179,9 +252,50 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
                     GGUF uses llama.cpp conversion/quantization; ONNX uses real export + dynamic INT8 quantization.
                 </div>
                 <div className="form-group"><label className="form-label">LoRA Adapter Path (for merge)</label><input className="input" value={loraPath} onChange={e => setLoraPath(e.target.value)} placeholder="Optional: path to LoRA adapter" /></div>
+                <div className="form-group">
+                    <label className="form-label">Model Soup Paths (for TIES/DEX merge)</label>
+                    <textarea
+                        className="input"
+                        style={{ minHeight: 88, resize: 'vertical' }}
+                        value={modelMergePathsText}
+                        onChange={e => setModelMergePathsText(e.target.value)}
+                        placeholder="/models/a\n/models/b\n/models/c"
+                    />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
+                    <div className="form-group">
+                        <label className="form-label">Merge Method</label>
+                        <select className="input" value={mergeMethod} onChange={e => setMergeMethod(e.target.value as 'ties' | 'dex')}>
+                            <option value="ties">TIES</option>
+                            <option value="dex">DEX</option>
+                        </select>
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Weights (optional CSV)</label>
+                        <input
+                            className="input"
+                            value={modelMergeWeightsText}
+                            onChange={e => setModelMergeWeightsText(e.target.value)}
+                            placeholder="0.5,0.3,0.2"
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">TIES Density</label>
+                        <input
+                            className="input"
+                            type="number"
+                            min={0.01}
+                            max={1}
+                            step={0.01}
+                            value={tiesDensity}
+                            onChange={e => setTiesDensity(e.target.value)}
+                        />
+                    </div>
+                </div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-md)' }}>
                     <button className="btn btn-primary" onClick={handleQuantize} disabled={isCompressing}>📦 Quantize</button>
                     <button className="btn btn-secondary" onClick={handleMerge} disabled={isCompressing}>🔗 Merge LoRA</button>
+                    <button className="btn btn-secondary" onClick={handleModelMerge} disabled={isCompressing}>🧬 Merge Models</button>
                     <button className="btn btn-secondary" onClick={handleBenchmark} disabled={isCompressing}>📐 Benchmark</button>
                     {isCompressing && activeTaskId && (
                         <button className="btn btn-secondary" onClick={() => void handleCancel()}>Cancel Job</button>

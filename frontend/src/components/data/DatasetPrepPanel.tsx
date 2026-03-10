@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
+import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import './DatasetPrepPanel.css';
 
 interface DatasetPrepPanelProps {
@@ -170,6 +171,31 @@ interface AdapterPreferenceAutoDetectResponse {
     saved: boolean;
 }
 
+interface SemanticIntelligenceResult {
+    project_id: number;
+    source?: {
+        split?: string;
+        source?: string;
+    };
+    sample_size_analyzed?: number;
+    cluster_count?: number;
+    semantic_diversity_score?: number;
+    redundancy_ratio?: number;
+    average_nearest_similarity?: number;
+    suggestions?: string[];
+    clusters?: Array<{
+        cluster_id: number;
+        size: number;
+        share: number;
+        representatives?: Array<{
+            sample_index?: number;
+            similarity_to_nearest?: number;
+            text_preview?: string;
+        }>;
+    }>;
+    report_path?: string;
+}
+
 const CHAT_TEMPLATES = [
     { value: 'llama3', label: 'Llama 3' },
     { value: 'chatml', label: 'ChatML' },
@@ -264,6 +290,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [profile, setProfile] = useState<ProfileResult | null>(null);
     const [profileLoading, setProfileLoading] = useState(false);
     const [profileType, setProfileType] = useState('cleaned');
+    const [semanticTargetSplit, setSemanticTargetSplit] = useState('train');
+    const [semanticSampleSize, setSemanticSampleSize] = useState(400);
+    const [semanticClusterCount, setSemanticClusterCount] = useState('');
+    const [semanticThreshold, setSemanticThreshold] = useState('0.92');
+    const [semanticLoading, setSemanticLoading] = useState(false);
+    const [semanticError, setSemanticError] = useState('');
+    const [semanticResult, setSemanticResult] = useState<SemanticIntelligenceResult | null>(null);
+    const [semanticPrefillStage, setSemanticPrefillStage] = useState('');
 
     // Adapter preview state
     const [adapterCatalog, setAdapterCatalog] = useState<AdapterCatalogResponse | null>(null);
@@ -404,6 +438,42 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const applySemanticPrefill = async () => {
+            const prefill = await loadWorkflowStagePrefill(projectId, ['semantic_curation']);
+            if (cancelled || !prefill) {
+                return;
+            }
+            const cfg = prefill.config || {};
+            const splitToken = String(cfg.target_split || '').trim().toLowerCase();
+            if (splitToken) {
+                if (splitToken === 'val') {
+                    setSemanticTargetSplit('validation');
+                } else {
+                    setSemanticTargetSplit(splitToken);
+                }
+            }
+            const sampleValue = Number(cfg.sample_size);
+            if (Number.isFinite(sampleValue) && sampleValue > 0) {
+                setSemanticSampleSize(Math.max(20, Math.min(2000, Math.round(sampleValue))));
+            }
+            const clusterValue = Number(cfg.cluster_count);
+            if (Number.isFinite(clusterValue) && clusterValue > 1) {
+                setSemanticClusterCount(String(Math.max(2, Math.min(64, Math.round(clusterValue)))));
+            }
+            const thresholdValue = Number(cfg.similarity_threshold);
+            if (Number.isFinite(thresholdValue) && thresholdValue >= 0.5) {
+                setSemanticThreshold(String(Math.max(0.5, Math.min(0.999, thresholdValue))));
+            }
+            setSemanticPrefillStage(prefill.stage);
+        };
+        void applySemanticPrefill();
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
+
     // ── Preview ────────────────────────────────────────────────
     const loadPreview = async () => {
         setPreviewLoading(true);
@@ -434,6 +504,34 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             setProfile(null);
         } finally {
             setProfileLoading(false);
+        }
+    };
+
+    const runSemanticIntelligence = async () => {
+        setSemanticLoading(true);
+        setSemanticError('');
+        try {
+            const thresholdValue = Number(semanticThreshold);
+            const parsedClusterCount = Number.parseInt(semanticClusterCount, 10);
+            const res = await api.post<SemanticIntelligenceResult>(
+                `/projects/${projectId}/dataset/semantic-intelligence/analyze`,
+                {
+                    target_split: semanticTargetSplit,
+                    sample_size: Math.max(20, Math.min(2000, semanticSampleSize || 20)),
+                    cluster_count: Number.isFinite(parsedClusterCount) && parsedClusterCount > 1
+                        ? parsedClusterCount
+                        : undefined,
+                    similarity_threshold: Number.isFinite(thresholdValue)
+                        ? Math.max(0.5, Math.min(0.999, thresholdValue))
+                        : 0.92,
+                },
+            );
+            setSemanticResult(res.data);
+        } catch (err: any) {
+            setSemanticResult(null);
+            setSemanticError(err?.response?.data?.detail || 'Semantic intelligence analysis failed');
+        } finally {
+            setSemanticLoading(false);
         }
     };
 
@@ -995,6 +1093,122 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 {JSON.stringify(profile.validator_report || {}, null, 2)}
                             </pre>
                         </div>
+                    </>
+                )}
+            </div>
+
+            <div className="dp-section">
+                <h3><span className="icon">🧠</span> Semantic Intelligence</h3>
+                {semanticPrefillStage && (
+                    <div style={{ marginBottom: '.5rem', fontSize: '.78rem', color: 'rgba(255,255,255,.62)' }}>
+                        Prefilled from workflow template stage: <strong>{semanticPrefillStage}</strong>
+                    </div>
+                )}
+                <div className="dp-info">
+                    <span className="info-icon">ℹ️</span>
+                    Analyze semantic diversity, redundancy, and cluster spread in prepared data.
+                </div>
+                <div className="dp-actions" style={{ flexWrap: 'wrap' }}>
+                    <select value={semanticTargetSplit} onChange={e => setSemanticTargetSplit(e.target.value)}>
+                        <option value="train">Train</option>
+                        <option value="validation">Validation</option>
+                        <option value="test">Test</option>
+                        <option value="combined">Combined</option>
+                    </select>
+                    <input
+                        type="number"
+                        min={20}
+                        max={2000}
+                        value={semanticSampleSize}
+                        onChange={e => setSemanticSampleSize(Math.max(20, Math.min(2000, Number(e.target.value) || 20)))}
+                        title="Sample Size"
+                        style={{ width: 130 }}
+                    />
+                    <input
+                        type="number"
+                        min={2}
+                        max={64}
+                        value={semanticClusterCount}
+                        onChange={e => setSemanticClusterCount(e.target.value)}
+                        title="Cluster Count (optional)"
+                        placeholder="clusters (opt)"
+                        style={{ width: 150 }}
+                    />
+                    <input
+                        type="number"
+                        min={0.5}
+                        max={0.999}
+                        step={0.01}
+                        value={semanticThreshold}
+                        onChange={e => setSemanticThreshold(e.target.value)}
+                        title="Similarity Threshold"
+                        style={{ width: 150 }}
+                    />
+                    <button className="btn-primary" onClick={runSemanticIntelligence} disabled={semanticLoading}>
+                        {semanticLoading ? '⏳ Analyzing...' : '🧪 Run Analysis'}
+                    </button>
+                </div>
+                {semanticError && (
+                    <p style={{ color: '#ff6b6b', fontSize: '.82rem', margin: '0 0 .75rem' }}>{semanticError}</p>
+                )}
+                {semanticResult && (
+                    <>
+                        <div className="dp-stats-grid">
+                            <div className="dp-stat">
+                                <div className="label">Sampled Rows</div>
+                                <div className="value">{semanticResult.sample_size_analyzed || 0}</div>
+                            </div>
+                            <div className="dp-stat">
+                                <div className="label">Clusters</div>
+                                <div className="value">{semanticResult.cluster_count || 0}</div>
+                            </div>
+                            <div className="dp-stat">
+                                <div className="label">Diversity Score</div>
+                                <div className="value">{asPercent(semanticResult.semantic_diversity_score)}</div>
+                            </div>
+                            <div className="dp-stat">
+                                <div className="label">Redundancy Ratio</div>
+                                <div className="value">{asPercent(semanticResult.redundancy_ratio)}</div>
+                            </div>
+                        </div>
+                        {Array.isArray(semanticResult.suggestions) && semanticResult.suggestions.length > 0 && (
+                            <div className="dp-resolved-panel" style={{ marginBottom: '.75rem' }}>
+                                <div className="dp-resolved-title">Suggestions</div>
+                                <ul style={{ margin: 0, paddingLeft: '1rem', color: 'rgba(255,255,255,.78)' }}>
+                                    {semanticResult.suggestions.map((item, index) => (
+                                        <li key={`semantic-suggestion-${index}`}>{item}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {Array.isArray(semanticResult.clusters) && semanticResult.clusters.length > 0 && (
+                            <div className="dp-resolved-panel">
+                                <div className="dp-resolved-title">Top Clusters</div>
+                                <div style={{ display: 'grid', gap: '.5rem' }}>
+                                    {semanticResult.clusters.slice(0, 6).map((cluster) => (
+                                        <div key={`cluster-${cluster.cluster_id}`} style={{ border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, padding: '.55rem .65rem' }}>
+                                            <div style={{ fontSize: '.8rem', fontWeight: 600 }}>
+                                                Cluster #{cluster.cluster_id} • {cluster.size} rows ({asPercent(cluster.share)})
+                                            </div>
+                                            {Array.isArray(cluster.representatives) && cluster.representatives.length > 0 && (
+                                                <div style={{ marginTop: '.4rem', display: 'grid', gap: '.4rem' }}>
+                                                    {cluster.representatives.slice(0, 2).map((rep, repIndex) => (
+                                                        <div key={`cluster-${cluster.cluster_id}-rep-${repIndex}`} style={{ fontSize: '.75rem', color: 'rgba(255,255,255,.72)' }}>
+                                                            #{rep.sample_index ?? 0} • sim {asPercent(rep.similarity_to_nearest)} • {String(rep.text_preview || '')}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                {semanticResult.report_path && (
+                                    <div style={{ marginTop: '.5rem', fontSize: '.74rem', color: 'rgba(255,255,255,.62)' }}>
+                                        Report path: {semanticResult.report_path}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </>
                 )}
             </div>

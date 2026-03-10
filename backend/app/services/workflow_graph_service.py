@@ -95,6 +95,21 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
             "min_vram_gb": 0.0,
         },
     },
+    "synthetic_conversation": {
+        "step_type": "core.synthetic_conversation",
+        "description": "Generate and persist multi-turn synthetic chat conversations.",
+        "input_artifacts": ["dataset.cleaned", "dataset.chunks"],
+        "output_artifacts": ["dataset.synthetic"],
+        "config_schema_ref": "slm.step.synthetic_conversation/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
+    },
     "dataset_prep": {
         "step_type": "core.dataset_prep",
         "description": "Merge sources and split train/validation/test datasets.",
@@ -148,12 +163,57 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
             "min_vram_gb": 0.0,
         },
     },
+    "semantic_curation": {
+        "step_type": "core.semantic_curation",
+        "description": "Run semantic redundancy/diversity diagnostics for prepared splits.",
+        "input_artifacts": ["dataset.train", "dataset.validation", "dataset.test"],
+        "output_artifacts": ["analysis.semantic_intelligence"],
+        "config_schema_ref": "slm.step.semantic_curation/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
+    },
+    "cloud_burst": {
+        "step_type": "core.cloud_burst_plan",
+        "description": "Build cloud GPU burst quote and launch plan for remote training.",
+        "input_artifacts": ["dataset.train", "dataset.validation"],
+        "output_artifacts": ["plan.cloud_burst"],
+        "config_schema_ref": "slm.step.cloud_burst_plan/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": [],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
+    },
     "training": {
         "step_type": "core.training",
         "description": "Run fine-tuning experiment(s) with configured runtime backend.",
         "input_artifacts": ["dataset.train", "dataset.validation"],
         "output_artifacts": ["model.checkpoint", "report.training"],
         "config_schema_ref": "slm.step.training/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery", "external"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": ["TRAINING_BACKEND"],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
+    },
+    "distillation": {
+        "step_type": "core.distillation_training",
+        "description": "Run teacher-guided distillation training for compact student models.",
+        "input_artifacts": ["dataset.train", "dataset.validation"],
+        "output_artifacts": ["model.checkpoint", "report.training"],
+        "config_schema_ref": "slm.step.distillation_training/v1",
         "runtime_requirements": {
             "execution_modes": ["local", "celery", "external"],
             "required_services": [],
@@ -184,6 +244,21 @@ _STEP_CONTRACTS: dict[str, dict[str, Any]] = {
         "input_artifacts": ["model.checkpoint", "report.evaluation"],
         "output_artifacts": ["model.compressed", "report.compression"],
         "config_schema_ref": "slm.step.compression/v1",
+        "runtime_requirements": {
+            "execution_modes": ["local", "celery", "external"],
+            "required_services": [],
+            "required_env": [],
+            "required_settings": ["COMPRESSION_BACKEND"],
+            "requires_gpu": False,
+            "min_vram_gb": 0.0,
+        },
+    },
+    "model_merge": {
+        "step_type": "core.model_merge",
+        "description": "Queue TIES/DEX style model merge to produce deployable merged artifacts.",
+        "input_artifacts": ["model.checkpoint"],
+        "output_artifacts": ["model.compressed", "report.compression"],
+        "config_schema_ref": "slm.step.model_merge/v1",
         "runtime_requirements": {
             "execution_modes": ["local", "celery", "external"],
             "required_services": [],
@@ -338,8 +413,7 @@ def get_step_contract_catalog() -> list[dict[str, Any]]:
 
 
 def _stage_sequence(*stages: str) -> list[str]:
-    valid = [stage.value for stage in STAGE_ORDER if stage.value in _STEP_CONTRACTS]
-    allowed = set(valid)
+    allowed = set(_STEP_CONTRACTS.keys())
     ordered: list[str] = []
     for stage in stages:
         if stage in allowed and stage not in ordered:
@@ -509,6 +583,143 @@ def get_workflow_graph_templates(project_id: int, current_stage: PipelineStage) 
                 template_label="Eval-Only Gate",
                 template_description="Evaluate an existing checkpoint and produce deployment readiness reports.",
                 stages=_stage_sequence("evaluation", "compression", "export"),
+            ),
+        }
+    )
+
+    templates.append(
+        {
+            "template_id": "template.autopilot_chat",
+            "display_name": "Autopilot Chat Pipeline",
+            "description": "Roadmap2 path with multi-turn synthetic, semantic curation, burst planning, and model merge.",
+            "graph": _build_template_graph(
+                project_id,
+                current_stage,
+                template_id="template.autopilot_chat",
+                template_label="Autopilot Chat Pipeline",
+                template_description=(
+                    "Roadmap2 path with multi-turn synthetic, semantic curation, "
+                    "cloud burst planning, and model merge."
+                ),
+                stages=_stage_sequence(
+                    "ingestion",
+                    "cleaning",
+                    "gold_set",
+                    "synthetic",
+                    "synthetic_conversation",
+                    "dataset_prep",
+                    "semantic_curation",
+                    "tokenization",
+                    "cloud_burst",
+                    "training",
+                    "distillation",
+                    "evaluation",
+                    "compression",
+                    "model_merge",
+                    "export",
+                ),
+                overrides={
+                    "synthetic_conversation": {
+                        "description": "Prefilled multi-turn synthetic chat settings (safe default: noop).",
+                        "config": {
+                            "mode": "noop",
+                            "source_text": (
+                                "Customer support policy snippets, troubleshooting steps, and "
+                                "standard resolution outcomes for multi-turn chat practice."
+                            ),
+                            "num_dialogues": 4,
+                            "min_turns": 3,
+                            "max_turns": 5,
+                            "model_name": "llama3",
+                            "save": True,
+                            "min_confidence": 0.4,
+                        },
+                    },
+                    "semantic_curation": {
+                        "description": "Semantic diversity/redundancy analysis preset (safe default: noop).",
+                        "config": {
+                            "mode": "noop",
+                            "target_split": "train",
+                            "sample_size": 400,
+                            "cluster_count": 8,
+                            "similarity_threshold": 0.92,
+                        },
+                    },
+                    "cloud_burst": {
+                        "description": "Build quote/launch plan before remote burst execution.",
+                        "config": {
+                            "mode": "plan",
+                            "provider_id": "runpod",
+                            "gpu_sku": "a10g.24gb",
+                            "duration_hours": 2.0,
+                            "spot": True,
+                            "region": "US",
+                            "image": "ghcr.io/slm/platform-trainer:latest",
+                            "startup_script": "bash /workspace/entrypoint.sh",
+                        },
+                    },
+                    "distillation": {
+                        "description": "Run teacher-guided distillation objective execution for student model.",
+                        "config": {
+                            "mode": "noop",
+                            "distillation_enabled": True,
+                            "distillation_teacher_model": "meta-llama/Llama-3.1-8B-Instruct",
+                            "distillation_alpha": 0.6,
+                            "distillation_temperature": 2.0,
+                        },
+                    },
+                    "model_merge": {
+                        "description": "Queue TIES/DEX model soup merge for checkpoint ensemble packaging.",
+                        "config": {
+                            "mode": "noop",
+                            "merge_method": "ties",
+                            "model_paths": [
+                                "/models/student-checkpoint-a",
+                                "/models/student-checkpoint-b",
+                            ],
+                            "weights": [0.5, 0.5],
+                            "ties_density": 0.2,
+                        },
+                    },
+                },
+            ),
+        }
+    )
+
+    templates.append(
+        {
+            "template_id": "template.remote_distill",
+            "display_name": "Remote Distill + Merge",
+            "description": "Lean remote path: cloud burst planning, distillation, evaluation, and model merge/export.",
+            "graph": _build_template_graph(
+                project_id,
+                current_stage,
+                template_id="template.remote_distill",
+                template_label="Remote Distill + Merge",
+                template_description=(
+                    "Lean remote path: cloud burst planning, distillation, evaluation, "
+                    "and model merge/export."
+                ),
+                stages=_stage_sequence(
+                    "ingestion",
+                    "cleaning",
+                    "dataset_prep",
+                    "tokenization",
+                    "cloud_burst",
+                    "training",
+                    "distillation",
+                    "evaluation",
+                    "model_merge",
+                    "export",
+                ),
+                overrides={
+                    "training": {
+                        "description": "Optional baseline training before distillation pass.",
+                    },
+                    "distillation": {
+                        "config_schema_ref": "slm.step.training.distill/v2",
+                    },
+                },
             ),
         }
     )

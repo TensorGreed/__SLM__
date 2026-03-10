@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
 import type {
+    PipelineGraphContractSaveResponse,
     PipelineGraphTemplate,
     PipelineGraphTemplateListResponse,
     PipelineStage,
@@ -65,6 +66,7 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
 
     const [isLoading, setIsLoading] = useState(false);
     const [isRunning, setIsRunning] = useState(false);
+    const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const [statusMessage, setStatusMessage] = useState('');
 
@@ -81,6 +83,10 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
     const selectedRunIsActive = useMemo(
         () => !!selectedRun && (selectedRun.status === 'pending' || selectedRun.status === 'running'),
         [selectedRun],
+    );
+    const isAutopilotTemplate = useMemo(
+        () => selectedTemplate?.template_id === 'template.autopilot_chat',
+        [selectedTemplate],
     );
 
     const loadRuns = useCallback(async () => {
@@ -177,6 +183,63 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
         }
     };
 
+    const handleApplyTemplateDefaults = useCallback(async () => {
+        if (!selectedTemplate) {
+            return;
+        }
+        setIsApplyingTemplate(true);
+        setStatusMessage('');
+        try {
+            await api.put<PipelineGraphContractSaveResponse>(
+                `/projects/${projectId}/pipeline/graph/contract`,
+                { graph: selectedTemplate.graph },
+            );
+            setErrorMessage('');
+            setStatusMessage(
+                `Template '${selectedTemplate.display_name}' saved. Stage panels can now prefill from this graph contract.`,
+            );
+        } catch (error) {
+            setErrorMessage(extractErrorMessage(error));
+        } finally {
+            setIsApplyingTemplate(false);
+        }
+    }, [projectId, selectedTemplate]);
+
+    const handleRunAutopilot = useCallback(async () => {
+        if (!selectedTemplate || !isAutopilotTemplate) {
+            return;
+        }
+        setIsRunning(true);
+        setStatusMessage('');
+        try {
+            const payload: Record<string, unknown> = {
+                allow_fallback: true,
+                use_saved_override: false,
+                execution_backend: 'local',
+                max_retries: 1,
+                stop_on_blocked: true,
+                stop_on_failure: true,
+                graph: selectedTemplate.graph,
+                config: {
+                    bootstrap_source_artifacts: true,
+                    autopilot_template_id: selectedTemplate.template_id,
+                },
+            };
+            const res = await api.post<WorkflowRunQueuedResponse>(`/projects/${projectId}/pipeline/graph/run-async`, payload);
+            setStatusMessage(
+                `Autopilot run #${res.data.run_id} queued (local backend, retries=1, source bootstrap enabled).`,
+            );
+            setSelectedRunId(res.data.run_id);
+            setSelectedRun(res.data.run);
+            setErrorMessage('');
+            await loadRuns();
+        } catch (error) {
+            setErrorMessage(extractErrorMessage(error));
+        } finally {
+            setIsRunning(false);
+        }
+    }, [isAutopilotTemplate, loadRuns, projectId, selectedTemplate]);
+
     return (
         <div className="card workflow-run-card">
             <div className="workflow-run-header">
@@ -259,6 +322,36 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
                     Refresh Runs
                 </button>
             </div>
+
+            {isAutopilotTemplate && selectedTemplate && (
+                <div className="workflow-run-autopilot">
+                    <div className="workflow-run-autopilot__text">
+                        <strong>Autopilot Chat Flow</strong>
+                        <span>
+                            Save this template to prefill Synthetic, Semantic, Cloud Burst, and Merge panels,
+                            then launch one guided run.
+                        </span>
+                    </div>
+                    <div className="workflow-run-autopilot__actions">
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => void handleApplyTemplateDefaults()}
+                            disabled={isApplyingTemplate || isRunning}
+                        >
+                            {isApplyingTemplate ? 'Applying...' : 'Apply Prefills'}
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={() => void handleRunAutopilot()}
+                            disabled={isApplyingTemplate || isRunning}
+                        >
+                            {isRunning ? 'Running...' : 'Run Autopilot Path'}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {errorMessage && <div className="workflow-run-alert workflow-run-alert--error">{errorMessage}</div>}
             {statusMessage && <div className="workflow-run-alert workflow-run-alert--ok">{statusMessage}</div>}

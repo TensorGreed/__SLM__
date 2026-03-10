@@ -18,6 +18,7 @@ import type {
     PipelineGraphNode,
     PipelineGraphResponse,
     PipelineGraphStageCatalogResponse,
+    PipelineGraphStage,
     PipelineGraphStageTemplate,
     PipelineGraphTemplate,
     PipelineGraphTemplateListResponse,
@@ -377,7 +378,7 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
     }, [loadEditorState, currentStage]);
 
     const stageToTemplate = useMemo(() => {
-        const map = new Map<PipelineStage, PipelineGraphStageTemplate>();
+        const map = new Map<PipelineGraphStage, PipelineGraphStageTemplate>();
         for (const template of catalog) {
             map.set(template.stage, template);
         }
@@ -611,7 +612,7 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
         }));
     }, [updateGraph]);
 
-    const handleAddNode = useCallback((stage: PipelineStage, customPosition?: NodeAddPosition) => {
+    const handleAddNode = useCallback((stage: PipelineGraphStage, customPosition?: NodeAddPosition) => {
         const template = stageToTemplate.get(stage);
         if (!template) {
             return;
@@ -684,7 +685,7 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
         setErrorMessage('');
     }, [loadEditorState, templates]);
 
-    const handlePaletteDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, stage: PipelineStage) => {
+    const handlePaletteDragStart = useCallback((event: ReactDragEvent<HTMLButtonElement>, stage: PipelineGraphStage) => {
         if (isBusy !== null) {
             return;
         }
@@ -715,7 +716,7 @@ export default function PipelineGraphEditor({ projectId, currentStage }: Pipelin
         if (!stageRaw) {
             return;
         }
-        const stage = stageRaw as PipelineStage;
+        const stage = stageRaw as PipelineGraphStage;
         if (!stageToTemplate.has(stage)) {
             return;
         }

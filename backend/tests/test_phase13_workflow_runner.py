@@ -118,6 +118,73 @@ class WorkflowRunnerTests(unittest.TestCase):
         stages = [item["stage"] for item in catalog.json()["stages"]]
         self.assertIn("data_adapter_preview", stages)
 
+    def test_stage_catalog_includes_roadmap2_stages(self):
+        project_id = self._create_project("phase13-stage-catalog-r2")
+        catalog = self.client.get(f"/api/projects/{project_id}/pipeline/graph/stage-catalog")
+        self.assertEqual(catalog.status_code, 200, catalog.text)
+        stages = [item["stage"] for item in catalog.json()["stages"]]
+        self.assertIn("synthetic_conversation", stages)
+        self.assertIn("semantic_curation", stages)
+        self.assertIn("cloud_burst", stages)
+        self.assertIn("distillation", stages)
+        self.assertIn("model_merge", stages)
+
+    def test_autopilot_template_can_prefill_and_run_end_to_end(self):
+        project_id = self._create_project("phase13-autopilot-template")
+        templates_res = self.client.get(f"/api/projects/{project_id}/pipeline/graph/templates")
+        self.assertEqual(templates_res.status_code, 200, templates_res.text)
+        templates = templates_res.json().get("templates", [])
+        autopilot = next(
+            (item for item in templates if item.get("template_id") == "template.autopilot_chat"),
+            None,
+        )
+        self.assertIsNotNone(autopilot, "template.autopilot_chat was not found")
+        graph = dict(autopilot.get("graph") or {})
+        nodes = [item for item in graph.get("nodes", []) if isinstance(item, dict)]
+        by_stage = {str(item.get("stage")): item for item in nodes}
+        self.assertIn("synthetic_conversation", by_stage)
+        self.assertIn("semantic_curation", by_stage)
+        self.assertIn("cloud_burst", by_stage)
+        self.assertIn("distillation", by_stage)
+        self.assertIn("model_merge", by_stage)
+        self.assertEqual(
+            str((by_stage["synthetic_conversation"].get("config") or {}).get("mode")),
+            "noop",
+        )
+        self.assertEqual(
+            str((by_stage["cloud_burst"].get("config") or {}).get("provider_id")),
+            "runpod",
+        )
+        self.assertEqual(
+            str((by_stage["model_merge"].get("config") or {}).get("merge_method")),
+            "ties",
+        )
+
+        run = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json={
+                "allow_fallback": False,
+                "use_saved_override": False,
+                "execution_backend": "local",
+                "max_retries": 1,
+                "stop_on_blocked": True,
+                "stop_on_failure": True,
+                "graph": graph,
+                "config": {
+                    "bootstrap_source_artifacts": True,
+                    "autopilot_template_id": "template.autopilot_chat",
+                },
+            },
+        )
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        run_nodes = {row["stage"]: row for row in payload.get("nodes", [])}
+        self.assertEqual(run_nodes["cloud_burst"]["status"], "completed")
+        self.assertEqual(run_nodes["model_merge"]["status"], "completed")
+        self.assertIn("plan.cloud_burst", run_nodes["cloud_burst"]["published_artifact_keys"])
+        self.assertIn("report.compression", run_nodes["model_merge"]["published_artifact_keys"])
+
     def test_workflow_run_executes_local_data_adapter_preview_node(self):
         project_id = self._create_project("phase13-adapter-node")
         graph_override = {
@@ -325,6 +392,334 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertEqual(training_log.get("experiment_id"), 777)
         mocked_create.assert_awaited()
         mocked_start.assert_awaited()
+
+    def test_workflow_run_executes_local_synthetic_conversation_node(self):
+        project_id = self._create_project("phase13-synth-conversation")
+        graph_override = {
+            "graph_id": "custom-synth-conversation",
+            "graph_label": "Synthetic Conversation Graph",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:synthetic_conversation",
+                    "stage": "synthetic_conversation",
+                    "display_name": "Synthetic Conversation",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.synthetic_conversation",
+                    "description": "Generate and save multi-turn conversations.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["dataset.synthetic"],
+                    "config_schema_ref": "slm.step.synthetic_conversation/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 40, "y": 40},
+                    "config": {
+                        "mode": "generate_and_save",
+                        "source_text": "Policies require MFA and periodic access review.",
+                        "num_dialogues": 1,
+                        "min_turns": 2,
+                        "max_turns": 3,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        mocked_conversations = [
+            {
+                "conversation_id": "conv-1",
+                "messages": [
+                    {"role": "user", "content": "What is the policy?"},
+                    {"role": "assistant", "content": "MFA is required."},
+                ],
+                "turn_count": 2,
+                "confidence": 0.9,
+            }
+        ]
+        mocked_save = {
+            "accepted": 1,
+            "rejected": 0,
+            "total": 1,
+            "accepted_turns": 2,
+        }
+
+        with patch(
+            "app.services.synthetic_service.generate_conversation_dialogues",
+            AsyncMock(return_value=mocked_conversations),
+        ) as mocked_generate, patch(
+            "app.services.synthetic_service.save_synthetic_conversation_batch",
+            AsyncMock(return_value=mocked_save),
+        ) as mocked_save_batch:
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={
+                    "execution_backend": "local",
+                    "allow_fallback": False,
+                    "graph": graph_override,
+                },
+            )
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        node = payload["nodes"][0]
+        self.assertEqual(node["status"], "completed")
+        self.assertEqual(node["published_artifact_keys"], ["dataset.synthetic"])
+        synth_log = node["node_log"][-1].get("synthetic_conversation", {})
+        self.assertEqual(int(synth_log.get("generated_count", 0)), 1)
+        self.assertTrue(bool(synth_log.get("saved")))
+        mocked_generate.assert_awaited()
+        mocked_save_batch.assert_awaited()
+
+    def test_workflow_run_executes_local_semantic_curation_node(self):
+        project_id = self._create_project("phase13-semantic-curation")
+        graph_override = {
+            "graph_id": "custom-semantic-curation",
+            "graph_label": "Semantic Curation Graph",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:semantic_curation",
+                    "stage": "semantic_curation",
+                    "display_name": "Semantic Curation",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.semantic_curation",
+                    "description": "Analyze semantic diversity and redundancy.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["analysis.semantic_intelligence"],
+                    "config_schema_ref": "slm.step.semantic_curation/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 40, "y": 40},
+                    "config": {
+                        "mode": "analyze",
+                        "target_split": "train",
+                        "sample_size": 128,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        with patch(
+            "app.services.dataset_intelligence_service.analyze_semantic_dataset_intelligence",
+            AsyncMock(
+                return_value={
+                    "project_id": project_id,
+                    "source": {"split": "train"},
+                    "sample_size_analyzed": 128,
+                    "cluster_count": 4,
+                    "semantic_diversity_score": 0.71,
+                    "redundancy_ratio": 0.18,
+                    "report_path": "/tmp/semantic_intelligence.json",
+                }
+            ),
+        ) as mocked_semantic:
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={
+                    "execution_backend": "local",
+                    "allow_fallback": False,
+                    "graph": graph_override,
+                },
+            )
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        node = payload["nodes"][0]
+        self.assertEqual(node["status"], "completed")
+        self.assertEqual(node["published_artifact_keys"], ["analysis.semantic_intelligence"])
+        semantic_log = node["node_log"][-1].get("semantic_curation", {})
+        self.assertEqual(int(semantic_log.get("sample_size_analyzed", 0)), 128)
+        mocked_semantic.assert_awaited()
+
+    def test_workflow_run_executes_local_cloud_burst_and_model_merge_nodes(self):
+        project_id = self._create_project("phase13-cloud-merge")
+        graph_override = {
+            "graph_id": "custom-cloud-merge",
+            "graph_label": "Cloud Burst + Model Merge",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:cloud_burst",
+                    "stage": "cloud_burst",
+                    "display_name": "Cloud Burst",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.cloud_burst_plan",
+                    "description": "Build cloud burst launch plan.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["plan.cloud_burst"],
+                    "config_schema_ref": "slm.step.cloud_burst_plan/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 20, "y": 20},
+                    "config": {
+                        "mode": "plan",
+                        "provider_id": "runpod",
+                        "gpu_sku": "a10g.24gb",
+                        "duration_hours": 2.0,
+                        "spot": True,
+                    },
+                },
+                {
+                    "id": "step:model_merge",
+                    "stage": "model_merge",
+                    "display_name": "Model Merge",
+                    "index": 1,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.model_merge",
+                    "description": "Queue TIES merge.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["model.compressed", "report.compression"],
+                    "config_schema_ref": "slm.step.model_merge/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 320, "y": 20},
+                    "config": {
+                        "mode": "queue_merge",
+                        "merge_method": "ties",
+                        "model_paths": ["/tmp/model-a", "/tmp/model-b"],
+                        "weights": [0.5, 0.5],
+                    },
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge:cloud->merge",
+                    "source": "step:cloud_burst",
+                    "target": "step:model_merge",
+                    "kind": "sequential",
+                }
+            ],
+        }
+
+        with patch(
+            "app.services.cloud_burst_service.build_cloud_burst_launch_plan",
+            AsyncMock(
+                return_value={
+                    "launch_id": "runpod-123",
+                    "provider_id": "runpod",
+                    "gpu_sku": "a10g.24gb",
+                    "quote": {"cost_breakdown_usd": {"total": 1.23}},
+                    "credentials": {"ready": False, "missing_keys": ["api_key"]},
+                    "record_path": "/tmp/cloud_burst_plan.json",
+                }
+            ),
+        ) as mocked_plan, patch(
+            "app.services.compression_service.merge_models",
+            AsyncMock(
+                return_value={
+                    "status": "queued",
+                    "merge_method": "ties",
+                    "task_id": "task-merge-1",
+                    "report_path": "/tmp/merge_models_report.json",
+                    "output_model_path": "/tmp/merged_model",
+                }
+            ),
+        ) as mocked_merge:
+            run = self.client.post(
+                f"/api/projects/{project_id}/pipeline/graph/run",
+                json={
+                    "execution_backend": "local",
+                    "allow_fallback": False,
+                    "graph": graph_override,
+                },
+            )
+
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        by_stage = {row["stage"]: row for row in payload["nodes"]}
+        self.assertEqual(by_stage["cloud_burst"]["status"], "completed")
+        self.assertEqual(by_stage["cloud_burst"]["published_artifact_keys"], ["plan.cloud_burst"])
+        self.assertEqual(by_stage["model_merge"]["status"], "completed")
+        self.assertEqual(
+            by_stage["model_merge"]["published_artifact_keys"],
+            ["model.compressed", "report.compression"],
+        )
+        mocked_plan.assert_awaited()
+        mocked_merge.assert_awaited()
+
+    def test_workflow_run_executes_local_distillation_node_noop(self):
+        project_id = self._create_project("phase13-distillation-noop")
+        graph_override = {
+            "graph_id": "custom-distillation-noop",
+            "graph_label": "Distillation Node Noop",
+            "graph_version": "1.0.0",
+            "nodes": [
+                {
+                    "id": "step:distillation",
+                    "stage": "distillation",
+                    "display_name": "Distillation",
+                    "index": 0,
+                    "kind": "custom_step",
+                    "status": "pending",
+                    "step_type": "core.distillation_training",
+                    "description": "Distillation node defaults to noop unless configured.",
+                    "input_artifacts": [],
+                    "output_artifacts": ["model.checkpoint"],
+                    "config_schema_ref": "slm.step.distillation_training/v1",
+                    "runtime_requirements": {
+                        "execution_modes": ["local"],
+                        "required_services": [],
+                        "required_env": [],
+                        "required_settings": [],
+                        "requires_gpu": False,
+                        "min_vram_gb": 0.0,
+                    },
+                    "position": {"x": 40, "y": 40},
+                }
+            ],
+            "edges": [],
+        }
+
+        run = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json={
+                "execution_backend": "local",
+                "allow_fallback": False,
+                "graph": graph_override,
+            },
+        )
+        self.assertEqual(run.status_code, 200, run.text)
+        payload = run.json()
+        self.assertEqual(payload["status"], "completed")
+        node = payload["nodes"][0]
+        self.assertEqual(node["status"], "completed")
+        distill_log = node["node_log"][-1].get("distillation", {})
+        self.assertTrue(bool(distill_log.get("enabled")))
 
     def test_workflow_run_completes_and_publishes_outputs(self):
         project_id = self._create_project("phase13-complete")

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
+import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 
 interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
 
@@ -12,6 +13,8 @@ interface Chunk {
     document_id: number;
     selected?: boolean;
 }
+
+type GenerationMode = 'qa' | 'conversation';
 
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
@@ -56,20 +59,87 @@ function extractErrorMessage(error: unknown): string {
 export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanelProps) {
     type Provider = 'ollama' | 'openai' | 'custom';
     const [provider, setProvider] = useState<Provider>('ollama');
+    const [generationMode, setGenerationMode] = useState<GenerationMode>('qa');
 
     const [sourceText, setSourceText] = useState('');
     const [numPairs, setNumPairs] = useState(5);
+    const [numDialogues, setNumDialogues] = useState(3);
+    const [minTurns, setMinTurns] = useState(3);
+    const [maxTurns, setMaxTurns] = useState(5);
     const [apiUrl, setApiUrl] = useState('http://localhost:11434/v1/chat/completions');
     const [apiKey, setApiKey] = useState('');
     const [modelName, setModelName] = useState('llama3');
     const [generatedPairs, setGeneratedPairs] = useState<any[]>([]);
+    const [generatedConversations, setGeneratedConversations] = useState<any[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [saveResult, setSaveResult] = useState<any>(null);
+    const [prefillSourceStage, setPrefillSourceStage] = useState('');
 
     // Auto-load chunks state
     const [chunks, setChunks] = useState<Chunk[]>([]);
     const [isLoadingChunks, setIsLoadingChunks] = useState(false);
     const [showChunkPicker, setShowChunkPicker] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const applyPrefill = async () => {
+            const prefill = await loadWorkflowStagePrefill(projectId, ['synthetic_conversation', 'synthetic']);
+            if (cancelled || !prefill) {
+                return;
+            }
+            const cfg = prefill.config || {};
+            const modeToken = String(cfg.mode || '').trim().toLowerCase();
+            if (prefill.stage === 'synthetic_conversation' || modeToken.includes('conversation')) {
+                setGenerationMode('conversation');
+            } else if (prefill.stage === 'synthetic') {
+                setGenerationMode('qa');
+            }
+
+            const sourceTextPrefill = String(cfg.source_text || '').trim();
+            if (sourceTextPrefill) {
+                setSourceText(sourceTextPrefill);
+            }
+            const modelToken = String(cfg.model_name || '').trim();
+            if (modelToken) {
+                setModelName(modelToken);
+            }
+            const apiUrlToken = String(cfg.api_url || '').trim();
+            if (apiUrlToken) {
+                setApiUrl(apiUrlToken);
+                const normalizedUrl = apiUrlToken.toLowerCase();
+                if (normalizedUrl.includes('api.openai.com')) {
+                    setProvider('openai');
+                } else if (normalizedUrl.includes('localhost:11434') || normalizedUrl.includes('127.0.0.1:11434')) {
+                    setProvider('ollama');
+                } else {
+                    setProvider('custom');
+                }
+            }
+
+            const parsedPairs = Number(cfg.num_pairs);
+            if (Number.isFinite(parsedPairs) && parsedPairs > 0) {
+                setNumPairs(Math.max(1, Math.min(50, Math.round(parsedPairs))));
+            }
+            const parsedDialogues = Number(cfg.num_dialogues);
+            if (Number.isFinite(parsedDialogues) && parsedDialogues > 0) {
+                setNumDialogues(Math.max(1, Math.min(20, Math.round(parsedDialogues))));
+            }
+            const parsedMinTurns = Number(cfg.min_turns);
+            const parsedMaxTurns = Number(cfg.max_turns);
+            if (Number.isFinite(parsedMinTurns) && parsedMinTurns > 0) {
+                setMinTurns(Math.max(1, Math.min(20, Math.round(parsedMinTurns))));
+            }
+            if (Number.isFinite(parsedMaxTurns) && parsedMaxTurns > 0) {
+                const maxValue = Math.max(1, Math.min(20, Math.round(parsedMaxTurns)));
+                setMaxTurns(maxValue);
+            }
+            setPrefillSourceStage(prefill.stage);
+        };
+        void applyPrefill();
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
 
     const handleProviderChange = (p: Provider) => {
         setProvider(p);
@@ -117,10 +187,30 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         if (!sourceText.trim()) return;
         setIsGenerating(true);
         try {
-            const res = await api.post(`/projects/${projectId}/synthetic/generate`, {
-                source_text: sourceText, num_pairs: numPairs, api_url: apiUrl, api_key: apiKey, model_name: modelName
-            });
-            setGeneratedPairs(res.data.pairs || []);
+            if (generationMode === 'qa') {
+                const res = await api.post(`/projects/${projectId}/synthetic/generate`, {
+                    source_text: sourceText,
+                    num_pairs: numPairs,
+                    api_url: apiUrl,
+                    api_key: apiKey,
+                    model_name: modelName,
+                });
+                setGeneratedPairs(res.data.pairs || []);
+                setGeneratedConversations([]);
+            } else {
+                const res = await api.post(`/projects/${projectId}/synthetic/generate-conversations`, {
+                    source_text: sourceText,
+                    num_dialogues: numDialogues,
+                    min_turns: minTurns,
+                    max_turns: Math.max(minTurns, maxTurns),
+                    api_url: apiUrl,
+                    api_key: apiKey,
+                    model_name: modelName,
+                });
+                setGeneratedConversations(res.data.conversations || []);
+                setGeneratedPairs([]);
+            }
+            setSaveResult(null);
         } catch (err: any) {
             toast.error(extractErrorMessage(err));
         } finally {
@@ -129,18 +219,54 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     };
 
     const handleSave = async () => {
-        const res = await api.post(`/projects/${projectId}/synthetic/save`, { pairs: generatedPairs, min_confidence: 0.4 });
+        if (generationMode === 'qa') {
+            const res = await api.post(`/projects/${projectId}/synthetic/save`, {
+                pairs: generatedPairs,
+                min_confidence: 0.4,
+            });
+            setSaveResult(res.data);
+            return;
+        }
+        const res = await api.post(`/projects/${projectId}/synthetic/save-conversations`, {
+            conversations: generatedConversations,
+            min_confidence: 0.4,
+        });
         setSaveResult(res.data);
     };
 
     const selectedCount = chunks.filter(c => c.selected).length;
-    const isDemoMode = generatedPairs.some(p => p.source === 'demo_heuristic');
+    const activeGeneratedCount = generationMode === 'qa' ? generatedPairs.length : generatedConversations.length;
+    const isDemoMode = generationMode === 'qa'
+        ? generatedPairs.some(p => p.source === 'demo_heuristic')
+        : generatedConversations.some(c => c.source === 'demo_heuristic');
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
+                {prefillSourceStage && (
+                    <div style={{ marginBottom: 'var(--space-md)', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                        Prefilled from workflow template stage: <strong>{prefillSourceStage}</strong>
+                    </div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+                    <div className="form-group">
+                        <label className="form-label">Generation Mode</label>
+                        <select
+                            className="input"
+                            value={generationMode}
+                            onChange={(e) => {
+                                const nextMode = e.target.value as GenerationMode;
+                                setGenerationMode(nextMode);
+                                setGeneratedPairs([]);
+                                setGeneratedConversations([]);
+                                setSaveResult(null);
+                            }}
+                        >
+                            <option value="qa">Single-turn Q&A</option>
+                            <option value="conversation">Multi-turn Conversations</option>
+                        </select>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: provider === 'ollama' ? '1fr 1fr' : '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
                         <div className="form-group">
                             <label className="form-label">Provider</label>
@@ -186,9 +312,67 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     </small>
                 </div>
 
-                <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center' }}>
-                    <div className="form-group" style={{ marginBottom: 0 }}><label className="form-label">Pairs to Generate</label><input className="input" type="number" value={numPairs} onChange={e => setNumPairs(+e.target.value)} min={1} max={50} style={{ width: 80 }} /></div>
-                    <button className="btn btn-primary" onClick={handleGenerate} disabled={isGenerating || !sourceText.trim()}>{isGenerating ? '⏳ Generating...' : '🧪 Generate'}</button>
+                <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {generationMode === 'qa' ? (
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                            <label className="form-label">Pairs to Generate</label>
+                            <input
+                                className="input"
+                                type="number"
+                                value={numPairs}
+                                onChange={e => setNumPairs(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                                min={1}
+                                max={50}
+                                style={{ width: 120 }}
+                            />
+                        </div>
+                    ) : (
+                        <>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-label">Dialogues</label>
+                                <input
+                                    className="input"
+                                    type="number"
+                                    value={numDialogues}
+                                    onChange={e => setNumDialogues(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                                    min={1}
+                                    max={20}
+                                    style={{ width: 100 }}
+                                />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-label">Min Turns</label>
+                                <input
+                                    className="input"
+                                    type="number"
+                                    value={minTurns}
+                                    onChange={e => {
+                                        const nextMin = Math.max(1, Math.min(20, Number(e.target.value) || 1));
+                                        setMinTurns(nextMin);
+                                        setMaxTurns((prev) => Math.max(prev, nextMin));
+                                    }}
+                                    min={1}
+                                    max={20}
+                                    style={{ width: 100 }}
+                                />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-label">Max Turns</label>
+                                <input
+                                    className="input"
+                                    type="number"
+                                    value={maxTurns}
+                                    onChange={e => setMaxTurns(Math.max(minTurns, Math.min(20, Number(e.target.value) || minTurns)))}
+                                    min={minTurns}
+                                    max={20}
+                                    style={{ width: 100 }}
+                                />
+                            </div>
+                        </>
+                    )}
+                    <button className="btn btn-primary" onClick={handleGenerate} disabled={isGenerating || !sourceText.trim()}>
+                        {isGenerating ? '⏳ Generating...' : '🧪 Generate'}
+                    </button>
                 </div>
             </div>
 
@@ -243,10 +427,14 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 </div>
             )}
 
-            {generatedPairs.length > 0 && (
+            {activeGeneratedCount > 0 && (
                 <div className="card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
-                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>Generated Pairs <span className="badge badge-accent">{generatedPairs.length}</span></h3>
+                        <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>
+                            {generationMode === 'qa' ? 'Generated Pairs' : 'Generated Conversations'}
+                            {' '}
+                            <span className="badge badge-accent">{activeGeneratedCount}</span>
+                        </h3>
                         <button className="btn btn-primary" onClick={handleSave}>✅ Save Approved</button>
                     </div>
 
@@ -261,21 +449,49 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
 
                     {saveResult && (
                         <div style={{ background: 'var(--color-success-bg)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-md)', color: 'var(--color-success)', fontSize: 'var(--font-size-sm)' }}>
-                            Saved {saveResult.accepted} pairs ({saveResult.rejected} rejected). Total: {saveResult.total}
+                            Saved {saveResult.accepted} item(s) ({saveResult.rejected} rejected). Total: {saveResult.total}
+                            {typeof saveResult.accepted_turns === 'number' ? ` • accepted turns: ${saveResult.accepted_turns}` : ''}
                         </div>
                     )}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {generatedPairs.map((p, i) => (
-                            <div key={i} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
-                                <div style={{ fontSize: 'var(--font-size-sm)', marginBottom: 4 }}><strong>Q:</strong> {p.question}</div>
-                                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 4 }}><strong>A:</strong> {p.answer}</div>
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                    <span className={`badge ${p.confidence >= 0.7 ? 'badge-success' : p.confidence >= 0.4 ? 'badge-warning' : 'badge-error'}`}>
-                                        Confidence: {(p.confidence * 100).toFixed(0)}%
-                                    </span>
+                        {generationMode === 'qa' ? (
+                            generatedPairs.map((p, i) => (
+                                <div key={i} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
+                                    <div style={{ fontSize: 'var(--font-size-sm)', marginBottom: 4 }}><strong>Q:</strong> {p.question}</div>
+                                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginBottom: 4 }}><strong>A:</strong> {p.answer}</div>
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <span className={`badge ${p.confidence >= 0.7 ? 'badge-success' : p.confidence >= 0.4 ? 'badge-warning' : 'badge-error'}`}>
+                                            Confidence: {(p.confidence * 100).toFixed(0)}%
+                                        </span>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))
+                        ) : (
+                            generatedConversations.map((conversation, index) => (
+                                <div key={conversation.conversation_id || index} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                                        <strong style={{ fontSize: 'var(--font-size-sm)' }}>
+                                            Conversation {index + 1}
+                                        </strong>
+                                        <span className="badge badge-info">
+                                            {conversation.turn_count || 0} turns
+                                        </span>
+                                        {typeof conversation.confidence === 'number' && (
+                                            <span className={`badge ${conversation.confidence >= 0.7 ? 'badge-success' : conversation.confidence >= 0.4 ? 'badge-warning' : 'badge-error'}`}>
+                                                Confidence: {(conversation.confidence * 100).toFixed(0)}%
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                        {(conversation.messages || []).map((message: any, messageIndex: number) => (
+                                            <div key={`${conversation.conversation_id || index}-${messageIndex}`} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                                                <strong>{String(message?.role || 'assistant')}:</strong> {String(message?.content || '')}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             )}
@@ -285,8 +501,10 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     currentStep="Synthetic Generation"
                     nextStep="Dataset Prep"
                     nextStepIcon="📋"
-                    isComplete={generatedPairs.length > 0}
-                    hint="Generate and save synthetic Q&A pairs to continue"
+                    isComplete={activeGeneratedCount > 0}
+                    hint={generationMode === 'qa'
+                        ? 'Generate and save synthetic Q&A pairs to continue'
+                        : 'Generate and save synthetic multi-turn conversations to continue'}
                     onNext={onNextStep}
                 />
             )}

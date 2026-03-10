@@ -14,6 +14,14 @@ export type PipelineStage =
     | 'export'
     | 'completed';
 
+export type PipelineGraphStage =
+    | PipelineStage
+    | 'synthetic_conversation'
+    | 'semantic_curation'
+    | 'cloud_burst'
+    | 'distillation'
+    | 'model_merge';
+
 export type ProjectStatus = 'draft' | 'active' | 'paused' | 'completed' | 'failed';
 export type DatasetType = 'raw' | 'cleaned' | 'gold_dev' | 'gold_test' | 'synthetic' | 'train' | 'validation' | 'test';
 export type DocumentStatus = 'pending' | 'processing' | 'accepted' | 'rejected' | 'error';
@@ -224,7 +232,7 @@ export interface StepRuntimeRequirements {
 
 export interface PipelineGraphNode {
     id: string;
-    stage: PipelineStage;
+    stage: PipelineGraphStage;
     display_name: string;
     index: number;
     kind: string;
@@ -272,7 +280,7 @@ export interface PipelineGraphValidationResponse {
 
 export interface PipelineGraphDryRunStep {
     id: string;
-    stage: PipelineStage;
+    stage: PipelineGraphStage | string;
     status: 'completed' | 'active' | 'pending' | string;
     can_run_now: boolean;
     missing_inputs: string[];
@@ -376,7 +384,7 @@ export interface PipelineGraphContractResetResponse {
 }
 
 export interface PipelineGraphStageTemplate {
-    stage: PipelineStage;
+    stage: PipelineGraphStage;
     display_name: string;
     index: number;
     step_type: string;

@@ -47,6 +47,37 @@
     color: #22c55e;
 }
 
+.workflow-run-autopilot {
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: rgba(56, 189, 248, 0.08);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: var(--space-md);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.workflow-run-autopilot__text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.workflow-run-autopilot__text strong {
+    color: #38bdf8;
+}
+
+.workflow-run-autopilot__actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
 .workflow-run-layout {
     display: grid;
     grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);

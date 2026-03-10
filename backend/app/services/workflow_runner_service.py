@@ -28,6 +28,7 @@ from app.models.workflow_run import (
 )
 from app.services.artifact_registry_service import publish_artifact_batch
 from app.services.workflow_graph_service import (
+    SOURCE_ARTIFACTS,
     collect_available_artifacts,
     evaluate_runtime_requirements_for_node,
     flatten_missing_runtime_requirements,
@@ -972,6 +973,374 @@ async def _execute_local_export_attempt(
     }, ""
 
 
+async def _execute_local_synthetic_conversation_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.synthetic_service import (
+        generate_conversation_dialogues,
+        save_synthetic_conversation_batch,
+    )
+
+    base_cfg = _resolve_step_config(config, step_key="synthetic_conversation", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "generate_and_save").strip().lower()
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local synthetic conversation step skipped for {node_id}",
+            "synthetic_conversation": {
+                "mode": mode,
+                "hint": "Set mode=generate or mode=generate_and_save to execute conversation generation.",
+            },
+        }, ""
+    if mode not in {"generate", "generate_only", "generate_and_save"}:
+        return (
+            False,
+            {"message": f"synthetic conversation step failed for {node_id}"},
+            f"unsupported synthetic_conversation mode '{mode}'",
+        )
+
+    source_text = str(base_cfg.get("source_text") or "").strip()
+    if not source_text:
+        return (
+            False,
+            {"message": f"synthetic conversation step failed for {node_id}"},
+            "synthetic_conversation.source_text is required",
+        )
+
+    num_dialogues = _coerce_int(base_cfg.get("num_dialogues"), default=3, minimum=1, maximum=20)
+    min_turns = _coerce_int(base_cfg.get("min_turns"), default=3, minimum=1, maximum=20)
+    max_turns = _coerce_int(base_cfg.get("max_turns"), default=5, minimum=min_turns, maximum=20)
+    api_url = str(base_cfg.get("api_url") or "").strip()
+    api_key = str(base_cfg.get("api_key") or "").strip()
+    model_name = str(base_cfg.get("model_name") or "llama3").strip() or "llama3"
+
+    conversations = await generate_conversation_dialogues(
+        db=db,
+        project_id=project_id,
+        source_text=source_text,
+        num_dialogues=num_dialogues,
+        min_turns=min_turns,
+        max_turns=max_turns,
+        api_url=api_url,
+        api_key=api_key,
+        model_name=model_name,
+    )
+    generated_count = len(conversations)
+    generated_turns = sum(int(item.get("turn_count") or 0) for item in conversations)
+
+    save_enabled = _coerce_bool(
+        base_cfg.get("save"),
+        default=mode in {"generate_and_save"},
+    )
+    save_result: dict[str, Any] | None = None
+    if save_enabled:
+        min_confidence = _coerce_float(base_cfg.get("min_confidence"), default=0.4, minimum=0.0, maximum=1.0)
+        save_result = await save_synthetic_conversation_batch(
+            db,
+            project_id,
+            conversations,
+            min_confidence,
+        )
+
+    return True, {
+        "message": f"local synthetic conversation step completed for {node_id}",
+        "synthetic_conversation": {
+            "mode": mode,
+            "generated_count": generated_count,
+            "generated_turns": generated_turns,
+            "saved": bool(save_result is not None),
+            "save_result": save_result,
+            "model_name": model_name,
+        },
+    }, ""
+
+
+async def _execute_local_semantic_curation_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.dataset_intelligence_service import analyze_semantic_dataset_intelligence
+
+    base_cfg = _resolve_step_config(config, step_key="semantic_curation", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "analyze").strip().lower()
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local semantic curation step skipped for {node_id}",
+            "semantic_curation": {
+                "mode": mode,
+                "hint": "Set mode=analyze to run semantic dataset diagnostics.",
+            },
+        }, ""
+    if mode not in {"analyze", "run"}:
+        return (
+            False,
+            {"message": f"semantic curation step failed for {node_id}"},
+            f"unsupported semantic_curation mode '{mode}'",
+        )
+
+    target_split = str(base_cfg.get("target_split") or "train").strip().lower()
+    sample_size = _coerce_int(base_cfg.get("sample_size"), default=400, minimum=20, maximum=2000)
+    cluster_count = base_cfg.get("cluster_count")
+    parsed_cluster_count: int | None = None
+    try:
+        if cluster_count not in (None, ""):
+            parsed_cluster_count = _coerce_int(cluster_count, default=8, minimum=2, maximum=64)
+    except (TypeError, ValueError):
+        parsed_cluster_count = None
+    similarity_threshold = _coerce_float(
+        base_cfg.get("similarity_threshold"),
+        default=0.92,
+        minimum=0.5,
+        maximum=0.999,
+    )
+    embedding_model = str(base_cfg.get("embedding_model") or "").strip()
+
+    report = await analyze_semantic_dataset_intelligence(
+        db=db,
+        project_id=project_id,
+        target_split=target_split,
+        sample_size=sample_size,
+        cluster_count=parsed_cluster_count,
+        similarity_threshold=similarity_threshold,
+        embedding_model=embedding_model,
+    )
+    return True, {
+        "message": f"local semantic curation step completed for {node_id}",
+        "semantic_curation": {
+            "mode": mode,
+            "target_split": report.get("source", {}).get("split"),
+            "sample_size_analyzed": report.get("sample_size_analyzed"),
+            "cluster_count": report.get("cluster_count"),
+            "semantic_diversity_score": report.get("semantic_diversity_score"),
+            "redundancy_ratio": report.get("redundancy_ratio"),
+            "report_path": report.get("report_path"),
+        },
+    }, ""
+
+
+async def _execute_local_distillation_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    base_cfg = _resolve_step_config(config, step_key="distillation", node_config=node_config)
+    base_cfg.setdefault("mode", "noop")
+
+    training_cfg_payload = base_cfg.get("config")
+    if isinstance(training_cfg_payload, dict):
+        distill_cfg = dict(training_cfg_payload)
+    else:
+        distill_cfg = {}
+
+    if "distillation_enabled" not in distill_cfg:
+        if "distillation_enabled" in base_cfg:
+            distill_cfg["distillation_enabled"] = _coerce_bool(base_cfg.get("distillation_enabled"), default=True)
+        else:
+            distill_cfg["distillation_enabled"] = True
+
+    teacher_model = str(base_cfg.get("distillation_teacher_model") or "").strip()
+    if teacher_model and "distillation_teacher_model" not in distill_cfg:
+        distill_cfg["distillation_teacher_model"] = teacher_model
+
+    if "distillation_alpha" in base_cfg and "distillation_alpha" not in distill_cfg:
+        alpha = _to_float(base_cfg.get("distillation_alpha"))
+        if alpha is not None:
+            distill_cfg["distillation_alpha"] = alpha
+    if "distillation_temperature" in base_cfg and "distillation_temperature" not in distill_cfg:
+        temperature = _to_float(base_cfg.get("distillation_temperature"))
+        if temperature is not None:
+            distill_cfg["distillation_temperature"] = temperature
+
+    training_node_cfg = dict(base_cfg)
+    training_node_cfg["config"] = distill_cfg
+
+    success, payload, error = await _execute_local_training_attempt(
+        db=db,
+        project_id=project_id,
+        node_id=node_id,
+        config={},
+        node_config=training_node_cfg,
+    )
+    if isinstance(payload, dict):
+        payload.setdefault("distillation", {})
+        if isinstance(payload.get("distillation"), dict):
+            payload["distillation"] = {
+                **dict(payload.get("distillation") or {}),
+                "enabled": bool(distill_cfg.get("distillation_enabled")),
+                "teacher_model": distill_cfg.get("distillation_teacher_model"),
+                "alpha": distill_cfg.get("distillation_alpha"),
+                "temperature": distill_cfg.get("distillation_temperature"),
+            }
+        if success:
+            payload["message"] = f"local distillation step completed for {node_id}"
+    return success, payload, error
+
+
+async def _execute_local_cloud_burst_plan_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.cloud_burst_service import build_cloud_burst_launch_plan
+
+    base_cfg = _resolve_step_config(config, step_key="cloud_burst", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "plan").strip().lower()
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local cloud burst step skipped for {node_id}",
+            "cloud_burst": {
+                "mode": mode,
+                "hint": "Set mode=plan to generate launch plan and credential readiness report.",
+            },
+        }, ""
+    if mode not in {"plan", "launch_plan"}:
+        return (
+            False,
+            {"message": f"cloud burst step failed for {node_id}"},
+            f"unsupported cloud_burst mode '{mode}'",
+        )
+
+    provider_id = str(base_cfg.get("provider_id") or "").strip()
+    gpu_sku = str(base_cfg.get("gpu_sku") or "").strip()
+    if not provider_id or not gpu_sku:
+        return (
+            False,
+            {"message": f"cloud burst step failed for {node_id}"},
+            "cloud_burst.provider_id and cloud_burst.gpu_sku are required",
+        )
+
+    experiment_id_raw = base_cfg.get("experiment_id")
+    experiment_id: int | None = None
+    try:
+        if experiment_id_raw not in (None, "", 0):
+            experiment_id = int(experiment_id_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        experiment_id = None
+
+    plan = await build_cloud_burst_launch_plan(
+        db=db,
+        project_id=project_id,
+        provider_id=provider_id,
+        gpu_sku=gpu_sku,
+        duration_hours=_coerce_float(base_cfg.get("duration_hours"), default=2.0, minimum=0.25, maximum=72.0),
+        experiment_id=experiment_id,
+        region=str(base_cfg.get("region") or "").strip() or None,
+        image=str(base_cfg.get("image") or "").strip(),
+        startup_script=str(base_cfg.get("startup_script") or "").strip(),
+        spot=_coerce_bool(base_cfg.get("spot"), default=True),
+    )
+    quote = plan.get("quote") if isinstance(plan.get("quote"), dict) else {}
+    credentials = plan.get("credentials") if isinstance(plan.get("credentials"), dict) else {}
+    return True, {
+        "message": f"local cloud burst step completed for {node_id}",
+        "cloud_burst": {
+            "mode": mode,
+            "launch_id": plan.get("launch_id"),
+            "provider_id": plan.get("provider_id"),
+            "gpu_sku": plan.get("gpu_sku"),
+            "quote_total_usd": (quote.get("cost_breakdown_usd") or {}).get("total"),
+            "credential_ready": credentials.get("ready"),
+            "missing_credentials": credentials.get("missing_keys"),
+            "record_path": plan.get("record_path"),
+        },
+    }, ""
+
+
+async def _execute_local_model_merge_attempt(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    node_id: str,
+    config: dict[str, Any],
+    node_config: object | None = None,
+) -> tuple[bool, dict[str, Any], str]:
+    from app.services.compression_service import merge_models
+
+    base_cfg = _resolve_step_config(config, step_key="model_merge", node_config=node_config)
+    mode = str(base_cfg.get("mode") or base_cfg.get("execution_mode") or "queue_merge").strip().lower()
+    if mode in {"noop", "disabled", "validate_only"}:
+        return True, {
+            "message": f"local model merge step skipped for {node_id}",
+            "model_merge": {
+                "mode": mode,
+                "hint": "Set mode=queue_merge and provide model_paths to run merge.",
+            },
+        }, ""
+    if mode not in {"queue_merge", "merge"}:
+        return (
+            False,
+            {"message": f"model merge step failed for {node_id}"},
+            f"unsupported model_merge mode '{mode}'",
+        )
+
+    model_paths_raw = base_cfg.get("model_paths")
+    if isinstance(model_paths_raw, list):
+        model_paths = [str(item).strip() for item in model_paths_raw if str(item).strip()]
+    else:
+        model_paths = [
+            item.strip()
+            for item in str(model_paths_raw or "").split(",")
+            if item.strip()
+        ]
+    if len(model_paths) < 2:
+        return (
+            False,
+            {"message": f"model merge step failed for {node_id}"},
+            "model_merge.model_paths requires at least two model paths",
+        )
+
+    weights_raw = base_cfg.get("weights")
+    parsed_weights: list[float] | None = None
+    if isinstance(weights_raw, list):
+        next_weights: list[float] = []
+        for value in weights_raw:
+            weight_value = _to_float(value)
+            if weight_value is not None and weight_value > 0:
+                next_weights.append(weight_value)
+        parsed_weights = next_weights or None
+
+    merge_result = await merge_models(
+        project_id=project_id,
+        model_paths=model_paths,
+        merge_method=str(base_cfg.get("merge_method") or "ties"),
+        weights=parsed_weights,
+        ties_density=_coerce_float(base_cfg.get("ties_density"), default=0.2, minimum=0.01, maximum=1.0),
+    )
+    status = str(merge_result.get("status") or "").strip().lower()
+    success = status in {"queued", "simulated", "completed"}
+    if not success:
+        return (
+            False,
+            {"message": f"local model merge step failed for {node_id}", "model_merge": merge_result},
+            f"model merge returned non-success status '{status or 'unknown'}'",
+        )
+    return True, {
+        "message": f"local model merge step completed for {node_id}",
+        "model_merge": {
+            "status": status,
+            "merge_method": merge_result.get("merge_method"),
+            "model_count": len(model_paths),
+            "task_id": merge_result.get("task_id"),
+            "report_path": merge_result.get("report_path"),
+            "output_model_path": merge_result.get("output_model_path"),
+        },
+    }, ""
+
+
 async def execute_local_core_step_attempt(
     *,
     db: AsyncSession,
@@ -990,6 +1359,30 @@ async def execute_local_core_step_attempt(
             config=config,
             node_config=node_config,
         )
+    if step_type == "core.synthetic_conversation":
+        return await _execute_local_synthetic_conversation_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+    if step_type == "core.semantic_curation":
+        return await _execute_local_semantic_curation_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+    if step_type == "core.cloud_burst_plan":
+        return await _execute_local_cloud_burst_plan_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
     if step_type == "core.training":
         return await _execute_local_training_attempt(
             db=db,
@@ -998,8 +1391,24 @@ async def execute_local_core_step_attempt(
             config=config,
             node_config=node_config,
         )
+    if step_type == "core.distillation_training":
+        return await _execute_local_distillation_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
     if step_type == "core.evaluation":
         return await _execute_local_evaluation_attempt(
+            db=db,
+            project_id=project_id,
+            node_id=node_id,
+            config=config,
+            node_config=node_config,
+        )
+    if step_type == "core.model_merge":
+        return await _execute_local_model_merge_attempt(
             db=db,
             project_id=project_id,
             node_id=node_id,
@@ -1605,6 +2014,8 @@ async def run_workflow_graph(
     if commit_progress:
         await db.commit()
     available_artifacts = await collect_available_artifacts(db, project.id)
+    if _coerce_bool(cfg.get("bootstrap_source_artifacts"), default=False):
+        available_artifacts.update(SOURCE_ARTIFACTS)
     node_results: dict[str, dict[str, Any]] = {}
     for row in run_nodes.values():
         if row.status == WorkflowNodeStatus.COMPLETED:

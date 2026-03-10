@@ -174,8 +174,13 @@ def run_workflow_node_job(
 
     executable_core_steps = {
         "core.data_adapter_preview",
+        "core.synthetic_conversation",
+        "core.semantic_curation",
+        "core.cloud_burst_plan",
         "core.training",
+        "core.distillation_training",
         "core.evaluation",
+        "core.model_merge",
         "core.export",
     }
     if step_type in executable_core_steps:
