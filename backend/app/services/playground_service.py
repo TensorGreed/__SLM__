@@ -9,15 +9,55 @@ from typing import Any, AsyncIterator
 import httpx
 
 DEFAULT_OPENAI_COMPATIBLE_URL = "http://localhost:11434/v1/chat/completions"
+DEFAULT_LLAMA_CPP_URL = "http://localhost:8080/v1/chat/completions"
+
+_PLAYGROUND_PROVIDER_SPECS: dict[str, dict[str, Any]] = {
+    "mock": {
+        "provider": "mock",
+        "label": "Mock Runtime",
+        "description": "Local deterministic mock responder for workflow testing.",
+        "default_api_url": None,
+        "supports_stream": True,
+        "local_first": True,
+    },
+    "openai_compatible": {
+        "provider": "openai_compatible",
+        "label": "OpenAI-Compatible",
+        "description": "Chat Completions compatible endpoint (Ollama/vLLM/TGI/OpenAI-style APIs).",
+        "default_api_url": DEFAULT_OPENAI_COMPATIBLE_URL,
+        "supports_stream": True,
+        "local_first": False,
+    },
+    "llama_cpp": {
+        "provider": "llama_cpp",
+        "label": "llama.cpp Server",
+        "description": "Local llama.cpp OpenAI-compatible server optimized for GGUF artifacts.",
+        "default_api_url": DEFAULT_LLAMA_CPP_URL,
+        "supports_stream": True,
+        "local_first": True,
+    },
+}
 
 
 def _normalize_provider(value: str | None) -> str:
     token = str(value or "").strip().lower()
     if token in {"", "openai", "openai_compatible", "ollama"}:
         return "openai_compatible"
+    if token in {"llama_cpp", "llama.cpp", "llama-cpp"}:
+        return "llama_cpp"
     if token in {"mock", "simulate"}:
         return "mock"
     return token
+
+
+def list_playground_provider_catalog() -> dict[str, Any]:
+    providers = [dict(item) for item in _PLAYGROUND_PROVIDER_SPECS.values()]
+    providers.sort(key=lambda item: (0 if bool(item.get("local_first")) else 1, str(item.get("provider") or "")))
+    return {
+        "provider_count": len(providers),
+        "default_provider": "openai_compatible",
+        "providers": providers,
+    }
 
 
 def normalize_playground_messages(
@@ -73,8 +113,9 @@ async def _openai_compatible_chat(
     api_key: str | None,
     temperature: float,
     max_tokens: int,
+    default_endpoint: str,
 ) -> tuple[str, dict[str, Any] | None, str | None, str]:
-    endpoint = str(api_url or DEFAULT_OPENAI_COMPATIBLE_URL).strip() or DEFAULT_OPENAI_COMPATIBLE_URL
+    endpoint = str(api_url or default_endpoint).strip() or default_endpoint
     payload = {
         "model": model_name,
         "messages": messages,
@@ -125,8 +166,9 @@ async def _openai_compatible_chat_stream(
     api_key: str | None,
     temperature: float,
     max_tokens: int,
+    default_endpoint: str,
 ) -> AsyncIterator[dict[str, Any]]:
-    endpoint = str(api_url or DEFAULT_OPENAI_COMPATIBLE_URL).strip() or DEFAULT_OPENAI_COMPATIBLE_URL
+    endpoint = str(api_url or default_endpoint).strip() or default_endpoint
     payload = {
         "model": model_name,
         "messages": messages,
@@ -213,6 +255,7 @@ async def _openai_compatible_chat_stream(
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            default_endpoint=default_endpoint,
         )
         for chunk in _iter_text_chunks(reply):
             yield {"type": "delta", "content": chunk}
@@ -265,10 +308,13 @@ async def run_playground_chat(
             "latency_ms": latency_ms,
         }
 
-    if normalized_provider != "openai_compatible":
+    if normalized_provider not in {"openai_compatible", "llama_cpp"}:
         raise ValueError(
-            f"Unsupported provider '{normalized_provider}'. Use 'openai_compatible' or 'mock'."
+            f"Unsupported provider '{normalized_provider}'. Use 'openai_compatible', 'llama_cpp', or 'mock'."
         )
+    default_endpoint = (
+        DEFAULT_LLAMA_CPP_URL if normalized_provider == "llama_cpp" else DEFAULT_OPENAI_COMPATIBLE_URL
+    )
 
     reply, usage, finish_reason, response_id = await _openai_compatible_chat(
         model_name=model_name,
@@ -277,9 +323,10 @@ async def run_playground_chat(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
+        default_endpoint=default_endpoint,
     )
     latency_ms = round((perf_counter() - started) * 1000, 2)
-    endpoint = str(api_url or DEFAULT_OPENAI_COMPATIBLE_URL).strip() or DEFAULT_OPENAI_COMPATIBLE_URL
+    endpoint = str(api_url or default_endpoint).strip() or default_endpoint
     return {
         "provider": normalized_provider,
         "model_name": model_name,
@@ -331,10 +378,13 @@ async def stream_playground_chat(
         }
         return
 
-    if normalized_provider != "openai_compatible":
+    if normalized_provider not in {"openai_compatible", "llama_cpp"}:
         raise ValueError(
-            f"Unsupported provider '{normalized_provider}'. Use 'openai_compatible' or 'mock'."
+            f"Unsupported provider '{normalized_provider}'. Use 'openai_compatible', 'llama_cpp', or 'mock'."
         )
+    default_endpoint = (
+        DEFAULT_LLAMA_CPP_URL if normalized_provider == "llama_cpp" else DEFAULT_OPENAI_COMPATIBLE_URL
+    )
 
     async for event in _openai_compatible_chat_stream(
         model_name=model_name,
@@ -343,6 +393,7 @@ async def stream_playground_chat(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
+        default_endpoint=default_endpoint,
     ):
         if event.get("type") != "final":
             yield event

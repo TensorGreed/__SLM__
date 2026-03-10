@@ -63,6 +63,29 @@ describe('ChatPlaygroundPanel', () => {
           },
         };
       }
+      if (url.includes('/training/playground/providers')) {
+        return {
+          data: {
+            providers: [
+              { provider: 'mock', label: 'Mock' },
+              { provider: 'openai_compatible', label: 'OpenAI-Compatible' },
+              { provider: 'llama_cpp', label: 'llama.cpp' },
+            ],
+          },
+        };
+      }
+      if (url.includes('/training/playground/logs')) {
+        return {
+          data: {
+            summary: {
+              event_count: 0,
+              positive_count: 0,
+              negative_count: 0,
+            },
+            events: [],
+          },
+        };
+      }
       return { data: {} };
     });
     apiMock.post.mockResolvedValue({ data: {} });
@@ -78,6 +101,28 @@ describe('ChatPlaygroundPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('This response came from history.')).toBeInTheDocument();
       expect(screen.getByText('What is saved?')).toBeInTheDocument();
+    });
+  });
+
+  it('saves feedback log for assistant response', async () => {
+    const user = userEvent.setup();
+    render(<ChatPlaygroundPanel projectId={42} />);
+
+    const sessionButton = await screen.findByRole('button', { name: /Saved Session/i });
+    await user.click(sessionButton);
+
+    await screen.findByText('This response came from history.');
+    await user.click(screen.getByRole('button', { name: 'Mark Good' }));
+    await user.click(screen.getByRole('button', { name: 'Save Feedback Log' }));
+
+    await waitFor(() => {
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/projects/42/training/playground/logs',
+        expect.objectContaining({
+          rating: 1,
+          reply: 'This response came from history.',
+        }),
+      );
     });
   });
 });

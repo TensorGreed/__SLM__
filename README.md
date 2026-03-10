@@ -75,6 +75,10 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
 - Added **Preflight Plan Suggestions** (`safe`, `balanced`, `max_quality`) with one-click config apply in Training UI.
 - Added project-persisted training plan preference (`preferred_plan_profile`) so recommended profile choice is remembered per project.
 - Added project/domain-pack adapter preset resolution for dataset split defaults (`adapter_id`, `adapter_config`, `field_mapping`).
+- Added **Alignment Workbench baseline** for DPO/ORPO:
+  - preference dataset import/filter APIs with apply-to-train support
+  - judge quality keep-ratio guardrails in preflight
+  - training-mode controls + alignment auto-filter settings in Training Config UI
 - Added **Universal Task/Dataset Adapter v3**:
   - typed adapter contracts (`task_profiles`, `preferred_training_tasks`, `output_contract`)
   - expanded built-in adapters: `rag-grounded`, `tool-call-json`, `structured-extraction` (plus existing chat/preference adapters)

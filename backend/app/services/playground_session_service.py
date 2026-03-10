@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import desc, select
@@ -15,6 +16,15 @@ from app.models.registry import ModelRegistryEntry
 
 
 ALLOWED_TRANSCRIPT_ROLES = {"system", "user", "assistant"}
+PLAYGROUND_PROVIDER_ALIASES: dict[str, str] = {
+    "openai": "openai_compatible",
+    "openai_compatible": "openai_compatible",
+    "ollama": "openai_compatible",
+    "mock": "mock",
+    "simulate": "mock",
+    "llama_cpp": "llama_cpp",
+    "llama.cpp": "llama_cpp",
+}
 
 
 def _coerce_text(value: Any) -> str:
@@ -25,6 +35,94 @@ def _coerce_text(value: Any) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     return ""
+
+
+def _normalize_provider(value: Any) -> str | None:
+    token = _coerce_text(value).lower()
+    if not token:
+        return None
+    return PLAYGROUND_PROVIDER_ALIASES.get(token, token)
+
+
+def _infer_model_runtime_hint(model_ref: str | None) -> dict[str, Any] | None:
+    token = _coerce_text(model_ref)
+    if not token:
+        return None
+
+    candidate = Path(token).expanduser()
+    if not candidate.exists():
+        return None
+
+    if candidate.is_file() and candidate.suffix.lower() == ".gguf":
+        return {
+            "path_exists": True,
+            "artifact_kind": "gguf_file",
+            "runtime_model_ref": str(candidate),
+            "recommended_provider": "llama_cpp",
+        }
+
+    if candidate.is_dir():
+        gguf_files = sorted(candidate.glob("*.gguf"))
+        if gguf_files:
+            return {
+                "path_exists": True,
+                "artifact_kind": "gguf_dir",
+                "runtime_model_ref": str(gguf_files[0]),
+                "recommended_provider": "llama_cpp",
+            }
+        if (candidate / "config.json").exists():
+            return {
+                "path_exists": True,
+                "artifact_kind": "hf_dir",
+                "runtime_model_ref": str(candidate),
+                "recommended_provider": "openai_compatible",
+            }
+        return {
+            "path_exists": True,
+            "artifact_kind": "dir_unknown",
+            "runtime_model_ref": str(candidate),
+            "recommended_provider": None,
+        }
+
+    return {
+        "path_exists": True,
+        "artifact_kind": "file_unknown",
+        "runtime_model_ref": str(candidate),
+        "recommended_provider": None,
+    }
+
+
+def resolve_playground_model_runtime(
+    *,
+    model_name: str,
+    provider: str | None = None,
+) -> dict[str, Any]:
+    requested_model_name = _coerce_text(model_name)
+    normalized_provider = _normalize_provider(provider)
+    runtime_hint = _infer_model_runtime_hint(requested_model_name)
+    resolved_model_name = requested_model_name
+    recommended_provider = (
+        _normalize_provider(runtime_hint.get("recommended_provider"))
+        if isinstance(runtime_hint, dict)
+        else None
+    )
+
+    if isinstance(runtime_hint, dict):
+        runtime_ref = _coerce_text(runtime_hint.get("runtime_model_ref"))
+        if runtime_ref:
+            if normalized_provider == "llama_cpp":
+                resolved_model_name = runtime_ref
+            elif normalized_provider is None and recommended_provider == "llama_cpp":
+                resolved_model_name = runtime_ref
+            elif normalized_provider == "openai_compatible" and runtime_hint.get("artifact_kind") == "hf_dir":
+                resolved_model_name = runtime_ref
+
+    return {
+        "requested_model_name": requested_model_name,
+        "resolved_model_name": resolved_model_name or requested_model_name,
+        "runtime_hint": runtime_hint,
+        "recommended_provider": recommended_provider,
+    }
 
 
 def _normalize_transcript(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -224,6 +322,7 @@ async def list_playground_model_options(
         if key in seen:
             return
         seen.add(key)
+        runtime_hint = _infer_model_runtime_hint(cleaned)
         options.append(
             {
                 "model_name": cleaned,
@@ -232,6 +331,12 @@ async def list_playground_model_options(
                 "priority": priority,
                 "source_ref": _coerce_text(source_ref) or None,
                 "meta": dict(meta or {}),
+                "runtime_hint": dict(runtime_hint or {}),
+                "recommended_provider": (
+                    _normalize_provider(runtime_hint.get("recommended_provider"))
+                    if isinstance(runtime_hint, dict)
+                    else None
+                ),
             }
         )
 

@@ -1,0 +1,379 @@
+"""Preference dataset import/filter helpers for alignment training workflows."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from app.config import settings
+from app.services.alignment_service import (
+    canonicalize_preference_row,
+    score_preference_rows,
+    validate_preference_rows,
+)
+
+
+def _utc_timestamp_slug() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _project_dir(project_id: int) -> Path:
+    return settings.DATA_DIR / "projects" / str(project_id)
+
+
+def _prepared_dir(project_id: int) -> Path:
+    return _project_dir(project_id) / "prepared"
+
+
+def _alignment_dir(project_id: int) -> Path:
+    path = _prepared_dir(project_id) / "alignment"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _project_train_file(project_id: int) -> Path:
+    return _prepared_dir(project_id) / "train.jsonl"
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
+
+
+def _resolve_project_path(project_id: int, candidate_path: str) -> Path:
+    token = str(candidate_path or "").strip()
+    if not token:
+        raise ValueError("Path is required.")
+
+    project_root = _project_dir(project_id).resolve()
+    candidate = Path(token).expanduser()
+    if not candidate.is_absolute():
+        candidate = (project_root / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+
+    try:
+        candidate.relative_to(project_root)
+    except ValueError as e:
+        raise ValueError("Path must stay within the project data directory.") from e
+    return candidate
+
+
+def _load_jsonl_rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    limit = max_rows if isinstance(max_rows, int) and max_rows > 0 else None
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if limit is not None and len(rows) >= limit:
+                break
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
+    return rows
+
+
+def _write_jsonl_rows(path: Path, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _parse_rows_input(
+    *,
+    rows: list[dict[str, Any]] | None = None,
+    raw_text: str | None = None,
+) -> list[dict[str, Any]]:
+    parsed_rows: list[dict[str, Any]] = [dict(item) for item in list(rows or []) if isinstance(item, dict)]
+
+    text = str(raw_text or "").strip()
+    if not text:
+        return parsed_rows
+
+    try:
+        decoded = json.loads(text)
+        if isinstance(decoded, list):
+            parsed_rows.extend(dict(item) for item in decoded if isinstance(item, dict))
+            return parsed_rows
+        if isinstance(decoded, dict):
+            parsed_rows.append(decoded)
+            return parsed_rows
+    except Exception:
+        pass
+
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            decoded = json.loads(raw)
+        except Exception as e:
+            raise ValueError(f"Invalid JSONL row at line {line_no}: {e}") from e
+        if isinstance(decoded, dict):
+            parsed_rows.append(decoded)
+    return parsed_rows
+
+
+def _canonicalize_valid_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    canonical_rows: list[dict[str, str]] = []
+    invalid_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        canonical = canonicalize_preference_row(row)
+        prompt = _coerce_text(canonical.get("prompt"))
+        chosen = _coerce_text(canonical.get("chosen"))
+        rejected = _coerce_text(canonical.get("rejected"))
+        missing: list[str] = []
+        if not prompt:
+            missing.append("prompt")
+        if not chosen:
+            missing.append("chosen")
+        if not rejected:
+            missing.append("rejected")
+        if missing:
+            invalid_rows.append(
+                {
+                    "index": index,
+                    "reason": f"Missing required fields: {', '.join(missing)}.",
+                    "missing_fields": missing,
+                }
+            )
+            continue
+        if chosen.strip() == rejected.strip():
+            invalid_rows.append(
+                {
+                    "index": index,
+                    "reason": "chosen and rejected responses are identical.",
+                    "missing_fields": [],
+                }
+            )
+            continue
+        canonical_rows.append({"prompt": prompt, "chosen": chosen, "rejected": rejected})
+    return canonical_rows, invalid_rows
+
+
+def summarize_preference_dataset(
+    project_id: int,
+    *,
+    source_path: str | None = None,
+    sample_size: int = 400,
+    quality_threshold: float = 3.0,
+) -> dict[str, Any]:
+    if source_path:
+        resolved_path = _resolve_project_path(project_id, source_path)
+    else:
+        resolved_path = _project_train_file(project_id)
+
+    rows = _load_jsonl_rows(
+        resolved_path,
+        max_rows=max(20, min(int(sample_size or 400), 5000)),
+    )
+    contract = validate_preference_rows(rows, min_coverage=0.0, max_rows=max(1, len(rows) or 1))
+    quality = score_preference_rows(
+        rows,
+        quality_threshold=quality_threshold,
+        max_rows=max(1, len(rows) or 1),
+    )
+    keep_count = int(quality.get("keep_count", 0))
+    scored_count = int(quality.get("scored_count", 0))
+    keep_ratio = float(keep_count / scored_count) if scored_count > 0 else 0.0
+
+    return {
+        "project_id": project_id,
+        "source_path": str(resolved_path),
+        "exists": resolved_path.exists(),
+        "sample_size": len(rows),
+        "contract": contract,
+        "quality": {
+            "quality_threshold": float(quality.get("quality_threshold", quality_threshold)),
+            "scored_count": scored_count,
+            "keep_count": keep_count,
+            "drop_count": int(quality.get("drop_count", 0)),
+            "keep_ratio": round(keep_ratio, 6),
+            "average_quality_score": quality.get("average_quality_score"),
+            "score_distribution": quality.get("score_distribution"),
+        },
+        "rows_preview": contract.get("canonical_rows_preview", []),
+    }
+
+
+def import_preference_dataset_rows(
+    project_id: int,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+    raw_text: str | None = None,
+    mode: str = "replace",
+    target: str = "prepared_train",
+) -> dict[str, Any]:
+    parsed_rows = _parse_rows_input(rows=rows, raw_text=raw_text)
+    if not parsed_rows:
+        raise ValueError("No preference rows were provided.")
+
+    normalized_mode = str(mode or "replace").strip().lower()
+    if normalized_mode not in {"replace", "append"}:
+        raise ValueError("mode must be 'replace' or 'append'.")
+
+    normalized_target = str(target or "prepared_train").strip().lower()
+    if normalized_target not in {"prepared_train", "alignment_workspace"}:
+        raise ValueError("target must be 'prepared_train' or 'alignment_workspace'.")
+
+    contract = validate_preference_rows(parsed_rows, min_coverage=0.0, max_rows=max(1, len(parsed_rows)))
+    canonical_rows, invalid_rows = _canonicalize_valid_rows(parsed_rows)
+    if not canonical_rows:
+        raise ValueError("No valid prompt/chosen/rejected rows were found.")
+
+    if normalized_target == "prepared_train":
+        target_path = _project_train_file(project_id)
+    else:
+        target_path = _alignment_dir(project_id) / "preference_workspace.jsonl"
+
+    existing_rows: list[dict[str, str]] = []
+    if normalized_mode == "append" and target_path.exists():
+        existing_raw = _load_jsonl_rows(target_path)
+        existing_rows, _ = _canonicalize_valid_rows(existing_raw)
+
+    output_rows = [*existing_rows, *canonical_rows]
+    _write_jsonl_rows(target_path, output_rows)
+
+    quality = score_preference_rows(
+        output_rows,
+        quality_threshold=3.0,
+        max_rows=max(1, len(output_rows)),
+    )
+    keep_count = int(quality.get("keep_count", 0))
+    keep_ratio = float(keep_count / len(output_rows)) if output_rows else 0.0
+
+    return {
+        "project_id": project_id,
+        "target_path": str(target_path),
+        "mode": normalized_mode,
+        "target": normalized_target,
+        "rows_received": len(parsed_rows),
+        "rows_written": len(output_rows),
+        "rows_added": len(canonical_rows),
+        "rows_dropped": len(invalid_rows),
+        "contract": contract,
+        "quality": {
+            "quality_threshold": float(quality.get("quality_threshold", 3.0)),
+            "scored_count": int(quality.get("scored_count", 0)),
+            "keep_count": keep_count,
+            "drop_count": int(quality.get("drop_count", 0)),
+            "keep_ratio": round(keep_ratio, 6),
+            "average_quality_score": quality.get("average_quality_score"),
+        },
+        "invalid_samples": invalid_rows[:25],
+    }
+
+
+def resolve_alignment_dataset_path(project_id: int, candidate_path: str | None) -> Path | None:
+    token = str(candidate_path or "").strip()
+    if not token:
+        return None
+    return _resolve_project_path(project_id, token)
+
+
+def filter_preference_dataset_by_quality(
+    project_id: int,
+    *,
+    quality_threshold: float = 3.0,
+    min_keep_ratio: float = 0.4,
+    apply_to_train_file: bool = False,
+    source_path: str | None = None,
+    target_path: str | None = None,
+) -> dict[str, Any]:
+    if source_path:
+        source_file = _resolve_project_path(project_id, source_path)
+    else:
+        source_file = _project_train_file(project_id)
+
+    if not source_file.exists():
+        raise ValueError(f"Source preference dataset not found: {source_file}")
+
+    source_rows = _load_jsonl_rows(source_file)
+    canonical_rows, invalid_rows = _canonicalize_valid_rows(source_rows)
+    if not canonical_rows:
+        raise ValueError("Source dataset has no valid preference rows.")
+
+    quality_cutoff = max(1.0, min(float(quality_threshold), 5.0))
+    quality = score_preference_rows(
+        canonical_rows,
+        quality_threshold=quality_cutoff,
+        max_rows=max(1, len(canonical_rows)),
+    )
+    kept_indices = [int(item) for item in quality.get("kept_row_indices", []) if isinstance(item, int)]
+    kept_rows = [canonical_rows[idx] for idx in kept_indices if 0 <= idx < len(canonical_rows)]
+    scored_count = int(quality.get("scored_count", 0))
+    keep_count = len(kept_rows)
+    keep_ratio = float(keep_count / scored_count) if scored_count > 0 else 0.0
+    required_keep_ratio = max(0.05, min(float(min_keep_ratio), 1.0))
+
+    if keep_count == 0:
+        raise ValueError(
+            "Judge filter rejected all preference rows. Lower quality threshold or improve pair quality."
+        )
+    if keep_ratio < required_keep_ratio:
+        raise ValueError(
+            (
+                f"Judge keep ratio {keep_ratio:.1%} is below required {required_keep_ratio:.0%}. "
+                "Lower threshold or improve pair quality before applying."
+            )
+        )
+
+    backup_path: Path | None = None
+    if apply_to_train_file:
+        output_file = _project_train_file(project_id)
+    elif target_path:
+        output_file = _resolve_project_path(project_id, target_path)
+    else:
+        output_file = _alignment_dir(project_id) / "train.filtered.jsonl"
+
+    if output_file.exists() and output_file.resolve() == _project_train_file(project_id).resolve():
+        backup_path = _alignment_dir(project_id) / f"train.backup.{_utc_timestamp_slug()}.jsonl"
+        output_file.replace(backup_path)
+
+    _write_jsonl_rows(output_file, kept_rows)
+
+    report_payload = {
+        "project_id": project_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_path": str(source_file),
+        "target_path": str(output_file),
+        "apply_to_train_file": bool(apply_to_train_file),
+        "quality_threshold": quality_cutoff,
+        "min_keep_ratio": required_keep_ratio,
+        "source_valid_rows": len(canonical_rows),
+        "source_invalid_rows": len(invalid_rows),
+        "scored_count": scored_count,
+        "keep_count": keep_count,
+        "drop_count": int(quality.get("drop_count", 0)),
+        "keep_ratio": round(keep_ratio, 6),
+        "average_quality_score": quality.get("average_quality_score"),
+        "score_distribution": quality.get("score_distribution"),
+    }
+    if backup_path is not None:
+        report_payload["backup_path"] = str(backup_path)
+
+    report_path = _alignment_dir(project_id) / "last_filter_report.json"
+    report_path.write_text(json.dumps(report_payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    return {
+        **report_payload,
+        "quality": quality,
+        "filter_report_path": str(report_path),
+    }

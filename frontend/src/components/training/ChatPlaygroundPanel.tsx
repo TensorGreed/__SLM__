@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import './ChatPlaygroundPanel.css';
 
-type PlaygroundProvider = 'openai_compatible' | 'mock';
+type PlaygroundProvider = 'openai_compatible' | 'llama_cpp' | 'mock';
 type PlaygroundRole = 'system' | 'user' | 'assistant';
 
 interface PlaygroundMessage {
@@ -16,11 +16,32 @@ interface PlaygroundModelOption {
   model_name: string;
   label: string;
   source: string;
+  recommended_provider?: PlaygroundProvider | string | null;
+  runtime_hint?: {
+    artifact_kind?: string;
+    runtime_model_ref?: string;
+    path_exists?: boolean;
+    recommended_provider?: string | null;
+  };
 }
 
 interface PlaygroundModelsResponse {
   default_model_name?: string;
   models?: PlaygroundModelOption[];
+}
+
+interface PlaygroundProviderSpec {
+  provider: string;
+  label?: string;
+  description?: string;
+  default_api_url?: string | null;
+  supports_stream?: boolean;
+  local_first?: boolean;
+}
+
+interface PlaygroundProviderCatalogResponse {
+  providers?: PlaygroundProviderSpec[];
+  default_provider?: string;
 }
 
 interface PlaygroundSessionSummary {
@@ -52,9 +73,47 @@ interface PlaygroundSessionDetailResponse {
 interface PlaygroundChatResponse {
   provider: string;
   model_name: string;
+  requested_model_name?: string;
+  resolved_model_name?: string;
+  resolved_provider?: string;
+  runtime_hint?: {
+    artifact_kind?: string;
+    runtime_model_ref?: string;
+    path_exists?: boolean;
+    recommended_provider?: string | null;
+  };
   reply: string;
   latency_ms?: number;
   session_id?: number | null;
+}
+
+interface PlaygroundLogEvent {
+  event_id: string;
+  timestamp?: string;
+  rating?: number | null;
+  tags?: string[];
+  quality_checks?: Array<{ code?: string; severity?: string; message?: string }>;
+}
+
+interface PlaygroundLogSummary {
+  event_count?: number;
+  positive_count?: number;
+  negative_count?: number;
+  top_tags?: Array<{ tag?: string; count?: number }>;
+  top_quality_issues?: Array<{ code?: string; count?: number }>;
+}
+
+interface PlaygroundLogListResponse {
+  summary?: PlaygroundLogSummary;
+  events?: PlaygroundLogEvent[];
+}
+
+interface PromptPreset {
+  id: string;
+  label: string;
+  prompt: string;
+  systemPrompt?: string;
+  tags: string[];
 }
 
 interface ChatPlaygroundPanelProps {
@@ -62,6 +121,35 @@ interface ChatPlaygroundPanelProps {
 }
 
 const DEFAULT_API_URL = 'http://localhost:11434/v1/chat/completions';
+const DEFAULT_LLAMA_CPP_API_URL = 'http://localhost:8080/v1/chat/completions';
+const PROMPT_PRESETS: PromptPreset[] = [
+  {
+    id: 'preset.summarize_contract',
+    label: 'Summarize Domain Contract',
+    prompt: 'Summarize the domain contract assumptions and output a concise checklist.',
+    systemPrompt: 'You are a precise ML platform assistant. Respond with concise checklists.',
+    tags: ['summarization', 'contract'],
+  },
+  {
+    id: 'preset.generate_eval_cases',
+    label: 'Generate Eval Cases',
+    prompt: 'Generate 5 edge-case evaluation prompts for this domain and expected answer criteria.',
+    tags: ['evaluation', 'edge-case'],
+  },
+  {
+    id: 'preset.structured_extract',
+    label: 'Structured Extraction',
+    prompt: 'Return JSON with fields: entity, confidence, rationale for this input: <paste text>',
+    systemPrompt: 'Return strict JSON only. No markdown.',
+    tags: ['json', 'extraction'],
+  },
+  {
+    id: 'preset.rag_grounded_answer',
+    label: 'RAG Grounded Answer',
+    prompt: 'Given the context below, answer only with grounded facts and cite snippet ids.',
+    tags: ['rag', 'grounding'],
+  },
+];
 
 function coerceRole(value: string): PlaygroundRole {
   const token = value.trim().toLowerCase();
@@ -105,6 +193,14 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [modelOptions, setModelOptions] = useState<PlaygroundModelOption[]>([]);
+  const [providerSpecs, setProviderSpecs] = useState<PlaygroundProviderSpec[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState('');
+  const [feedbackRating, setFeedbackRating] = useState<number | null>(null);
+  const [feedbackTagsText, setFeedbackTagsText] = useState('');
+  const [feedbackNotes, setFeedbackNotes] = useState('');
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackSummary, setFeedbackSummary] = useState<PlaygroundLogSummary | null>(null);
+  const [feedbackEvents, setFeedbackEvents] = useState<PlaygroundLogEvent[]>([]);
 
   const loadSessions = async () => {
     setSessionsLoading(true);
@@ -140,6 +236,29 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
+  const loadProviderCatalog = async () => {
+    try {
+      const res = await api.get<PlaygroundProviderCatalogResponse>(`/projects/${projectId}/training/playground/providers`);
+      const rows = Array.isArray(res.data?.providers) ? res.data.providers : [];
+      setProviderSpecs(rows);
+    } catch {
+      setProviderSpecs([]);
+    }
+  };
+
+  const loadFeedbackLogs = async () => {
+    try {
+      const res = await api.get<PlaygroundLogListResponse>(`/projects/${projectId}/training/playground/logs`, {
+        params: { limit: 20 },
+      });
+      setFeedbackSummary(res.data?.summary || null);
+      setFeedbackEvents(Array.isArray(res.data?.events) ? res.data.events : []);
+    } catch {
+      setFeedbackSummary(null);
+      setFeedbackEvents([]);
+    }
+  };
+
   useEffect(() => {
     setMessages([]);
     setInput('');
@@ -147,9 +266,31 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     setError('');
     setLastMeta(null);
     setActiveSessionId(null);
+    setSelectedPresetId('');
+    setFeedbackRating(null);
+    setFeedbackTagsText('');
+    setFeedbackNotes('');
     void loadSessions();
     void loadModelOptions();
+    void loadProviderCatalog();
+    void loadFeedbackLogs();
   }, [projectId]);
+
+  useEffect(() => {
+    if (provider === 'llama_cpp') {
+      const current = apiUrl.trim();
+      if (!current || current === DEFAULT_API_URL) {
+        setApiUrl(DEFAULT_LLAMA_CPP_API_URL);
+      }
+      return;
+    }
+    if (provider === 'openai_compatible') {
+      const current = apiUrl.trim();
+      if (!current || current === DEFAULT_LLAMA_CPP_API_URL) {
+        setApiUrl(DEFAULT_API_URL);
+      }
+    }
+  }, [provider, apiUrl]);
 
   const startNewChat = () => {
     setActiveSessionId(null);
@@ -158,6 +299,9 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     setInput('');
     setError('');
     setLastMeta(null);
+    setFeedbackRating(null);
+    setFeedbackTagsText('');
+    setFeedbackNotes('');
   };
 
   const openSession = async (sessionId: number) => {
@@ -183,7 +327,14 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
 
       setActiveSessionId(Number(detail?.id || sessionId));
       setMessages(restored);
-      setProvider((String(detail?.provider || provider).trim().toLowerCase() === 'mock' ? 'mock' : 'openai_compatible'));
+      const sessionProvider = String(detail?.provider || provider).trim().toLowerCase();
+      setProvider(
+        sessionProvider === 'mock'
+          ? 'mock'
+          : sessionProvider === 'llama_cpp'
+            ? 'llama_cpp'
+            : 'openai_compatible',
+      );
       if (detail?.model_name && String(detail.model_name).trim()) {
         setModelName(String(detail.model_name));
       }
@@ -209,6 +360,93 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
+  const selectedPreset = PROMPT_PRESETS.find((item) => item.id === selectedPresetId) || null;
+  const selectedModelOption =
+    modelOptions.find((item) => item.model_name.toLowerCase() === modelName.trim().toLowerCase()) || null;
+
+  const applyPromptPreset = () => {
+    if (!selectedPreset) {
+      return;
+    }
+    setInput(selectedPreset.prompt);
+    if (selectedPreset.systemPrompt) {
+      setSystemPrompt(selectedPreset.systemPrompt);
+    }
+  };
+
+  const applyModelRecommendedProvider = () => {
+    const recommended = String(
+      selectedModelOption?.recommended_provider
+      || selectedModelOption?.runtime_hint?.recommended_provider
+      || '',
+    ).trim().toLowerCase();
+    if (!recommended) {
+      return;
+    }
+    if (recommended === 'llama_cpp') {
+      setProvider('llama_cpp');
+      if (!apiUrl.trim()) {
+        setApiUrl(DEFAULT_LLAMA_CPP_API_URL);
+      }
+      return;
+    }
+    if (recommended === 'openai_compatible') {
+      setProvider('openai_compatible');
+      if (!apiUrl.trim()) {
+        setApiUrl(DEFAULT_API_URL);
+      }
+    }
+  };
+
+  const saveFeedback = async () => {
+    const assistantMessages = messages
+      .map((item, idx) => ({ ...item, idx }))
+      .filter((item) => item.role === 'assistant');
+    const lastAssistant = assistantMessages[assistantMessages.length - 1];
+    if (!lastAssistant) {
+      setError('No assistant response available for feedback.');
+      return;
+    }
+    const promptText = [...messages]
+      .reverse()
+      .find((item) => item.role === 'user')?.content || '';
+    const tags = feedbackTagsText
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+
+    setFeedbackSaving(true);
+    try {
+      await api.post(`/projects/${projectId}/training/playground/logs`, {
+        session_id: activeSessionId || undefined,
+        message_index: lastAssistant.idx,
+        provider: lastMeta?.provider || provider,
+        model_name: lastMeta?.modelName || modelName,
+        preset_id: selectedPreset?.id || undefined,
+        prompt: promptText || '(no user prompt found)',
+        reply: lastAssistant.content,
+        rating: feedbackRating,
+        tags,
+        notes: feedbackNotes.trim() || undefined,
+      });
+      setFeedbackRating(null);
+      setFeedbackTagsText('');
+      setFeedbackNotes('');
+      await loadFeedbackLogs();
+    } catch (err: unknown) {
+      const message =
+        typeof err === 'object' &&
+        err !== null &&
+        'response' in err &&
+        typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || ''
+          : '';
+      setError(message || 'Failed to save feedback log.');
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
+
   const sendMessageNonStreaming = async (
     payload: Record<string, unknown>,
     fallbackModel: string,
@@ -229,8 +467,8 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       },
     ]);
     setLastMeta({
-      provider: String(res.data?.provider || fallbackProvider),
-      modelName: String(res.data?.model_name || fallbackModel),
+      provider: String(res.data?.resolved_provider || res.data?.provider || fallbackProvider),
+      modelName: String(res.data?.requested_model_name || res.data?.model_name || fallbackModel),
       latencyMs: Number.isFinite(Number(res.data?.latency_ms)) ? Number(res.data?.latency_ms) : null,
     });
     const nextSessionId = Number(res.data?.session_id || 0);
@@ -309,8 +547,8 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             }
 
             setLastMeta({
-              provider: String(parsed.provider || fallbackProvider),
-              modelName: String(parsed.model_name || fallbackModel),
+              provider: String(parsed.resolved_provider || parsed.provider || fallbackProvider),
+              modelName: String(parsed.requested_model_name || parsed.model_name || fallbackModel),
               latencyMs: Number.isFinite(Number(parsed.latency_ms)) ? Number(parsed.latency_ms) : null,
             });
 
@@ -350,11 +588,12 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     const payload: Record<string, unknown> = {
       provider,
       model_name: modelName || undefined,
-      api_url: provider === 'openai_compatible' ? apiUrl : undefined,
-      api_key: provider === 'openai_compatible' && apiKey.trim() ? apiKey.trim() : undefined,
+      api_url: provider === 'mock' ? undefined : apiUrl,
+      api_key: provider !== 'mock' && apiKey.trim() ? apiKey.trim() : undefined,
       system_prompt: systemPrompt.trim() || undefined,
       temperature: Number.isFinite(tempNumber) ? tempNumber : 0.2,
       max_tokens: maxTokens,
+      auto_runtime_provider: true,
       session_id: activeSessionId || undefined,
       save_history: true,
       messages: nextMessages.map((item) => ({
@@ -417,10 +656,40 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
 
       <div className="playground-settings">
         <div className="form-group">
+          <label className="form-label">Prompt Preset</label>
+          <select className="input" value={selectedPresetId} onChange={(e) => setSelectedPresetId(e.target.value)}>
+            <option value="">Select a preset...</option>
+            {PROMPT_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group" style={{ alignSelf: 'end' }}>
+          <button className="btn btn-secondary" onClick={applyPromptPreset} disabled={!selectedPreset}>
+            Insert Preset Prompt
+          </button>
+        </div>
+      </div>
+
+      <div className="playground-settings">
+        <div className="form-group">
           <label className="form-label">Provider</label>
           <select className="input" value={provider} onChange={(e) => setProvider(e.target.value as PlaygroundProvider)}>
-            <option value="mock">Mock (local, no model runtime)</option>
-            <option value="openai_compatible">OpenAI-Compatible / Ollama</option>
+            {providerSpecs.length > 0 ? (
+              providerSpecs.map((spec) => (
+                <option key={spec.provider} value={spec.provider}>
+                  {spec.label || spec.provider}
+                </option>
+              ))
+            ) : (
+              <>
+                <option value="mock">Mock (local, no model runtime)</option>
+                <option value="openai_compatible">OpenAI-Compatible / Ollama</option>
+                <option value="llama_cpp">llama.cpp Server</option>
+              </>
+            )}
           </select>
         </div>
         <div className="form-group">
@@ -433,6 +702,22 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
               </option>
             ))}
           </datalist>
+          {selectedModelOption?.runtime_hint?.artifact_kind && (
+            <div className="form-hint">
+              Detected artifact: <code>{selectedModelOption.runtime_hint.artifact_kind}</code>
+              {selectedModelOption.runtime_hint.runtime_model_ref ? (
+                <>
+                  {' '}
+                  • Runtime ref: <code>{selectedModelOption.runtime_hint.runtime_model_ref}</code>
+                </>
+              ) : null}
+            </div>
+          )}
+          {selectedModelOption?.recommended_provider && (
+            <button className="btn btn-secondary btn-sm" type="button" onClick={applyModelRecommendedProvider}>
+              Use Suggested Provider ({selectedModelOption.recommended_provider})
+            </button>
+          )}
         </div>
         <div className="form-group">
           <label className="form-label">Temperature</label>
@@ -462,6 +747,18 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         <div className="playground-settings">
           <div className="form-group">
             <label className="form-label">API URL</label>
+            <input className="input" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">API Key (Optional)</label>
+            <input className="input" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          </div>
+        </div>
+      )}
+      {provider === 'llama_cpp' && (
+        <div className="playground-settings">
+          <div className="form-group">
+            <label className="form-label">llama.cpp API URL</label>
             <input className="input" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
           </div>
           <div className="form-group">
@@ -512,6 +809,71 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
           </>
         )}
       </div>
+
+      <div className="playground-settings">
+        <div className="form-group">
+          <label className="form-label">Response Feedback</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className={`btn btn-secondary btn-sm ${feedbackRating === 1 ? 'active' : ''}`}
+              type="button"
+              onClick={() => setFeedbackRating(1)}
+              disabled={feedbackSaving}
+            >
+              Mark Good
+            </button>
+            <button
+              className={`btn btn-secondary btn-sm ${feedbackRating === -1 ? 'active' : ''}`}
+              type="button"
+              onClick={() => setFeedbackRating(-1)}
+              disabled={feedbackSaving}
+            >
+              Mark Bad
+            </button>
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Tags (comma-separated)</label>
+          <input
+            className="input"
+            value={feedbackTagsText}
+            onChange={(e) => setFeedbackTagsText(e.target.value)}
+            placeholder="hallucination, concise, grounded"
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Notes</label>
+          <input
+            className="input"
+            value={feedbackNotes}
+            onChange={(e) => setFeedbackNotes(e.target.value)}
+            placeholder="Optional annotation for future DPO/ORPO dataset curation."
+          />
+        </div>
+        <div className="form-group" style={{ alignSelf: 'end' }}>
+          <button className="btn btn-secondary" type="button" onClick={() => void saveFeedback()} disabled={feedbackSaving}>
+            {feedbackSaving ? 'Saving...' : 'Save Feedback Log'}
+          </button>
+        </div>
+      </div>
+
+      {feedbackSummary && (
+        <div className="playground-meta">
+          Feedback logs: {feedbackSummary.event_count || 0} • positive: {feedbackSummary.positive_count || 0} • negative:{' '}
+          {feedbackSummary.negative_count || 0}
+          {Array.isArray(feedbackSummary.top_quality_issues) && feedbackSummary.top_quality_issues.length > 0 ? (
+            <> • top issue: {feedbackSummary.top_quality_issues[0]?.code || '—'}</>
+          ) : null}
+        </div>
+      )}
+      {feedbackEvents.length > 0 && (
+        <div className="playground-meta">
+          Latest check:{' '}
+          {Array.isArray(feedbackEvents[0]?.quality_checks) && feedbackEvents[0].quality_checks?.length
+            ? String(feedbackEvents[0].quality_checks?.[0]?.code || 'ok')
+            : 'ok'}
+        </div>
+      )}
 
       <div className="playground-composer">
         <textarea

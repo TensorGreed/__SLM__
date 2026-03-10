@@ -57,6 +57,17 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 201, resp.text)
         return int(resp.json()["id"])
 
+    def _import_preference_rows(self, project_id: int, rows: list[dict]) -> None:
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/alignment/preference-dataset/import",
+            json={
+                "rows": rows,
+                "mode": "replace",
+                "target": "prepared_train",
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
     def test_alignment_recipe_resolve_returns_training_mode(self):
         project_id = self._create_project("phase24-alignment-1")
         resp = self.client.post(
@@ -116,6 +127,160 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
         self.assertEqual(int(payload.get("scored_count", 0)), 1)
         self.assertGreaterEqual(int(payload.get("keep_count", 0)), 0)
         self.assertIn("contract", payload)
+
+    def test_alignment_preference_dataset_import_and_summary(self):
+        project_id = self._create_project("phase24-alignment-4")
+        rows = [
+            {
+                "prompt": "Summarize key rotation policy.",
+                "chosen": "Rotate keys every 90 days and after incidents.",
+                "rejected": "Never rotate keys.",
+            },
+            {
+                "question": "How should API traffic be secured?",
+                "preferred": "Require TLS 1.2+ and reject plaintext.",
+                "dispreferred": "HTTP is acceptable for production APIs.",
+            },
+        ]
+        import_resp = self.client.post(
+            f"/api/projects/{project_id}/training/alignment/preference-dataset/import",
+            json={
+                "rows": rows,
+                "mode": "replace",
+                "target": "prepared_train",
+            },
+        )
+        self.assertEqual(import_resp.status_code, 200, import_resp.text)
+        import_payload = import_resp.json()
+        self.assertEqual(int(import_payload.get("rows_added", 0)), 2)
+        self.assertEqual(int(import_payload.get("rows_dropped", 0)), 0)
+
+        summary_resp = self.client.get(
+            f"/api/projects/{project_id}/training/alignment/preference-dataset",
+            params={"sample_size": 50, "quality_threshold": 3.0},
+        )
+        self.assertEqual(summary_resp.status_code, 200, summary_resp.text)
+        summary = summary_resp.json()
+        contract = summary.get("contract", {})
+        self.assertTrue(summary.get("exists"))
+        self.assertEqual(int(contract.get("valid_rows", 0)), 2)
+        self.assertEqual(int(summary.get("quality", {}).get("scored_count", 0)), 2)
+
+    def test_alignment_filter_can_apply_to_train_file(self):
+        project_id = self._create_project("phase24-alignment-5")
+        self._import_preference_rows(
+            project_id,
+            rows=[
+                {
+                    "prompt": "How to secure API keys?",
+                    "chosen": "Store keys in a secret manager and rotate regularly.",
+                    "rejected": "Post keys in public repos.",
+                },
+                {
+                    "prompt": "How to greet users?",
+                    "chosen": "hello",
+                    "rejected": "goodbye",
+                },
+            ],
+        )
+
+        filter_resp = self.client.post(
+            f"/api/projects/{project_id}/training/alignment/preference-dataset/filter",
+            json={
+                "quality_threshold": 2.5,
+                "min_keep_ratio": 0.1,
+                "apply_to_train_file": True,
+            },
+        )
+        self.assertEqual(filter_resp.status_code, 200, filter_resp.text)
+        payload = filter_resp.json()
+        self.assertTrue(bool(payload.get("apply_to_train_file")))
+        self.assertGreater(int(payload.get("keep_count", 0)), 0)
+        self.assertTrue(str(payload.get("target_path", "")).endswith("train.jsonl"))
+
+    def test_dpo_preflight_includes_alignment_quality_summary(self):
+        project_id = self._create_project("phase24-alignment-6")
+        self._import_preference_rows(
+            project_id,
+            rows=[
+                {
+                    "prompt": "How often should keys rotate?",
+                    "chosen": "Rotate keys every 90 days and after incidents.",
+                    "rejected": "Do not rotate keys.",
+                },
+                {
+                    "prompt": "How to secure API traffic?",
+                    "chosen": "Require TLS for all endpoints.",
+                    "rejected": "Use plaintext HTTP.",
+                },
+            ],
+        )
+
+        preflight_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/preflight",
+            json={
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                    "training_mode": "dpo",
+                    "task_type": "causal_lm",
+                    "trainer_backend": "hf_trainer",
+                    "alignment_quality_threshold": 3.0,
+                }
+            },
+        )
+        self.assertEqual(preflight_resp.status_code, 200, preflight_resp.text)
+        payload = preflight_resp.json()
+        preflight = payload.get("preflight", {})
+        self.assertTrue(preflight.get("ok"), preflight)
+        capability = preflight.get("capability_summary", {})
+        dataset = capability.get("dataset", {})
+        alignment_quality = dataset.get("alignment_quality", {})
+        self.assertGreater(int(alignment_quality.get("scored_count", 0)), 0)
+
+    def test_dpo_start_training_auto_filter_wires_filtered_dataset(self):
+        project_id = self._create_project("phase24-alignment-7")
+        self._import_preference_rows(
+            project_id,
+            rows=[
+                {
+                    "prompt": "How often should keys rotate?",
+                    "chosen": "Rotate keys every 90 days and after incidents.",
+                    "rejected": "Do not rotate keys.",
+                },
+                {
+                    "prompt": "What protocol for APIs?",
+                    "chosen": "Use HTTPS/TLS for all endpoints.",
+                    "rejected": "Use plaintext HTTP.",
+                },
+            ],
+        )
+        exp_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "phase24-dpo-auto-filter",
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                    "training_mode": "dpo",
+                    "task_type": "causal_lm",
+                    "trainer_backend": "hf_trainer",
+                    "alignment_auto_filter": True,
+                    "alignment_quality_threshold": 3.0,
+                    "alignment_min_keep_ratio": 0.1,
+                },
+            },
+        )
+        self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
+        experiment_id = int(exp_resp.json()["id"])
+
+        start_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/{experiment_id}/start"
+        )
+        self.assertEqual(start_resp.status_code, 200, start_resp.text)
+        config = start_resp.json().get("config", {})
+        runtime = config.get("_runtime", {})
+        alignment_filter = runtime.get("alignment_filter", {})
+        self.assertTrue(alignment_filter)
+        self.assertGreater(int(alignment_filter.get("keep_count", 0)), 0)
 
 
 if __name__ == "__main__":

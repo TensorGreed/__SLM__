@@ -39,6 +39,11 @@ from app.services.alignment_service import (
     score_preference_rows,
     validate_preference_rows,
 )
+from app.services.alignment_dataset_service import (
+    filter_preference_dataset_by_quality,
+    import_preference_dataset_rows,
+    summarize_preference_dataset,
+)
 from app.services.model_selection_service import recommend_training_base_models
 from app.services.training_telemetry_service import (
     build_model_acceptance_bias,
@@ -46,15 +51,22 @@ from app.services.training_telemetry_service import (
     summarize_model_wizard_events,
 )
 from app.services.playground_service import (
+    list_playground_provider_catalog,
     normalize_playground_messages,
     run_playground_chat,
     stream_playground_chat,
+)
+from app.services.playground_log_service import (
+    list_playground_feedback,
+    record_playground_feedback,
+    summarize_playground_feedback,
 )
 from app.services.playground_session_service import (
     delete_playground_session,
     get_playground_session,
     list_playground_model_options,
     list_playground_sessions,
+    resolve_playground_model_runtime,
     save_playground_session_transcript,
     serialize_playground_session_detail,
     serialize_playground_session_summary,
@@ -120,6 +132,7 @@ class PlaygroundChatRequest(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     max_tokens: int = Field(default=512, ge=16, le=4096)
     system_prompt: str | None = Field(default=None, max_length=8000)
+    auto_runtime_provider: bool = True
     session_id: int | None = Field(default=None, ge=1)
     session_title: str | None = Field(default=None, max_length=255)
     save_history: bool = True
@@ -135,6 +148,19 @@ class PlaygroundSessionCreateRequest(BaseModel):
     max_tokens: int = Field(default=512, ge=16, le=4096)
     system_prompt: str | None = Field(default=None, max_length=8000)
     messages: list[PlaygroundChatMessage] = Field(default_factory=list)
+
+
+class PlaygroundFeedbackRequest(BaseModel):
+    session_id: int | None = Field(default=None, ge=1)
+    message_index: int | None = Field(default=None, ge=0)
+    provider: str | None = Field(default=None, max_length=64)
+    model_name: str | None = Field(default=None, max_length=512)
+    preset_id: str | None = Field(default=None, max_length=128)
+    prompt: str = Field(..., min_length=1, max_length=32000)
+    reply: str = Field(..., min_length=1, max_length=64000)
+    rating: int | None = Field(default=None, ge=-1, le=1)
+    tags: list[str] = Field(default_factory=list)
+    notes: str | None = Field(default=None, max_length=4000)
 
 
 class AlignmentRecipeResolveRequest(BaseModel):
@@ -153,6 +179,21 @@ class AlignmentJudgeScoreRequest(BaseModel):
     rows: list[dict[str, object]] = Field(default_factory=list, min_length=1)
     quality_threshold: float = Field(default=3.0, ge=1.0, le=5.0)
     max_rows: int = Field(default=1000, ge=1, le=5000)
+
+
+class AlignmentDatasetImportRequest(BaseModel):
+    rows: list[dict[str, object]] = Field(default_factory=list)
+    raw_text: str | None = Field(default=None, max_length=2_000_000)
+    mode: str = Field(default="replace", pattern="^(replace|append)$")
+    target: str = Field(default="prepared_train", pattern="^(prepared_train|alignment_workspace)$")
+
+
+class AlignmentDatasetFilterRequest(BaseModel):
+    quality_threshold: float = Field(default=3.0, ge=1.0, le=5.0)
+    min_keep_ratio: float = Field(default=0.4, ge=0.05, le=1.0)
+    apply_to_train_file: bool = False
+    source_path: str | None = Field(default=None, max_length=4096)
+    target_path: str | None = Field(default=None, max_length=4096)
 
 
 def _sse_json(payload: dict) -> str:
@@ -309,6 +350,19 @@ async def model_selection_telemetry_summary(
     return summarize_model_wizard_events(project_id)
 
 
+@router.get("/playground/providers")
+async def playground_provider_catalog(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List supported playground runtime providers."""
+    await _get_project_or_404(db, project_id)
+    return {
+        "project_id": project_id,
+        **list_playground_provider_catalog(),
+    }
+
+
 @router.post("/playground/chat")
 async def playground_chat(
     project_id: int,
@@ -318,7 +372,17 @@ async def playground_chat(
     """Run a chat completion request for the project playground."""
     project = await _get_project_or_404(db, project_id)
 
-    model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    runtime_resolution = resolve_playground_model_runtime(
+        model_name=requested_model_name,
+        provider=req.provider,
+    )
+    runtime_provider = str(req.provider or "").strip() or "openai_compatible"
+    if bool(req.auto_runtime_provider):
+        recommended_provider = str(runtime_resolution.get("recommended_provider") or "").strip()
+        if recommended_provider and runtime_provider in {"", "openai_compatible"}:
+            runtime_provider = recommended_provider
+    resolved_model_name = str(runtime_resolution.get("resolved_model_name") or requested_model_name)
     normalized_messages = normalize_playground_messages(
         messages=[item.model_dump() for item in req.messages],
         system_prompt=req.system_prompt,
@@ -327,8 +391,8 @@ async def playground_chat(
         raise HTTPException(400, "At least one non-empty chat message is required.")
     try:
         result = await run_playground_chat(
-            provider=req.provider,
-            model_name=model_name,
+            provider=runtime_provider,
+            model_name=resolved_model_name,
             messages=normalized_messages,
             api_url=req.api_url,
             api_key=req.api_key,
@@ -349,8 +413,8 @@ async def playground_chat(
                 project_id=project_id,
                 session_id=req.session_id,
                 title=req.session_title,
-                provider=req.provider,
-                model_name=model_name,
+                provider=runtime_provider,
+                model_name=requested_model_name,
                 api_url=req.api_url,
                 system_prompt=req.system_prompt,
                 temperature=req.temperature,
@@ -359,6 +423,9 @@ async def playground_chat(
                 metadata={
                     "message_count": len(req.messages),
                     "last_latency_ms": result.get("latency_ms"),
+                    "requested_model_name": requested_model_name,
+                    "resolved_model_name": resolved_model_name,
+                    "runtime_hint": runtime_resolution.get("runtime_hint"),
                 },
             )
             session_payload = serialize_playground_session_summary(session)
@@ -371,6 +438,10 @@ async def playground_chat(
         "normalized_message_count": len(normalized_messages),
         "session_id": session_payload.get("id") if isinstance(session_payload, dict) else None,
         "session_summary": session_payload,
+        "requested_model_name": requested_model_name,
+        "resolved_model_name": resolved_model_name,
+        "resolved_provider": runtime_provider,
+        "runtime_hint": runtime_resolution.get("runtime_hint"),
         **result,
     }
 
@@ -383,7 +454,17 @@ async def playground_chat_stream(
 ):
     """Stream incremental chat completion chunks (SSE)."""
     project = await _get_project_or_404(db, project_id)
-    model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    runtime_resolution = resolve_playground_model_runtime(
+        model_name=requested_model_name,
+        provider=req.provider,
+    )
+    runtime_provider = str(req.provider or "").strip() or "openai_compatible"
+    if bool(req.auto_runtime_provider):
+        recommended_provider = str(runtime_resolution.get("recommended_provider") or "").strip()
+        if recommended_provider and runtime_provider in {"", "openai_compatible"}:
+            runtime_provider = recommended_provider
+    resolved_model_name = str(runtime_resolution.get("resolved_model_name") or requested_model_name)
     normalized_messages = normalize_playground_messages(
         messages=[item.model_dump() for item in req.messages],
         system_prompt=req.system_prompt,
@@ -394,8 +475,8 @@ async def playground_chat_stream(
     async def stream_events() -> AsyncIterator[str]:
         try:
             async for event in stream_playground_chat(
-                provider=req.provider,
-                model_name=model_name,
+                provider=runtime_provider,
+                model_name=resolved_model_name,
                 messages=normalized_messages,
                 api_url=req.api_url,
                 api_key=req.api_key,
@@ -424,8 +505,8 @@ async def playground_chat_stream(
                             project_id=project_id,
                             session_id=req.session_id,
                             title=req.session_title,
-                            provider=req.provider,
-                            model_name=model_name,
+                            provider=runtime_provider,
+                            model_name=requested_model_name,
                             api_url=req.api_url,
                             system_prompt=req.system_prompt,
                             temperature=req.temperature,
@@ -435,6 +516,9 @@ async def playground_chat_stream(
                                 "message_count": len(req.messages),
                                 "last_latency_ms": final_event.get("latency_ms"),
                                 "stream": True,
+                                "requested_model_name": requested_model_name,
+                                "resolved_model_name": resolved_model_name,
+                                "runtime_hint": runtime_resolution.get("runtime_hint"),
                             },
                         )
                         session_payload = serialize_playground_session_summary(session)
@@ -449,6 +533,10 @@ async def playground_chat_stream(
                         "normalized_message_count": len(normalized_messages),
                         "session_id": session_payload.get("id") if isinstance(session_payload, dict) else None,
                         "session_summary": session_payload,
+                        "requested_model_name": requested_model_name,
+                        "resolved_model_name": resolved_model_name,
+                        "resolved_provider": runtime_provider,
+                        "runtime_hint": runtime_resolution.get("runtime_hint"),
                     }
                 )
                 yield _sse_json(final_event)
@@ -549,6 +637,32 @@ async def playground_session_remove(
         raise HTTPException(404, f"Playground session {session_id} not found")
 
 
+@router.post("/playground/logs")
+async def playground_feedback_log(
+    project_id: int,
+    req: PlaygroundFeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist prompt/eval feedback log for playground responses."""
+    await _get_project_or_404(db, project_id)
+    return record_playground_feedback(project_id, payload=req.model_dump())
+
+
+@router.get("/playground/logs")
+async def playground_feedback_list(
+    project_id: int,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read recent playground feedback logs with aggregate summary."""
+    await _get_project_or_404(db, project_id)
+    logs = list_playground_feedback(project_id, limit=limit)
+    return {
+        **logs,
+        "summary": summarize_playground_feedback(project_id),
+    }
+
+
 @router.get("/alignment/recipes")
 async def alignment_recipe_catalog(
     project_id: int,
@@ -618,6 +732,71 @@ async def alignment_judge_score(
         "project_id": project_id,
         **report,
     }
+
+
+@router.get("/alignment/preference-dataset")
+async def alignment_preference_dataset_summary(
+    project_id: int,
+    sample_size: int = 400,
+    quality_threshold: float = 3.0,
+    source_path: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Inspect current preference dataset contract + quality summary."""
+    await _get_project_or_404(db, project_id)
+    try:
+        report = summarize_preference_dataset(
+            project_id,
+            source_path=source_path,
+            sample_size=sample_size,
+            quality_threshold=quality_threshold,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return report
+
+
+@router.post("/alignment/preference-dataset/import")
+async def alignment_preference_dataset_import(
+    project_id: int,
+    req: AlignmentDatasetImportRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Import preference rows from JSON array/JSONL text into project dataset files."""
+    await _get_project_or_404(db, project_id)
+    try:
+        report = import_preference_dataset_rows(
+            project_id,
+            rows=[dict(item) for item in req.rows],
+            raw_text=req.raw_text,
+            mode=req.mode,
+            target=req.target,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return report
+
+
+@router.post("/alignment/preference-dataset/filter")
+async def alignment_preference_dataset_filter(
+    project_id: int,
+    req: AlignmentDatasetFilterRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run judge-quality filtering and optionally apply filtered dataset to train split."""
+    await _get_project_or_404(db, project_id)
+    try:
+        report = filter_preference_dataset_by_quality(
+            project_id,
+            quality_threshold=req.quality_threshold,
+            min_keep_ratio=req.min_keep_ratio,
+            apply_to_train_file=req.apply_to_train_file,
+            source_path=req.source_path,
+            target_path=req.target_path,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return report
 
 
 def _resolve_training_config(

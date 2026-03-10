@@ -21,6 +21,21 @@
     align-items: end;
 }
 
+.alignment-scaffold__controls--quality {
+    grid-template-columns: 1fr 1fr auto auto;
+}
+
+.alignment-scaffold__draft {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.alignment-scaffold__draft textarea {
+    min-height: 120px;
+    resize: vertical;
+}
+
 .alignment-scaffold__rows {
     min-height: 180px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -60,6 +75,14 @@
 
 @media (max-width: 760px) {
     .alignment-scaffold__controls {
+        grid-template-columns: 1fr;
+    }
+
+    .alignment-scaffold__controls--quality {
+        grid-template-columns: 1fr;
+    }
+
+    .alignment-scaffold__draft {
         grid-template-columns: 1fr;
     }
 }

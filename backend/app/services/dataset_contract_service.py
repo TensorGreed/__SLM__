@@ -82,9 +82,37 @@ def _row_shapes(row: dict[str, Any]) -> set[str]:
 
     text = _pick_text(row, ("text", "content", "body", "document", "passage"))
     question = _pick_text(row, ("question", "prompt", "query", "instruction", "input", "source_text"))
-    answer = _pick_text(row, ("answer", "response", "output", "target", "completion", "target_text"))
+    answer = _pick_text(
+        row,
+        (
+            "answer",
+            "response",
+            "output",
+            "target",
+            "completion",
+            "target_text",
+            "chosen",
+            "preferred",
+            "accepted",
+            "response_chosen",
+        ),
+    )
     source_text = _pick_text(row, ("source_text", "source", "input", "question", "prompt", "instruction", "text"))
-    target_text = _pick_text(row, ("target_text", "target", "answer", "output", "completion", "response"))
+    target_text = _pick_text(
+        row,
+        (
+            "target_text",
+            "target",
+            "answer",
+            "output",
+            "completion",
+            "response",
+            "chosen",
+            "preferred",
+            "accepted",
+            "response_chosen",
+        ),
+    )
     label = _pick_text(row, ("label", "class", "category", "output_label", "target", "answer", "output"))
     chat_text = _messages_as_text(row)
 

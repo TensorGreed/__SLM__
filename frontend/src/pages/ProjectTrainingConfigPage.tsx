@@ -1,7 +1,6 @@
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
-import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 
@@ -34,7 +33,20 @@ export default function ProjectTrainingConfigPage() {
                 hideStepFooter
             />
 
-            <ChatPlaygroundPanel projectId={projectId} />
+            <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+                <div>
+                    <h3 style={{ margin: 0 }}>Playground moved to dedicated page</h3>
+                    <p style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
+                        Use Playground for prompt presets, runtime adapters, and feedback logging.
+                    </p>
+                </div>
+                <button
+                    className="btn btn-secondary"
+                    onClick={() => navigate(`/project/${projectId}/playground`)}
+                >
+                    Open Playground
+                </button>
+            </div>
             <AlignmentScaffoldPanel projectId={projectId} />
         </div>
     );

@@ -297,6 +297,7 @@ function parseMetricFromLogLine(text: string, experimentId: number): TrainingMet
 }
 
 type ConfigFieldKey =
+  | 'training_mode'
   | 'training_runtime_id'
   | 'task_type'
   | 'trainer_backend'
@@ -320,7 +321,11 @@ type ConfigFieldKey =
   | 'auto_oom_retry'
   | 'max_oom_retries'
   | 'oom_retry_seq_shrink'
-  | 'gradient_checkpointing';
+  | 'gradient_checkpointing'
+  | 'alignment_auto_filter'
+  | 'alignment_quality_threshold'
+  | 'alignment_min_keep_ratio'
+  | 'alignment_dataset_path';
 
 type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
 
@@ -345,6 +350,7 @@ export default function TrainingPanel({
 
   const [name, setName] = useState('');
   const [baseModel, setBaseModel] = useState('microsoft/phi-2');
+  const [trainingMode, setTrainingMode] = useState('sft');
   const [trainingRuntimeId, setTrainingRuntimeId] = useState('auto');
   const [taskType, setTaskType] = useState('causal_lm');
   const [trainerBackend, setTrainerBackend] = useState('auto');
@@ -369,8 +375,13 @@ export default function TrainingPanel({
   const [maxOomRetries, setMaxOomRetries] = useState(2);
   const [oomRetrySeqShrink, setOomRetrySeqShrink] = useState('0.75');
   const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
+  const [alignmentAutoFilter, setAlignmentAutoFilter] = useState(false);
+  const [alignmentQualityThreshold, setAlignmentQualityThreshold] = useState('3.0');
+  const [alignmentMinKeepRatio, setAlignmentMinKeepRatio] = useState('0.4');
+  const [alignmentDatasetPath, setAlignmentDatasetPath] = useState('');
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
   const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
+    training_mode: false,
     training_runtime_id: false,
     task_type: false,
     trainer_backend: false,
@@ -395,6 +406,10 @@ export default function TrainingPanel({
     max_oom_retries: false,
     oom_retry_seq_shrink: false,
     gradient_checkpointing: false,
+    alignment_auto_filter: false,
+    alignment_quality_threshold: false,
+    alignment_min_keep_ratio: false,
+    alignment_dataset_path: false,
   });
   const [lastCreateSummary, setLastCreateSummary] = useState<{
     domainPackApplied: string | null;
@@ -446,6 +461,7 @@ export default function TrainingPanel({
   const canConfigureExperiments = !hideCreateControls;
   const canViewRuns = !hideExperimentList;
   const showWorkspaceTabs = canConfigureExperiments && canViewRuns;
+  const isAlignmentMode = trainingMode === 'dpo' || trainingMode === 'orpo';
 
   const experimentStats = useMemo(() => {
     const running = experiments.filter((item) => item.status === 'running').length;
@@ -489,6 +505,8 @@ export default function TrainingPanel({
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
     const retryShrink = Number.parseFloat(oomRetrySeqShrink);
+    const alignmentThreshold = Number.parseFloat(alignmentQualityThreshold);
+    const alignmentKeepRatio = Number.parseFloat(alignmentMinKeepRatio);
     const parsedTargetModules = targetModules
       .split(',')
       .map((s) => s.trim())
@@ -498,6 +516,7 @@ export default function TrainingPanel({
       base_model: baseModel,
     };
     const includeField = (key: ConfigFieldKey): boolean => !useProfileDefaults || touchedConfig[key];
+    if (includeField('training_mode')) config.training_mode = trainingMode;
     if (includeField('training_runtime_id')) config.training_runtime_id = trainingRuntimeId;
     if (includeField('task_type')) config.task_type = taskType;
     if (includeField('trainer_backend')) config.trainer_backend = trainerBackend;
@@ -524,6 +543,16 @@ export default function TrainingPanel({
       config.oom_retry_seq_shrink = retryShrink;
     }
     if (includeField('gradient_checkpointing')) config.gradient_checkpointing = gradientCheckpointing;
+    if (includeField('alignment_auto_filter')) config.alignment_auto_filter = alignmentAutoFilter;
+    if (includeField('alignment_quality_threshold') && Number.isFinite(alignmentThreshold)) {
+      config.alignment_quality_threshold = alignmentThreshold;
+    }
+    if (includeField('alignment_min_keep_ratio') && Number.isFinite(alignmentKeepRatio)) {
+      config.alignment_min_keep_ratio = alignmentKeepRatio;
+    }
+    if (includeField('alignment_dataset_path')) {
+      config.alignment_dataset_path = alignmentDatasetPath.trim();
+    }
     return config;
   };
 
@@ -546,6 +575,7 @@ export default function TrainingPanel({
       typeof value === 'string' && value.trim() ? value : fallback;
 
     if (typeof config.base_model === 'string' && config.base_model.trim()) setBaseModel(config.base_model);
+    setTrainingMode(parseString(config.training_mode, trainingMode));
     setTrainingRuntimeId(parseString(config.training_runtime_id, trainingRuntimeId));
     setTaskType(parseString(config.task_type, taskType));
     setTrainerBackend(parseString(config.trainer_backend, trainerBackend));
@@ -585,6 +615,10 @@ export default function TrainingPanel({
     setMaxOomRetries(Math.max(0, Math.min(5, parseNumber(config.max_oom_retries, maxOomRetries))));
     setOomRetrySeqShrink(String(config.oom_retry_seq_shrink ?? oomRetrySeqShrink));
     setGradientCheckpointing(parseBoolean(config.gradient_checkpointing, gradientCheckpointing));
+    setAlignmentAutoFilter(parseBoolean(config.alignment_auto_filter, alignmentAutoFilter));
+    setAlignmentQualityThreshold(String(config.alignment_quality_threshold ?? alignmentQualityThreshold));
+    setAlignmentMinKeepRatio(String(config.alignment_min_keep_ratio ?? alignmentMinKeepRatio));
+    setAlignmentDatasetPath(parseString(config.alignment_dataset_path, alignmentDatasetPath));
 
     setUseProfileDefaults(false);
     setTouchedConfig((prev) => {
@@ -929,9 +963,17 @@ export default function TrainingPanel({
     setShowCreate(Boolean(forceCreateVisible && !hideCreateControls));
     setTaskState('');
     setTrainingError('');
+    setTrainingMode('sft');
     setTrainingRuntimeId('auto');
+    setTaskType('causal_lm');
+    setTrainerBackend('auto');
+    setAlignmentAutoFilter(false);
+    setAlignmentQualityThreshold('3.0');
+    setAlignmentMinKeepRatio('0.4');
+    setAlignmentDatasetPath('');
     setUseProfileDefaults(true);
     setTouchedConfig({
+      training_mode: false,
       training_runtime_id: false,
       task_type: false,
       trainer_backend: false,
@@ -956,6 +998,10 @@ export default function TrainingPanel({
       max_oom_retries: false,
       oom_retry_seq_shrink: false,
       gradient_checkpointing: false,
+      alignment_auto_filter: false,
+      alignment_quality_threshold: false,
+      alignment_min_keep_ratio: false,
+      alignment_dataset_path: false,
     });
     setLastCreateSummary(null);
     setEffectivePreview(null);
@@ -1168,6 +1214,7 @@ export default function TrainingPanel({
       setPreflightPlanError('');
       setRecipeResolveError('');
       setTouchedConfig({
+        training_mode: false,
         training_runtime_id: false,
         task_type: false,
         trainer_backend: false,
@@ -1192,6 +1239,10 @@ export default function TrainingPanel({
         max_oom_retries: false,
         oom_retry_seq_shrink: false,
         gradient_checkpointing: false,
+        alignment_auto_filter: false,
+        alignment_quality_threshold: false,
+        alignment_min_keep_ratio: false,
+        alignment_dataset_path: false,
       });
     } catch (err: any) {
       setTrainingError(err?.response?.data?.detail || 'Failed to create experiment');
@@ -1924,7 +1975,28 @@ export default function TrainingPanel({
                       <label className="form-label">Base Model</label>
                       <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
                     </div>
-                <div className="training-grid-3">
+                <div className="training-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Training Mode</label>
+                    <select
+                      className="input"
+                      value={trainingMode}
+                      onChange={(e) => {
+                        const nextMode = e.target.value;
+                        setTrainingMode(nextMode);
+                        setTouchedConfig((prev) => ({ ...prev, training_mode: true }));
+                        if (nextMode === 'dpo' || nextMode === 'orpo') {
+                          setTaskType('causal_lm');
+                          setTouchedConfig((prev) => ({ ...prev, task_type: true }));
+                        }
+                      }}
+                    >
+                      <option value="sft">SFT</option>
+                      <option value="domain_pretrain">Domain Pretrain</option>
+                      <option value="dpo">DPO</option>
+                      <option value="orpo">ORPO</option>
+                    </select>
+                  </div>
                   <div className="form-group">
                     <label className="form-label">Runtime</label>
                     <select
@@ -1952,6 +2024,8 @@ export default function TrainingPanel({
                       </div>
                     )}
                   </div>
+                </div>
+                <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Task Type</label>
                     <select
@@ -1961,11 +2035,17 @@ export default function TrainingPanel({
                         setTaskType(e.target.value);
                         setTouchedConfig((prev) => ({ ...prev, task_type: true }));
                       }}
+                      disabled={isAlignmentMode}
                     >
                       <option value="causal_lm">Causal LM</option>
                       <option value="seq2seq">Seq2Seq</option>
                       <option value="classification">Classification</option>
                     </select>
+                    {isAlignmentMode && (
+                      <div className="form-hint">
+                        DPO/ORPO currently run on causal LM preference pairs.
+                      </div>
+                    )}
                   </div>
                   <div className="form-group">
                     <label className="form-label">Trainer Backend</label>
@@ -2269,6 +2349,65 @@ export default function TrainingPanel({
                     />
                   </div>
                 </div>
+                {isAlignmentMode && (
+                  <div className="training-lora-box">
+                    <h5 className="training-config-section-title" style={{ marginTop: 0 }}>
+                      Alignment Dataset Controls
+                    </h5>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={alignmentAutoFilter}
+                        onChange={(e) => {
+                          setAlignmentAutoFilter(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, alignment_auto_filter: true }));
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">Auto filter preference pairs before run</label>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Alignment Quality Threshold</label>
+                        <input
+                          className="input"
+                          value={alignmentQualityThreshold}
+                          onChange={(e) => {
+                            setAlignmentQualityThreshold(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, alignment_quality_threshold: true }));
+                          }}
+                          placeholder="3.0"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Alignment Min Keep Ratio</label>
+                        <input
+                          className="input"
+                          value={alignmentMinKeepRatio}
+                          onChange={(e) => {
+                            setAlignmentMinKeepRatio(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, alignment_min_keep_ratio: true }));
+                          }}
+                          placeholder="0.4"
+                        />
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Alignment Dataset Path (Optional)</label>
+                      <input
+                        className="input"
+                        value={alignmentDatasetPath}
+                        onChange={(e) => {
+                          setAlignmentDatasetPath(e.target.value);
+                          setTouchedConfig((prev) => ({ ...prev, alignment_dataset_path: true }));
+                        }}
+                        placeholder="prepared/alignment/train.filtered.jsonl"
+                      />
+                      <div className="form-hint">
+                        Leave empty to use prepared train split. Path is project-relative under data/projects/&lt;id&gt;.
+                      </div>
+                    </div>
+                  </div>
+                )}
                   </div>
                 </div>
               </div>

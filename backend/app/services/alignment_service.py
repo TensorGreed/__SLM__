@@ -369,3 +369,44 @@ def analyze_preference_dataset_contract(
     report = validate_preference_rows(rows, min_coverage=min_coverage, max_rows=len(rows))
     report["dataset_path"] = str(train_file)
     return report
+
+
+def analyze_preference_dataset_quality(
+    *,
+    project_id: int,
+    sample_size: int = 400,
+    quality_threshold: float = 3.0,
+) -> dict[str, Any]:
+    prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+    train_file = prepared_dir / "train.jsonl"
+
+    if not train_file.exists():
+        return {
+            "quality_threshold": max(1.0, min(float(quality_threshold), 5.0)),
+            "contract": {
+                "ok": False,
+                "errors": [
+                    (
+                        f"Prepared training dataset missing at {train_file}. "
+                        "Run Dataset Prep split with preference pairs before DPO/ORPO training."
+                    )
+                ],
+            },
+            "scored_count": 0,
+            "keep_count": 0,
+            "drop_count": 0,
+            "average_quality_score": 0.0,
+            "score_distribution": {"5": 0, "4": 0, "3": 0, "2": 0, "1": 0},
+            "scored_rows": [],
+            "kept_row_indices": [],
+            "dataset_path": str(train_file),
+        }
+
+    rows = _load_jsonl_rows(train_file, sample_size=max(20, min(int(sample_size or 400), 5000)))
+    report = score_preference_rows(
+        rows,
+        quality_threshold=quality_threshold,
+        max_rows=len(rows),
+    )
+    report["dataset_path"] = str(train_file)
+    return report

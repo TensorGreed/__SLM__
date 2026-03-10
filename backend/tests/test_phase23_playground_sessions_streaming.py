@@ -62,6 +62,20 @@ class Phase23PlaygroundSessionsStreamingTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 201, resp.text)
         return int(resp.json()["id"])
 
+    def _create_experiment_with_output(self, project_id: int, name: str) -> Path:
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": name,
+                "description": "playground-models",
+                "config": {"base_model": "microsoft/phi-2"},
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        output_dir = Path(str(resp.json().get("output_dir") or ""))
+        self.assertTrue(output_dir.exists(), output_dir)
+        return output_dir
+
     def test_chat_persists_session_and_history(self):
         project_id = self._create_project("phase23-playground-1")
         chat_resp = self.client.post(
@@ -132,6 +146,66 @@ class Phase23PlaygroundSessionsStreamingTests(unittest.TestCase):
         self.assertGreaterEqual(len(models), 1)
         names = {str(item.get("model_name", "")) for item in models}
         self.assertIn("TinyLlama/TinyLlama-1.1B", names)
+
+    def test_playground_provider_catalog_includes_llama_cpp(self):
+        project_id = self._create_project("phase23-playground-4")
+        resp = self.client.get(f"/api/projects/{project_id}/training/playground/providers")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        providers = [item for item in payload.get("providers", []) if isinstance(item, dict)]
+        provider_ids = {str(item.get("provider")) for item in providers}
+        self.assertIn("mock", provider_ids)
+        self.assertIn("openai_compatible", provider_ids)
+        self.assertIn("llama_cpp", provider_ids)
+
+    def test_playground_logs_persist_feedback_and_quality_summary(self):
+        project_id = self._create_project("phase23-playground-5")
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/playground/logs",
+            json={
+                "prompt": "Return JSON for this record",
+                "reply": "I don't know",
+                "rating": -1,
+                "tags": ["quality", "refusal"],
+                "notes": "Bad response.",
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload.get("summary", {}).get("event_count"), 1)
+        quality_checks = [item for item in payload.get("event", {}).get("quality_checks", []) if isinstance(item, dict)]
+        self.assertTrue(any(str(item.get("code")) == "user_negative_feedback" for item in quality_checks))
+
+        read_resp = self.client.get(f"/api/projects/{project_id}/training/playground/logs")
+        self.assertEqual(read_resp.status_code, 200, read_resp.text)
+        read_payload = read_resp.json()
+        self.assertEqual(read_payload.get("count"), 1)
+        summary = read_payload.get("summary", {})
+        self.assertEqual(summary.get("negative_count"), 1)
+        top_tags = [item for item in summary.get("top_tags", []) if isinstance(item, dict)]
+        self.assertTrue(any(str(item.get("tag")) == "quality" for item in top_tags))
+
+    def test_playground_models_include_runtime_hint_for_gguf_artifacts(self):
+        project_id = self._create_project("phase23-playground-6")
+        output_dir = self._create_experiment_with_output(project_id, "phase23-model-hints")
+        model_dir = output_dir / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        gguf_path = model_dir / "model-q4.gguf"
+        gguf_path.write_bytes(b"gguf")
+
+        resp = self.client.get(f"/api/projects/{project_id}/training/playground/models")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        models = [item for item in resp.json().get("models", []) if isinstance(item, dict)]
+        hinted = [
+            item for item in models
+            if isinstance(item.get("runtime_hint"), dict)
+            and str(item.get("runtime_hint", {}).get("artifact_kind", "")).startswith("gguf")
+        ]
+        self.assertTrue(hinted)
+        self.assertTrue(any(str(item.get("recommended_provider")) == "llama_cpp" for item in hinted))
+        self.assertTrue(
+            any(str(item.get("runtime_hint", {}).get("runtime_model_ref")) == str(gguf_path) for item in hinted)
+        )
 
 
 if __name__ == "__main__":

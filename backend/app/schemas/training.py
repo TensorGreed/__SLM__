@@ -63,6 +63,29 @@ class TrainingConfig(BaseModel):
         lt=1.0,
         description="Per-retry max_seq_length shrink factor.",
     )
+
+    # Alignment (DPO/ORPO)
+    alignment_auto_filter: bool = Field(
+        False,
+        description="Auto-run judge quality filter and train on kept preference rows.",
+    )
+    alignment_quality_threshold: float = Field(
+        3.0,
+        ge=1.0,
+        le=5.0,
+        description="Judge score threshold for keeping preference pairs.",
+    )
+    alignment_min_keep_ratio: float = Field(
+        0.4,
+        ge=0.05,
+        le=1.0,
+        description="Minimum keep ratio required when applying alignment filter.",
+    )
+    alignment_dataset_path: str = Field(
+        "",
+        max_length=4096,
+        description="Optional project-relative path to a preference JSONL file for DPO/ORPO.",
+    )
     
     # Checkpointing
     save_steps: int = Field(100, ge=1)

@@ -47,6 +47,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
     const isRecipesRoute = location.pathname === `/project/${projectId}/recipes`;
     const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
+    const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
         || location.pathname === `/project/${projectId}/domain`;
@@ -114,6 +115,16 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                     <span className="nav-copy">
                         <span className="nav-label">Training Setup</span>
                         <span className="nav-caption">Model, hyperparameters, runtime profile.</span>
+                    </span>
+                </button>
+                <button
+                    className={`workspace-nav-item ${isPlaygroundRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/playground`)}
+                >
+                    <span className="nav-icon">PG</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Playground</span>
+                        <span className="nav-caption">Prompt presets, runtime adapters, and eval logs.</span>
                     </span>
                 </button>
 

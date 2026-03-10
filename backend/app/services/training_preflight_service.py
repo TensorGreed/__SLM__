@@ -6,7 +6,10 @@ import importlib.util
 from typing import Any
 
 from app.config import settings
-from app.services.alignment_service import analyze_preference_dataset_contract
+from app.services.alignment_service import (
+    analyze_preference_dataset_contract,
+    analyze_preference_dataset_quality,
+)
 from app.services.dataset_contract_service import analyze_prepared_dataset_contract
 from app.services.training_runtime_service import (
     get_runtime_spec,
@@ -184,6 +187,16 @@ def _normalize_trainer_backend(value: Any, warnings: list[str]) -> str:
         return candidate
     warnings.append(f"Unknown trainer_backend '{candidate}', defaulting to auto for preflight.")
     return "auto"
+
+
+def _normalize_training_mode(value: Any) -> str:
+    raw = value
+    if hasattr(value, "value"):
+        raw = getattr(value, "value")
+    candidate = str(raw or "sft").strip().lower()
+    if candidate in {"sft", "domain_pretrain", "dpo", "orpo"}:
+        return candidate
+    return "sft"
 
 
 def _resolve_backend(requested_backend: str) -> str:
@@ -397,8 +410,9 @@ def run_training_preflight(
     train_exists = train_file.exists()
     val_exists = val_file.exists()
     dataset_contract: dict[str, Any] | None = None
-    training_mode = str(resolved_config.get("training_mode") or "sft").strip().lower() or "sft"
+    training_mode = _normalize_training_mode(resolved_config.get("training_mode"))
     alignment_contract: dict[str, Any] | None = None
+    alignment_quality: dict[str, Any] | None = None
     if not train_exists:
         errors.append(
             (
@@ -452,6 +466,56 @@ def run_training_preflight(
             if text and text not in hints:
                 hints.append(text)
 
+        quality_threshold = _coerce_float(
+            resolved_config.get("alignment_quality_threshold"),
+            3.0,
+            minimum=1.0,
+        )
+        min_keep_ratio = max(
+            0.05,
+            min(
+                _coerce_float(
+                    resolved_config.get("alignment_min_keep_ratio"),
+                    0.4,
+                    minimum=0.05,
+                ),
+                1.0,
+            ),
+        )
+        alignment_quality = analyze_preference_dataset_quality(
+            project_id=project_id,
+            sample_size=400,
+            quality_threshold=quality_threshold,
+        )
+        scored_count = int(alignment_quality.get("scored_count", 0))
+        keep_count = int(alignment_quality.get("keep_count", 0))
+        keep_ratio = float(keep_count / scored_count) if scored_count > 0 else 0.0
+
+        if scored_count <= 0:
+            errors.append(
+                (
+                    "No scorable preference rows found for alignment mode. "
+                    "Provide prompt/chosen/rejected rows before DPO/ORPO training."
+                )
+            )
+        elif keep_count <= 0:
+            errors.append(
+                (
+                    "Judge quality threshold would drop all preference pairs. "
+                    "Lower alignment_quality_threshold or improve dataset quality."
+                )
+            )
+        elif keep_ratio < min_keep_ratio:
+            warnings.append(
+                (
+                    f"Alignment keep ratio {keep_ratio:.1%} is below configured minimum "
+                    f"{min_keep_ratio:.0%}."
+                )
+            )
+            hints.append(
+                "Lower alignment_quality_threshold or import cleaner preference pairs."
+            )
+
     capability_summary = {
         "matrix_version": MODEL_CAPABILITY_MATRIX_VERSION,
         "model": {
@@ -488,6 +552,7 @@ def run_training_preflight(
             "val_file_exists": val_exists,
             "contract": dataset_contract or {},
             "alignment_contract": alignment_contract or {},
+            "alignment_quality": alignment_quality or {},
         },
         "command_template_present": bool(settings.TRAINING_EXTERNAL_CMD.strip()),
     }

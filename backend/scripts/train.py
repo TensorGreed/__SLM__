@@ -224,7 +224,19 @@ def _adapt_record_to_text(
         return {"text": direct_text, "source_text": direct_text, "target_text": ""}
 
     question = _pick_first_text(row, ["question", "prompt", "instruction"])
-    answer = _pick_first_text(row, ["answer", "completion", "output", "response"])
+    answer = _pick_first_text(
+        row,
+        [
+            "answer",
+            "completion",
+            "output",
+            "response",
+            "chosen",
+            "preferred",
+            "accepted",
+            "response_chosen",
+        ],
+    )
     if question and answer:
         rendered = _qa_to_chat_text(question, answer, chat_template)
         return {"text": rendered, "source_text": question, "target_text": answer}
@@ -620,6 +632,7 @@ def _run_training_attempt(
     total_attempts: int,
     retry_history: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    training_mode = str(config.get("training_mode", "sft")).strip().lower() or "sft"
     chat_template = str(config.get("chat_template", "llama3"))
     task_type = str(config.get("task_type", "causal_lm"))
     trainer_backend = str(config.get("trainer_backend", "auto"))
@@ -671,6 +684,13 @@ def _run_training_attempt(
         ) from e
 
     warnings: list[str] = []
+    if training_mode in {"dpo", "orpo"}:
+        warnings.append(
+            (
+                f"training_mode={training_mode} uses preferred-response projection in the current "
+                "external runtime. Pairwise objective trainers are optional."
+            )
+        )
     normalized_task_type = _normalize_task_type(task_type, warnings)
     normalized_backend = _normalize_trainer_backend(trainer_backend, warnings)
     resolved_backend = _normalize_requested_backend(normalized_backend, warnings)
@@ -1142,6 +1162,8 @@ def _run_training_attempt(
         "project_id": args.project,
         "experiment_id": args.experiment,
         "backend": resolved_backend,
+        "training_mode_requested": training_mode,
+        "training_mode_effective": "sft" if training_mode in {"dpo", "orpo"} else training_mode,
         "task_type": normalized_task_type,
         "adapter_contract": data_contract,
         "base_model": args.base_model,
@@ -1196,6 +1218,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     _emit_runtime_event(
         "runtime_preflight",
         {
+            "training_mode": str(base_config.get("training_mode", "sft")),
             "task_type": str(base_config.get("task_type", "causal_lm")),
             "trainer_backend": str(base_config.get("trainer_backend", "auto")),
             "auto_oom_retry": auto_oom_retry,

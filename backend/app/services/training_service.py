@@ -20,6 +20,10 @@ from app.models.experiment import (
 )
 from app.models.project import Project
 from app.services.training_preflight_service import run_training_preflight
+from app.services.alignment_dataset_service import (
+    filter_preference_dataset_by_quality,
+    resolve_alignment_dataset_path,
+)
 from app.services.training_runtime_service import (
     TrainingRuntimeStartContext,
     get_runtime_spec,
@@ -124,6 +128,20 @@ def _coerce_float(value) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off", ""}:
+            return False
+    return default
 
 
 def _extract_step_from_checkpoint_dir(path: Path) -> int | None:
@@ -499,6 +517,43 @@ async def start_training(
     prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
     train_file = prepared_dir / "train.jsonl"
     val_file = prepared_dir / "val.jsonl"
+    training_mode = str(resolved_config.get("training_mode") or exp.training_mode.value).strip().lower()
+
+    if training_mode in {"dpo", "orpo"}:
+        runtime_config["alignment_mode"] = training_mode
+        custom_alignment_path = resolve_alignment_dataset_path(
+            project_id,
+            str(resolved_config.get("alignment_dataset_path") or "").strip(),
+        )
+        if custom_alignment_path is not None:
+            if not custom_alignment_path.exists():
+                raise ValueError(f"Configured alignment_dataset_path not found: {custom_alignment_path}")
+            train_file = custom_alignment_path
+            runtime_config["alignment_dataset_path"] = str(train_file)
+        elif _coerce_bool(resolved_config.get("alignment_auto_filter"), False):
+            quality_threshold = _coerce_float(resolved_config.get("alignment_quality_threshold"))
+            min_keep_ratio = _coerce_float(resolved_config.get("alignment_min_keep_ratio"))
+            filter_report = filter_preference_dataset_by_quality(
+                project_id,
+                quality_threshold=quality_threshold if quality_threshold is not None else 3.0,
+                min_keep_ratio=min_keep_ratio if min_keep_ratio is not None else 0.4,
+                apply_to_train_file=False,
+                source_path=None,
+                target_path=None,
+            )
+            train_file = Path(str(filter_report.get("target_path") or train_file))
+            runtime_config["alignment_filter"] = {
+                "source_path": filter_report.get("source_path"),
+                "target_path": str(train_file),
+                "quality_threshold": filter_report.get("quality_threshold"),
+                "min_keep_ratio": filter_report.get("min_keep_ratio"),
+                "keep_ratio": filter_report.get("keep_ratio"),
+                "scored_count": filter_report.get("scored_count"),
+                "keep_count": filter_report.get("keep_count"),
+                "drop_count": filter_report.get("drop_count"),
+                "average_quality_score": filter_report.get("average_quality_score"),
+                "filter_report_path": filter_report.get("filter_report_path"),
+            }
 
     exp.status = ExperimentStatus.RUNNING
     exp.started_at = datetime.now(timezone.utc)
