@@ -1,5 +1,6 @@
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
+import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 
@@ -31,6 +32,8 @@ export default function ProjectTrainingConfigPage() {
                 hideExperimentList
                 hideStepFooter
             />
+
+            <ChatPlaygroundPanel projectId={projectId} />
         </div>
     );
 }

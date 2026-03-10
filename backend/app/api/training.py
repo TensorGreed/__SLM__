@@ -31,6 +31,7 @@ from app.services.training_preflight_service import (
     run_training_preflight_plan,
 )
 from app.services.model_selection_service import recommend_training_base_models
+from app.services.playground_service import run_playground_chat
 from app.services.training_recipe_service import (
     list_training_recipes,
     resolve_training_recipe,
@@ -61,6 +62,22 @@ class ModelSelectionRecommendRequest(BaseModel):
     available_vram_gb: float | None = Field(default=None, ge=0)
     task_profile: str | None = Field(default=None, max_length=64)
     top_k: int = Field(default=3, ge=1, le=5)
+
+
+class PlaygroundChatMessage(BaseModel):
+    role: str = Field(..., min_length=1, max_length=16)
+    content: str = Field(..., min_length=1, max_length=32000)
+
+
+class PlaygroundChatRequest(BaseModel):
+    provider: str = Field(default="openai_compatible", min_length=1, max_length=64)
+    model_name: str | None = Field(default=None, max_length=255)
+    api_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, max_length=8192)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, ge=16, le=4096)
+    system_prompt: str | None = Field(default=None, max_length=8000)
+    messages: list[PlaygroundChatMessage] = Field(default_factory=list, min_length=1)
 
 
 @router.get("/runtimes")
@@ -163,6 +180,40 @@ async def recommend_training_models(
     return {
         "project_id": project_id,
         **payload,
+    }
+
+
+@router.post("/playground/chat")
+async def playground_chat(
+    project_id: int,
+    req: PlaygroundChatRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a chat completion request for the project playground."""
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    try:
+        result = await run_playground_chat(
+            provider=req.provider,
+            model_name=model_name,
+            messages=[item.model_dump() for item in req.messages],
+            api_url=req.api_url,
+            api_key=req.api_key,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            system_prompt=req.system_prompt,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return {
+        "project_id": project_id,
+        "message_count": len(req.messages),
+        **result,
     }
 
 

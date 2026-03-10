@@ -423,6 +423,7 @@ export default function TrainingPanel({
   const [wizardLoading, setWizardLoading] = useState(false);
   const [wizardError, setWizardError] = useState('');
   const [wizardResult, setWizardResult] = useState<ModelWizardResponse | null>(null);
+  const [wizardAutoRan, setWizardAutoRan] = useState(false);
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -770,7 +771,7 @@ export default function TrainingPanel({
     }
   };
 
-  const runModelWizard = async () => {
+  const runModelWizard = async (options?: { silent?: boolean }) => {
     setWizardLoading(true);
     setWizardError('');
     try {
@@ -789,7 +790,9 @@ export default function TrainingPanel({
       setWizardResult(res.data || null);
     } catch (err: any) {
       setWizardResult(null);
-      setWizardError(err?.response?.data?.detail || 'Failed to load model recommendations');
+      if (!options?.silent) {
+        setWizardError(err?.response?.data?.detail || 'Failed to load model recommendations');
+      }
     } finally {
       setWizardLoading(false);
     }
@@ -929,12 +932,28 @@ export default function TrainingPanel({
     setWizardLoading(false);
     setWizardError('');
     setWizardResult(null);
+    setWizardAutoRan(false);
     void loadPreferredPlanProfile();
     void loadTrainingRuntimes();
     void loadTrainingRecipes();
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, forceCreateVisible, hideCreateControls, hideExperimentList]);
+
+  useEffect(() => {
+    if (workspaceView !== 'setup' || !createFormVisible) {
+      return;
+    }
+    if (wizardAutoRan || wizardLoading) {
+      return;
+    }
+    if (Array.isArray(wizardResult?.recommendations) && wizardResult.recommendations.length > 0) {
+      return;
+    }
+    setWizardAutoRan(true);
+    void runModelWizard({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceView, createFormVisible, wizardAutoRan, wizardLoading, projectId]);
 
   useEffect(() => {
     if (forceCreateVisible || !canViewRuns) {
