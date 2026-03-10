@@ -16,7 +16,12 @@ from app.services.export_service import (
     run_export,
     validate_export_deployment,
 )
-from app.services.serve_service import build_export_serve_plan
+from app.services.serve_runtime_service import (
+    get_serve_run_status,
+    start_serve_run,
+    stop_serve_run,
+)
+from app.services.serve_service import build_export_serve_plan, select_serve_template
 
 router = APIRouter(prefix="/projects/{project_id}/export", tags=["Export"])
 
@@ -44,6 +49,10 @@ class ExportServePlanRequest(BaseModel):
     port: int = 8000
     smoke_test_prompt: str = "Hello from SLM!"
     target_ids: list[str] | None = None
+
+
+class ExportServeRunStartRequest(ExportServePlanRequest):
+    template_id: str
 
 
 @router.post("/create", status_code=201)
@@ -188,3 +197,65 @@ async def serve_plan(
         if "not found" in detail:
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+@router.post("/{export_id}/serve-runs/start")
+async def start_export_serve_run(
+    project_id: int,
+    export_id: int,
+    req: ExportServeRunStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a local serve process for a selected export serve template."""
+    try:
+        plan = await build_export_serve_plan(
+            db,
+            project_id=project_id,
+            export_id=export_id,
+            host=req.host,
+            port=req.port,
+            smoke_test_prompt=req.smoke_test_prompt,
+            target_ids=req.target_ids,
+        )
+        template = select_serve_template(plan, req.template_id)
+        return await start_serve_run(
+            project_id=project_id,
+            source="export",
+            export_id=export_id,
+            model_id=None,
+            template=template,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/serve-runs/{run_id}")
+async def export_serve_run_status(
+    project_id: int,
+    run_id: str,
+    logs_tail: int = 200,
+):
+    """Read live status/log tail for a serve run."""
+    try:
+        return await get_serve_run_status(
+            project_id=project_id,
+            run_id=run_id,
+            logs_tail=logs_tail,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/serve-runs/{run_id}/stop")
+async def export_serve_run_stop(
+    project_id: int,
+    run_id: str,
+):
+    """Request stop for a running serve process."""
+    try:
+        return await stop_serve_run(project_id=project_id, run_id=run_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))

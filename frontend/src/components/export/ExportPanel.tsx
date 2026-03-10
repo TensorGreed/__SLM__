@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { TerminalConsole } from '../shared/TerminalConsole';
 import './ExportPanel.css';
 
 interface ExportPanelProps { projectId: number; }
@@ -106,6 +107,23 @@ interface ServePlanResponse {
     templates?: ServeTemplate[];
 }
 
+interface ServeRunStatusResponse {
+    run_id: string;
+    source: string;
+    export_id?: number | null;
+    model_id?: number | null;
+    template_id: string;
+    template_name?: string;
+    status: string;
+    can_stop?: boolean;
+    pid?: number | null;
+    return_code?: number | null;
+    command?: string;
+    healthcheck_curl?: string | null;
+    smoke_curl?: string | null;
+    logs_tail?: string[];
+}
+
 function toErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -144,6 +162,9 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [copyState, setCopyState] = useState<Record<string, boolean>>({});
     const [servePlan, setServePlan] = useState<ServePlanResponse | null>(null);
     const [isLoadingServePlan, setIsLoadingServePlan] = useState(false);
+    const [activeServeRun, setActiveServeRun] = useState<ServeRunStatusResponse | null>(null);
+    const [isStartingServeRun, setIsStartingServeRun] = useState(false);
+    const [isStoppingServeRun, setIsStoppingServeRun] = useState(false);
 
     const refreshAll = async () => {
         setIsLoading(true);
@@ -170,9 +191,33 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setStatusMessage('');
         setTargetLoadError('');
         setServePlan(null);
+        setActiveServeRun(null);
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
+
+    useEffect(() => {
+        const runId = String(activeServeRun?.run_id || '').trim();
+        const status = String(activeServeRun?.status || '').trim().toLowerCase();
+        if (!runId || !['pending', 'running', 'stopping'].includes(status)) {
+            return;
+        }
+
+        const interval = window.setInterval(() => {
+            void (async () => {
+                try {
+                    const res = await api.get<ServeRunStatusResponse>(
+                        `/projects/${projectId}/export/serve-runs/${runId}`,
+                        { params: { logs_tail: 500 } },
+                    );
+                    setActiveServeRun(res.data || null);
+                } catch {
+                    // no-op, keep last known status
+                }
+            })();
+        }, 1500);
+        return () => window.clearInterval(interval);
+    }, [activeServeRun?.run_id, activeServeRun?.status, projectId]);
 
     useEffect(() => {
         const loadDeploymentTargets = async () => {
@@ -341,12 +386,68 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 },
             );
             setServePlan(res.data || null);
+            setActiveServeRun(null);
             setStatusMessage(`Serve plan generated for model ${modelId}.`);
         } catch (err) {
             setErrorMessage(toErrorMessage(err));
             setStatusMessage('');
         } finally {
             setIsLoadingServePlan(false);
+        }
+    };
+
+    const handleStartServeRun = async (templateId: string) => {
+        if (!servePlan) return;
+        setIsStartingServeRun(true);
+        setErrorMessage('');
+        setStatusMessage(`Starting serve run (${templateId})...`);
+        try {
+            const payload = {
+                template_id: templateId,
+                host: String(servePlan.host || '127.0.0.1'),
+                port: Number(servePlan.port || 8080),
+                smoke_test_prompt: 'Hello from local SLM',
+            };
+            let res;
+            if (servePlan.source === 'registry' && servePlan.model_id) {
+                res = await api.post<ServeRunStatusResponse>(
+                    `/projects/${projectId}/registry/models/${servePlan.model_id}/serve-runs/start`,
+                    payload,
+                );
+            } else if (servePlan.export_id) {
+                res = await api.post<ServeRunStatusResponse>(
+                    `/projects/${projectId}/export/${servePlan.export_id}/serve-runs/start`,
+                    payload,
+                );
+            } else {
+                throw new Error('Serve plan missing source identifier.');
+            }
+            setActiveServeRun(res.data || null);
+            setStatusMessage(`Serve run ${res.data.run_id} started.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+            setStatusMessage('');
+        } finally {
+            setIsStartingServeRun(false);
+        }
+    };
+
+    const handleStopServeRun = async () => {
+        const runId = String(activeServeRun?.run_id || '').trim();
+        if (!runId) return;
+        setIsStoppingServeRun(true);
+        setErrorMessage('');
+        try {
+            const res = await api.post<ServeRunStatusResponse>(
+                `/projects/${projectId}/export/serve-runs/${runId}/stop`,
+            );
+            setActiveServeRun(res.data || null);
+            setStatusMessage(`Stop requested for serve run ${runId}.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+            setStatusMessage('');
+        } finally {
+            setIsStoppingServeRun(false);
         }
     };
 
@@ -377,6 +478,17 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 : stage === 'archived'
                     ? 'badge-warning'
                     : 'badge-accent';
+
+    const runStatusColor = (status: string) =>
+        status === 'completed'
+            ? 'badge-success'
+            : status === 'running'
+                ? 'badge-info'
+                : status === 'failed'
+                    ? 'badge-error'
+                    : status === 'cancelled'
+                        ? 'badge-warning'
+                        : 'badge-warning';
 
     const formatBytes = (bytes?: number | null) => {
         if (!bytes) return '—';
@@ -666,7 +778,11 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                 {servePlan.model_stage ? ` • Stage: ${servePlan.model_stage}` : ''}
                             </p>
                         </div>
-                        <button className="btn btn-secondary btn-sm" onClick={() => setServePlan(null)}>
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setServePlan(null)}
+                            disabled={Boolean(activeServeRun?.can_stop)}
+                        >
                             Close
                         </button>
                     </div>
@@ -685,6 +801,17 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                 {template.description && (
                                     <div className="serve-template-card__subtitle">{template.description}</div>
                                 )}
+                                <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() => void handleStartServeRun(template.template_id)}
+                                    disabled={isStartingServeRun || isStoppingServeRun || Boolean(activeServeRun?.can_stop)}
+                                >
+                                    {isStartingServeRun
+                                        ? 'Starting...'
+                                        : activeServeRun?.can_stop
+                                            ? 'Running...'
+                                            : 'Run Now'}
+                                </button>
 
                                 {template.command && (
                                     <div className="serve-template-block">
@@ -748,6 +875,57 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                             </div>
                         ))}
                     </div>
+
+                    {activeServeRun && (
+                        <div className="serve-run-card">
+                            <div className="serve-run-card__header">
+                                <div>
+                                    <div className="serve-template-card__title">Live Serve Status</div>
+                                    <div className="serve-template-card__subtitle">
+                                        Run ID: {activeServeRun.run_id} • Template: {activeServeRun.template_id}
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span className={`badge ${runStatusColor(activeServeRun.status)}`}>{activeServeRun.status}</span>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => void handleStopServeRun()}
+                                        disabled={isStoppingServeRun || !activeServeRun.can_stop}
+                                    >
+                                        {isStoppingServeRun ? 'Stopping...' : 'Stop'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {activeServeRun.command && (
+                                <div className="serve-template-block">
+                                    <div className="serve-template-block__label">Active Command</div>
+                                    <pre className="serve-template-code">{activeServeRun.command}</pre>
+                                </div>
+                            )}
+
+                            <TerminalConsole logs={activeServeRun.logs_tail || []} height="260px" />
+
+                            <div className="serve-run-card__actions">
+                                {activeServeRun.healthcheck_curl && (
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => handleCopy(`run-health-${activeServeRun.run_id}`, activeServeRun.healthcheck_curl || '')}
+                                    >
+                                        {copyState[`run-health-${activeServeRun.run_id}`] ? 'Copied!' : 'Copy Health Curl'}
+                                    </button>
+                                )}
+                                {activeServeRun.smoke_curl && (
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => handleCopy(`run-smoke-${activeServeRun.run_id}`, activeServeRun.smoke_curl || '')}
+                                    >
+                                        {copyState[`run-smoke-${activeServeRun.run_id}`] ? 'Copied!' : 'Copy Smoke Curl'}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

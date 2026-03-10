@@ -20,7 +20,8 @@ from app.services.registry_service import (
     register_model,
     serialize_registry_entry,
 )
-from app.services.serve_service import build_registry_serve_plan
+from app.services.serve_runtime_service import start_serve_run
+from app.services.serve_service import build_registry_serve_plan, select_serve_template
 
 router = APIRouter(prefix="/projects/{project_id}/registry", tags=["Registry"])
 
@@ -59,6 +60,10 @@ class RegistryServePlanRequest(BaseModel):
     port: int = 8000
     smoke_test_prompt: str = "Hello from SLM!"
     target_ids: list[str] | None = None
+
+
+class RegistryServeRunStartRequest(RegistryServePlanRequest):
+    template_id: str
 
 
 @router.post("/models/register", status_code=201)
@@ -189,6 +194,39 @@ async def serve_plan(
             port=payload.port,
             smoke_test_prompt=payload.smoke_test_prompt,
             target_ids=payload.target_ids,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/models/{model_id}/serve-runs/start")
+async def start_registry_serve_run(
+    project_id: int,
+    model_id: int,
+    req: RegistryServeRunStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a local serve process from a registry model template."""
+    try:
+        plan = await build_registry_serve_plan(
+            db,
+            project_id=project_id,
+            model_id=model_id,
+            host=req.host,
+            port=req.port,
+            smoke_test_prompt=req.smoke_test_prompt,
+            target_ids=req.target_ids,
+        )
+        template = select_serve_template(plan, req.template_id)
+        return await start_serve_run(
+            project_id=project_id,
+            source="registry",
+            export_id=plan.get("export_id"),
+            model_id=model_id,
+            template=template,
         )
     except ValueError as e:
         detail = str(e)

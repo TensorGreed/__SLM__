@@ -110,6 +110,11 @@ def _build_builtin_template(
             f"Run from export directory: {run_dir}",
             "Default server port in generated script is 8080; adjust script or environment if needed.",
         ],
+        "launch_spec": {
+            "cwd": str(run_dir),
+            "argv": ["python", "serve.py"],
+            "env": {"MODEL_PATH": model_path},
+        },
     }
 
 
@@ -166,6 +171,21 @@ def _build_vllm_template(
             "Install vLLM in the active environment before launching.",
             f"Model path is resolved to: {model_dir}",
         ],
+        "launch_spec": {
+            "cwd": str(run_dir),
+            "argv": [
+                "python",
+                "-m",
+                "vllm.entrypoints.openai.api_server",
+                "--model",
+                str(model_dir),
+                "--host",
+                host,
+                "--port",
+                str(port),
+            ],
+            "env": {},
+        },
     }
 
 
@@ -219,6 +239,19 @@ def _build_tgi_template(
         "notes": [
             "Install `text-generation-launcher` or use Docker image `ghcr.io/huggingface/text-generation-inference`.",
         ],
+        "launch_spec": {
+            "cwd": str(run_dir),
+            "argv": [
+                "text-generation-launcher",
+                "--model-id",
+                str(model_dir),
+                "--hostname",
+                host,
+                "--port",
+                str(port),
+            ],
+            "env": {},
+        },
     }
 
 
@@ -275,6 +308,11 @@ def _build_ollama_template(
             "Run setup_commands once before first serve.",
             f"GGUF file used in Modelfile: {gguf_name}",
         ],
+        "launch_spec": {
+            "cwd": str(run_dir),
+            "argv": ["ollama", "serve"],
+            "env": {"OLLAMA_HOST": f"{host}:{port}"},
+        },
     }
 
 
@@ -467,3 +505,28 @@ async def build_registry_serve_plan(
         }
     )
     return export_plan
+
+
+def select_serve_template(plan: dict[str, Any], template_id: str) -> dict[str, Any]:
+    requested = str(template_id or "").strip().lower()
+    templates = [
+        item
+        for item in list(plan.get("templates") or [])
+        if isinstance(item, dict)
+    ]
+    if not requested:
+        raise ValueError("template_id is required.")
+    selected = next(
+        (
+            item
+            for item in templates
+            if str(item.get("template_id") or "").strip().lower() == requested
+        ),
+        None,
+    )
+    if selected is None:
+        available = ", ".join(sorted(str(item.get("template_id") or "") for item in templates))
+        raise ValueError(
+            f"Unknown serve template '{template_id}'. Available templates: {available}"
+        )
+    return selected

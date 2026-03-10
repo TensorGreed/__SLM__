@@ -275,3 +275,28 @@
     display: grid;
     gap: 4px;
 }
+
+.serve-run-card {
+    margin-top: var(--space-lg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    background: rgba(255, 255, 255, 0.01);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.serve-run-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.serve-run-card__actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
