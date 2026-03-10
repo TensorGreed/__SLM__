@@ -40,6 +40,11 @@ from app.services.alignment_service import (
     validate_preference_rows,
 )
 from app.services.model_selection_service import recommend_training_base_models
+from app.services.training_telemetry_service import (
+    build_model_acceptance_bias,
+    record_model_wizard_event,
+    summarize_model_wizard_events,
+)
 from app.services.playground_service import (
     normalize_playground_messages,
     run_playground_chat,
@@ -84,6 +89,22 @@ class ModelSelectionRecommendRequest(BaseModel):
     available_vram_gb: float | None = Field(default=None, ge=0)
     task_profile: str | None = Field(default=None, max_length=64)
     top_k: int = Field(default=3, ge=1, le=5)
+
+
+class ModelSelectionTelemetryRequest(BaseModel):
+    action: str = Field(default="recommend", pattern="^(recommend|apply)$")
+    source: str = Field(default="training_setup_wizard", min_length=1, max_length=64)
+    auto_run: bool | None = None
+    target_device: str | None = Field(default=None, max_length=32)
+    primary_language: str | None = Field(default=None, max_length=32)
+    available_vram_gb: float | None = Field(default=None, ge=0)
+    task_profile: str | None = Field(default=None, max_length=64)
+    top_k: int | None = Field(default=None, ge=1, le=5)
+    recommendation_count: int | None = Field(default=None, ge=0, le=20)
+    recommendation_model_ids: list[str] | None = None
+    selected_model_id: str | None = Field(default=None, max_length=255)
+    selected_rank: int | None = Field(default=None, ge=1, le=50)
+    selected_score: float | None = None
 
 
 class PlaygroundChatMessage(BaseModel):
@@ -237,17 +258,55 @@ async def recommend_training_models(
     if project_result.scalar_one_or_none() is None:
         raise HTTPException(404, f"Project {project_id} not found")
 
+    adaptive_bias = build_model_acceptance_bias(
+        project_id,
+        target_device=req.target_device,
+        task_profile=req.task_profile,
+    )
     payload = recommend_training_base_models(
         target_device=req.target_device,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
         task_profile=req.task_profile,
         top_k=req.top_k,
+        adaptive_model_bias=adaptive_bias.get("bias_by_model"),
+        adaptive_bias_label=str(adaptive_bias.get("context_label") or ""),
     )
     return {
         "project_id": project_id,
         **payload,
+        "adaptive_ranking": {
+            "enabled": bool(adaptive_bias.get("enabled")),
+            "context_label": adaptive_bias.get("context_label"),
+            "global_apply_events": adaptive_bias.get("global_apply_events"),
+            "context_apply_events": adaptive_bias.get("context_apply_events"),
+            "boosted_model_count": len(dict(adaptive_bias.get("bias_by_model") or {})),
+        },
     }
+
+
+@router.post("/model-selection/telemetry")
+async def model_selection_telemetry(
+    project_id: int,
+    req: ModelSelectionTelemetryRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist model selection wizard telemetry event."""
+    await _get_project_or_404(db, project_id)
+    return record_model_wizard_event(
+        project_id,
+        payload=req.model_dump(),
+    )
+
+
+@router.get("/model-selection/telemetry")
+async def model_selection_telemetry_summary(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return aggregated model selection wizard telemetry metrics."""
+    await _get_project_or_404(db, project_id)
+    return summarize_model_wizard_events(project_id)
 
 
 @router.post("/playground/chat")

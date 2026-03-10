@@ -70,13 +70,19 @@ describe('ExportPanel serve run flow', () => {
             status: 'running',
             can_stop: true,
             command: 'python serve.py',
+            first_token_curl: 'curl first-token',
             logs_tail: ['running'],
             telemetry: {
               first_healthy_at: null,
               startup_latency_ms: null,
               smoke_passed: null,
+              first_token_at: null,
+              first_token_latency_ms: null,
+              throughput_tokens_per_sec: null,
+              first_token_passed: null,
               health_checks: [],
               smoke_checks: [],
+              first_token_checks: [],
             },
           },
         };
@@ -102,6 +108,7 @@ describe('ExportPanel serve run flow', () => {
                 command: 'python serve.py',
                 healthcheck: { curl: 'curl health' },
                 smoke_test: { curl: 'curl smoke' },
+                first_token_probe: { curl: 'curl first-token' },
                 notes: [],
               },
             ],
@@ -118,13 +125,19 @@ describe('ExportPanel serve run flow', () => {
             status: 'running',
             can_stop: true,
             command: 'python serve.py',
+            first_token_curl: 'curl first-token',
             logs_tail: ['booting...'],
             telemetry: {
               first_healthy_at: null,
               startup_latency_ms: null,
               smoke_passed: null,
+              first_token_at: null,
+              first_token_latency_ms: null,
+              throughput_tokens_per_sec: null,
+              first_token_passed: null,
               health_checks: [],
               smoke_checks: [],
+              first_token_checks: [],
             },
           },
         };
@@ -139,13 +152,19 @@ describe('ExportPanel serve run flow', () => {
             status: 'stopping',
             can_stop: true,
             command: 'python serve.py',
+            first_token_curl: 'curl first-token',
             logs_tail: ['stopping...'],
             telemetry: {
               first_healthy_at: null,
               startup_latency_ms: null,
               smoke_passed: null,
+              first_token_at: null,
+              first_token_latency_ms: null,
+              throughput_tokens_per_sec: null,
+              first_token_passed: null,
               health_checks: [],
               smoke_checks: [],
+              first_token_checks: [],
             },
           },
         };
@@ -162,9 +181,11 @@ describe('ExportPanel serve run flow', () => {
     await user.click(servePlanButton);
 
     expect(await screen.findByText('One-Click Serve Plan')).toBeInTheDocument();
+    expect(await screen.findByText('First-Token Probe Curl')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Run Now' }));
 
     expect(await screen.findByText('Live Serve Status')).toBeInTheDocument();
+    expect(await screen.findByText('Throughput')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Stop' }));
 
     await waitFor(() => {

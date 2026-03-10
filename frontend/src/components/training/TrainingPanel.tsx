@@ -192,6 +192,13 @@ interface ModelWizardResponse {
   recommendation_count?: number;
   recommendations?: ModelWizardRecommendation[];
   warnings?: string[];
+  adaptive_ranking?: {
+    enabled?: boolean;
+    context_label?: string;
+    global_apply_events?: number;
+    context_apply_events?: number;
+    boosted_model_count?: number;
+  };
 }
 
 const METRIC_PREFIX = 'SLM_METRIC ';
@@ -788,6 +795,24 @@ export default function TrainingPanel({
         payload,
       );
       setWizardResult(res.data || null);
+      const rows = Array.isArray(res.data?.recommendations) ? res.data.recommendations : [];
+      const recommendationModelIds = rows
+        .map((item) => String(item?.model_id || '').trim())
+        .filter(Boolean);
+      void api
+        .post(`/projects/${projectId}/training/model-selection/telemetry`, {
+          action: 'recommend',
+          source: 'training_setup_wizard',
+          auto_run: Boolean(options?.silent),
+          target_device: payload.target_device,
+          primary_language: payload.primary_language,
+          available_vram_gb: payload.available_vram_gb,
+          task_profile: payload.task_profile,
+          top_k: payload.top_k,
+          recommendation_count: recommendationModelIds.length,
+          recommendation_model_ids: recommendationModelIds,
+        })
+        .catch(() => {});
     } catch (err: any) {
       setWizardResult(null);
       if (!options?.silent) {
@@ -798,7 +823,7 @@ export default function TrainingPanel({
     }
   };
 
-  const applyModelWizardRecommendation = (item: ModelWizardRecommendation) => {
+  const applyModelWizardRecommendation = (item: ModelWizardRecommendation, rankIndex: number) => {
     const defaults = item.suggested_defaults || {};
     const nextConfig: Record<string, unknown> = {
       base_model: item.model_id,
@@ -819,6 +844,27 @@ export default function TrainingPanel({
       nextConfig.max_seq_length = Math.max(128, defaults.max_seq_length);
     }
     applySuggestedConfig(nextConfig);
+    const vramValue = Number.parseFloat(wizardVramGb);
+    const rows = Array.isArray(wizardResult?.recommendations) ? wizardResult.recommendations : [];
+    void api
+      .post(`/projects/${projectId}/training/model-selection/telemetry`, {
+        action: 'apply',
+        source: 'training_setup_wizard',
+        target_device: wizardTargetDevice,
+        primary_language: wizardPrimaryLanguage,
+        available_vram_gb: Number.isFinite(vramValue) && vramValue > 0 ? vramValue : undefined,
+        task_profile: wizardTaskProfile !== 'auto' ? wizardTaskProfile : undefined,
+        recommendation_count: rows.length,
+        recommendation_model_ids: rows
+          .map((row) => String(row?.model_id || '').trim())
+          .filter(Boolean),
+        selected_model_id: item.model_id,
+        selected_rank: Math.max(1, rankIndex + 1),
+        selected_score: Number.isFinite(Number(item.match_score))
+          ? Number(item.match_score)
+          : undefined,
+      })
+      .catch(() => {});
   };
 
   const persistPreferredPlanProfile = async (profile: string) => {
@@ -1834,9 +1880,15 @@ export default function TrainingPanel({
                           {wizardResult.warnings.join(' | ')}
                         </div>
                       )}
+                      {wizardResult?.adaptive_ranking?.enabled && (
+                        <div className="training-model-wizard__warnings">
+                          Adaptive ranking active ({wizardResult.adaptive_ranking.context_label || 'global'}): boosted{' '}
+                          {wizardResult.adaptive_ranking.boosted_model_count || 0} model(s) from prior applies.
+                        </div>
+                      )}
                       {Array.isArray(wizardResult?.recommendations) && wizardResult.recommendations.length > 0 && (
                         <div className="training-model-wizard__results">
-                          {wizardResult.recommendations.map((item) => (
+                          {wizardResult.recommendations.map((item, idx) => (
                             <div className="training-model-wizard__card" key={item.model_id}>
                               <div className="training-model-wizard__card-head">
                                 <strong>{item.model_id}</strong>
@@ -1859,7 +1911,7 @@ export default function TrainingPanel({
                               )}
                               <button
                                 className="btn btn-secondary btn-sm"
-                                onClick={() => applyModelWizardRecommendation(item)}
+                                onClick={() => applyModelWizardRecommendation(item, idx)}
                               >
                                 Apply Model + Defaults
                               </button>

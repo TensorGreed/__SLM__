@@ -91,6 +91,10 @@ interface ServeTemplate {
         prompt?: string;
         curl?: string;
     };
+    first_token_probe?: {
+        url?: string;
+        curl?: string;
+    };
     notes?: string[];
 }
 
@@ -121,14 +125,22 @@ interface ServeRunStatusResponse {
     command?: string;
     healthcheck_curl?: string | null;
     smoke_curl?: string | null;
+    first_token_curl?: string | null;
     logs_tail?: string[];
     telemetry?: {
         path?: string | null;
         first_healthy_at?: string | null;
         startup_latency_ms?: number | null;
         smoke_passed?: boolean | null;
+        first_token_at?: string | null;
+        first_token_latency_ms?: number | null;
+        throughput_tokens_per_sec?: number | null;
+        throughput_token_count_estimate?: number | null;
+        throughput_window_ms?: number | null;
+        first_token_passed?: boolean | null;
         health_checks?: Array<{ ok?: boolean; status_code?: number | null; error?: string }>;
         smoke_checks?: Array<{ ok?: boolean; status_code?: number | null; error?: string }>;
+        first_token_checks?: Array<{ ok?: boolean; status_code?: number | null; error?: string }>;
     };
 }
 
@@ -879,6 +891,19 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                     </div>
                                 )}
 
+                                {template.first_token_probe?.curl && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">First-Token Probe Curl</div>
+                                        <pre className="serve-template-code">{template.first_token_probe.curl}</pre>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => handleCopy(`serve-first-token-${template.template_id}`, template.first_token_probe?.curl || '')}
+                                        >
+                                            {copyState[`serve-first-token-${template.template_id}`] ? 'Copied!' : 'Copy First-Token Curl'}
+                                        </button>
+                                    </div>
+                                )}
+
                                 {Array.isArray(template.notes) && template.notes.length > 0 && (
                                     <div className="serve-template-notes">
                                         {template.notes.map((note, idx) => (
@@ -949,6 +974,26 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                                     : 'no'}
                                         </strong>
                                     </div>
+                                    <div className="serve-run-telemetry__item">
+                                        <span>First token</span>
+                                        <strong>{fmtTimestamp(activeServeRun.telemetry.first_token_at)}</strong>
+                                    </div>
+                                    <div className="serve-run-telemetry__item">
+                                        <span>First-token latency</span>
+                                        <strong>
+                                            {typeof activeServeRun.telemetry.first_token_latency_ms === 'number'
+                                                ? `${activeServeRun.telemetry.first_token_latency_ms} ms`
+                                                : '—'}
+                                        </strong>
+                                    </div>
+                                    <div className="serve-run-telemetry__item">
+                                        <span>Throughput</span>
+                                        <strong>
+                                            {typeof activeServeRun.telemetry.throughput_tokens_per_sec === 'number'
+                                                ? `${activeServeRun.telemetry.throughput_tokens_per_sec.toFixed(2)} tok/s`
+                                                : '—'}
+                                        </strong>
+                                    </div>
                                 </div>
                             )}
 
@@ -969,6 +1014,14 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                         onClick={() => handleCopy(`run-smoke-${activeServeRun.run_id}`, activeServeRun.smoke_curl || '')}
                                     >
                                         {copyState[`run-smoke-${activeServeRun.run_id}`] ? 'Copied!' : 'Copy Smoke Curl'}
+                                    </button>
+                                )}
+                                {activeServeRun.first_token_curl && (
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => handleCopy(`run-first-token-${activeServeRun.run_id}`, activeServeRun.first_token_curl || '')}
+                                    >
+                                        {copyState[`run-first-token-${activeServeRun.run_id}`] ? 'Copied!' : 'Copy First-Token Curl'}
                                     </button>
                                 )}
                             </div>

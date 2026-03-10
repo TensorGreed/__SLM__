@@ -80,5 +80,12 @@ describe('TrainingPanel model wizard', () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
     });
+    expect(apiMock.post).toHaveBeenCalledWith(
+      '/projects/1/training/model-selection/telemetry',
+      expect.objectContaining({
+        action: 'apply',
+        selected_model_id: 'acme/test-model',
+      }),
+    );
   });
 });

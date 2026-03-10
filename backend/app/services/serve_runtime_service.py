@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -21,10 +22,15 @@ from app.config import settings
 MAX_LOG_LINES = 2000
 MAX_HEALTH_HISTORY = 160
 MAX_SMOKE_HISTORY = 40
+MAX_FIRST_TOKEN_HISTORY = 40
 HEALTH_PROBE_TIMEOUT_SECONDS = 2.5
+FIRST_TOKEN_PROBE_TIMEOUT_SECONDS = 30.0
+FIRST_TOKEN_THROUGHPUT_WINDOW_SECONDS = 8.0
 STARTUP_HEALTH_POLL_SECONDS = 1.0
 STEADY_HEALTH_POLL_SECONDS = 5.0
 MAX_STARTUP_SMOKE_ATTEMPTS = 3
+MAX_STARTUP_FIRST_TOKEN_ATTEMPTS = 2
+MAX_FIRST_TOKEN_COUNT_ESTIMATE = 8192
 
 
 def _utcnow() -> datetime:
@@ -58,6 +64,13 @@ def _normalize_expected_status(value: Any, *, default: int = 200) -> int:
     return parsed
 
 
+def _normalize_first_token_parser(value: Any) -> str:
+    token = _coerce_text(value).lower()
+    if token in {"openai_sse", "tgi_sse", "ollama_jsonl"}:
+        return token
+    return "openai_sse"
+
+
 def _safe_headers(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
@@ -75,6 +88,105 @@ def _safe_json_mapping(value: Any) -> dict[str, Any] | None:
     if isinstance(value, dict):
         return dict(value)
     return None
+
+
+def _extract_openai_sse_token(payload: str) -> str | None:
+    token = payload.strip()
+    if not token or token == "[DONE]":
+        return None
+    try:
+        parsed = json.loads(token)
+    except Exception:
+        return token
+    if not isinstance(parsed, dict):
+        return None
+
+    choices = parsed.get("choices")
+    if not isinstance(choices, list):
+        return None
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str) and content != "":
+                return content
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str) and content != "":
+                return content
+        text = choice.get("text")
+        if isinstance(text, str) and text != "":
+            return text
+    return None
+
+
+def _extract_tgi_sse_token(payload: str) -> str | None:
+    token = payload.strip()
+    if not token or token == "[DONE]":
+        return None
+    try:
+        parsed = json.loads(token)
+    except Exception:
+        return token
+    if not isinstance(parsed, dict):
+        return None
+    token_obj = parsed.get("token")
+    if isinstance(token_obj, dict):
+        text = token_obj.get("text")
+        if isinstance(text, str) and text != "":
+            return text
+    generated = parsed.get("generated_text")
+    if isinstance(generated, str) and generated != "":
+        return generated
+    return None
+
+
+def _extract_ollama_jsonl_token(payload: str) -> str | None:
+    token = payload.strip()
+    if not token:
+        return None
+    try:
+        parsed = json.loads(token)
+    except Exception:
+        return token
+    if not isinstance(parsed, dict):
+        return None
+    response_text = parsed.get("response")
+    if isinstance(response_text, str) and response_text != "":
+        return response_text
+    return None
+
+
+def _extract_first_token_from_line(*, parser: str, raw_line: str) -> str | None:
+    line = str(raw_line or "").strip()
+    if not line:
+        return None
+    if line.startswith("data:"):
+        payload = line[5:].strip()
+        if parser == "tgi_sse":
+            return _extract_tgi_sse_token(payload)
+        return _extract_openai_sse_token(payload)
+    if parser in {"openai_sse", "tgi_sse"}:
+        return None
+    if parser == "ollama_jsonl":
+        return _extract_ollama_jsonl_token(line)
+    return line
+
+
+def _estimate_token_count(text: str) -> int:
+    payload = str(text or "")
+    if not payload:
+        return 0
+    word_count = len(re.findall(r"\S+", payload))
+    if word_count > 1:
+        return word_count
+    char_count = len(payload)
+    if char_count <= 0:
+        return 0
+    return max(1, int(round(char_count / 4.0)))
 
 
 def _serve_run_dir(project_id: int) -> Path:
@@ -101,6 +213,7 @@ class ServeRunJob:
     env_overrides: dict[str, str]
     healthcheck_curl: str | None = None
     smoke_curl: str | None = None
+    first_token_curl: str | None = None
     command_display: str | None = None
     healthcheck_url: str | None = None
     healthcheck_method: str = "GET"
@@ -110,6 +223,12 @@ class ServeRunJob:
     smoke_headers: dict[str, str] = field(default_factory=dict)
     smoke_json_body: dict[str, Any] | None = None
     smoke_expected_status: int = 200
+    first_token_url: str | None = None
+    first_token_method: str = "POST"
+    first_token_headers: dict[str, str] = field(default_factory=dict)
+    first_token_json_body: dict[str, Any] | None = None
+    first_token_expected_status: int = 200
+    first_token_parser: str = "openai_sse"
     status: str = "pending"
     created_at: str = field(default_factory=_utcnow_iso)
     started_at: str | None = None
@@ -127,11 +246,20 @@ class ServeRunJob:
     first_healthy_at: str | None = None
     startup_latency_ms: int | None = None
     smoke_passed: bool | None = None
+    first_token_at: str | None = None
+    first_token_latency_ms: int | None = None
+    throughput_tokens_per_sec: float | None = None
+    throughput_token_count_estimate: int | None = None
+    throughput_window_ms: int | None = None
+    first_token_passed: bool | None = None
     health_checks: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=MAX_HEALTH_HISTORY)
     )
     smoke_checks: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=MAX_SMOKE_HISTORY)
+    )
+    first_token_checks: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=MAX_FIRST_TOKEN_HISTORY)
     )
 
 
@@ -199,6 +327,19 @@ def _run_telemetry_payload(run: ServeRunJob) -> dict[str, Any]:
             "passed": run.smoke_passed,
             "checks": list(run.smoke_checks),
         },
+        "first_token": {
+            "url": run.first_token_url,
+            "method": run.first_token_method,
+            "expected_status": run.first_token_expected_status,
+            "parser": run.first_token_parser,
+            "passed": run.first_token_passed,
+            "first_token_at": run.first_token_at,
+            "first_token_latency_ms": run.first_token_latency_ms,
+            "throughput_tokens_per_sec": run.throughput_tokens_per_sec,
+            "throughput_token_count_estimate": run.throughput_token_count_estimate,
+            "throughput_window_ms": run.throughput_window_ms,
+            "checks": list(run.first_token_checks),
+        },
         "updated_at": _utcnow_iso(),
     }
 
@@ -236,6 +377,7 @@ def _serialize_run(run: ServeRunJob, *, logs_tail: int = 200) -> dict[str, Any]:
         "argv": list(run.argv),
         "healthcheck_curl": run.healthcheck_curl,
         "smoke_curl": run.smoke_curl,
+        "first_token_curl": run.first_token_curl,
         "created_at": run.created_at,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
@@ -248,9 +390,17 @@ def _serialize_run(run: ServeRunJob, *, logs_tail: int = 200) -> dict[str, Any]:
             "first_healthy_at": run.first_healthy_at,
             "startup_latency_ms": run.startup_latency_ms,
             "smoke_passed": run.smoke_passed,
+            "first_token_at": run.first_token_at,
+            "first_token_latency_ms": run.first_token_latency_ms,
+            "throughput_tokens_per_sec": run.throughput_tokens_per_sec,
+            "throughput_token_count_estimate": run.throughput_token_count_estimate,
+            "throughput_window_ms": run.throughput_window_ms,
+            "first_token_passed": run.first_token_passed,
             "healthcheck_url": run.healthcheck_url,
+            "first_token_url": run.first_token_url,
             "health_checks": list(run.health_checks),
             "smoke_checks": list(run.smoke_checks),
+            "first_token_checks": list(run.first_token_checks),
         },
     }
 
@@ -325,6 +475,142 @@ async def _http_probe(
     )
 
 
+def _http_first_token_probe_sync(
+    *,
+    url: str,
+    method: str,
+    parser: str,
+    headers: dict[str, str] | None = None,
+    json_body: dict[str, Any] | None = None,
+    expected_status: int = 200,
+) -> dict[str, Any]:
+    request_headers = dict(headers or {})
+    data: bytes | None = None
+    if json_body is not None:
+        data = json.dumps(json_body, ensure_ascii=True).encode("utf-8")
+        lower_headers = {str(key).lower() for key in request_headers.keys()}
+        if "content-type" not in lower_headers:
+            request_headers["Content-Type"] = "application/json"
+
+    started = time.perf_counter()
+    status_code: int | None = None
+    body_preview = ""
+    token_preview = ""
+    error = ""
+    ok = False
+    first_token_latency_ms: int | None = None
+    throughput_tokens_per_sec: float | None = None
+    throughput_token_count_estimate = 0
+    throughput_window_ms: int | None = None
+    first_token_monotonic: float | None = None
+    last_token_monotonic: float | None = None
+    parser_token = _normalize_first_token_parser(parser)
+    try:
+        request = Request(url=url, method=method, data=data, headers=request_headers)
+        with urlopen(request, timeout=FIRST_TOKEN_PROBE_TIMEOUT_SECONDS) as response:  # noqa: S310
+            status_code = int(response.status)
+            if status_code != expected_status:
+                raw = response.read(512)
+                body_preview = raw.decode("utf-8", errors="replace").strip()
+            else:
+                deadline = time.monotonic() + FIRST_TOKEN_PROBE_TIMEOUT_SECONDS
+                throughput_deadline: float | None = None
+                while time.monotonic() < deadline:
+                    line_bytes = response.readline()
+                    if not line_bytes:
+                        break
+                    line = line_bytes.decode("utf-8", errors="replace")
+                    token = _extract_first_token_from_line(
+                        parser=parser_token,
+                        raw_line=line,
+                    )
+                    if token is None:
+                        continue
+                    now_monotonic = time.monotonic()
+                    token_text = str(token)
+                    if not token_preview:
+                        token_preview = token_text[:160]
+                    throughput_token_count_estimate = min(
+                        MAX_FIRST_TOKEN_COUNT_ESTIMATE,
+                        throughput_token_count_estimate + _estimate_token_count(token_text),
+                    )
+                    last_token_monotonic = now_monotonic
+                    if first_token_latency_ms is None:
+                        first_token_latency_ms = int(
+                            max(0.0, (time.perf_counter() - started) * 1000.0)
+                        )
+                        first_token_monotonic = now_monotonic
+                        throughput_deadline = min(
+                            deadline,
+                            now_monotonic + FIRST_TOKEN_THROUGHPUT_WINDOW_SECONDS,
+                        )
+                        ok = True
+                    if throughput_token_count_estimate >= MAX_FIRST_TOKEN_COUNT_ESTIMATE:
+                        break
+                    if throughput_deadline is not None and now_monotonic >= throughput_deadline:
+                        break
+                if first_token_monotonic is not None:
+                    sample_end = last_token_monotonic or time.monotonic()
+                    raw_window_seconds = max(0.0, sample_end - first_token_monotonic)
+                    throughput_window_ms = int(raw_window_seconds * 1000.0)
+                    effective_window_seconds = max(0.2, raw_window_seconds)
+                    if throughput_token_count_estimate > 0:
+                        throughput_tokens_per_sec = round(
+                            float(throughput_token_count_estimate) / effective_window_seconds,
+                            4,
+                        )
+                if not ok:
+                    error = "No token chunk observed before stream ended."
+    except HTTPError as exc:
+        status_code = int(exc.code)
+        try:
+            body_preview = exc.read(512).decode("utf-8", errors="replace").strip()
+        except Exception:
+            body_preview = ""
+        error = str(exc)
+    except URLError as exc:
+        error = str(exc.reason or exc)
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)
+
+    latency_ms = int(max(0.0, (time.perf_counter() - started) * 1000.0))
+    return {
+        "timestamp": _utcnow_iso(),
+        "ok": bool(ok),
+        "status_code": status_code,
+        "expected_status": expected_status,
+        "parser": parser_token,
+        "latency_ms": latency_ms,
+        "first_token_latency_ms": first_token_latency_ms,
+        "throughput_tokens_per_sec": throughput_tokens_per_sec,
+        "throughput_token_count_estimate": throughput_token_count_estimate,
+        "throughput_window_ms": throughput_window_ms,
+        "error": error,
+        "token_preview": token_preview,
+        "body_preview": body_preview[:240],
+    }
+
+
+async def _http_first_token_probe(
+    *,
+    url: str,
+    method: str,
+    parser: str,
+    headers: dict[str, str] | None = None,
+    json_body: dict[str, Any] | None = None,
+    expected_status: int = 200,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        _http_first_token_probe_sync,
+        url=url,
+        method=method,
+        parser=parser,
+        headers=headers,
+        json_body=json_body,
+        expected_status=expected_status,
+    )
+
+
 def _record_health_probe(run: ServeRunJob, probe: dict[str, Any]) -> bool:
     run.health_checks.append(dict(probe))
     became_healthy = bool(probe.get("ok")) and run.first_healthy_at is None
@@ -365,6 +651,59 @@ def _record_smoke_probe(run: ServeRunJob, probe: dict[str, Any]) -> bool:
     return passed
 
 
+def _record_first_token_probe(run: ServeRunJob, probe: dict[str, Any]) -> bool:
+    run.first_token_checks.append(dict(probe))
+    passed = bool(probe.get("ok"))
+    run.first_token_passed = (
+        passed
+        if run.first_token_passed is None
+        else bool(run.first_token_passed or passed)
+    )
+    if passed:
+        if run.first_token_at is None:
+            run.first_token_at = str(probe.get("timestamp") or _utcnow_iso())
+        latency_value = probe.get("first_token_latency_ms")
+        if isinstance(latency_value, int):
+            run.first_token_latency_ms = max(0, latency_value)
+        elif run.first_token_latency_ms is None and isinstance(probe.get("latency_ms"), int):
+            run.first_token_latency_ms = max(0, int(probe.get("latency_ms")))
+        throughput_value = probe.get("throughput_tokens_per_sec")
+        if isinstance(throughput_value, (int, float)):
+            run.throughput_tokens_per_sec = round(float(max(0.0, throughput_value)), 4)
+        token_count_value = probe.get("throughput_token_count_estimate")
+        if isinstance(token_count_value, int):
+            run.throughput_token_count_estimate = max(0, token_count_value)
+        window_value = probe.get("throughput_window_ms")
+        if isinstance(window_value, int):
+            run.throughput_window_ms = max(0, window_value)
+        _append_log(
+            run,
+            _format_log(
+                "[SYS]",
+                (
+                    "First-token probe passed"
+                    + (
+                        f" (first_token_latency_ms={run.first_token_latency_ms})"
+                        if run.first_token_latency_ms is not None
+                        else ""
+                    )
+                    + (
+                        f" (throughput_tokens_per_sec={run.throughput_tokens_per_sec})"
+                        if run.throughput_tokens_per_sec is not None
+                        else ""
+                    )
+                    + "."
+                ),
+            ),
+        )
+    else:
+        code = probe.get("status_code")
+        err = _coerce_text(probe.get("error"))
+        detail = f"status={code}" if code is not None else err or "unknown error"
+        _append_log(run, _format_log("[SYS]", f"First-token probe failed ({detail})."))
+    return passed
+
+
 async def _consume_stream(
     run: ServeRunJob,
     stream: asyncio.StreamReader | None,
@@ -385,6 +724,7 @@ async def _consume_stream(
 
 async def _probe_runtime_telemetry(run: ServeRunJob) -> None:
     startup_smoke_attempts = 0
+    startup_first_token_attempts = 0
     while True:
         process = run.process
         if process is None or process.returncode is not None:
@@ -392,7 +732,8 @@ async def _probe_runtime_telemetry(run: ServeRunJob) -> None:
 
         has_health = bool(run.healthcheck_url)
         has_smoke = bool(run.smoke_url)
-        if not has_health and not has_smoke:
+        has_first_token = bool(run.first_token_url)
+        if not has_health and not has_smoke and not has_first_token:
             break
 
         try:
@@ -421,6 +762,25 @@ async def _probe_runtime_telemetry(run: ServeRunJob) -> None:
                     expected_status=run.smoke_expected_status,
                 )
                 _record_smoke_probe(run, smoke_probe)
+                _persist_telemetry(run)
+
+            should_probe_first_token = (
+                has_first_token
+                and startup_first_token_attempts < MAX_STARTUP_FIRST_TOKEN_ATTEMPTS
+                and run.first_token_passed is not True
+                and (run.first_healthy_at is not None or not has_health)
+            )
+            if should_probe_first_token:
+                startup_first_token_attempts += 1
+                first_token_probe = await _http_first_token_probe(
+                    url=str(run.first_token_url),
+                    method=run.first_token_method,
+                    parser=run.first_token_parser,
+                    headers=run.first_token_headers,
+                    json_body=run.first_token_json_body,
+                    expected_status=run.first_token_expected_status,
+                )
+                _record_first_token_probe(run, first_token_probe)
                 _persist_telemetry(run)
         except Exception as exc:  # noqa: BLE001
             _append_log(run, _format_log("[ERR]", f"Telemetry probe failed: {exc}"))
@@ -491,6 +851,11 @@ async def start_serve_run(
 
     healthcheck = template.get("healthcheck") if isinstance(template.get("healthcheck"), dict) else {}
     smoke_test = template.get("smoke_test") if isinstance(template.get("smoke_test"), dict) else {}
+    first_token_probe = (
+        template.get("first_token_probe")
+        if isinstance(template.get("first_token_probe"), dict)
+        else {}
+    )
 
     run_id = uuid4().hex
     run = ServeRunJob(
@@ -506,6 +871,7 @@ async def start_serve_run(
         env_overrides=env_overrides,
         healthcheck_curl=_coerce_text(healthcheck.get("curl")) or None,
         smoke_curl=_coerce_text(smoke_test.get("curl")) or None,
+        first_token_curl=_coerce_text(first_token_probe.get("curl")) or None,
         command_display=_coerce_text(template.get("command")),
         healthcheck_url=_coerce_text(healthcheck.get("url")) or None,
         healthcheck_method=_normalize_method(healthcheck.get("method"), default="GET"),
@@ -518,6 +884,18 @@ async def start_serve_run(
         smoke_headers=_safe_headers(smoke_test.get("headers")),
         smoke_json_body=_safe_json_mapping(smoke_test.get("json_body")),
         smoke_expected_status=_normalize_expected_status(smoke_test.get("expected_status"), default=200),
+        first_token_url=_coerce_text(first_token_probe.get("url")) or None,
+        first_token_method=_normalize_method(
+            first_token_probe.get("method"),
+            default="POST",
+        ),
+        first_token_headers=_safe_headers(first_token_probe.get("headers")),
+        first_token_json_body=_safe_json_mapping(first_token_probe.get("json_body")),
+        first_token_expected_status=_normalize_expected_status(
+            first_token_probe.get("expected_status"),
+            default=200,
+        ),
+        first_token_parser=_normalize_first_token_parser(first_token_probe.get("parser")),
         telemetry_path=_telemetry_path(int(project_id), run_id),
     )
     _append_log(run, _format_log("[SYS]", f"Starting serve run for template {run.template_id}..."))

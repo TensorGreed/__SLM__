@@ -328,6 +328,8 @@ def recommend_training_base_models(
     available_vram_gb: float | None = None,
     task_profile: str | None = None,
     top_k: int = 3,
+    adaptive_model_bias: dict[str, float] | None = None,
+    adaptive_bias_label: str | None = None,
 ) -> dict[str, Any]:
     """Recommend base models from built-in catalog using hardware/task heuristics."""
     resolved_device = _normalize_target_device(target_device)
@@ -336,7 +338,20 @@ def recommend_training_base_models(
     resolved_top_k = _coerce_top_k(top_k)
     resolved_task_profile, suggested_task_type = _resolve_training_task(task_profile)
 
-    scored: list[tuple[float, dict[str, Any], list[str]]] = []
+    bias_map: dict[str, float] = {}
+    for raw_model_id, raw_bias in dict(adaptive_model_bias or {}).items():
+        model_id = str(raw_model_id or "").strip()
+        if not model_id:
+            continue
+        try:
+            parsed_bias = float(raw_bias)
+        except (TypeError, ValueError):
+            continue
+        if parsed_bias <= 0:
+            continue
+        bias_map[model_id] = parsed_bias
+
+    scored: list[tuple[float, dict[str, Any], list[str], float]] = []
     fits_vram_count = 0
     for model in _MODEL_CATALOG:
         score, reasons = _score_model(
@@ -345,10 +360,20 @@ def recommend_training_base_models(
             primary_language=resolved_language,
             available_vram_gb=resolved_vram,
         )
+        model_id = str(model.get("model_id") or "")
+        adaptive_bias = float(bias_map.get(model_id, 0.0))
+        if adaptive_bias > 0:
+            score += adaptive_bias
+            if adaptive_bias_label:
+                reasons.append(
+                    f"project acceptance trend boost (+{adaptive_bias:.2f}; {adaptive_bias_label})"
+                )
+            else:
+                reasons.append(f"project acceptance trend boost (+{adaptive_bias:.2f})")
         min_vram_gb = float(model.get("estimated_min_vram_gb") or 0.0)
         if resolved_vram is not None and resolved_vram >= min_vram_gb:
             fits_vram_count += 1
-        scored.append((score, model, reasons))
+        scored.append((score, model, reasons, adaptive_bias))
 
     scored.sort(
         key=lambda item: (
@@ -360,7 +385,7 @@ def recommend_training_base_models(
     )
 
     recommendations: list[dict[str, Any]] = []
-    for score, model, reasons in scored[:resolved_top_k]:
+    for score, model, reasons, adaptive_bias in scored[:resolved_top_k]:
         min_vram_gb = float(model.get("estimated_min_vram_gb") or 0.0)
         params_b = float(model.get("params_b") or 0.0)
         recommendations.append(
@@ -375,6 +400,7 @@ def recommend_training_base_models(
                 "caveats": list(model.get("caveats") or []),
                 "match_reasons": reasons[:6],
                 "match_score": round(float(score), 4),
+                "adaptive_bias": round(float(adaptive_bias), 4),
                 "suggested_defaults": {
                     "task_type": suggested_task_type,
                     "chat_template": str(model.get("preferred_chat_template") or "llama3"),
@@ -417,4 +443,3 @@ def recommend_training_base_models(
         "recommendations": recommendations,
         "warnings": warnings,
     }
-

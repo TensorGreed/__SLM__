@@ -154,6 +154,13 @@ def _build_vllm_template(
         "max_tokens": 64,
         "stream": False,
     }
+    first_token_payload = {
+        "model": smoke_payload["model"],
+        "messages": smoke_payload["messages"],
+        "temperature": 0.2,
+        "max_tokens": 64,
+        "stream": True,
+    }
     return {
         "template_id": "runner.vllm",
         "display_name": "vLLM OpenAI Server",
@@ -179,9 +186,22 @@ def _build_vllm_template(
                 f"-d '{_format_curl_json(smoke_payload)}'"
             ),
         },
+        "first_token_probe": {
+            "url": chat_url,
+            "method": "POST",
+            "parser": "openai_sse",
+            "json_body": first_token_payload,
+            "expected_status": 200,
+            "curl": (
+                f"curl -sS -N -X POST {shlex.quote(chat_url)} "
+                "-H 'Content-Type: application/json' "
+                f"-d '{_format_curl_json(first_token_payload)}'"
+            ),
+        },
         "notes": [
             "Install vLLM in the active environment before launching.",
             f"Model path is resolved to: {model_dir}",
+            "First-token latency probe uses streaming /v1/chat/completions.",
         ],
         "launch_spec": {
             "cwd": str(run_dir),
@@ -229,6 +249,11 @@ def _build_tgi_template(
             "temperature": 0.2,
         },
     }
+    first_token_url = f"http://{host}:{port}/generate_stream"
+    first_token_payload = {
+        "inputs": smoke_payload["inputs"],
+        "parameters": smoke_payload["parameters"],
+    }
     return {
         "template_id": "runner.tgi",
         "display_name": "TGI Runner",
@@ -254,8 +279,21 @@ def _build_tgi_template(
                 f"-d '{_format_curl_json(smoke_payload)}'"
             ),
         },
+        "first_token_probe": {
+            "url": first_token_url,
+            "method": "POST",
+            "parser": "tgi_sse",
+            "json_body": first_token_payload,
+            "expected_status": 200,
+            "curl": (
+                f"curl -sS -N -X POST {shlex.quote(first_token_url)} "
+                "-H 'Content-Type: application/json' "
+                f"-d '{_format_curl_json(first_token_payload)}'"
+            ),
+        },
         "notes": [
             "Install `text-generation-launcher` or use Docker image `ghcr.io/huggingface/text-generation-inference`.",
+            "First-token latency probe uses `/generate_stream` SSE response.",
         ],
         "launch_spec": {
             "cwd": str(run_dir),
@@ -298,6 +336,11 @@ def _build_ollama_template(
         "prompt": str(prompt or "Hello from SLM!"),
         "stream": False,
     }
+    first_token_payload = {
+        "model": model_alias,
+        "prompt": str(prompt or "Hello from SLM!"),
+        "stream": True,
+    }
     return {
         "template_id": "runner.ollama",
         "display_name": "Ollama Runner",
@@ -328,9 +371,22 @@ def _build_ollama_template(
                 f"-d '{_format_curl_json(smoke_payload)}'"
             ),
         },
+        "first_token_probe": {
+            "url": smoke_url,
+            "method": "POST",
+            "parser": "ollama_jsonl",
+            "json_body": first_token_payload,
+            "expected_status": 200,
+            "curl": (
+                f"curl -sS -N -X POST {shlex.quote(smoke_url)} "
+                "-H 'Content-Type: application/json' "
+                f"-d '{_format_curl_json(first_token_payload)}'"
+            ),
+        },
         "notes": [
             "Run setup_commands once before first serve.",
             f"GGUF file used in Modelfile: {gguf_name}",
+            "First-token latency probe uses streamed `/api/generate` output.",
         ],
         "launch_spec": {
             "cwd": str(run_dir),
