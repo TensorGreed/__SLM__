@@ -76,6 +76,36 @@ interface RegistryListResponse {
     models: RegistryModel[];
 }
 
+interface ServeTemplate {
+    template_id: string;
+    display_name: string;
+    description?: string;
+    command?: string;
+    setup_commands?: string[];
+    healthcheck?: {
+        url?: string;
+        curl?: string;
+    };
+    smoke_test?: {
+        prompt?: string;
+        curl?: string;
+    };
+    notes?: string[];
+}
+
+interface ServePlanResponse {
+    source: string;
+    export_id?: number;
+    model_id?: number;
+    model_name?: string;
+    model_stage?: string;
+    export_format?: string;
+    host?: string;
+    port?: number;
+    run_dir?: string;
+    templates?: ServeTemplate[];
+}
+
 function toErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -112,6 +142,8 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
 
     const [expandedIds, setExpandedIds] = useState<number[]>([]);
     const [copyState, setCopyState] = useState<Record<string, boolean>>({});
+    const [servePlan, setServePlan] = useState<ServePlanResponse | null>(null);
+    const [isLoadingServePlan, setIsLoadingServePlan] = useState(false);
 
     const refreshAll = async () => {
         setIsLoading(true);
@@ -137,6 +169,7 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setErrorMessage('');
         setStatusMessage('');
         setTargetLoadError('');
+        setServePlan(null);
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -268,6 +301,52 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         } catch (err) {
             setErrorMessage(toErrorMessage(err));
             setStatusMessage('');
+        }
+    };
+
+    const handleExportServePlan = async (exportId: number) => {
+        setIsLoadingServePlan(true);
+        setErrorMessage('');
+        setStatusMessage(`Generating serve plan for export ${exportId}...`);
+        try {
+            const res = await api.post<ServePlanResponse>(
+                `/projects/${projectId}/export/${exportId}/serve-plan`,
+                {
+                    host: '127.0.0.1',
+                    port: 8080,
+                    smoke_test_prompt: 'Hello from local SLM',
+                },
+            );
+            setServePlan(res.data || null);
+            setStatusMessage(`Serve plan generated for export ${exportId}.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+            setStatusMessage('');
+        } finally {
+            setIsLoadingServePlan(false);
+        }
+    };
+
+    const handleRegistryServePlan = async (modelId: number) => {
+        setIsLoadingServePlan(true);
+        setErrorMessage('');
+        setStatusMessage(`Generating serve plan for model ${modelId}...`);
+        try {
+            const res = await api.post<ServePlanResponse>(
+                `/projects/${projectId}/registry/models/${modelId}/serve-plan`,
+                {
+                    host: '127.0.0.1',
+                    port: 8080,
+                    smoke_test_prompt: 'Hello from local SLM',
+                },
+            );
+            setServePlan(res.data || null);
+            setStatusMessage(`Serve plan generated for model ${modelId}.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+            setStatusMessage('');
+        } finally {
+            setIsLoadingServePlan(false);
         }
     };
 
@@ -469,6 +548,13 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                                 <button className="btn btn-secondary btn-sm" onClick={() => void handleDeploy(model.id, model.stage === 'production' ? 'production' : 'staging')}>
                                                     Mark Deployed
                                                 </button>
+                                                <button
+                                                    className="btn btn-secondary btn-sm"
+                                                    onClick={() => void handleRegistryServePlan(model.id)}
+                                                    disabled={isLoadingServePlan}
+                                                >
+                                                    {isLoadingServePlan ? 'Loading...' : 'Serve Plan'}
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -533,6 +619,16 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                                                 >
                                                                     {copyState[`manifest-${exp.id}`] ? 'Copied!' : 'Copy Manifest'}
                                                                 </button>
+                                                                <button
+                                                                    className="btn btn-secondary btn-sm"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        void handleExportServePlan(exp.id);
+                                                                    }}
+                                                                    disabled={isLoadingServePlan}
+                                                                >
+                                                                    {isLoadingServePlan ? 'Loading...' : 'Serve Plan'}
+                                                                </button>
                                                             </div>
                                                         </div>
 
@@ -554,6 +650,103 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                 })}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {servePlan && (
+                <div className="card">
+                    <div className="serve-plan-header">
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: 'var(--font-size-md)' }}>One-Click Serve Plan</h3>
+                            <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                                Source: {servePlan.source}
+                                {servePlan.export_format ? ` • Format: ${servePlan.export_format}` : ''}
+                                {servePlan.model_name ? ` • Model: ${servePlan.model_name}` : ''}
+                                {servePlan.model_stage ? ` • Stage: ${servePlan.model_stage}` : ''}
+                            </p>
+                        </div>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setServePlan(null)}>
+                            Close
+                        </button>
+                    </div>
+
+                    {servePlan.run_dir && (
+                        <div className="serve-plan-run-dir">
+                            Run dir:{' '}
+                            <code>{servePlan.run_dir}</code>
+                        </div>
+                    )}
+
+                    <div className="serve-template-grid">
+                        {(servePlan.templates || []).map((template) => (
+                            <div key={template.template_id} className="serve-template-card">
+                                <div className="serve-template-card__title">{template.display_name}</div>
+                                {template.description && (
+                                    <div className="serve-template-card__subtitle">{template.description}</div>
+                                )}
+
+                                {template.command && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Launch Command</div>
+                                        <pre className="serve-template-code">{template.command}</pre>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => handleCopy(`serve-cmd-${template.template_id}`, template.command || '')}
+                                        >
+                                            {copyState[`serve-cmd-${template.template_id}`] ? 'Copied!' : 'Copy Command'}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {Array.isArray(template.setup_commands) && template.setup_commands.length > 0 && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Setup Commands</div>
+                                        <pre className="serve-template-code">{template.setup_commands.join('\n')}</pre>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => handleCopy(`serve-setup-${template.template_id}`, (template.setup_commands || []).join('\n'))}
+                                        >
+                                            {copyState[`serve-setup-${template.template_id}`] ? 'Copied!' : 'Copy Setup'}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {template.healthcheck?.curl && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Health Check Curl</div>
+                                        <pre className="serve-template-code">{template.healthcheck.curl}</pre>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => handleCopy(`serve-health-${template.template_id}`, template.healthcheck?.curl || '')}
+                                        >
+                                            {copyState[`serve-health-${template.template_id}`] ? 'Copied!' : 'Copy Health Curl'}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {template.smoke_test?.curl && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Smoke Test Curl</div>
+                                        <pre className="serve-template-code">{template.smoke_test.curl}</pre>
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => handleCopy(`serve-smoke-${template.template_id}`, template.smoke_test?.curl || '')}
+                                        >
+                                            {copyState[`serve-smoke-${template.template_id}`] ? 'Copied!' : 'Copy Smoke Curl'}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {Array.isArray(template.notes) && template.notes.length > 0 && (
+                                    <div className="serve-template-notes">
+                                        {template.notes.map((note, idx) => (
+                                            <div key={`${template.template_id}-note-${idx}`}>• {note}</div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 </div>
             )}

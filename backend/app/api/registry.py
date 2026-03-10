@@ -20,6 +20,7 @@ from app.services.registry_service import (
     register_model,
     serialize_registry_entry,
 )
+from app.services.serve_service import build_registry_serve_plan
 
 router = APIRouter(prefix="/projects/{project_id}/registry", tags=["Registry"])
 
@@ -51,6 +52,13 @@ class DeployModelRequest(BaseModel):
     environment: str = Field(default="staging", min_length=1, max_length=32)
     endpoint_url: str = Field(default="", max_length=1024)
     notes: str = Field(default="", max_length=2000)
+
+
+class RegistryServePlanRequest(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8000
+    smoke_test_prompt: str = "Hello from SLM!"
+    target_ids: list[str] | None = None
 
 
 @router.post("/models/register", status_code=201)
@@ -156,6 +164,32 @@ async def deploy(
             notes=req.notes,
         )
         return serialize_registry_entry(entry)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/models/{model_id}/serve-plan")
+async def serve_plan(
+    project_id: int,
+    model_id: int,
+    req: RegistryServePlanRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate local serve launch templates for a registry model."""
+    payload = req or RegistryServePlanRequest()
+    try:
+        return await build_registry_serve_plan(
+            db,
+            project_id=project_id,
+            model_id=model_id,
+            host=payload.host,
+            port=payload.port,
+            smoke_test_prompt=payload.smoke_test_prompt,
+            target_ids=payload.target_ids,
+        )
     except ValueError as e:
         detail = str(e)
         if "not found" in detail:

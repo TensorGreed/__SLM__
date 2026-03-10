@@ -16,6 +16,7 @@ from app.services.export_service import (
     run_export,
     validate_export_deployment,
 )
+from app.services.serve_service import build_export_serve_plan
 
 router = APIRouter(prefix="/projects/{project_id}/export", tags=["Export"])
 
@@ -36,6 +37,13 @@ class ExportRunRequest(BaseModel):
 class ExportDeploymentValidateRequest(BaseModel):
     deployment_targets: list[str] | None = None
     run_smoke_tests: bool = True
+
+
+class ExportServePlanRequest(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8000
+    smoke_test_prompt: str = "Hello from SLM!"
+    target_ids: list[str] | None = None
 
 
 @router.post("/create", status_code=201)
@@ -154,3 +162,29 @@ async def list_all(
         }
         for e in exports
     ]
+
+
+@router.post("/{export_id}/serve-plan")
+async def serve_plan(
+    project_id: int,
+    export_id: int,
+    req: ExportServePlanRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate local serve launch templates + health/smoke curl snippets for an export."""
+    payload = req or ExportServePlanRequest()
+    try:
+        return await build_export_serve_plan(
+            db,
+            project_id=project_id,
+            export_id=export_id,
+            host=payload.host,
+            port=payload.port,
+            smoke_test_prompt=payload.smoke_test_prompt,
+            target_ids=payload.target_ids,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)

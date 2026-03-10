@@ -194,3 +194,84 @@
 .expanded .expand-icon {
     transform: rotate(180deg);
 }
+
+.serve-plan-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.serve-plan-run-dir {
+    margin-bottom: var(--space-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.serve-plan-run-dir code {
+    background: rgba(0, 0, 0, 0.25);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.serve-template-grid {
+    display: grid;
+    gap: var(--space-md);
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.serve-template-card {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.serve-template-card__title {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+}
+
+.serve-template-card__subtitle {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.serve-template-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.serve-template-block__label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.serve-template-code {
+    margin: 0;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Fira Code', 'Courier New', Courier, monospace;
+    font-size: 0.72rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.serve-template-notes {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    display: grid;
+    gap: 4px;
+}
