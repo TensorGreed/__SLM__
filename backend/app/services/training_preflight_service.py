@@ -6,6 +6,7 @@ import importlib.util
 from typing import Any
 
 from app.config import settings
+from app.services.alignment_service import analyze_preference_dataset_contract
 from app.services.dataset_contract_service import analyze_prepared_dataset_contract
 from app.services.training_runtime_service import (
     get_runtime_spec,
@@ -396,6 +397,8 @@ def run_training_preflight(
     train_exists = train_file.exists()
     val_exists = val_file.exists()
     dataset_contract: dict[str, Any] | None = None
+    training_mode = str(resolved_config.get("training_mode") or "sft").strip().lower() or "sft"
+    alignment_contract: dict[str, Any] | None = None
     if not train_exists:
         errors.append(
             (
@@ -430,6 +433,25 @@ def run_training_preflight(
             if text and text not in hints:
                 hints.append(text)
 
+    if train_exists and training_mode in {"dpo", "orpo"}:
+        alignment_contract = analyze_preference_dataset_contract(
+            project_id=project_id,
+            sample_size=400,
+            min_coverage=0.85,
+        )
+        for item in alignment_contract.get("errors", []):
+            text = str(item).strip()
+            if text and text not in errors:
+                errors.append(text)
+        for item in alignment_contract.get("warnings", []):
+            text = str(item).strip()
+            if text and text not in warnings:
+                warnings.append(text)
+        for item in alignment_contract.get("hints", []):
+            text = str(item).strip()
+            if text and text not in hints:
+                hints.append(text)
+
     capability_summary = {
         "matrix_version": MODEL_CAPABILITY_MATRIX_VERSION,
         "model": {
@@ -441,6 +463,7 @@ def run_training_preflight(
             "recommended_chat_templates": recommended_templates,
         },
         "task_type": task_type,
+        "training_mode": training_mode,
         "trainer_backend_requested": trainer_backend_requested,
         "trainer_backend_effective": trainer_backend_effective,
         "sequence_length": {
@@ -464,6 +487,7 @@ def run_training_preflight(
             "val_file": str(val_file),
             "val_file_exists": val_exists,
             "contract": dataset_contract or {},
+            "alignment_contract": alignment_contract or {},
         },
         "command_template_present": bool(settings.TRAINING_EXTERNAL_CMD.strip()),
     }

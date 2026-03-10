@@ -1,9 +1,12 @@
 """Training API routes."""
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-import redis.asyncio as aioredis
 import asyncio
 import json
+from collections.abc import AsyncIterator
+
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,8 +33,27 @@ from app.services.training_preflight_service import (
     run_training_preflight,
     run_training_preflight_plan,
 )
+from app.services.alignment_service import (
+    list_alignment_recipes,
+    resolve_alignment_recipe,
+    score_preference_rows,
+    validate_preference_rows,
+)
 from app.services.model_selection_service import recommend_training_base_models
-from app.services.playground_service import run_playground_chat
+from app.services.playground_service import (
+    normalize_playground_messages,
+    run_playground_chat,
+    stream_playground_chat,
+)
+from app.services.playground_session_service import (
+    delete_playground_session,
+    get_playground_session,
+    list_playground_model_options,
+    list_playground_sessions,
+    save_playground_session_transcript,
+    serialize_playground_session_detail,
+    serialize_playground_session_summary,
+)
 from app.services.training_recipe_service import (
     list_training_recipes,
     resolve_training_recipe,
@@ -77,7 +99,52 @@ class PlaygroundChatRequest(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     max_tokens: int = Field(default=512, ge=16, le=4096)
     system_prompt: str | None = Field(default=None, max_length=8000)
+    session_id: int | None = Field(default=None, ge=1)
+    session_title: str | None = Field(default=None, max_length=255)
+    save_history: bool = True
     messages: list[PlaygroundChatMessage] = Field(default_factory=list, min_length=1)
+
+
+class PlaygroundSessionCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    provider: str = Field(default="openai_compatible", min_length=1, max_length=64)
+    model_name: str | None = Field(default=None, max_length=255)
+    api_url: str | None = Field(default=None, max_length=2048)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, ge=16, le=4096)
+    system_prompt: str | None = Field(default=None, max_length=8000)
+    messages: list[PlaygroundChatMessage] = Field(default_factory=list)
+
+
+class AlignmentRecipeResolveRequest(BaseModel):
+    recipe_id: str = Field(..., min_length=1, max_length=128)
+    base_config: dict[str, object] = Field(default_factory=dict)
+    overrides: dict[str, object] = Field(default_factory=dict)
+
+
+class AlignmentContractValidateRequest(BaseModel):
+    rows: list[dict[str, object]] = Field(default_factory=list, min_length=1)
+    min_coverage: float = Field(default=0.85, ge=0.0, le=1.0)
+    max_rows: int = Field(default=2000, ge=1, le=10000)
+
+
+class AlignmentJudgeScoreRequest(BaseModel):
+    rows: list[dict[str, object]] = Field(default_factory=list, min_length=1)
+    quality_threshold: float = Field(default=3.0, ge=1.0, le=5.0)
+    max_rows: int = Field(default=1000, ge=1, le=5000)
+
+
+def _sse_json(payload: dict) -> str:
+    serialized = json.dumps(payload, ensure_ascii=True)
+    return f"data: {serialized}\n\n"
+
+
+async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return project
 
 
 @router.get("/runtimes")
@@ -190,30 +257,307 @@ async def playground_chat(
     db: AsyncSession = Depends(get_db),
 ):
     """Run a chat completion request for the project playground."""
-    project_result = await db.execute(select(Project).where(Project.id == project_id))
-    project = project_result.scalar_one_or_none()
-    if project is None:
-        raise HTTPException(404, f"Project {project_id} not found")
+    project = await _get_project_or_404(db, project_id)
 
     model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    normalized_messages = normalize_playground_messages(
+        messages=[item.model_dump() for item in req.messages],
+        system_prompt=req.system_prompt,
+    )
+    if not normalized_messages:
+        raise HTTPException(400, "At least one non-empty chat message is required.")
     try:
         result = await run_playground_chat(
             provider=req.provider,
             model_name=model_name,
-            messages=[item.model_dump() for item in req.messages],
+            messages=normalized_messages,
             api_url=req.api_url,
             api_key=req.api_key,
             temperature=req.temperature,
             max_tokens=req.max_tokens,
-            system_prompt=req.system_prompt,
+            system_prompt=None,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    session_payload = None
+    if bool(req.save_history):
+        transcript = list(normalized_messages)
+        transcript.append({"role": "assistant", "content": str(result.get("reply") or "").strip()})
+        try:
+            session = await save_playground_session_transcript(
+                db,
+                project_id=project_id,
+                session_id=req.session_id,
+                title=req.session_title,
+                provider=req.provider,
+                model_name=model_name,
+                api_url=req.api_url,
+                system_prompt=req.system_prompt,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+                transcript=transcript,
+                metadata={
+                    "message_count": len(req.messages),
+                    "last_latency_ms": result.get("latency_ms"),
+                },
+            )
+            session_payload = serialize_playground_session_summary(session)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
     return {
         "project_id": project_id,
         "message_count": len(req.messages),
+        "normalized_message_count": len(normalized_messages),
+        "session_id": session_payload.get("id") if isinstance(session_payload, dict) else None,
+        "session_summary": session_payload,
         **result,
+    }
+
+
+@router.post("/playground/chat/stream")
+async def playground_chat_stream(
+    project_id: int,
+    req: PlaygroundChatRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream incremental chat completion chunks (SSE)."""
+    project = await _get_project_or_404(db, project_id)
+    model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    normalized_messages = normalize_playground_messages(
+        messages=[item.model_dump() for item in req.messages],
+        system_prompt=req.system_prompt,
+    )
+    if not normalized_messages:
+        raise HTTPException(400, "At least one non-empty chat message is required.")
+
+    async def stream_events() -> AsyncIterator[str]:
+        try:
+            async for event in stream_playground_chat(
+                provider=req.provider,
+                model_name=model_name,
+                messages=normalized_messages,
+                api_url=req.api_url,
+                api_key=req.api_key,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+                system_prompt=None,
+            ):
+                event_type = str(event.get("type") or "").strip().lower()
+                if event_type != "final":
+                    yield _sse_json(event)
+                    continue
+
+                final_event = dict(event)
+                session_payload = None
+                if bool(req.save_history):
+                    transcript = list(normalized_messages)
+                    transcript.append(
+                        {
+                            "role": "assistant",
+                            "content": str(final_event.get("reply") or "").strip(),
+                        }
+                    )
+                    try:
+                        session = await save_playground_session_transcript(
+                            db,
+                            project_id=project_id,
+                            session_id=req.session_id,
+                            title=req.session_title,
+                            provider=req.provider,
+                            model_name=model_name,
+                            api_url=req.api_url,
+                            system_prompt=req.system_prompt,
+                            temperature=req.temperature,
+                            max_tokens=req.max_tokens,
+                            transcript=transcript,
+                            metadata={
+                                "message_count": len(req.messages),
+                                "last_latency_ms": final_event.get("latency_ms"),
+                                "stream": True,
+                            },
+                        )
+                        session_payload = serialize_playground_session_summary(session)
+                    except ValueError as e:
+                        yield _sse_json({"type": "error", "detail": str(e)})
+                        return
+
+                final_event.update(
+                    {
+                        "project_id": project_id,
+                        "message_count": len(req.messages),
+                        "normalized_message_count": len(normalized_messages),
+                        "session_id": session_payload.get("id") if isinstance(session_payload, dict) else None,
+                        "session_summary": session_payload,
+                    }
+                )
+                yield _sse_json(final_event)
+        except ValueError as e:
+            yield _sse_json({"type": "error", "detail": str(e)})
+
+    return StreamingResponse(
+        stream_events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.get("/playground/models")
+async def playground_models(
+    project_id: int,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """List model candidates for playground picker from project/registry/artifacts."""
+    try:
+        return await list_playground_model_options(db, project_id=project_id, limit=limit)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/playground/sessions")
+async def playground_session_list(
+    project_id: int,
+    limit: int = 30,
+    db: AsyncSession = Depends(get_db),
+):
+    """List project playground sessions."""
+    await _get_project_or_404(db, project_id)
+    rows = await list_playground_sessions(db, project_id=project_id, limit=limit)
+    sessions = [serialize_playground_session_summary(item) for item in rows]
+    return {
+        "project_id": project_id,
+        "count": len(sessions),
+        "sessions": sessions,
+    }
+
+
+@router.post("/playground/sessions", status_code=201)
+async def create_playground_session(
+    project_id: int,
+    req: PlaygroundSessionCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a playground session with optional initial history."""
+    project = await _get_project_or_404(db, project_id)
+    model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    transcript = normalize_playground_messages(
+        messages=[item.model_dump() for item in req.messages],
+        system_prompt=req.system_prompt,
+    )
+    session = await save_playground_session_transcript(
+        db,
+        project_id=project_id,
+        session_id=None,
+        title=req.title,
+        provider=req.provider,
+        model_name=model_name,
+        api_url=req.api_url,
+        system_prompt=req.system_prompt,
+        temperature=req.temperature,
+        max_tokens=req.max_tokens,
+        transcript=transcript,
+        metadata={"created_manually": True},
+    )
+    return serialize_playground_session_detail(session)
+
+
+@router.get("/playground/sessions/{session_id}")
+async def playground_session_get(
+    project_id: int,
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read one playground session with full transcript."""
+    await _get_project_or_404(db, project_id)
+    session = await get_playground_session(db, project_id=project_id, session_id=session_id)
+    if session is None:
+        raise HTTPException(404, f"Playground session {session_id} not found")
+    return serialize_playground_session_detail(session)
+
+
+@router.delete("/playground/sessions/{session_id}", status_code=204)
+async def playground_session_remove(
+    project_id: int,
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete one playground session."""
+    await _get_project_or_404(db, project_id)
+    deleted = await delete_playground_session(db, project_id=project_id, session_id=session_id)
+    if not deleted:
+        raise HTTPException(404, f"Playground session {session_id} not found")
+
+
+@router.get("/alignment/recipes")
+async def alignment_recipe_catalog(
+    project_id: int,
+):
+    """List DPO/ORPO alignment recipe presets."""
+    return {
+        "project_id": project_id,
+        "recipe_count": len(list_alignment_recipes(include_patch=False)),
+        "recipes": list_alignment_recipes(include_patch=False),
+    }
+
+
+@router.post("/alignment/recipes/resolve")
+async def alignment_recipe_resolve(
+    project_id: int,
+    req: AlignmentRecipeResolveRequest,
+):
+    """Resolve one alignment recipe into effective training config patch."""
+    try:
+        resolution = resolve_alignment_recipe(
+            req.recipe_id,
+            base_config=dict(req.base_config or {}),
+            overrides=dict(req.overrides or {}),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "project_id": project_id,
+        "recipe": resolution.get("recipe"),
+        "resolved_config": resolution.get("resolved_config"),
+    }
+
+
+@router.post("/alignment/preference-contract/validate")
+async def alignment_contract_validate(
+    project_id: int,
+    req: AlignmentContractValidateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate prompt/chosen/rejected pair contract for DPO/ORPO data."""
+    await _get_project_or_404(db, project_id)
+    report = validate_preference_rows(
+        [dict(item) for item in req.rows],
+        min_coverage=req.min_coverage,
+        max_rows=req.max_rows,
+    )
+    return {
+        "project_id": project_id,
+        **report,
+    }
+
+
+@router.post("/alignment/judge/score")
+async def alignment_judge_score(
+    project_id: int,
+    req: AlignmentJudgeScoreRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Heuristic judge scoring for preference rows before DPO/ORPO training."""
+    await _get_project_or_404(db, project_id)
+    report = score_preference_rows(
+        [dict(item) for item in req.rows],
+        quality_threshold=req.quality_threshold,
+        max_rows=req.max_rows,
+    )
+    return {
+        "project_id": project_id,
+        **report,
     }
 
 

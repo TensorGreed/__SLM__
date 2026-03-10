@@ -122,7 +122,9 @@ export default function DatasetVersionPanel({ projectId }: DatasetVersionPanelPr
                                         {ds.dataset_type}
                                     </span>
                                     {ds.is_locked && (
-                                        <CheckCircle size={14} color="var(--color-success)" title="Locked (immutable)" />
+                                        <span title="Locked (immutable)" style={{ display: 'inline-flex' }}>
+                                            <CheckCircle size={14} color="var(--color-success)" />
+                                        </span>
                                     )}
                                 </div>
                                 <div style={{ display: 'flex', gap: 'var(--space-lg)', color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>

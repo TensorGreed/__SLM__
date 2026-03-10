@@ -28,6 +28,66 @@
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.playground-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.playground-sessions {
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    background: rgba(15, 23, 42, 0.28);
+}
+
+.playground-sessions__title {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.playground-sessions__list {
+    display: grid;
+    gap: 6px;
+}
+
+.playground-sessions__empty {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+}
+
+.playground-session-item {
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-sm);
+    background: rgba(30, 41, 59, 0.45);
+    color: var(--text-primary);
+    text-align: left;
+    padding: 8px 10px;
+    display: grid;
+    gap: 3px;
+    cursor: pointer;
+}
+
+.playground-session-item.active {
+    border-color: rgba(59, 130, 246, 0.7);
+    background: rgba(59, 130, 246, 0.18);
+}
+
+.playground-session-item__title {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+}
+
+.playground-session-item__meta {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
 .playground-system {
     min-height: 78px;
     resize: vertical;
@@ -72,6 +132,14 @@
 
 .playground-message.assistant {
     background: rgba(16, 185, 129, 0.1);
+}
+
+.playground-message.system {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.playground-message.streaming {
+    border-style: dashed;
 }
 
 .playground-message__role {

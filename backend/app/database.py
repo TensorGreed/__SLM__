@@ -66,6 +66,7 @@ BASE_REQUIRED_TABLES = {
     "exports",
     "model_registry_entries",
     "project_secrets",
+    "playground_sessions",
 }
 
 AUTH_REQUIRED_TABLES = {

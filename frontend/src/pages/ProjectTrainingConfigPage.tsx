@@ -1,5 +1,6 @@
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
+import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
 import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -34,6 +35,7 @@ export default function ProjectTrainingConfigPage() {
             />
 
             <ChatPlaygroundPanel projectId={projectId} />
+            <AlignmentScaffoldPanel projectId={projectId} />
         </div>
     );
 }

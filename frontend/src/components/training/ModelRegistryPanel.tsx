@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Star, Clock, HardDrive, Tag } from 'lucide-react';
+import { Download, Star, Clock, HardDrive } from 'lucide-react';
 import api from '../../api/client';
 
 interface Checkpoint {
