@@ -1,10 +1,17 @@
 """Tests for the synthetic data generation service — demo/heuristic mode."""
 
+import os
 import unittest
 
+os.environ.setdefault("AUTH_ENABLED", "false")
+os.environ.setdefault("DEBUG", "false")
+
 from app.services.synthetic_service import (
+    _build_demo_conversations,
+    _compute_conversation_confidence,
     _generate_demo_pairs,
     _compute_confidence,
+    _parse_teacher_conversations,
     _parse_teacher_pairs,
 )
 
@@ -111,6 +118,54 @@ class SyntheticServiceTests(unittest.TestCase):
         self.assertEqual(len(pairs), 2)
         self.assertEqual(pairs[0]["question"], "What is supervised learning?")
         self.assertEqual(pairs[1]["answer"], "PyTorch.")
+
+    # ── Multi-Turn Conversation Generation ────────────────────────────
+
+    def test_demo_conversations_respect_turn_constraints(self):
+        rows = _build_demo_conversations(
+            self.SAMPLE_TEXT,
+            num_dialogues=2,
+            min_turns=3,
+            max_turns=4,
+        )
+        self.assertEqual(len(rows), 2)
+        for item in rows:
+            self.assertIn("messages", item)
+            self.assertIn("turn_count", item)
+            self.assertGreaterEqual(int(item["turn_count"]), 3)
+            self.assertLessEqual(int(item["turn_count"]), 4)
+
+    def test_parse_teacher_conversations_json(self):
+        content = (
+            '{"conversations":[{"conversation_id":"c1","messages":['
+            '{"role":"user","content":"Q1"},'
+            '{"role":"assistant","content":"A1"},'
+            '{"role":"user","content":"Q2"},'
+            '{"role":"assistant","content":"A2"}]}]}'
+        )
+        rows = _parse_teacher_conversations(content)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["conversation_id"], "c1")
+        self.assertEqual(int(rows[0]["turn_count"]), 2)
+
+    def test_conversation_confidence_increases_with_pairs(self):
+        short = _compute_conversation_confidence(
+            [
+                {"role": "user", "content": "What is ML?"},
+                {"role": "assistant", "content": "Machine learning is a subset of AI."},
+            ]
+        )
+        longer = _compute_conversation_confidence(
+            [
+                {"role": "user", "content": "What is ML?"},
+                {"role": "assistant", "content": "Machine learning is a subset of AI."},
+                {"role": "user", "content": "Why is it useful?"},
+                {"role": "assistant", "content": "It learns patterns from data for predictions."},
+                {"role": "user", "content": "Give an example."},
+                {"role": "assistant", "content": "Fraud detection and demand forecasting are common examples."},
+            ]
+        )
+        self.assertLessEqual(short, longer)
 
 
 if __name__ == "__main__":

@@ -76,6 +76,11 @@ from app.services.training_recipe_service import (
     resolve_training_recipe,
 )
 from app.services.training_runtime_service import list_runtime_catalog
+from app.services.cloud_burst_service import (
+    build_cloud_burst_launch_plan,
+    estimate_cloud_burst_quote,
+    list_cloud_burst_catalog,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/training", tags=["Training"])
 
@@ -196,6 +201,26 @@ class AlignmentDatasetFilterRequest(BaseModel):
     target_path: str | None = Field(default=None, max_length=4096)
 
 
+class CloudBurstQuoteRequest(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    gpu_sku: str = Field(..., min_length=1, max_length=64)
+    duration_hours: float = Field(default=2.0, ge=0.25, le=72.0)
+    storage_gb: int = Field(default=50, ge=10, le=2000)
+    egress_gb: float = Field(default=0.0, ge=0.0, le=5000.0)
+    spot: bool = True
+
+
+class CloudBurstLaunchPlanRequest(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    gpu_sku: str = Field(..., min_length=1, max_length=64)
+    duration_hours: float = Field(default=2.0, ge=0.25, le=72.0)
+    experiment_id: int | None = Field(default=None, ge=1)
+    region: str | None = Field(default=None, max_length=64)
+    image: str = Field(default="", max_length=512)
+    startup_script: str = Field(default="", max_length=8000)
+    spot: bool = True
+
+
 def _sse_json(payload: dict) -> str:
     serialized = json.dumps(payload, ensure_ascii=True)
     return f"data: {serialized}\n\n"
@@ -218,6 +243,66 @@ async def get_training_runtime_catalog(
         "project_id": project_id,
         **list_runtime_catalog(),
     }
+
+
+@router.get("/cloud-burst/catalog")
+async def get_cloud_burst_catalog(
+    project_id: int,
+):
+    """List supported cloud burst providers and GPU SKU options."""
+    return {
+        "project_id": project_id,
+        **list_cloud_burst_catalog(),
+    }
+
+
+@router.post("/cloud-burst/quote")
+async def get_cloud_burst_quote(
+    project_id: int,
+    req: CloudBurstQuoteRequest,
+):
+    """Estimate cloud burst lease cost for selected provider/GPU."""
+    try:
+        quote = estimate_cloud_burst_quote(
+            provider_id=req.provider_id,
+            gpu_sku=req.gpu_sku,
+            duration_hours=req.duration_hours,
+            storage_gb=req.storage_gb,
+            egress_gb=req.egress_gb,
+            spot=req.spot,
+        )
+        return {
+            "project_id": project_id,
+            **quote,
+        }
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/cloud-burst/launch-plan")
+async def get_cloud_burst_launch_plan(
+    project_id: int,
+    req: CloudBurstLaunchPlanRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Build provider-specific burst launch plan + credential readiness report."""
+    await _get_project_or_404(db, project_id)
+    try:
+        plan = await build_cloud_burst_launch_plan(
+            db,
+            project_id=project_id,
+            provider_id=req.provider_id,
+            gpu_sku=req.gpu_sku,
+            duration_hours=req.duration_hours,
+            experiment_id=req.experiment_id,
+            region=req.region,
+            image=req.image,
+            startup_script=req.startup_script,
+            spot=req.spot,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return plan
 
 
 @router.get("/recipes")

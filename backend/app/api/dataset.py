@@ -25,6 +25,9 @@ from app.services.dataset_service import (
     save_project_dataset_adapter_preference,
     split_dataset,
 )
+from app.services.dataset_intelligence_service import (
+    analyze_semantic_dataset_intelligence,
+)
 from app.services.domain_profile_service import get_dataset_split_defaults
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 
@@ -103,6 +106,14 @@ class MappingAcceptanceTelemetryRequest(BaseModel):
     confidence_avg: float | None = Field(default=None, ge=0, le=1)
     mapping: dict[str, str] = Field(default_factory=dict)
     accepted_suggestion_ids: list[str] | None = None
+
+
+class SemanticIntelligenceRequest(BaseModel):
+    target_split: str = Field(default="train", pattern="^(train|val|validation|test|combined)$")
+    sample_size: int = Field(default=400, ge=20, le=2000)
+    cluster_count: int | None = Field(default=None, ge=2, le=64)
+    similarity_threshold: float = Field(default=0.92, ge=0.5, le=0.999)
+    embedding_model: str = Field(default="", max_length=255)
 
 
 def _resolve_split_config(
@@ -269,6 +280,27 @@ async def split(
         if detail.startswith("Project "):
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+@router.post("/semantic-intelligence/analyze")
+async def semantic_intelligence_analyze(
+    project_id: int,
+    req: SemanticIntelligenceRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Analyze semantic diversity/redundancy and cluster distribution for project data."""
+    try:
+        return await analyze_semantic_dataset_intelligence(
+            db=db,
+            project_id=project_id,
+            target_split=req.target_split,
+            sample_size=req.sample_size,
+            cluster_count=req.cluster_count,
+            similarity_threshold=req.similarity_threshold,
+            embedding_model=req.embedding_model,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/preview")

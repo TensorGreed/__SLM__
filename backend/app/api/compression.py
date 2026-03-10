@@ -11,6 +11,7 @@ from app.services.compression_service import (
     benchmark_model,
     get_compression_job_status,
     merge_lora,
+    merge_models,
     quantize_model,
 )
 
@@ -31,6 +32,13 @@ class MergeLoRARequest(BaseModel):
 class BenchmarkRequest(BaseModel):
     model_path: str
     num_samples: int = Field(100, ge=1, le=1000)
+
+
+class MergeModelsRequest(BaseModel):
+    model_paths: list[str] = Field(..., min_length=2, max_length=16)
+    merge_method: str = Field(default="ties", pattern="^(ties|dex)$")
+    weights: list[float] | None = None
+    ties_density: float = Field(default=0.2, ge=0.01, le=1.0)
 
 
 @router.post("/quantize")
@@ -56,6 +64,21 @@ async def benchmark(project_id: int, req: BenchmarkRequest):
     """Benchmark model size and performance."""
     try:
         return await benchmark_model(project_id, req.model_path, req.num_samples)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/merge-models")
+async def merge_model_soup(project_id: int, req: MergeModelsRequest):
+    """Queue TIES/DEX model soup merge."""
+    try:
+        return await merge_models(
+            project_id=project_id,
+            model_paths=req.model_paths,
+            merge_method=req.merge_method,
+            weights=req.weights,
+            ties_density=req.ties_density,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 

@@ -300,6 +300,130 @@ async def merge_lora(
     }
 
 
+async def merge_models(
+    project_id: int,
+    model_paths: list[str],
+    *,
+    merge_method: str = "ties",
+    weights: list[float] | None = None,
+    ties_density: float = 0.2,
+) -> dict:
+    """Queue multi-model merge using TIES/DEX style model soup command."""
+    normalized_paths = [str(item or "").strip() for item in model_paths if str(item or "").strip()]
+    if len(normalized_paths) < 2:
+        raise ValueError("At least two model paths are required for model merge.")
+
+    method = str(merge_method or "ties").strip().lower()
+    if method not in {"ties", "dex"}:
+        raise ValueError("merge_method must be one of: ties, dex.")
+
+    normalized_weights: list[float] = []
+    if weights is not None:
+        for raw in list(weights):
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                normalized_weights.append(value)
+        if normalized_weights and len(normalized_weights) != len(normalized_paths):
+            raise ValueError(
+                "weights length must match model_paths length when provided."
+            )
+
+    safe_ties_density = max(0.01, min(float(ties_density), 1.0))
+    output_dir = _compression_dir(project_id) / f"model_soup_{method}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    backend = _resolve_backend()
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    if backend == "stub":
+        if not settings.ALLOW_STUB_COMPRESSION:
+            raise ValueError(
+                "Stub compression backend is disabled. Configure COMPRESSION_BACKEND=external "
+                "with MERGE_MODELS_EXTERNAL_CMD or set ALLOW_STUB_COMPRESSION=true for demos."
+            )
+        return {
+            "project_id": project_id,
+            "merge_method": method,
+            "model_paths": normalized_paths,
+            "weights": normalized_weights or None,
+            "ties_density": safe_ties_density,
+            "output_dir": str(output_dir),
+            "status": "simulated",
+            "created_at": created_at,
+            "message": "No external model merge backend configured; returning simulated result.",
+        }
+
+    template = settings.MERGE_MODELS_EXTERNAL_CMD.strip()
+    if not template:
+        raise ValueError("MERGE_MODELS_EXTERNAL_CMD is required when COMPRESSION_BACKEND=external")
+
+    models_file_path = output_dir / "models.json"
+    models_file_path.write_text(
+        json.dumps(
+            {
+                "project_id": project_id,
+                "method": method,
+                "model_paths": normalized_paths,
+                "weights": normalized_weights,
+                "ties_density": safe_ties_density,
+            },
+            indent=2,
+            ensure_ascii=True,
+        ),
+        encoding="utf-8",
+    )
+    output_model_path = output_dir / "merged_model"
+    report_path = output_dir / "merge_models_report.json"
+    weights_csv = ",".join(f"{item:.8f}" for item in normalized_weights) if normalized_weights else ""
+    command = _render_external_command(
+        template,
+        {
+            "project_id": project_id,
+            "models_file_path": str(models_file_path),
+            "merge_method": method,
+            "output_dir": str(output_dir),
+            "output_model_path": str(output_model_path),
+            "weights_csv": weights_csv,
+            "ties_density": safe_ties_density,
+            "backend_dir": str(BACKEND_DIR),
+        },
+    )
+    command, command_note = _normalize_external_python_command(command)
+    command, env_note = _prepend_quantize_runtime_env(command)
+    if env_note:
+        command_note = f"{command_note}; {env_note}" if command_note else env_note
+
+    from app.worker import celery_app
+
+    task = celery_app.send_task(
+        "run_quantization_job",
+        kwargs={
+            "command": command,
+            "report_path": str(report_path),
+            "project_id": project_id,
+            "job_type": f"model_merge_{method}",
+        },
+    )
+
+    return {
+        "project_id": project_id,
+        "merge_method": method,
+        "model_paths": normalized_paths,
+        "weights": normalized_weights or None,
+        "ties_density": safe_ties_density,
+        "output_dir": str(output_dir),
+        "output_model_path": str(output_model_path),
+        "status": "queued",
+        "created_at": created_at,
+        "models_file_path": str(models_file_path),
+        "report_path": str(report_path),
+        "task_id": task.id,
+        "command_note": command_note,
+    }
+
+
 async def benchmark_model(
     project_id: int,
     model_path: str,

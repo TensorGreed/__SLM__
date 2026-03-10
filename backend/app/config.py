@@ -97,6 +97,12 @@ class Settings(BaseSettings):
         '--project {project_id} --model "{base_model_path}" --bits 16 '
         '--format merged --out "{output_model_path}" --adapter "{lora_adapter_path}"'
     )
+    MERGE_MODELS_EXTERNAL_CMD: str = (
+        'python "{backend_dir}/scripts/model_merge.py" '
+        '--project {project_id} --models-file "{models_file_path}" '
+        '--method "{merge_method}" --out "{output_model_path}" '
+        '--weights "{weights_csv}" --ties-density {ties_density}'
+    )
     BENCHMARK_EXTERNAL_CMD: str = (
         'python "{backend_dir}/scripts/benchmark.py" '
         '--project {project_id} --model "{model_path}" --samples {num_samples} '

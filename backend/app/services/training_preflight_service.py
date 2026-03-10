@@ -271,6 +271,46 @@ def run_training_preflight(
     if training_mode in {"dpo", "orpo"} and task_type != "causal_lm":
         errors.append(f"training_mode={training_mode} supports task_type=causal_lm only.")
 
+    distillation_enabled = _coerce_bool(resolved_config.get("distillation_enabled"), False)
+    distillation_teacher_model = str(resolved_config.get("distillation_teacher_model") or "").strip()
+    if distillation_enabled:
+        if training_mode in {"dpo", "orpo"}:
+            errors.append(
+                "distillation_enabled is incompatible with training_mode=dpo/orpo."
+            )
+        if task_type != "causal_lm":
+            errors.append(
+                "distillation_enabled currently supports task_type=causal_lm only."
+            )
+        if not distillation_teacher_model:
+            errors.append(
+                "distillation_enabled=true requires distillation_teacher_model."
+            )
+        elif distillation_teacher_model == model_id:
+            warnings.append(
+                "distillation_teacher_model matches base_model; transfer gain may be limited."
+            )
+
+        distillation_temperature = _coerce_float(
+            resolved_config.get("distillation_temperature"),
+            2.0,
+            minimum=0.1,
+        )
+        if distillation_temperature <= 0.0:
+            errors.append("distillation_temperature must be > 0.")
+        distillation_alpha = max(
+            0.0,
+            min(_coerce_float(resolved_config.get("distillation_alpha"), 0.6, minimum=0.0), 1.0),
+        )
+        if distillation_alpha <= 0.0:
+            warnings.append(
+                "distillation_alpha is 0, so training uses only distillation loss and no supervised CE."
+            )
+        if distillation_alpha >= 1.0:
+            warnings.append(
+                "distillation_alpha is 1, so distillation loss is disabled and run behaves like standard SFT."
+            )
+
     if architecture == "seq2seq" and task_type == "causal_lm":
         errors.append(
             (
@@ -361,6 +401,14 @@ def run_training_preflight(
             )
         )
         hints.append("Install trl in the backend/worker environment before DPO/ORPO runs.")
+    if distillation_enabled and not dependencies.get("torch", False):
+        errors.append(
+            "distillation_enabled=true requires dependency 'torch'."
+        )
+    if distillation_enabled and not dependencies.get("transformers", False):
+        errors.append(
+            "distillation_enabled=true requires dependency 'transformers'."
+        )
     if bool(resolved_config.get("use_lora", False)) and not dependencies.get("peft", False):
         errors.append(
             "use_lora=true requested but dependency 'peft' is not installed."
@@ -538,6 +586,18 @@ def run_training_preflight(
         },
         "task_type": task_type,
         "training_mode": training_mode,
+        "distillation": {
+            "enabled": distillation_enabled,
+            "teacher_model": distillation_teacher_model or None,
+            "alpha": _coerce_float(resolved_config.get("distillation_alpha"), 0.6, minimum=0.0),
+            "temperature": _coerce_float(resolved_config.get("distillation_temperature"), 2.0, minimum=0.1),
+            "hidden_state_weight": _coerce_float(
+                resolved_config.get("distillation_hidden_state_weight"),
+                0.0,
+                minimum=0.0,
+            ),
+            "hidden_state_loss": str(resolved_config.get("distillation_hidden_state_loss") or "mse").strip().lower() or "mse",
+        },
         "trainer_backend_requested": trainer_backend_requested,
         "trainer_backend_effective": trainer_backend_effective,
         "sequence_length": {

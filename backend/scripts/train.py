@@ -705,6 +705,22 @@ def _run_training_attempt(
     sequence_packing = bool(config.get("sequence_packing", True))
     max_train_samples = args.max_train_samples
     max_eval_samples = args.max_eval_samples
+    distillation_enabled = bool(config.get("distillation_enabled", False))
+    distillation_teacher_model = str(config.get("distillation_teacher_model") or "").strip()
+    distillation_alpha = float(config.get("distillation_alpha", 0.6))
+    distillation_temperature = _coerce_float(
+        config.get("distillation_temperature"),
+        2.0,
+        minimum=0.1,
+    )
+    distillation_hidden_state_weight = _coerce_float(
+        config.get("distillation_hidden_state_weight"),
+        0.0,
+        minimum=0.0,
+    )
+    distillation_hidden_state_loss = str(
+        config.get("distillation_hidden_state_loss", "mse")
+    ).strip().lower() or "mse"
 
     try:
         import torch
@@ -739,6 +755,24 @@ def _run_training_attempt(
         raise ValueError(
             f"training_mode={training_mode} requires task_type=causal_lm."
         )
+    if distillation_enabled and training_mode in {"dpo", "orpo"}:
+        raise ValueError(
+            "distillation_enabled is incompatible with DPO/ORPO pairwise objectives."
+        )
+    if distillation_enabled and normalized_task_type != "causal_lm":
+        raise ValueError(
+            "distillation_enabled currently supports task_type=causal_lm only."
+        )
+    if distillation_enabled and not distillation_teacher_model:
+        raise ValueError(
+            "distillation_enabled=true requires distillation_teacher_model."
+        )
+    if distillation_hidden_state_loss not in {"mse", "cosine"}:
+        warnings.append(
+            f"Unknown distillation_hidden_state_loss='{distillation_hidden_state_loss}', defaulting to mse."
+        )
+        distillation_hidden_state_loss = "mse"
+    distillation_alpha = max(0.0, min(float(distillation_alpha), 1.0))
     if resolved_backend == "trl_sft" and normalized_task_type != "causal_lm":
         warnings.append(
             (
@@ -834,6 +868,16 @@ def _run_training_attempt(
 
     use_cuda = torch.cuda.is_available()
     runtime_environment = _collect_runtime_environment(torch, use_cuda, warnings)
+    runtime_environment["distillation_enabled"] = bool(distillation_enabled)
+    if distillation_enabled:
+        runtime_environment["distillation_teacher_model"] = distillation_teacher_model
+        runtime_environment["distillation_alpha"] = round(distillation_alpha, 4)
+        runtime_environment["distillation_temperature"] = round(distillation_temperature, 4)
+        runtime_environment["distillation_hidden_state_weight"] = round(
+            distillation_hidden_state_weight,
+            4,
+        )
+        runtime_environment["distillation_hidden_state_loss"] = distillation_hidden_state_loss
     if normalized_task_type == "classification":
         runtime_environment["label_space_size"] = len(label_space)
         runtime_environment["label_space_preview"] = label_space[:50]
@@ -853,16 +897,21 @@ def _run_training_attempt(
     elif normalized_task_type == "classification":
         model_loader = AutoModelForSequenceClassification
 
-    def _load_model_with_dtype_fallback(load_kwargs: dict[str, Any]):
+    def _load_model_with_dtype_fallback(
+        load_kwargs: dict[str, Any],
+        *,
+        model_name: str | None = None,
+    ):
+        resolved_model_name = str(model_name or args.base_model)
         try:
-            loaded = model_loader.from_pretrained(args.base_model, **load_kwargs)
+            loaded = model_loader.from_pretrained(resolved_model_name, **load_kwargs)
             return loaded, load_kwargs
         except TypeError as type_error:
             if "dtype" in load_kwargs and "unexpected keyword argument 'dtype'" in str(type_error):
                 fallback_kwargs = dict(load_kwargs)
                 fallback_kwargs["torch_dtype"] = fallback_kwargs.pop("dtype")
                 warnings.append("transformers runtime rejected 'dtype'; falling back to legacy 'torch_dtype'.")
-                loaded = model_loader.from_pretrained(args.base_model, **fallback_kwargs)
+                loaded = model_loader.from_pretrained(resolved_model_name, **fallback_kwargs)
                 return loaded, fallback_kwargs
             raise
 
@@ -917,6 +966,45 @@ def _run_training_attempt(
                 bias="none",
             ),
         )
+
+    teacher_model = None
+    if distillation_enabled:
+        teacher_model_kwargs = dict(model_kwargs)
+        if distillation_hidden_state_weight > 0:
+            teacher_model_kwargs["output_hidden_states"] = True
+        try:
+            teacher_model, teacher_model_kwargs = _load_model_with_dtype_fallback(
+                teacher_model_kwargs,
+                model_name=distillation_teacher_model,
+            )
+        except Exception as teacher_error:
+            if teacher_model_kwargs.get("attn_implementation") == "flash_attention_2":
+                warnings.append(
+                    (
+                        "Teacher model does not support flash_attention_2; falling back. "
+                        f"Details: {teacher_error}"
+                    )
+                )
+                teacher_model_kwargs.pop("attn_implementation", None)
+                teacher_model, teacher_model_kwargs = _load_model_with_dtype_fallback(
+                    teacher_model_kwargs,
+                    model_name=distillation_teacher_model,
+                )
+            else:
+                raise
+        if teacher_model.config.pad_token_id is None:
+            teacher_model.config.pad_token_id = tokenizer.pad_token_id
+        teacher_embeddings = teacher_model.get_input_embeddings()
+        if teacher_embeddings is not None and len(tokenizer) > teacher_embeddings.num_embeddings:
+            warnings.append(
+                (
+                    "Student tokenizer vocab exceeds teacher vocab size; "
+                    "distillation may fail on out-of-range token ids."
+                )
+            )
+        teacher_model.eval()
+        for parameter in teacher_model.parameters():
+            parameter.requires_grad_(False)
 
     has_eval_records = (
         (eval_preference is not None and len(eval_preference) > 0)
@@ -1145,6 +1233,146 @@ def _run_training_attempt(
             "args": training_args,
             "tokenizer": tokenizer,
         }
+        trainer_cls: type = Trainer
+
+        if distillation_enabled:
+            if teacher_model is None:
+                raise RuntimeError("Distillation is enabled but teacher model failed to load.")
+
+            class DistillationTrainer(Trainer):
+                def __init__(
+                    self,
+                    *args,
+                    teacher_model_ref,
+                    distill_alpha: float,
+                    distill_temperature: float,
+                    hidden_state_weight: float,
+                    hidden_state_loss_type: str,
+                    **kwargs,
+                ):
+                    super().__init__(*args, **kwargs)
+                    self.teacher_model = teacher_model_ref
+                    self.teacher_model.eval()
+                    for parameter in self.teacher_model.parameters():
+                        parameter.requires_grad_(False)
+                    self.distill_alpha = max(0.0, min(float(distill_alpha), 1.0))
+                    self.distill_temperature = max(0.1, float(distill_temperature))
+                    self.hidden_state_weight = max(0.0, float(hidden_state_weight))
+                    self.hidden_state_loss_type = hidden_state_loss_type
+                    self._last_distill_log_step = -1
+
+                def _ensure_teacher_device(self, target_device):  # noqa: ANN001
+                    teacher_device = next(self.teacher_model.parameters()).device
+                    if teacher_device != target_device:
+                        self.teacher_model.to(target_device)
+
+                def compute_loss(
+                    self,
+                    model,  # noqa: ANN001
+                    inputs,  # noqa: ANN001
+                    return_outputs: bool = False,
+                    num_items_in_batch=None,  # noqa: ANN001
+                ):
+                    import torch.nn.functional as F
+
+                    outputs = model(**inputs)
+                    student_loss = outputs.get("loss")
+                    if student_loss is None:
+                        if return_outputs:
+                            return outputs.loss, outputs
+                        return outputs.loss
+
+                    teacher_inputs = {}
+                    for key in ("input_ids", "attention_mask", "position_ids"):
+                        value = inputs.get(key)
+                        if value is not None:
+                            teacher_inputs[key] = value
+
+                    self._ensure_teacher_device(outputs.logits.device)
+                    with torch.no_grad():
+                        teacher_outputs = self.teacher_model(
+                            **teacher_inputs,
+                            output_hidden_states=self.hidden_state_weight > 0.0,
+                        )
+
+                    student_logits = outputs.logits.float()
+                    teacher_logits = teacher_outputs.logits.float()
+                    seq_len = min(int(student_logits.shape[1]), int(teacher_logits.shape[1]))
+                    vocab_size = min(int(student_logits.shape[-1]), int(teacher_logits.shape[-1]))
+                    student_logits = student_logits[:, :seq_len, :vocab_size]
+                    teacher_logits = teacher_logits[:, :seq_len, :vocab_size]
+
+                    labels = inputs.get("labels")
+                    if labels is not None and hasattr(labels, "shape") and len(labels.shape) == 2:
+                        mask = (labels[:, :seq_len] != -100).unsqueeze(-1)
+                        mask_f = mask.to(student_logits.dtype)
+                        valid_count = float(mask_f.sum().item())
+                        if valid_count > 0:
+                            student_logits = student_logits * mask_f
+                            teacher_logits = teacher_logits * mask_f
+
+                    log_probs = F.log_softmax(
+                        student_logits / self.distill_temperature,
+                        dim=-1,
+                    )
+                    probs = F.softmax(
+                        teacher_logits / self.distill_temperature,
+                        dim=-1,
+                    )
+                    kd_loss = (
+                        F.kl_div(log_probs, probs, reduction="batchmean")
+                        * (self.distill_temperature ** 2)
+                    )
+
+                    total_loss = (
+                        (self.distill_alpha * student_loss)
+                        + ((1.0 - self.distill_alpha) * kd_loss)
+                    )
+                    hidden_loss_value = None
+                    if self.hidden_state_weight > 0.0:
+                        student_states = getattr(outputs, "hidden_states", None)
+                        teacher_states = getattr(teacher_outputs, "hidden_states", None)
+                        if student_states and teacher_states:
+                            student_last = student_states[-1].float()
+                            teacher_last = teacher_states[-1].float()
+                            hs_seq = min(int(student_last.shape[1]), int(teacher_last.shape[1]))
+                            hs_dim = min(int(student_last.shape[2]), int(teacher_last.shape[2]))
+                            student_last = student_last[:, :hs_seq, :hs_dim]
+                            teacher_last = teacher_last[:, :hs_seq, :hs_dim]
+                            if self.hidden_state_loss_type == "cosine":
+                                s_flat = student_last.reshape(-1, hs_dim)
+                                t_flat = teacher_last.reshape(-1, hs_dim)
+                                hidden_loss = 1.0 - F.cosine_similarity(s_flat, t_flat, dim=-1).mean()
+                            else:
+                                hidden_loss = F.mse_loss(student_last, teacher_last)
+                            hidden_loss_value = hidden_loss
+                            total_loss = total_loss + (self.hidden_state_weight * hidden_loss)
+
+                    step = int(getattr(self.state, "global_step", 0) or 0)
+                    if step != self._last_distill_log_step and step % 10 == 0:
+                        metrics = {
+                            "distill_total_loss": float(total_loss.detach().cpu()),
+                            "distill_kd_loss": float(kd_loss.detach().cpu()),
+                            "distill_ce_loss": float(student_loss.detach().cpu()),
+                            "distill_alpha": self.distill_alpha,
+                            "distill_temperature": self.distill_temperature,
+                        }
+                        if hidden_loss_value is not None:
+                            metrics["distill_hidden_loss"] = float(hidden_loss_value.detach().cpu())
+                        self.log(metrics)
+                        self._last_distill_log_step = step
+
+                    if return_outputs:
+                        outputs.loss = total_loss
+                        return total_loss, outputs
+                    return total_loss
+
+            trainer_cls = DistillationTrainer
+            trainer_kwargs["teacher_model_ref"] = teacher_model
+            trainer_kwargs["distill_alpha"] = distillation_alpha
+            trainer_kwargs["distill_temperature"] = distillation_temperature
+            trainer_kwargs["hidden_state_weight"] = distillation_hidden_state_weight
+            trainer_kwargs["hidden_state_loss_type"] = distillation_hidden_state_loss
 
         if normalized_task_type == "seq2seq":
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
@@ -1268,13 +1496,16 @@ def _run_training_attempt(
             trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
             trainer_kwargs["data_collator"] = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-        safe_trainer_kwargs, dropped_trainer_keys = _coerce_trainer_kwargs(trainer_kwargs, Trainer)
-        if dropped_trainer_keys:
-            warnings.append(
-                "Ignoring unsupported Trainer keys "
-                f"for transformers {hf_transformers.__version__}: {', '.join(dropped_trainer_keys)}."
-            )
-        trainer = Trainer(**safe_trainer_kwargs)
+        if distillation_enabled:
+            trainer = trainer_cls(**trainer_kwargs)
+        else:
+            safe_trainer_kwargs, dropped_trainer_keys = _coerce_trainer_kwargs(trainer_kwargs, trainer_cls)
+            if dropped_trainer_keys:
+                warnings.append(
+                    "Ignoring unsupported Trainer keys "
+                    f"for transformers {hf_transformers.__version__}: {', '.join(dropped_trainer_keys)}."
+                )
+            trainer = trainer_cls(**safe_trainer_kwargs)
 
     trainer.add_callback(StreamingMetricCallback())
 
@@ -1351,6 +1582,18 @@ def _run_training_attempt(
         "training_mode_requested": training_mode,
         "training_mode_effective": training_mode_effective,
         "alignment_native_objective": alignment_native_objective,
+        "distillation": {
+            "enabled": bool(distillation_enabled),
+            "teacher_model": distillation_teacher_model if distillation_enabled else None,
+            "alpha": distillation_alpha if distillation_enabled else None,
+            "temperature": distillation_temperature if distillation_enabled else None,
+            "hidden_state_weight": (
+                distillation_hidden_state_weight if distillation_enabled else None
+            ),
+            "hidden_state_loss": (
+                distillation_hidden_state_loss if distillation_enabled else None
+            ),
+        },
         "task_type": normalized_task_type,
         "adapter_contract": data_contract,
         "base_model": args.base_model,

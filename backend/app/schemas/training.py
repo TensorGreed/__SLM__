@@ -104,6 +104,40 @@ class TrainingConfig(BaseModel):
         max_length=4096,
         description="Optional project-relative path to a preference JSONL file for DPO/ORPO.",
     )
+
+    # Distillation
+    distillation_enabled: bool = Field(
+        False,
+        description="Enable teacher-student distillation objective during SFT training.",
+    )
+    distillation_teacher_model: str = Field(
+        "",
+        max_length=255,
+        description="Teacher model id/path used for distillation guidance.",
+    )
+    distillation_alpha: float = Field(
+        0.6,
+        ge=0.0,
+        le=1.0,
+        description="Weight for supervised CE loss when distillation is enabled (KD weight = 1-alpha).",
+    )
+    distillation_temperature: float = Field(
+        2.0,
+        gt=0.1,
+        le=20.0,
+        description="Softmax temperature for teacher-student logit distillation.",
+    )
+    distillation_hidden_state_weight: float = Field(
+        0.0,
+        ge=0.0,
+        le=10.0,
+        description="Optional hidden-state alignment weight (0 disables hidden-state guidance).",
+    )
+    distillation_hidden_state_loss: str = Field(
+        "mse",
+        pattern="^(mse|cosine)$",
+        description="Hidden-state loss type when distillation_hidden_state_weight > 0 (mse|cosine).",
+    )
     
     # Checkpointing
     save_steps: int = Field(100, ge=1)

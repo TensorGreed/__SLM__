@@ -121,6 +121,15 @@ _RUNTIME_SETTING_SPECS: tuple[RuntimeSettingSpec, ...] = (
         multiline=True,
     ),
     RuntimeSettingSpec(
+        key="MERGE_MODELS_EXTERNAL_CMD",
+        label="Model Merge External Command",
+        description="Command template used for TIES/DEX multi-model merge jobs.",
+        category="compression",
+        value_type="string",
+        requires_restart=True,
+        multiline=True,
+    ),
+    RuntimeSettingSpec(
         key="BENCHMARK_EXTERNAL_CMD",
         label="Benchmark External Command",
         description="Command template used for benchmark jobs.",
@@ -318,4 +327,3 @@ def update_runtime_settings(updates: dict[str, Any]) -> dict[str, Any]:
         "path": path,
         "settings": list_runtime_settings(),
     }
-
