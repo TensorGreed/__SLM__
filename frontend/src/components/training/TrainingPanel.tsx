@@ -324,6 +324,9 @@ type ConfigFieldKey =
   | 'gradient_checkpointing'
   | 'alignment_auto_filter'
   | 'alignment_quality_threshold'
+  | 'alignment_beta'
+  | 'alignment_max_prompt_length'
+  | 'alignment_max_length'
   | 'alignment_min_keep_ratio'
   | 'alignment_dataset_path';
 
@@ -377,6 +380,9 @@ export default function TrainingPanel({
   const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
   const [alignmentAutoFilter, setAlignmentAutoFilter] = useState(false);
   const [alignmentQualityThreshold, setAlignmentQualityThreshold] = useState('3.0');
+  const [alignmentBeta, setAlignmentBeta] = useState('0.1');
+  const [alignmentMaxPromptLength, setAlignmentMaxPromptLength] = useState('1024');
+  const [alignmentMaxLength, setAlignmentMaxLength] = useState('2048');
   const [alignmentMinKeepRatio, setAlignmentMinKeepRatio] = useState('0.4');
   const [alignmentDatasetPath, setAlignmentDatasetPath] = useState('');
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
@@ -408,6 +414,9 @@ export default function TrainingPanel({
     gradient_checkpointing: false,
     alignment_auto_filter: false,
     alignment_quality_threshold: false,
+    alignment_beta: false,
+    alignment_max_prompt_length: false,
+    alignment_max_length: false,
     alignment_min_keep_ratio: false,
     alignment_dataset_path: false,
   });
@@ -506,6 +515,9 @@ export default function TrainingPanel({
     const learningRate = Number.parseFloat(lr);
     const retryShrink = Number.parseFloat(oomRetrySeqShrink);
     const alignmentThreshold = Number.parseFloat(alignmentQualityThreshold);
+    const alignmentBetaValue = Number.parseFloat(alignmentBeta);
+    const alignmentPromptLengthValue = Number.parseInt(alignmentMaxPromptLength, 10);
+    const alignmentMaxLengthValue = Number.parseInt(alignmentMaxLength, 10);
     const alignmentKeepRatio = Number.parseFloat(alignmentMinKeepRatio);
     const parsedTargetModules = targetModules
       .split(',')
@@ -546,6 +558,15 @@ export default function TrainingPanel({
     if (includeField('alignment_auto_filter')) config.alignment_auto_filter = alignmentAutoFilter;
     if (includeField('alignment_quality_threshold') && Number.isFinite(alignmentThreshold)) {
       config.alignment_quality_threshold = alignmentThreshold;
+    }
+    if (includeField('alignment_beta') && Number.isFinite(alignmentBetaValue)) {
+      config.alignment_beta = alignmentBetaValue;
+    }
+    if (includeField('alignment_max_prompt_length') && Number.isFinite(alignmentPromptLengthValue)) {
+      config.alignment_max_prompt_length = alignmentPromptLengthValue;
+    }
+    if (includeField('alignment_max_length') && Number.isFinite(alignmentMaxLengthValue)) {
+      config.alignment_max_length = alignmentMaxLengthValue;
     }
     if (includeField('alignment_min_keep_ratio') && Number.isFinite(alignmentKeepRatio)) {
       config.alignment_min_keep_ratio = alignmentKeepRatio;
@@ -617,6 +638,9 @@ export default function TrainingPanel({
     setGradientCheckpointing(parseBoolean(config.gradient_checkpointing, gradientCheckpointing));
     setAlignmentAutoFilter(parseBoolean(config.alignment_auto_filter, alignmentAutoFilter));
     setAlignmentQualityThreshold(String(config.alignment_quality_threshold ?? alignmentQualityThreshold));
+    setAlignmentBeta(String(config.alignment_beta ?? alignmentBeta));
+    setAlignmentMaxPromptLength(String(config.alignment_max_prompt_length ?? alignmentMaxPromptLength));
+    setAlignmentMaxLength(String(config.alignment_max_length ?? alignmentMaxLength));
     setAlignmentMinKeepRatio(String(config.alignment_min_keep_ratio ?? alignmentMinKeepRatio));
     setAlignmentDatasetPath(parseString(config.alignment_dataset_path, alignmentDatasetPath));
 
@@ -969,6 +993,9 @@ export default function TrainingPanel({
     setTrainerBackend('auto');
     setAlignmentAutoFilter(false);
     setAlignmentQualityThreshold('3.0');
+    setAlignmentBeta('0.1');
+    setAlignmentMaxPromptLength('1024');
+    setAlignmentMaxLength('2048');
     setAlignmentMinKeepRatio('0.4');
     setAlignmentDatasetPath('');
     setUseProfileDefaults(true);
@@ -1000,6 +1027,9 @@ export default function TrainingPanel({
       gradient_checkpointing: false,
       alignment_auto_filter: false,
       alignment_quality_threshold: false,
+      alignment_beta: false,
+      alignment_max_prompt_length: false,
+      alignment_max_length: false,
       alignment_min_keep_ratio: false,
       alignment_dataset_path: false,
     });
@@ -1241,6 +1271,9 @@ export default function TrainingPanel({
         gradient_checkpointing: false,
         alignment_auto_filter: false,
         alignment_quality_threshold: false,
+        alignment_beta: false,
+        alignment_max_prompt_length: false,
+        alignment_max_length: false,
         alignment_min_keep_ratio: false,
         alignment_dataset_path: false,
       });
@@ -2367,6 +2400,18 @@ export default function TrainingPanel({
                     </div>
                     <div className="training-grid-2">
                       <div className="form-group">
+                        <label className="form-label">Alignment Beta</label>
+                        <input
+                          className="input"
+                          value={alignmentBeta}
+                          onChange={(e) => {
+                            setAlignmentBeta(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, alignment_beta: true }));
+                          }}
+                          placeholder="0.1"
+                        />
+                      </div>
+                      <div className="form-group">
                         <label className="form-label">Alignment Quality Threshold</label>
                         <input
                           className="input"
@@ -2378,6 +2423,34 @@ export default function TrainingPanel({
                           placeholder="3.0"
                         />
                       </div>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Alignment Max Prompt Length</label>
+                        <input
+                          className="input"
+                          value={alignmentMaxPromptLength}
+                          onChange={(e) => {
+                            setAlignmentMaxPromptLength(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, alignment_max_prompt_length: true }));
+                          }}
+                          placeholder="1024"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Alignment Max Length</label>
+                        <input
+                          className="input"
+                          value={alignmentMaxLength}
+                          onChange={(e) => {
+                            setAlignmentMaxLength(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, alignment_max_length: true }));
+                          }}
+                          placeholder="2048"
+                        />
+                      </div>
+                    </div>
+                    <div className="training-grid-2">
                       <div className="form-group">
                         <label className="form-label">Alignment Min Keep Ratio</label>
                         <input

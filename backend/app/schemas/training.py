@@ -75,6 +75,24 @@ class TrainingConfig(BaseModel):
         le=5.0,
         description="Judge score threshold for keeping preference pairs.",
     )
+    alignment_beta: float = Field(
+        0.1,
+        gt=0.0,
+        le=5.0,
+        description="Pairwise objective beta for DPO/ORPO TRL trainers.",
+    )
+    alignment_max_prompt_length: int = Field(
+        1024,
+        ge=32,
+        le=32768,
+        description="Prompt token cap for DPO/ORPO processing.",
+    )
+    alignment_max_length: int = Field(
+        2048,
+        ge=64,
+        le=32768,
+        description="Total token cap for DPO/ORPO prompt+response processing.",
+    )
     alignment_min_keep_ratio: float = Field(
         0.4,
         ge=0.05,

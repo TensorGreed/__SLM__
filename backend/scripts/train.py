@@ -4,6 +4,7 @@
 This script runs supervised finetuning against prepared JSONL datasets.
 It includes:
 - trainer backend abstraction (`hf_trainer`, optional `trl_sft`)
+- native TRL pairwise alignment objective trainers (`DPOTrainer`, `ORPOTrainer`)
 - task/data adapter contract (`causal_lm`, `seq2seq`, `classification`)
 - runtime planner with CUDA OOM auto-retry
 """
@@ -119,6 +120,52 @@ def _pick_first_text(row: dict[str, Any], keys: list[str]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+PREFERENCE_PROMPT_KEYS = [
+    "prompt",
+    "question",
+    "instruction",
+    "input",
+    "query",
+]
+PREFERENCE_CHOSEN_KEYS = [
+    "chosen",
+    "preferred",
+    "accepted",
+    "better",
+    "response_chosen",
+    "answer_chosen",
+    "completion_chosen",
+]
+PREFERENCE_REJECTED_KEYS = [
+    "rejected",
+    "dispreferred",
+    "worse",
+    "response_rejected",
+    "answer_rejected",
+    "completion_rejected",
+]
+
+
+def _adapt_record_to_preference(row: dict[str, Any]) -> dict[str, str]:
+    prompt = _pick_first_text(row, PREFERENCE_PROMPT_KEYS)
+    chosen = _pick_first_text(row, PREFERENCE_CHOSEN_KEYS)
+    rejected = _pick_first_text(row, PREFERENCE_REJECTED_KEYS)
+    return {
+        "prompt": prompt,
+        "chosen": chosen,
+        "rejected": rejected,
+    }
+
+
+def _is_valid_preference_row(row: dict[str, Any]) -> bool:
+    prompt = str(row.get("prompt", "")).strip()
+    chosen = str(row.get("chosen", "")).strip()
+    rejected = str(row.get("rejected", "")).strip()
+    if not prompt or not chosen or not rejected:
+        return False
+    return chosen != rejected
 
 
 def _qa_to_chat_text(question: str, answer: str, template_name: str) -> str:
@@ -408,18 +455,15 @@ def _resolve_resume_checkpoint(
     return _latest_checkpoint_dir(output_dir)
 
 
-def _coerce_training_arguments_kwargs(
+def _coerce_constructor_kwargs(
     kwargs: dict[str, Any],
-    training_args_cls: type,
+    constructor_owner: type,
+    *,
+    alias_pairs: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    accepted = inspect.signature(training_args_cls.__init__).parameters
+    accepted = inspect.signature(constructor_owner.__init__).parameters
     normalized = dict(kwargs)
-
-    alias_pairs = [
-        ("evaluation_strategy", "eval_strategy"),
-        ("eval_strategy", "evaluation_strategy"),
-    ]
-    for old_name, new_name in alias_pairs:
+    for old_name, new_name in list(alias_pairs or []):
         if old_name in normalized and old_name not in accepted and new_name in accepted:
             normalized[new_name] = normalized.pop(old_name)
 
@@ -430,34 +474,35 @@ def _coerce_training_arguments_kwargs(
             filtered[key] = value
         else:
             dropped.append(key)
-
     return filtered, sorted(dropped)
+
+
+def _coerce_training_arguments_kwargs(
+    kwargs: dict[str, Any],
+    training_args_cls: type,
+) -> tuple[dict[str, Any], list[str]]:
+    return _coerce_constructor_kwargs(
+        kwargs,
+        training_args_cls,
+        alias_pairs=[
+            ("evaluation_strategy", "eval_strategy"),
+            ("eval_strategy", "evaluation_strategy"),
+        ],
+    )
 
 
 def _coerce_trainer_kwargs(
     kwargs: dict[str, Any],
     trainer_cls: type,
 ) -> tuple[dict[str, Any], list[str]]:
-    accepted = inspect.signature(trainer_cls.__init__).parameters
-    normalized = dict(kwargs)
-
-    alias_pairs = [
-        ("tokenizer", "processing_class"),
-        ("processing_class", "tokenizer"),
-    ]
-    for old_name, new_name in alias_pairs:
-        if old_name in normalized and old_name not in accepted and new_name in accepted:
-            normalized[new_name] = normalized.pop(old_name)
-
-    filtered: dict[str, Any] = {}
-    dropped: list[str] = []
-    for key, value in normalized.items():
-        if key in accepted:
-            filtered[key] = value
-        else:
-            dropped.append(key)
-
-    return filtered, sorted(dropped)
+    return _coerce_constructor_kwargs(
+        kwargs,
+        trainer_cls,
+        alias_pairs=[
+            ("tokenizer", "processing_class"),
+            ("processing_class", "tokenizer"),
+        ],
+    )
 
 
 def _normalize_task_type(task_type: str | None, warnings: list[str]) -> str:
@@ -684,16 +729,16 @@ def _run_training_attempt(
         ) from e
 
     warnings: list[str] = []
-    if training_mode in {"dpo", "orpo"}:
-        warnings.append(
-            (
-                f"training_mode={training_mode} uses preferred-response projection in the current "
-                "external runtime. Pairwise objective trainers are optional."
-            )
-        )
+    if training_mode not in {"sft", "domain_pretrain", "dpo", "orpo"}:
+        warnings.append(f"Unknown training_mode '{training_mode}', defaulting to sft.")
+        training_mode = "sft"
     normalized_task_type = _normalize_task_type(task_type, warnings)
     normalized_backend = _normalize_trainer_backend(trainer_backend, warnings)
     resolved_backend = _normalize_requested_backend(normalized_backend, warnings)
+    if training_mode in {"dpo", "orpo"} and normalized_task_type != "causal_lm":
+        raise ValueError(
+            f"training_mode={training_mode} requires task_type=causal_lm."
+        )
     if resolved_backend == "trl_sft" and normalized_task_type != "causal_lm":
         warnings.append(
             (
@@ -702,6 +747,8 @@ def _run_training_attempt(
             )
         )
         resolved_backend = "hf_trainer"
+    if training_mode in {"dpo", "orpo"}:
+        resolved_backend = f"trl_{training_mode}"
     set_seed(seed)
 
     data_contract = _build_data_adapter_contract(normalized_task_type, chat_template)
@@ -719,25 +766,54 @@ def _run_training_attempt(
     if eval_ds is not None and max_eval_samples > 0:
         eval_ds = eval_ds.select(range(min(len(eval_ds), max_eval_samples)))
 
-    def to_text_record(row: dict[str, Any]) -> dict[str, Any]:
-        return _adapt_record_to_text(row, data_contract, chat_template)
-
-    train_text = train_ds.map(to_text_record, remove_columns=train_ds.column_names)
-    train_text = train_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
-    if len(train_text) == 0:
-        raise ValueError(
-            (
-                f"No valid training rows after '{normalized_task_type}' adapter normalization. "
-                "Verify required fields are present for the selected task type."
-            )
-        )
-
+    train_text = None
     eval_text = None
-    if eval_ds is not None:
-        eval_text = eval_ds.map(to_text_record, remove_columns=eval_ds.column_names)
-        eval_text = eval_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
-        if len(eval_text) == 0:
-            eval_text = None
+    train_preference = None
+    eval_preference = None
+    if training_mode in {"dpo", "orpo"}:
+        data_contract = {
+            "task_type": "preference_pair",
+            "required_fields": ["prompt", "chosen", "rejected"],
+            "render_mode": "trl_pairwise",
+        }
+
+        def to_preference_record(row: dict[str, Any]) -> dict[str, str]:
+            return _adapt_record_to_preference(row)
+
+        train_preference = train_ds.map(to_preference_record, remove_columns=train_ds.column_names)
+        train_preference = train_preference.filter(_is_valid_preference_row)
+        if len(train_preference) == 0:
+            raise ValueError(
+                (
+                    "No valid prompt/chosen/rejected rows for alignment training. "
+                    "Verify preference pair fields before DPO/ORPO training."
+                )
+            )
+
+        if eval_ds is not None:
+            eval_preference = eval_ds.map(to_preference_record, remove_columns=eval_ds.column_names)
+            eval_preference = eval_preference.filter(_is_valid_preference_row)
+            if len(eval_preference) == 0:
+                eval_preference = None
+    else:
+        def to_text_record(row: dict[str, Any]) -> dict[str, Any]:
+            return _adapt_record_to_text(row, data_contract, chat_template)
+
+        train_text = train_ds.map(to_text_record, remove_columns=train_ds.column_names)
+        train_text = train_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
+        if len(train_text) == 0:
+            raise ValueError(
+                (
+                    f"No valid training rows after '{normalized_task_type}' adapter normalization. "
+                    "Verify required fields are present for the selected task type."
+                )
+            )
+
+        if eval_ds is not None:
+            eval_text = eval_ds.map(to_text_record, remove_columns=eval_ds.column_names)
+            eval_text = eval_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
+            if len(eval_text) == 0:
+                eval_text = None
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -842,7 +918,11 @@ def _run_training_attempt(
             ),
         )
 
-    has_eval_records = eval_text is not None and len(eval_text) > 0
+    has_eval_records = (
+        (eval_preference is not None and len(eval_preference) > 0)
+        if training_mode in {"dpo", "orpo"}
+        else (eval_text is not None and len(eval_text) > 0)
+    )
 
     if optimizer == "paged_adamw_8bit":
         try:
@@ -943,7 +1023,100 @@ def _run_training_attempt(
                 return
             _emit_runtime_event("epoch_end", {"epoch": max(1, int(round(epoch)))})
 
-    if resolved_backend == "trl_sft":
+    alignment_native_objective = False
+    if training_mode in {"dpo", "orpo"}:
+        try:
+            import trl
+        except ImportError as e:
+            raise RuntimeError(
+                (
+                    f"training_mode={training_mode} requires TRL pairwise trainers. "
+                    "Install trl in the training runtime environment."
+                )
+            ) from e
+
+        trainer_name = "DPOTrainer" if training_mode == "dpo" else "ORPOTrainer"
+        config_name = "DPOConfig" if training_mode == "dpo" else "ORPOConfig"
+        pairwise_trainer_cls = getattr(trl, trainer_name, None)
+        pairwise_config_cls = getattr(trl, config_name, None)
+        if pairwise_trainer_cls is None:
+            raise RuntimeError(
+                f"Installed trl does not provide {trainer_name}; upgrade trl to use {training_mode}."
+            )
+
+        runtime_environment["trl_version"] = str(getattr(trl, "__version__", "unknown"))
+        runtime_environment["alignment_trainer"] = trainer_name
+
+        alignment_beta = _coerce_float(config.get("alignment_beta"), 0.1, minimum=1e-6)
+        alignment_max_length = _coerce_int(config.get("alignment_max_length"), max_seq_length, minimum=128)
+        alignment_max_prompt_length = _coerce_int(
+            config.get("alignment_max_prompt_length"),
+            max(64, min(max_seq_length, max_seq_length // 2)),
+            minimum=32,
+        )
+        if alignment_max_prompt_length >= alignment_max_length:
+            alignment_max_prompt_length = max(32, alignment_max_length - 16)
+
+        pairwise_args = training_args
+        if pairwise_config_cls is not None:
+            pairwise_args_kwargs = dict(safe_args_kwargs)
+            pairwise_args_kwargs["beta"] = alignment_beta
+            pairwise_args_kwargs["max_length"] = alignment_max_length
+            pairwise_args_kwargs["max_prompt_length"] = alignment_max_prompt_length
+            safe_pairwise_args_kwargs, dropped_pairwise_arg_keys = _coerce_constructor_kwargs(
+                pairwise_args_kwargs,
+                pairwise_config_cls,
+                alias_pairs=[
+                    ("evaluation_strategy", "eval_strategy"),
+                    ("eval_strategy", "evaluation_strategy"),
+                ],
+            )
+            if dropped_pairwise_arg_keys:
+                warnings.append(
+                    (
+                        f"Ignoring unsupported {config_name} keys for trl "
+                        f"{runtime_environment['trl_version']}: {', '.join(dropped_pairwise_arg_keys)}."
+                    )
+                )
+            pairwise_args = pairwise_config_cls(**safe_pairwise_args_kwargs)
+        else:
+            warnings.append(
+                f"trl does not expose {config_name}; falling back to TrainingArguments for {trainer_name}."
+            )
+
+        pairwise_kwargs: dict[str, Any] = {
+            "model": model,
+            "args": pairwise_args,
+            "train_dataset": train_preference,
+            "eval_dataset": eval_preference if has_eval_records else None,
+            "tokenizer": tokenizer,
+            "max_length": alignment_max_length,
+            "max_prompt_length": alignment_max_prompt_length,
+        }
+        if pairwise_config_cls is None:
+            pairwise_kwargs["beta"] = alignment_beta
+        if training_mode == "dpo":
+            ref_model, _ = _load_model_with_dtype_fallback(dict(model_kwargs))
+            if getattr(ref_model, "config", None) is not None and ref_model.config.pad_token_id is None:
+                ref_model.config.pad_token_id = tokenizer.pad_token_id
+            ref_model.eval()
+            for param in ref_model.parameters():
+                param.requires_grad_(False)
+            pairwise_kwargs["ref_model"] = ref_model
+
+        safe_pairwise_kwargs, dropped_pairwise_keys = _coerce_trainer_kwargs(
+            pairwise_kwargs,
+            pairwise_trainer_cls,
+        )
+        if dropped_pairwise_keys:
+            warnings.append(
+                "Ignoring unsupported pairwise trainer keys "
+                f"for {trainer_name}: {', '.join(dropped_pairwise_keys)}."
+            )
+
+        trainer = pairwise_trainer_cls(**safe_pairwise_kwargs)
+        alignment_native_objective = True
+    elif resolved_backend == "trl_sft":
         from trl import SFTTrainer
 
         sft_kwargs: dict[str, Any] = {
@@ -1157,13 +1330,27 @@ def _run_training_attempt(
             "final_eval_macro_f1": final_eval_macro_f1,
             "label_space": label_space,
         }
+    train_record_count = (
+        len(train_preference)
+        if training_mode in {"dpo", "orpo"}
+        else len(train_text)
+    )
+    eval_record_count = (
+        len(eval_preference)
+        if training_mode in {"dpo", "orpo"} and eval_preference is not None
+        else (len(eval_text) if eval_text is not None else 0)
+    )
+    training_mode_effective = (
+        training_mode if alignment_native_objective else ("sft" if training_mode in {"dpo", "orpo"} else training_mode)
+    )
 
     report = {
         "project_id": args.project,
         "experiment_id": args.experiment,
         "backend": resolved_backend,
         "training_mode_requested": training_mode,
-        "training_mode_effective": "sft" if training_mode in {"dpo", "orpo"} else training_mode,
+        "training_mode_effective": training_mode_effective,
+        "alignment_native_objective": alignment_native_objective,
         "task_type": normalized_task_type,
         "adapter_contract": data_contract,
         "base_model": args.base_model,
@@ -1177,8 +1364,8 @@ def _run_training_attempt(
         "metrics_path": str(metrics_path),
         "epochs": num_epochs,
         "total_steps": int(getattr(trainer.state, "global_step", 0) or 0),
-        "train_records": len(train_text),
-        "eval_records": len(eval_text) if eval_text is not None else 0,
+        "train_records": train_record_count,
+        "eval_records": eval_record_count,
         "final_train_loss": final_train_loss,
         "final_eval_loss": final_eval_loss or eval_metrics.get("eval_loss"),
         "final_eval_accuracy": final_eval_accuracy,

@@ -245,6 +245,7 @@ def run_training_preflight(
         warnings,
     )
     trainer_backend_effective = _resolve_backend(trainer_backend_requested)
+    training_mode = _normalize_training_mode(resolved_config.get("training_mode"))
 
     supported_task_types = list(capability.get("supported_task_types", []))
     if supported_task_types and task_type not in supported_task_types:
@@ -267,6 +268,8 @@ def run_training_preflight(
 
     if trainer_backend_effective == "trl_sft" and task_type != "causal_lm":
         errors.append("trainer_backend=trl_sft supports task_type=causal_lm only.")
+    if training_mode in {"dpo", "orpo"} and task_type != "causal_lm":
+        errors.append(f"training_mode={training_mode} supports task_type=causal_lm only.")
 
     if architecture == "seq2seq" and task_type == "causal_lm":
         errors.append(
@@ -350,6 +353,14 @@ def run_training_preflight(
         errors.append(
             "trainer_backend=trl_sft requested but dependency 'trl' is not installed."
         )
+    if training_mode in {"dpo", "orpo"} and not dependencies.get("trl", False):
+        errors.append(
+            (
+                f"training_mode={training_mode} requires dependency 'trl' "
+                "for native pairwise objective trainers."
+            )
+        )
+        hints.append("Install trl in the backend/worker environment before DPO/ORPO runs.")
     if bool(resolved_config.get("use_lora", False)) and not dependencies.get("peft", False):
         errors.append(
             "use_lora=true requested but dependency 'peft' is not installed."
@@ -410,7 +421,6 @@ def run_training_preflight(
     train_exists = train_file.exists()
     val_exists = val_file.exists()
     dataset_contract: dict[str, Any] | None = None
-    training_mode = _normalize_training_mode(resolved_config.get("training_mode"))
     alignment_contract: dict[str, Any] | None = None
     alignment_quality: dict[str, Any] | None = None
     if not train_exists:

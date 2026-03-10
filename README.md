@@ -79,6 +79,7 @@ This repository contains a FastAPI backend + React frontend for end-to-end SLM l
   - preference dataset import/filter APIs with apply-to-train support
   - judge quality keep-ratio guardrails in preflight
   - training-mode controls + alignment auto-filter settings in Training Config UI
+  - native TRL pairwise objective runtime path (`DPOTrainer` / `ORPOTrainer`) in external training script
 - Added **Universal Task/Dataset Adapter v3**:
   - typed adapter contracts (`task_profiles`, `preferred_training_tasks`, `output_contract`)
   - expanded built-in adapters: `rag-grounded`, `tool-call-json`, `structured-extraction` (plus existing chat/preference adapters)
@@ -135,6 +136,9 @@ python -m venv .venv
 source .venv/bin/activate
 # CPU/default install profile:
 pip install -r requirements.txt
+
+# Optional but required for native DPO/ORPO pairwise training:
+# pip install trl
 
 # GPU profile (all non-torch deps):
 # pip install -r requirements-gpu.txt

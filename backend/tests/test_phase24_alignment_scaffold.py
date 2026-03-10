@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 TEST_DB_PATH = Path(__file__).resolve().parent / "phase24_alignment_test.db"
 TEST_DATA_DIR = Path(__file__).resolve().parent / "phase24_alignment_data"
@@ -231,7 +232,9 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
         self.assertEqual(preflight_resp.status_code, 200, preflight_resp.text)
         payload = preflight_resp.json()
         preflight = payload.get("preflight", {})
-        self.assertTrue(preflight.get("ok"), preflight)
+        self.assertFalse(bool(preflight.get("ok")))
+        errors = [str(item) for item in preflight.get("errors", [])]
+        self.assertTrue(any("requires dependency 'trl'" in item for item in errors), errors)
         capability = preflight.get("capability_summary", {})
         dataset = capability.get("dataset", {})
         alignment_quality = dataset.get("alignment_quality", {})
@@ -272,9 +275,21 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
         self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
         experiment_id = int(exp_resp.json()["id"])
 
-        start_resp = self.client.post(
-            f"/api/projects/{project_id}/training/experiments/{experiment_id}/start"
-        )
+        with patch(
+            "app.services.training_preflight_service._dependency_status_snapshot",
+            return_value={
+                "torch": True,
+                "transformers": True,
+                "datasets": True,
+                "accelerate": True,
+                "trl": True,
+                "peft": True,
+                "bitsandbytes": False,
+            },
+        ):
+            start_resp = self.client.post(
+                f"/api/projects/{project_id}/training/experiments/{experiment_id}/start"
+            )
         self.assertEqual(start_resp.status_code, 200, start_resp.text)
         config = start_resp.json().get("config", {})
         runtime = config.get("_runtime", {})

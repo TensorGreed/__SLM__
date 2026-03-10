@@ -135,6 +135,37 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         preflight = payload.get("preflight", {})
         self.assertTrue(preflight.get("ok"), preflight)
 
+    def test_preflight_blocks_dpo_without_trl_dependency(self):
+        project_id = self._create_project("phase14-preflight-dpo-trl")
+        self._create_prepared_split(project_id)
+        prepared_dir = TEST_DATA_DIR / "projects" / str(project_id) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        (prepared_dir / "train.jsonl").write_text(
+            (
+                '{"prompt":"How often rotate keys?","chosen":"Every 90 days.","rejected":"Never."}\n'
+                '{"prompt":"How secure API traffic?","chosen":"Use TLS.","rejected":"Use HTTP."}\n'
+            ),
+            encoding="utf-8",
+        )
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/preflight",
+            json={
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                    "training_mode": "dpo",
+                    "task_type": "causal_lm",
+                    "trainer_backend": "auto",
+                }
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        preflight = payload.get("preflight", {})
+        self.assertFalse(bool(preflight.get("ok")))
+        errors = [str(item) for item in preflight.get("errors", [])]
+        self.assertTrue(any("requires dependency 'trl'" in item for item in errors), errors)
+
     def test_preflight_plan_returns_profiles_and_fixes_precision_conflict(self):
         project_id = self._create_project("phase14-preflight-4")
         self._create_prepared_split(project_id)
