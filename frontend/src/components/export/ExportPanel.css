@@ -300,3 +300,29 @@
     gap: 8px;
     flex-wrap: wrap;
 }
+
+.serve-run-telemetry {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-sm);
+}
+
+.serve-run-telemetry__item {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.02);
+    padding: var(--space-xs) var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.serve-run-telemetry__item span {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+}
+
+.serve-run-telemetry__item strong {
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+}

@@ -126,12 +126,24 @@ interface AdapterPreviewResult {
         failing_examples?: Array<{ mapped_index?: number; missing_required_fields?: string[] }>;
     };
     auto_fix_suggestions?: Array<{
+        suggestion_id?: string;
         kind?: string;
         severity?: string;
         message?: string;
+        confidence?: number;
+        confidence_label?: string;
+        expected_coverage_gain?: number;
         suggested_field_mapping?: Record<string, string>;
         top_raw_fields?: Array<[string, number]>;
     }>;
+    auto_apply?: {
+        confidence_threshold?: number;
+        candidate_count?: number;
+        applied_count?: number;
+        suggested_field_mapping?: Record<string, string>;
+        applied_suggestion_ids?: string[];
+        min_confidence?: number | null;
+    };
     inferred_task_profiles?: string[];
     raw_field_frequency?: Record<string, number>;
     preview_rows: Array<{
@@ -216,6 +228,19 @@ function parseJsonStringMapInput(raw: string): { value: Record<string, string>; 
         out[left] = right;
     }
     return { value: out, error: '' };
+}
+
+function normalizeStringMap(mapping: Record<string, unknown> | Record<string, string>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [rawKey, rawValue] of Object.entries(mapping || {})) {
+        const key = String(rawKey || '').trim();
+        const value = String(rawValue ?? '').trim();
+        if (!key || !value) {
+            continue;
+        }
+        out[key] = value;
+    }
+    return out;
 }
 
 function asPercent(value: unknown): string {
@@ -460,16 +485,39 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
     };
 
-    const applySuggestedFieldMapping = (mapping: Record<string, string>) => {
-        const nextMapping: Record<string, string> = {};
-        for (const [rawKey, rawValue] of Object.entries(mapping || {})) {
-            const key = String(rawKey || '').trim();
-            const value = String(rawValue || '').trim();
-            if (!key || !value) {
-                continue;
-            }
-            nextMapping[key] = value;
+    const emitMappingAcceptanceTelemetry = async (payload: {
+        mode: 'single' | 'batch';
+        mapping: Record<string, string>;
+        suggestionCount?: number;
+        confidenceAvg?: number;
+        acceptedSuggestionIds?: string[];
+    }) => {
+        try {
+            await api.post(`/projects/${projectId}/dataset/adapters/mapping-acceptance`, {
+                mode: payload.mode,
+                source: 'adapter_preview',
+                adapter_id: adapterPreviewResult?.resolved_adapter_id || adapterId || undefined,
+                task_profile: adapterPreviewResult?.resolved_task_profile || (adapterTaskProfile !== 'auto' ? adapterTaskProfile : undefined),
+                suggestion_count: payload.suggestionCount,
+                confidence_avg: payload.confidenceAvg,
+                mapping: payload.mapping,
+                accepted_suggestion_ids: payload.acceptedSuggestionIds,
+            });
+        } catch {
+            // Best-effort telemetry should not block UX.
         }
+    };
+
+    const applySuggestedFieldMapping = (
+        mapping: Record<string, string>,
+        options?: {
+            mode?: 'single' | 'batch';
+            suggestionCount?: number;
+            confidenceAvg?: number;
+            acceptedSuggestionIds?: string[];
+        },
+    ) => {
+        const nextMapping = normalizeStringMap(mapping);
         if (Object.keys(nextMapping).length === 0) {
             toast.error('Suggested mapping is empty.');
             return;
@@ -484,11 +532,108 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             ...parsedCurrent.value,
             ...nextMapping,
         };
+        let changedCount = 0;
+        for (const [key, value] of Object.entries(nextMapping)) {
+            if (parsedCurrent.value[key] !== value) {
+                changedCount += 1;
+            }
+        }
+        if (changedCount === 0) {
+            toast.success('Suggested mappings were already applied.');
+            return;
+        }
+
         const mergedText = JSON.stringify(merged, null, 2);
         setAdapterFieldMappingText(mergedText);
         setSplitFieldMappingText(mergedText);
         setAdapterPreviewError('');
-        toast.success('Applied suggested mapping to adapter and split field mappings.');
+
+        const mode = options?.mode || 'single';
+        if (mode === 'batch') {
+            toast.success(`Applied ${changedCount} suggested mappings to adapter and split field mappings.`);
+        } else {
+            toast.success('Applied suggested mapping to adapter and split field mappings.');
+        }
+        void emitMappingAcceptanceTelemetry({
+            mode,
+            mapping: nextMapping,
+            suggestionCount: options?.suggestionCount,
+            confidenceAvg: options?.confidenceAvg,
+            acceptedSuggestionIds: options?.acceptedSuggestionIds,
+        });
+    };
+
+    const applyAllSuggestedFieldMappings = () => {
+        if (!adapterPreviewResult) {
+            toast.error('Run adapter preview before applying suggestions.');
+            return;
+        }
+        const suggestions = Array.isArray(adapterPreviewResult.auto_fix_suggestions)
+            ? adapterPreviewResult.auto_fix_suggestions
+            : [];
+        const confidenceById = new Map<string, number>();
+        for (const suggestion of suggestions) {
+            const id = String(suggestion?.suggestion_id || '').trim();
+            const confidence = Number(suggestion?.confidence);
+            if (id && Number.isFinite(confidence)) {
+                confidenceById.set(id, confidence);
+            }
+        }
+
+        const preferredMapping = normalizeStringMap(
+            (adapterPreviewResult.auto_apply?.suggested_field_mapping || {}) as Record<string, unknown>,
+        );
+        const preferredIds = Array.isArray(adapterPreviewResult.auto_apply?.applied_suggestion_ids)
+            ? adapterPreviewResult.auto_apply?.applied_suggestion_ids?.map((id) => String(id || '').trim()).filter(Boolean) || []
+            : [];
+
+        let mergedMapping = { ...preferredMapping };
+        let acceptedSuggestionIds = [...preferredIds];
+        if (Object.keys(mergedMapping).length === 0) {
+            const threshold = Number(adapterPreviewResult.auto_apply?.confidence_threshold ?? 0.72);
+            const usedRawFields = new Set<string>();
+            for (const suggestion of suggestions) {
+                const suggested = normalizeStringMap((suggestion?.suggested_field_mapping || {}) as Record<string, unknown>);
+                if (Object.keys(suggested).length === 0) {
+                    continue;
+                }
+                const confidence = Number(suggestion?.confidence);
+                if (Number.isFinite(confidence) && confidence < threshold) {
+                    continue;
+                }
+                let applied = false;
+                for (const [canonical, raw] of Object.entries(suggested)) {
+                    if (mergedMapping[canonical] || usedRawFields.has(raw)) {
+                        continue;
+                    }
+                    mergedMapping[canonical] = raw;
+                    usedRawFields.add(raw);
+                    applied = true;
+                }
+                if (applied && suggestion?.suggestion_id) {
+                    acceptedSuggestionIds.push(String(suggestion.suggestion_id));
+                }
+            }
+        }
+
+        if (Object.keys(mergedMapping).length === 0) {
+            toast.error('No high-confidence field mapping suggestions found.');
+            return;
+        }
+
+        const confidenceValues = acceptedSuggestionIds
+            .map((id) => confidenceById.get(id))
+            .filter((value): value is number => Number.isFinite(value));
+        const confidenceAvg = confidenceValues.length > 0
+            ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
+            : undefined;
+
+        applySuggestedFieldMapping(mergedMapping, {
+            mode: 'batch',
+            suggestionCount: acceptedSuggestionIds.length || Number(adapterPreviewResult.auto_apply?.candidate_count || 0),
+            confidenceAvg,
+            acceptedSuggestionIds,
+        });
     };
 
     // ── Split ──────────────────────────────────────────────────
@@ -663,6 +808,12 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
             ...DEFAULT_TASK_PROFILE_OPTIONS,
         ]),
     ];
+    const autoFixSuggestions = Array.isArray(adapterPreviewResult?.auto_fix_suggestions)
+        ? adapterPreviewResult?.auto_fix_suggestions || []
+        : [];
+    const suggestionsWithMapping = autoFixSuggestions.filter((item) => (
+        item?.suggested_field_mapping && Object.keys(item.suggested_field_mapping).length > 0
+    ));
 
     return (
         <div className="dataprep-panel">
@@ -1013,11 +1164,33 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 )}
                             </div>
                         )}
-                        {Array.isArray(adapterPreviewResult.auto_fix_suggestions) && adapterPreviewResult.auto_fix_suggestions.length > 0 && (
+                        {autoFixSuggestions.length > 0 && (
                             <div className="dp-resolved-panel">
-                                <div className="dp-resolved-title">Auto-Fix Suggestions</div>
+                                <div style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    gap: '.6rem',
+                                    marginBottom: '.5rem',
+                                }}>
+                                    <div className="dp-resolved-title" style={{ marginBottom: 0 }}>Auto-Fix Suggestions</div>
+                                    <button
+                                        type="button"
+                                        className="btn-secondary"
+                                        onClick={applyAllSuggestedFieldMappings}
+                                        disabled={suggestionsWithMapping.length === 0}
+                                    >
+                                        Apply All Suggested Mappings
+                                    </button>
+                                </div>
+                                {adapterPreviewResult.auto_apply?.applied_count ? (
+                                    <div style={{ fontSize: '.74rem', color: 'rgba(255,255,255,.62)', marginBottom: '.5rem' }}>
+                                        Auto-apply ready: {adapterPreviewResult.auto_apply.applied_count} mapping(s) at or above
+                                        {' '}{asPercent(adapterPreviewResult.auto_apply.confidence_threshold || 0)} confidence.
+                                    </div>
+                                ) : null}
                                 <div style={{ display: 'grid', gap: '.55rem' }}>
-                                    {adapterPreviewResult.auto_fix_suggestions.map((suggestion, index) => (
+                                    {autoFixSuggestions.map((suggestion, index) => (
                                         <div key={`suggestion-${index}`} style={{
                                             border: '1px solid rgba(255,255,255,.08)',
                                             borderRadius: 8,
@@ -1026,6 +1199,13 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                         }}>
                                             <div style={{ fontSize: '.78rem', color: 'rgba(255,255,255,.9)' }}>
                                                 {suggestion.message || 'No message'}
+                                            </div>
+                                            <div style={{ fontSize: '.72rem', color: 'rgba(255,255,255,.62)', marginTop: '.3rem' }}>
+                                                Confidence: {asPercent(suggestion.confidence)}
+                                                {suggestion.confidence_label ? ` (${suggestion.confidence_label})` : ''}
+                                                {typeof suggestion.expected_coverage_gain === 'number'
+                                                    ? ` • expected gain ${asPercent(suggestion.expected_coverage_gain)}`
+                                                    : ''}
                                             </div>
                                             {suggestion.suggested_field_mapping && Object.keys(suggestion.suggested_field_mapping).length > 0 && (
                                                 <>
@@ -1036,7 +1216,19 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                                         type="button"
                                                         className="btn-secondary"
                                                         style={{ marginTop: '.45rem' }}
-                                                        onClick={() => applySuggestedFieldMapping(suggestion.suggested_field_mapping || {})}
+                                                        onClick={() => applySuggestedFieldMapping(
+                                                            suggestion.suggested_field_mapping || {},
+                                                            {
+                                                                mode: 'single',
+                                                                suggestionCount: 1,
+                                                                confidenceAvg: typeof suggestion.confidence === 'number'
+                                                                    ? suggestion.confidence
+                                                                    : undefined,
+                                                                acceptedSuggestionIds: suggestion.suggestion_id
+                                                                    ? [suggestion.suggestion_id]
+                                                                    : undefined,
+                                                            },
+                                                        )}
                                                     >
                                                         Apply Mapping
                                                     </button>

@@ -107,6 +107,17 @@ class DataAdapterServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(suggestions), 1)
         suggestion_kinds = {str(item.get("kind")) for item in suggestions if isinstance(item, dict)}
         self.assertIn("field_mapping", suggestion_kinds)
+        field_mapping_suggestions = [
+            item
+            for item in suggestions
+            if isinstance(item, dict) and item.get("kind") == "field_mapping"
+        ]
+        self.assertTrue(any("confidence" in item for item in field_mapping_suggestions))
+        self.assertTrue(any("suggestion_id" in item for item in field_mapping_suggestions))
+        auto_apply = result.get("auto_apply") or {}
+        self.assertIn("confidence_threshold", auto_apply)
+        self.assertIn("suggested_field_mapping", auto_apply)
+        self.assertIsInstance(auto_apply.get("suggested_field_mapping"), dict)
 
     def test_contract_helpers_handle_profile_and_training_task_compatibility(self):
         self.assertEqual(normalize_task_profile("Causal_LM"), "instruction_sft")

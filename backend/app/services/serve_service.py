@@ -96,10 +96,16 @@ def _build_builtin_template(
         "command": command,
         "healthcheck": {
             "url": health_url,
+            "method": "GET",
+            "expected_status": 200,
             "curl": f"curl -sS {shlex.quote(health_url)}",
         },
         "smoke_test": {
             "prompt": smoke_payload["prompt"],
+            "url": generate_url,
+            "method": "POST",
+            "json_body": smoke_payload,
+            "expected_status": 200,
             "curl": (
                 f"curl -sS -X POST {shlex.quote(generate_url)} "
                 "-H 'Content-Type: application/json' "
@@ -157,10 +163,16 @@ def _build_vllm_template(
         "command": command,
         "healthcheck": {
             "url": health_url,
+            "method": "GET",
+            "expected_status": 200,
             "curl": f"curl -sS {shlex.quote(health_url)}",
         },
         "smoke_test": {
             "prompt": smoke_payload["messages"][0]["content"],
+            "url": chat_url,
+            "method": "POST",
+            "json_body": smoke_payload,
+            "expected_status": 200,
             "curl": (
                 f"curl -sS -X POST {shlex.quote(chat_url)} "
                 "-H 'Content-Type: application/json' "
@@ -226,10 +238,16 @@ def _build_tgi_template(
         "command": command,
         "healthcheck": {
             "url": health_url,
+            "method": "GET",
+            "expected_status": 200,
             "curl": f"curl -sS {shlex.quote(health_url)}",
         },
         "smoke_test": {
             "prompt": smoke_payload["inputs"],
+            "url": generate_url,
+            "method": "POST",
+            "json_body": smoke_payload,
+            "expected_status": 200,
             "curl": (
                 f"curl -sS -X POST {shlex.quote(generate_url)} "
                 "-H 'Content-Type: application/json' "
@@ -294,10 +312,16 @@ def _build_ollama_template(
         ],
         "healthcheck": {
             "url": health_url,
+            "method": "GET",
+            "expected_status": 200,
             "curl": f"curl -sS {shlex.quote(health_url)}",
         },
         "smoke_test": {
             "prompt": smoke_payload["prompt"],
+            "url": smoke_url,
+            "method": "POST",
+            "json_body": smoke_payload,
+            "expected_status": 200,
             "curl": (
                 f"curl -sS -X POST {shlex.quote(smoke_url)} "
                 "-H 'Content-Type: application/json' "

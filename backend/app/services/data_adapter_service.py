@@ -1763,6 +1763,72 @@ def _candidate_field_mapping(
     return preferred[0][0]
 
 
+def _confidence_label(score: float) -> str:
+    normalized = _safe_float(score)
+    if normalized >= 0.85:
+        return "high"
+    if normalized >= 0.65:
+        return "medium"
+    return "low"
+
+
+def _build_auto_apply_field_mapping(
+    suggestions: list[dict[str, Any]],
+    *,
+    confidence_threshold: float = 0.72,
+) -> dict[str, Any]:
+    threshold = _safe_float(confidence_threshold)
+    scored: list[tuple[float, int, dict[str, str], str]] = []
+    for idx, suggestion in enumerate(suggestions):
+        if not isinstance(suggestion, dict):
+            continue
+        mapping = suggestion.get("suggested_field_mapping")
+        if not isinstance(mapping, dict) or not mapping:
+            continue
+        confidence = _safe_float(suggestion.get("confidence"))
+        if confidence < threshold:
+            continue
+        cleaned_mapping: dict[str, str] = {}
+        for raw_key, raw_value in mapping.items():
+            key = str(raw_key or "").strip()
+            value = str(raw_value or "").strip()
+            if not key or not value:
+                continue
+            cleaned_mapping[key] = value
+        if not cleaned_mapping:
+            continue
+        suggestion_id = str(suggestion.get("suggestion_id") or f"suggestion-{idx + 1}")
+        scored.append((confidence, idx, cleaned_mapping, suggestion_id))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    merged_mapping: dict[str, str] = {}
+    used_raw_fields: set[str] = set()
+    applied_ids: list[str] = []
+    min_confidence: float | None = None
+    for confidence, _, mapping, suggestion_id in scored:
+        applied = False
+        for canonical_field, raw_field in mapping.items():
+            if canonical_field in merged_mapping:
+                continue
+            if raw_field in used_raw_fields:
+                continue
+            merged_mapping[canonical_field] = raw_field
+            used_raw_fields.add(raw_field)
+            applied = True
+        if applied:
+            applied_ids.append(suggestion_id)
+            min_confidence = confidence if min_confidence is None else min(min_confidence, confidence)
+
+    return {
+        "confidence_threshold": round(threshold, 4),
+        "candidate_count": len(scored),
+        "applied_count": len(merged_mapping),
+        "suggested_field_mapping": merged_mapping,
+        "applied_suggestion_ids": applied_ids,
+        "min_confidence": round(min_confidence, 4) if min_confidence is not None else None,
+    }
+
+
 def _build_auto_fix_suggestions(
     *,
     conformance_report: dict[str, Any],
@@ -1776,23 +1842,58 @@ def _build_auto_fix_suggestions(
     raw_field_frequency: dict[str, int],
 ) -> list[dict[str, Any]]:
     suggestions: list[dict[str, Any]] = []
+    suggestion_counter = 0
+
+    def add_suggestion(
+        *,
+        kind: str,
+        severity: str,
+        message: str,
+        confidence: float,
+        suggested_field_mapping: dict[str, str] | None = None,
+        expected_coverage_gain: float | None = None,
+        top_raw_fields: list[tuple[str, int]] | None = None,
+    ) -> None:
+        nonlocal suggestion_counter
+        suggestion_counter += 1
+        normalized_confidence = _safe_float(confidence)
+        payload: dict[str, Any] = {
+            "suggestion_id": f"{kind}:{suggestion_counter}",
+            "kind": kind,
+            "severity": severity,
+            "message": message,
+            "confidence": round(normalized_confidence, 4),
+            "confidence_label": _confidence_label(normalized_confidence),
+        }
+        if isinstance(suggested_field_mapping, dict) and suggested_field_mapping:
+            payload["suggested_field_mapping"] = dict(suggested_field_mapping)
+        if expected_coverage_gain is not None:
+            payload["expected_coverage_gain"] = round(max(0.0, expected_coverage_gain), 4)
+        if top_raw_fields:
+            payload["top_raw_fields"] = list(top_raw_fields)
+        suggestions.append(payload)
+
     mapping_success_rate = float(conformance_report.get("mapping_success_rate") or 0.0)
     if mapping_success_rate < 0.7:
-        suggestions.append(
-            {
-                "kind": "field_mapping",
-                "severity": "warning",
-                "message": (
-                    f"Only {round(mapping_success_rate * 100, 1)}% of sampled rows mapped with "
-                    f"'{resolved_adapter_id}'. Add field_mapping overrides or choose a better adapter."
-                ),
-                "top_raw_fields": list(raw_field_frequency.items())[:8],
-            }
+        confidence = min(0.92, max(0.5, (1.0 - mapping_success_rate) * 0.8))
+        add_suggestion(
+            kind="field_mapping",
+            severity="warning",
+            message=(
+                f"Only {round(mapping_success_rate * 100, 1)}% of sampled rows mapped with "
+                f"'{resolved_adapter_id}'. Add field_mapping overrides or choose a better adapter."
+            ),
+            confidence=confidence,
+            top_raw_fields=list(raw_field_frequency.items())[:8],
         )
 
     schema_hint = contract.get("schema_hint")
     if not isinstance(schema_hint, dict):
         schema_hint = {}
+    required_coverage = conformance_report.get("required_field_coverage")
+    if not isinstance(required_coverage, dict):
+        required_coverage = {}
+    max_raw_frequency = max([int(v) for v in raw_field_frequency.values()] or [1])
     for field in list(conformance_report.get("required_fields_below_100") or []):
         canonical_field = str(field).strip()
         if not canonical_field:
@@ -1804,48 +1905,59 @@ def _build_auto_fix_suggestions(
         )
         if not suggestion:
             continue
-        suggestions.append(
-            {
-                "kind": "field_mapping",
-                "severity": "warning",
-                "message": f"Map canonical field '{canonical_field}' to raw field '{suggestion}'.",
-                "suggested_field_mapping": {
-                    canonical_field: suggestion,
-                },
-            }
+        coverage_payload = required_coverage.get(canonical_field) if isinstance(required_coverage.get(canonical_field), dict) else {}
+        current_ratio = _safe_float(coverage_payload.get("ratio"))
+        missing_ratio = max(0.0, 1.0 - current_ratio)
+        source_frequency = int(raw_field_frequency.get(suggestion) or 0)
+        source_score = min(1.0, max(0.0, source_frequency / max_raw_frequency))
+        confidence = min(0.98, max(0.4, (0.6 * source_score) + (0.4 * missing_ratio)))
+        expected_gain = missing_ratio * max(0.25, source_score)
+        add_suggestion(
+            kind="field_mapping",
+            severity="warning",
+            message=f"Map canonical field '{canonical_field}' to raw field '{suggestion}'.",
+            confidence=confidence,
+            suggested_field_mapping={canonical_field: suggestion},
+            expected_coverage_gain=expected_gain,
         )
 
     if not task_profile_compatible and requested_task_profile:
-        suggestions.append(
-            {
-                "kind": "task_profile",
-                "severity": "warning",
-                "message": (
-                    f"Requested task_profile '{requested_task_profile}' is not compatible with "
-                    f"adapter '{resolved_adapter_id}'. Use '{resolved_task_profile}' or change adapter."
-                ),
-            }
+        add_suggestion(
+            kind="task_profile",
+            severity="warning",
+            message=(
+                f"Requested task_profile '{requested_task_profile}' is not compatible with "
+                f"adapter '{resolved_adapter_id}'. Use '{resolved_task_profile}' or change adapter."
+            ),
+            confidence=0.82,
         )
 
     if str(validation_report.get("status") or "").strip().lower() == "warning":
-        suggestions.append(
-            {
-                "kind": "validation",
-                "severity": "warning",
-                "message": "Adapter validation returned warning status. Inspect validation_report for weak fields.",
-            }
+        add_suggestion(
+            kind="validation",
+            severity="warning",
+            message="Adapter validation returned warning status. Inspect validation_report for weak fields.",
+            confidence=0.68,
         )
 
     if not suggestions:
         sorted_scores = sorted(detection_scores.items(), key=lambda item: item[1], reverse=True)
         top = ", ".join(f"{adapter}:{score:.2f}" for adapter, score in sorted_scores[:3])
-        suggestions.append(
-            {
-                "kind": "info",
-                "severity": "info",
-                "message": f"Adapter mapping is stable on sampled data. Top detection scores: {top}.",
-            }
+        max_score = _safe_float(sorted_scores[0][1]) if sorted_scores else 0.5
+        add_suggestion(
+            kind="info",
+            severity="info",
+            message=f"Adapter mapping is stable on sampled data. Top detection scores: {top}.",
+            confidence=max(0.45, max_score),
         )
+
+    severity_rank = {"warning": 0, "info": 1}
+    suggestions.sort(
+        key=lambda item: (
+            int(severity_rank.get(str(item.get("severity")), 9)),
+            -_safe_float(item.get("confidence")),
+        )
+    )
     return suggestions[:12]
 
 
@@ -2011,6 +2123,7 @@ def preview_data_adapter(
         mapped_rows,
         resolved_task_profile=resolved_task_profile,
     )
+    auto_apply = _build_auto_apply_field_mapping(auto_fix_suggestions, confidence_threshold=0.72)
 
     return {
         "requested_adapter_id": _normalize_adapter_id(adapter_id) or DEFAULT_ADAPTER_ID,
@@ -2035,6 +2148,7 @@ def preview_data_adapter(
         "validation_report": validation,
         "conformance_report": conformance_report,
         "auto_fix_suggestions": auto_fix_suggestions,
+        "auto_apply": auto_apply,
         "inferred_task_profiles": inferred_task_profiles,
         "raw_field_frequency": raw_field_frequency,
         "preview_rows": preview_rows,

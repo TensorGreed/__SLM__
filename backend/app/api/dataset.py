@@ -13,6 +13,10 @@ from app.services.data_adapter_service import (
     list_data_adapter_catalog,
     load_data_adapter_plugins_from_settings,
 )
+from app.services.dataset_telemetry_service import (
+    record_mapping_acceptance,
+    summarize_mapping_acceptance,
+)
 from app.services.dataset_service import (
     combine_datasets,
     preview_project_data_adapter,
@@ -88,6 +92,17 @@ class AdapterPreferenceAutoDetectRequest(BaseModel):
     task_profile: str | None = None
     document_id: int | None = None
     save: bool = True
+
+
+class MappingAcceptanceTelemetryRequest(BaseModel):
+    mode: str = Field(default="single", pattern="^(single|batch)$")
+    source: str = Field(default="adapter_preview", min_length=1, max_length=64)
+    adapter_id: str | None = Field(default=None, max_length=128)
+    task_profile: str | None = Field(default=None, max_length=64)
+    suggestion_count: int | None = Field(default=None, ge=0, le=500)
+    confidence_avg: float | None = Field(default=None, ge=0, le=1)
+    mapping: dict[str, str] = Field(default_factory=dict)
+    accepted_suggestion_ids: list[str] | None = None
 
 
 def _resolve_split_config(
@@ -404,6 +419,43 @@ async def adapter_preview(
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/adapters/mapping-acceptance")
+async def adapter_mapping_acceptance(
+    project_id: int,
+    req: MappingAcceptanceTelemetryRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist mapping acceptance telemetry event for adapter suggestions."""
+    try:
+        await resolve_project_dataset_adapter_preference(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+    return record_mapping_acceptance(
+        project_id,
+        payload=req.model_dump(),
+    )
+
+
+@router.get("/adapters/mapping-acceptance")
+async def adapter_mapping_acceptance_summary(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return aggregated mapping acceptance telemetry summary for a project."""
+    try:
+        await resolve_project_dataset_adapter_preference(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("Project "):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    return summarize_mapping_acceptance(project_id)
 
 
 @router.post("/profile")

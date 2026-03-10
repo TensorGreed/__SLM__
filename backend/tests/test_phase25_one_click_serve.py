@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import unittest
 from pathlib import Path
 
@@ -192,6 +193,14 @@ class Phase25OneClickServeTests(unittest.TestCase):
             {"pending", "running", "stopping", "completed", "failed", "cancelled"},
         )
         self.assertIsInstance(status_payload.get("logs_tail"), list)
+        telemetry = status_payload.get("telemetry", {})
+        self.assertIsInstance(telemetry, dict)
+        telemetry_path = Path(str(telemetry.get("path") or ""))
+        self.assertTrue(telemetry_path.exists(), telemetry_path)
+        persisted = json.loads(telemetry_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted.get("run_id"), run_id)
+        self.assertIn("healthcheck", persisted)
+        self.assertIn("smoke_test", persisted)
 
         stop_resp = self.client.post(f"/api/projects/{project_id}/export/serve-runs/{run_id}/stop")
         self.assertEqual(stop_resp.status_code, 200, stop_resp.text)

@@ -322,6 +322,52 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(kwargs.get("adapter_id"), "qa-pair")
         self.assertEqual(kwargs.get("task_profile"), "qa")
 
+    def test_adapter_mapping_acceptance_telemetry_records_summary(self):
+        project_id = self._create_project("phase14-adapter-telemetry-1")
+
+        first = self.client.post(
+            f"/api/projects/{project_id}/dataset/adapters/mapping-acceptance",
+            json={
+                "mode": "single",
+                "adapter_id": "qa-pair",
+                "task_profile": "qa",
+                "mapping": {"question": "prompt_text"},
+                "suggestion_count": 1,
+                "confidence_avg": 0.82,
+                "accepted_suggestion_ids": ["field_mapping:1"],
+            },
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        first_payload = first.json()
+        self.assertEqual(first_payload.get("event", {}).get("accepted_count"), 1)
+        self.assertEqual(first_payload.get("summary", {}).get("event_count"), 1)
+
+        second = self.client.post(
+            f"/api/projects/{project_id}/dataset/adapters/mapping-acceptance",
+            json={
+                "mode": "batch",
+                "adapter_id": "qa-pair",
+                "task_profile": "qa",
+                "mapping": {"answer": "gold_response", "context": "reference_text"},
+                "suggestion_count": 2,
+                "confidence_avg": 0.79,
+                "accepted_suggestion_ids": ["field_mapping:2", "field_mapping:3"],
+            },
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        second_payload = second.json()
+        self.assertEqual(second_payload.get("summary", {}).get("event_count"), 2)
+        self.assertEqual(second_payload.get("summary", {}).get("batch_apply_events"), 1)
+        self.assertGreaterEqual(second_payload.get("summary", {}).get("accepted_mappings_total", 0), 3)
+
+        summary = self.client.get(f"/api/projects/{project_id}/dataset/adapters/mapping-acceptance")
+        self.assertEqual(summary.status_code, 200, summary.text)
+        summary_payload = summary.json()
+        self.assertEqual(summary_payload.get("event_count"), 2)
+        self.assertEqual(summary_payload.get("single_apply_events"), 1)
+        self.assertEqual(summary_payload.get("batch_apply_events"), 1)
+        self.assertTrue(bool(summary_payload.get("path")))
+
     def test_preflight_blocks_classification_when_dataset_contract_is_incompatible(self):
         project_id = self._create_project("phase14-preflight-contract-1")
         self._create_prepared_split(project_id)  # text-only rows

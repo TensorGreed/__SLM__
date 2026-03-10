@@ -122,6 +122,14 @@ interface ServeRunStatusResponse {
     healthcheck_curl?: string | null;
     smoke_curl?: string | null;
     logs_tail?: string[];
+    telemetry?: {
+        path?: string | null;
+        first_healthy_at?: string | null;
+        startup_latency_ms?: number | null;
+        smoke_passed?: boolean | null;
+        health_checks?: Array<{ ok?: boolean; status_code?: number | null; error?: string }>;
+        smoke_checks?: Array<{ ok?: boolean; status_code?: number | null; error?: string }>;
+    };
 }
 
 function toErrorMessage(error: unknown): string {
@@ -500,6 +508,12 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     };
 
     const fmtMetric = (value?: number | null) => (value == null ? '—' : `${(value * 100).toFixed(1)}%`);
+    const fmtTimestamp = (value?: string | null) => {
+        if (!value) return '—';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return value;
+        return parsed.toLocaleTimeString();
+    };
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
@@ -901,6 +915,40 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                 <div className="serve-template-block">
                                     <div className="serve-template-block__label">Active Command</div>
                                     <pre className="serve-template-code">{activeServeRun.command}</pre>
+                                </div>
+                            )}
+                            {activeServeRun.telemetry && (
+                                <div className="serve-run-telemetry">
+                                    <div className="serve-run-telemetry__item">
+                                        <span>First healthy</span>
+                                        <strong>{fmtTimestamp(activeServeRun.telemetry.first_healthy_at)}</strong>
+                                    </div>
+                                    <div className="serve-run-telemetry__item">
+                                        <span>Startup latency</span>
+                                        <strong>
+                                            {typeof activeServeRun.telemetry.startup_latency_ms === 'number'
+                                                ? `${activeServeRun.telemetry.startup_latency_ms} ms`
+                                                : '—'}
+                                        </strong>
+                                    </div>
+                                    <div className="serve-run-telemetry__item">
+                                        <span>Smoke checks</span>
+                                        <strong>
+                                            {Array.isArray(activeServeRun.telemetry.smoke_checks)
+                                                ? activeServeRun.telemetry.smoke_checks.length
+                                                : 0}
+                                        </strong>
+                                    </div>
+                                    <div className="serve-run-telemetry__item">
+                                        <span>Smoke passed</span>
+                                        <strong>
+                                            {activeServeRun.telemetry.smoke_passed === null || activeServeRun.telemetry.smoke_passed === undefined
+                                                ? 'pending'
+                                                : activeServeRun.telemetry.smoke_passed
+                                                    ? 'yes'
+                                                    : 'no'}
+                                        </strong>
+                                    </div>
                                 </div>
                             )}
 
