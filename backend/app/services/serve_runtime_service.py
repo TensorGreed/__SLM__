@@ -390,6 +390,10 @@ def _serialize_run(run: ServeRunJob, *, logs_tail: int = 200) -> dict[str, Any]:
             "first_healthy_at": run.first_healthy_at,
             "startup_latency_ms": run.startup_latency_ms,
             "smoke_passed": run.smoke_passed,
+            "smoke_url": run.smoke_url,
+            "smoke_method": run.smoke_method,
+            "smoke_expected_status": run.smoke_expected_status,
+            "smoke_json_body": run.smoke_json_body,
             "first_token_at": run.first_token_at,
             "first_token_latency_ms": run.first_token_latency_ms,
             "throughput_tokens_per_sec": run.throughput_tokens_per_sec,
@@ -398,6 +402,9 @@ def _serialize_run(run: ServeRunJob, *, logs_tail: int = 200) -> dict[str, Any]:
             "first_token_passed": run.first_token_passed,
             "healthcheck_url": run.healthcheck_url,
             "first_token_url": run.first_token_url,
+            "first_token_method": run.first_token_method,
+            "first_token_expected_status": run.first_token_expected_status,
+            "first_token_json_body": run.first_token_json_body,
             "health_checks": list(run.health_checks),
             "smoke_checks": list(run.smoke_checks),
             "first_token_checks": list(run.first_token_checks),
@@ -992,3 +999,22 @@ async def stop_serve_run(
         run.finished_at = _utcnow_iso()
     _persist_telemetry(run)
     return _serialize_run(run)
+
+
+async def list_serve_runs(
+    *,
+    project_id: int,
+    limit: int = 50,
+    logs_tail: int = 0,
+) -> dict[str, Any]:
+    capped_limit = max(1, min(int(limit or 50), 500))
+    target_project = int(project_id)
+    async with _RUN_LOCK:
+        rows = [run for run in _SERVE_RUNS.values() if int(run.project_id) == target_project]
+        rows.sort(key=lambda run: str(run.created_at or ""), reverse=True)
+        selected = rows[:capped_limit]
+    return {
+        "project_id": target_project,
+        "count": len(selected),
+        "runs": [_serialize_run(run, logs_tail=logs_tail) for run in selected],
+    }

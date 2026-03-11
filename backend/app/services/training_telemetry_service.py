@@ -13,11 +13,16 @@ from app.config import settings
 
 
 EVENT_TYPE_MODEL_WIZARD = "training.model_selection_wizard"
+EVENT_TYPE_OBSERVABILITY = "training.observability"
 MAX_TOP_MODELS = 20
 MAX_TOP_CONTEXTS = 12
 MIN_ADAPTIVE_APPLY_EVENTS = 3
 MIN_CONTEXT_APPLY_EVENTS = 2
 MAX_ADAPTIVE_MODEL_BOOST = 1.25
+MAX_OBSERVABILITY_LAYER_ITEMS = 128
+MAX_OBSERVABILITY_ATTENTION_ITEMS = 128
+MAX_OBSERVABILITY_NOTES = 2000
+MAX_OBSERVABILITY_EVENTS = 1000
 
 _TARGET_DEVICE_ALIASES: dict[str, str] = {
     "mobile": "mobile",
@@ -343,5 +348,278 @@ def record_model_wizard_event(
     return {
         "event": event,
         "summary": summarize_model_wizard_events(project_id),
+        "path": str(path),
+    }
+
+
+def _observability_path(project_id: int) -> Path:
+    return _telemetry_dir(project_id) / "training_observability_events.jsonl"
+
+
+def _normalize_layer_gradients(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        layer = _coerce_text(item.get("layer") or item.get("layer_id"))
+        grad_norm = _safe_float(item.get("grad_norm"))
+        weight_norm = _safe_float(item.get("weight_norm"))
+        update_ratio = _safe_float(item.get("update_ratio"))
+        if not layer:
+            continue
+        row: dict[str, Any] = {"layer": layer[:160]}
+        if grad_norm is not None:
+            row["grad_norm"] = max(0.0, round(float(grad_norm), 8))
+        if weight_norm is not None:
+            row["weight_norm"] = max(0.0, round(float(weight_norm), 8))
+        if update_ratio is not None:
+            row["update_ratio"] = max(0.0, round(float(update_ratio), 8))
+        rows.append(row)
+        if len(rows) >= MAX_OBSERVABILITY_LAYER_ITEMS:
+            break
+    return rows
+
+
+def _normalize_attention_focus(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        token = _coerce_text(item.get("token"))
+        if not token:
+            continue
+        weight = _safe_float(item.get("weight"))
+        source = _coerce_text(item.get("source"))
+        row: dict[str, Any] = {"token": token[:160]}
+        if weight is not None:
+            row["weight"] = max(0.0, round(float(weight), 8))
+        if source:
+            row["source"] = source[:80]
+        rows.append(row)
+        if len(rows) >= MAX_OBSERVABILITY_ATTENTION_ITEMS:
+            break
+    return rows
+
+
+def _normalize_split(value: Any) -> str | None:
+    token = _coerce_text(value).lower()
+    if token in {"train", "eval", "validation", "test"}:
+        return token
+    return None
+
+
+def _safe_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _safe_positive_step(value: Any) -> int | None:
+    parsed = _safe_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+def _safe_epoch(value: Any) -> float | None:
+    parsed = _safe_float(value)
+    if parsed is None or parsed < 0:
+        return None
+    return float(parsed)
+
+
+def _max_grad_norm(layer_gradients: list[dict[str, Any]]) -> float | None:
+    values: list[float] = []
+    for item in layer_gradients:
+        grad = item.get("grad_norm")
+        if isinstance(grad, (int, float)):
+            values.append(float(grad))
+    if not values:
+        return None
+    return max(values)
+
+
+def record_observability_event(
+    project_id: int,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    data = dict(payload or {})
+    layer_gradients = _normalize_layer_gradients(data.get("layer_gradients"))
+    attention_focus = _normalize_attention_focus(data.get("attention_focus"))
+    max_grad_norm = _max_grad_norm(layer_gradients)
+    anomaly_hint = _safe_bool(data.get("gradient_anomaly"))
+    hallucination_hint = _safe_bool(data.get("hallucination_signal"))
+    hallucination_signal = (
+        bool(hallucination_hint)
+        or any(
+            str(item.get("source") or "").strip().lower() in {"oov", "out_of_context", "hallucination_hint"}
+            for item in attention_focus
+        )
+    )
+    gradient_anomaly = bool(anomaly_hint) or (max_grad_norm is not None and max_grad_norm >= 5.0)
+
+    event = {
+        "event_id": uuid4().hex,
+        "event_type": EVENT_TYPE_OBSERVABILITY,
+        "timestamp": _utcnow_iso(),
+        "project_id": int(project_id),
+        "experiment_id": _safe_positive_step(data.get("experiment_id")),
+        "step": _safe_positive_step(data.get("step")),
+        "epoch": _safe_epoch(data.get("epoch")),
+        "split": _normalize_split(data.get("split")),
+        "layer_gradients": layer_gradients,
+        "attention_focus": attention_focus,
+        "gradient_anomaly": gradient_anomaly,
+        "hallucination_signal": hallucination_signal,
+        "max_grad_norm": max_grad_norm,
+        "notes": _coerce_text(data.get("notes"))[:MAX_OBSERVABILITY_NOTES],
+    }
+    path = _observability_path(project_id)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+
+    return {
+        "event": event,
+        "summary": summarize_observability_events(
+            project_id,
+            experiment_id=event.get("experiment_id"),
+        ),
+        "path": str(path),
+    }
+
+
+def list_observability_events(
+    project_id: int,
+    *,
+    experiment_id: int | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    path = _observability_path(project_id)
+    events = _iter_events(path)
+    selected_events = [
+        event
+        for event in events
+        if experiment_id is None or _safe_positive_step(event.get("experiment_id")) == int(experiment_id)
+    ]
+    capped_limit = max(1, min(int(limit or 200), MAX_OBSERVABILITY_EVENTS))
+    selected = list(reversed(selected_events[-capped_limit:]))
+    return {
+        "project_id": int(project_id),
+        "experiment_id": int(experiment_id) if experiment_id is not None else None,
+        "count": len(selected),
+        "events": selected,
+        "path": str(path),
+    }
+
+
+def summarize_observability_events(
+    project_id: int,
+    *,
+    experiment_id: int | None = None,
+) -> dict[str, Any]:
+    path = _observability_path(project_id)
+    events = _iter_events(path)
+    filtered = [
+        event
+        for event in events
+        if experiment_id is None or _safe_positive_step(event.get("experiment_id")) == int(experiment_id)
+    ]
+    anomaly_count = 0
+    hallucination_count = 0
+    last_timestamp: str | None = None
+    step_min: int | None = None
+    step_max: int | None = None
+    layer_stats: dict[str, dict[str, float]] = {}
+    layer_counts: Counter[str] = Counter()
+    focus_tokens: Counter[str] = Counter()
+
+    for event in filtered:
+        if bool(event.get("gradient_anomaly")):
+            anomaly_count += 1
+        if bool(event.get("hallucination_signal")):
+            hallucination_count += 1
+        timestamp = _coerce_text(event.get("timestamp"))
+        if timestamp:
+            last_timestamp = timestamp
+        step = _safe_positive_step(event.get("step"))
+        if step is not None:
+            step_min = step if step_min is None else min(step_min, step)
+            step_max = step if step_max is None else max(step_max, step)
+
+        for layer_item in list(event.get("layer_gradients") or []):
+            if not isinstance(layer_item, dict):
+                continue
+            layer = _coerce_text(layer_item.get("layer"))
+            if not layer:
+                continue
+            grad = _safe_float(layer_item.get("grad_norm"))
+            upd = _safe_float(layer_item.get("update_ratio"))
+            layer_counts[layer] += 1
+            aggregate = layer_stats.setdefault(
+                layer,
+                {
+                    "grad_sum": 0.0,
+                    "grad_max": 0.0,
+                    "upd_sum": 0.0,
+                },
+            )
+            if grad is not None:
+                aggregate["grad_sum"] += max(0.0, float(grad))
+                aggregate["grad_max"] = max(aggregate["grad_max"], max(0.0, float(grad)))
+            if upd is not None:
+                aggregate["upd_sum"] += max(0.0, float(upd))
+
+        for focus_item in list(event.get("attention_focus") or []):
+            if not isinstance(focus_item, dict):
+                continue
+            token = _coerce_text(focus_item.get("token"))
+            if not token:
+                continue
+            focus_tokens[token] += 1
+
+    top_layers: list[dict[str, Any]] = []
+    for layer, count in layer_counts.most_common(12):
+        aggregate = layer_stats.get(layer, {})
+        grad_avg = float(aggregate.get("grad_sum", 0.0)) / float(max(1, count))
+        upd_avg = float(aggregate.get("upd_sum", 0.0)) / float(max(1, count))
+        top_layers.append(
+            {
+                "layer": layer,
+                "event_count": int(count),
+                "avg_grad_norm": round(grad_avg, 8),
+                "max_grad_norm": round(float(aggregate.get("grad_max", 0.0)), 8),
+                "avg_update_ratio": round(upd_avg, 8),
+            }
+        )
+
+    top_attention_tokens = [
+        {"token": token, "count": count}
+        for token, count in focus_tokens.most_common(20)
+    ]
+    total_events = len(filtered)
+    return {
+        "project_id": int(project_id),
+        "experiment_id": int(experiment_id) if experiment_id is not None else None,
+        "event_count": total_events,
+        "gradient_anomaly_count": anomaly_count,
+        "hallucination_signal_count": hallucination_count,
+        "gradient_anomaly_rate": round(anomaly_count / total_events, 6) if total_events > 0 else 0.0,
+        "hallucination_signal_rate": round(hallucination_count / total_events, 6) if total_events > 0 else 0.0,
+        "step_min": step_min,
+        "step_max": step_max,
+        "top_layers": top_layers,
+        "top_attention_tokens": top_attention_tokens,
+        "last_event_at": last_timestamp,
         "path": str(path),
     }

@@ -162,6 +162,7 @@ def record_playground_feedback(
         "rating": rating,
         "tags": tags,
         "notes": _coerce_text(data.get("notes")),
+        "preferred_reply": _coerce_text(data.get("preferred_reply")),
         "quality_checks": _quality_checks(prompt=prompt, reply=reply, rating=rating),
     }
 
@@ -169,10 +170,25 @@ def record_playground_feedback(
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=True) + "\n")
 
+    active_learning_capture = None
+    if rating is not None and rating < 0:
+        try:
+            from app.services.alignment_dataset_service import capture_playground_rejected_feedback
+
+            active_learning_capture = capture_playground_rejected_feedback(project_id, event=event)
+        except Exception as e:  # noqa: BLE001
+            active_learning_capture = {
+                "project_id": int(project_id),
+                "captured": False,
+                "reason": "capture_error",
+                "error": str(e),
+            }
+
     return {
         "event": event,
         "summary": summarize_playground_feedback(project_id),
         "path": str(path),
+        "active_learning": active_learning_capture,
     }
 
 

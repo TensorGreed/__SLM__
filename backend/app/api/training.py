@@ -40,14 +40,20 @@ from app.services.alignment_service import (
     validate_preference_rows,
 )
 from app.services.alignment_dataset_service import (
+    compose_alignment_training_dataset,
     filter_preference_dataset_by_quality,
     import_preference_dataset_rows,
+    summarize_playground_active_learning,
+    materialize_playground_preference_pairs,
     summarize_preference_dataset,
 )
 from app.services.model_selection_service import recommend_training_base_models
 from app.services.training_telemetry_service import (
     build_model_acceptance_bias,
+    list_observability_events,
     record_model_wizard_event,
+    record_observability_event,
+    summarize_observability_events,
     summarize_model_wizard_events,
 )
 from app.services.playground_service import (
@@ -75,7 +81,11 @@ from app.services.training_recipe_service import (
     list_training_recipes,
     resolve_training_recipe,
 )
-from app.services.training_runtime_service import list_runtime_catalog
+from app.services.training_runtime_service import (
+    list_runtime_catalog,
+    reload_runtime_plugins_from_settings,
+    runtime_plugin_status,
+)
 from app.services.cloud_burst_service import (
     build_cloud_burst_launch_plan,
     estimate_cloud_burst_quote,
@@ -124,6 +134,18 @@ class ModelSelectionTelemetryRequest(BaseModel):
     selected_score: float | None = None
 
 
+class ObservabilityTelemetryRequest(BaseModel):
+    experiment_id: int | None = Field(default=None, ge=1)
+    step: int | None = Field(default=None, ge=1)
+    epoch: float | None = Field(default=None, ge=0)
+    split: str | None = Field(default=None, max_length=32)
+    layer_gradients: list[dict[str, object]] = Field(default_factory=list)
+    attention_focus: list[dict[str, object]] = Field(default_factory=list)
+    gradient_anomaly: bool | None = None
+    hallucination_signal: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class PlaygroundChatMessage(BaseModel):
     role: str = Field(..., min_length=1, max_length=16)
     content: str = Field(..., min_length=1, max_length=32000)
@@ -166,6 +188,7 @@ class PlaygroundFeedbackRequest(BaseModel):
     rating: int | None = Field(default=None, ge=-1, le=1)
     tags: list[str] = Field(default_factory=list)
     notes: str | None = Field(default=None, max_length=4000)
+    preferred_reply: str | None = Field(default=None, max_length=64000)
 
 
 class AlignmentRecipeResolveRequest(BaseModel):
@@ -199,6 +222,13 @@ class AlignmentDatasetFilterRequest(BaseModel):
     apply_to_train_file: bool = False
     source_path: str | None = Field(default=None, max_length=4096)
     target_path: str | None = Field(default=None, max_length=4096)
+
+
+class AlignmentActiveLearningComposeRequest(BaseModel):
+    source_path: str | None = Field(default=None, max_length=4096)
+    target_path: str | None = Field(default=None, max_length=4096)
+    include_playground_pairs: bool = True
+    max_playground_pairs: int = Field(default=5000, ge=1, le=50000)
 
 
 class CloudBurstQuoteRequest(BaseModel):
@@ -242,6 +272,28 @@ async def get_training_runtime_catalog(
     return {
         "project_id": project_id,
         **list_runtime_catalog(),
+    }
+
+
+@router.get("/runtimes/plugins/status")
+async def get_training_runtime_plugin_status(
+    project_id: int,
+):
+    """Read runtime plugin loader status (modules/errors/count)."""
+    return {
+        "project_id": project_id,
+        **runtime_plugin_status(),
+    }
+
+
+@router.post("/runtimes/plugins/reload")
+async def reload_training_runtime_plugins(
+    project_id: int,
+):
+    """Reload training runtime plugins from settings and return fresh catalog."""
+    return {
+        "project_id": project_id,
+        **reload_runtime_plugins_from_settings(),
     }
 
 
@@ -433,6 +485,39 @@ async def model_selection_telemetry_summary(
     """Return aggregated model selection wizard telemetry metrics."""
     await _get_project_or_404(db, project_id)
     return summarize_model_wizard_events(project_id)
+
+
+@router.post("/observability/telemetry")
+async def observability_telemetry_record(
+    project_id: int,
+    req: ObservabilityTelemetryRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist training observability telemetry event (gradients/attention focus)."""
+    await _get_project_or_404(db, project_id)
+    return record_observability_event(
+        project_id,
+        payload=req.model_dump(),
+    )
+
+
+@router.get("/observability/telemetry")
+async def observability_telemetry_summary(
+    project_id: int,
+    experiment_id: int | None = None,
+    limit: int = 120,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return observability telemetry summary with recent events for debugging."""
+    await _get_project_or_404(db, project_id)
+    return {
+        "summary": summarize_observability_events(project_id, experiment_id=experiment_id),
+        "recent": list_observability_events(
+            project_id,
+            experiment_id=experiment_id,
+            limit=limit,
+        ),
+    }
 
 
 @router.get("/playground/providers")
@@ -882,6 +967,43 @@ async def alignment_preference_dataset_filter(
     except ValueError as e:
         raise HTTPException(400, str(e))
     return report
+
+
+@router.get("/alignment/active-learning")
+async def alignment_active_learning_summary(
+    project_id: int,
+    refresh_pairs: bool = True,
+    max_playground_pairs: int = 5000,
+    db: AsyncSession = Depends(get_db),
+):
+    """Inspect active-learning artifacts derived from playground downvotes."""
+    await _get_project_or_404(db, project_id)
+    if bool(refresh_pairs):
+        materialize_playground_preference_pairs(
+            project_id,
+            max_pairs=max_playground_pairs,
+        )
+    return summarize_playground_active_learning(project_id)
+
+
+@router.post("/alignment/active-learning/compose")
+async def alignment_active_learning_compose(
+    project_id: int,
+    req: AlignmentActiveLearningComposeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compose train preference dataset merged with auto-materialized playground pairs."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return compose_alignment_training_dataset(
+            project_id,
+            source_path=req.source_path,
+            include_playground_pairs=req.include_playground_pairs,
+            target_path=req.target_path,
+            max_playground_pairs=req.max_playground_pairs,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 def _resolve_training_config(

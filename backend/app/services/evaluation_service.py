@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 from time import perf_counter
+from urllib.parse import parse_qs
 
 import httpx
 from sqlalchemy import select
@@ -679,6 +680,190 @@ def _build_judge_endpoint(api_url: str) -> str:
     return f"{base}/v1/chat/completions"
 
 
+def _parse_local_judge_spec(judge_model: str) -> dict[str, str | None] | None:
+    token = str(judge_model or "").strip()
+    prefixes = ("local_serve:", "serve_run:", "serve-run:")
+    selected: str | None = None
+    for prefix in prefixes:
+        if token.lower().startswith(prefix):
+            selected = token[len(prefix):]
+            break
+    if selected is None:
+        return None
+
+    run_selector, _, query = selected.partition("?")
+    run_id = run_selector.strip() or "auto"
+    query_values = parse_qs(query)
+    model_override = str(query_values.get("model", [""])[0] or "").strip() or None
+    if run_id.lower() in {"auto", "latest", "running"}:
+        run_id = ""
+    return {
+        "run_id": run_id or None,
+        "model_override": model_override,
+    }
+
+
+def _local_judge_transport_from_endpoint(endpoint: str) -> str:
+    lower = str(endpoint or "").strip().lower()
+    if "/v1/chat/completions" in lower or lower.endswith("/chat/completions"):
+        return "openai_chat"
+    if "/api/generate" in lower:
+        return "ollama_generate"
+    if lower.endswith("/generate"):
+        return "plain_generate"
+    return "openai_chat"
+
+
+def _extract_local_response_text(payload: dict, *, transport: str) -> str:
+    if transport == "openai_chat":
+        return str(
+            payload.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        ).strip()
+    if transport == "ollama_generate":
+        return str(payload.get("response") or payload.get("message") or "").strip()
+    for key in ("text", "generated_text", "response", "reply", "content"):
+        if key in payload and isinstance(payload.get(key), str):
+            return str(payload.get(key)).strip()
+    return ""
+
+
+async def _resolve_local_judge_target(
+    *,
+    project_id: int,
+    run_id: str | None,
+    model_override: str | None,
+    judge_model: str,
+) -> dict[str, str]:
+    from app.services.serve_runtime_service import (
+        get_serve_run_status,
+        list_serve_runs,
+    )
+
+    run_payload: dict
+    if run_id:
+        run_payload = await get_serve_run_status(
+            project_id=project_id,
+            run_id=run_id,
+            logs_tail=0,
+        )
+    else:
+        listing = await list_serve_runs(project_id=project_id, limit=30, logs_tail=0)
+        runs = [item for item in list(listing.get("runs") or []) if isinstance(item, dict)]
+        candidates = [
+            item
+            for item in runs
+            if str(item.get("status") or "").strip() in {"running", "pending", "completed"}
+            and isinstance(item.get("telemetry"), dict)
+            and (
+                str(item.get("telemetry", {}).get("smoke_url") or "").strip()
+                or str(item.get("telemetry", {}).get("first_token_url") or "").strip()
+            )
+        ]
+        if not candidates:
+            raise ValueError(
+                "No serve runtime found for local judge. Start a serve run first or configure remote judge API."
+            )
+        run_payload = candidates[0]
+
+    telemetry = dict(run_payload.get("telemetry") or {})
+    smoke_url = str(telemetry.get("smoke_url") or "").strip()
+    first_token_url = str(telemetry.get("first_token_url") or "").strip()
+    endpoint = smoke_url or first_token_url
+    if not endpoint:
+        raise ValueError("Serve run does not expose smoke/first-token URL for local judge requests.")
+    transport = _local_judge_transport_from_endpoint(endpoint)
+
+    body_hint = telemetry.get("smoke_json_body")
+    if not isinstance(body_hint, dict):
+        body_hint = telemetry.get("first_token_json_body")
+    hinted_model = str((body_hint or {}).get("model") or "").strip()
+    selected_model = model_override or hinted_model
+    if not selected_model and not _parse_local_judge_spec(judge_model):
+        selected_model = judge_model
+    if not selected_model:
+        selected_model = "local-judge"
+
+    return {
+        "run_id": str(run_payload.get("run_id") or "").strip(),
+        "endpoint": endpoint,
+        "method": str(
+            (telemetry.get("smoke_method") if smoke_url else telemetry.get("first_token_method"))
+            or "POST"
+        ).strip().upper(),
+        "transport": transport,
+        "model": selected_model,
+    }
+
+
+async def _judge_with_local_serve(
+    client: httpx.AsyncClient,
+    *,
+    endpoint: str,
+    method: str,
+    transport: str,
+    judge_model: str,
+    prompt: str,
+    reference: str,
+    prediction: str,
+) -> tuple[int, str]:
+    rubric = (
+        "Score answer quality from 1 to 5.\n"
+        "5 = fully correct and complete; 4 = mostly correct; 3 = partially correct; "
+        "2 = weak relevance; 1 = incorrect.\n"
+        "Return strict JSON: {\"score\": <1-5>, \"rationale\": \"...\"}."
+    )
+    if transport == "openai_chat":
+        body = {
+            "model": judge_model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": rubric},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Prompt:\n{prompt}\n\nReference Answer:\n{reference}\n\n"
+                        f"Model Prediction:\n{prediction}"
+                    ),
+                },
+            ],
+        }
+    elif transport == "ollama_generate":
+        body = {
+            "model": judge_model,
+            "stream": False,
+            "prompt": (
+                f"{rubric}\n\nPrompt:\n{prompt}\n\nReference Answer:\n{reference}\n\n"
+                f"Model Prediction:\n{prediction}"
+            ),
+        }
+    else:
+        body = {
+            "prompt": (
+                f"{rubric}\n\nPrompt:\n{prompt}\n\nReference Answer:\n{reference}\n\n"
+                f"Model Prediction:\n{prediction}"
+            ),
+            "max_tokens": 256,
+            "temperature": 0,
+        }
+
+    resp = await client.request(
+        method=method or "POST",
+        url=endpoint,
+        json=body,
+        headers={"Content-Type": "application/json"},
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Local judge response is not a JSON object")
+    content = _extract_local_response_text(payload, transport=transport)
+    if not content:
+        raise ValueError("Local judge response did not include parsable content")
+    return _parse_api_judge_content(content)
+
+
 async def _judge_with_remote_model(
     client: httpx.AsyncClient,
     endpoint: str,
@@ -745,17 +930,34 @@ async def evaluate_with_llm_judge(
     total_score = 0
     passed_count = 0
     fallback_count = 0
+    judge_provider = "heuristic"
+    local_target: dict[str, str] | None = None
+    judge_endpoint = ""
+    resolved_api_key = ""
+    local_spec = _parse_local_judge_spec(judge_model)
+    use_local_judge = local_spec is not None
+    use_remote_judge = False
+    judge_client: httpx.AsyncClient | None = None
 
-    secret_api_url = await get_project_secret_value(db, project_id, "judge_model", "api_url")
-    secret_api_key = await get_project_secret_value(db, project_id, "judge_model", "api_key")
-    resolved_api_url = secret_api_url or settings.JUDGE_MODEL_API_URL
-    resolved_api_key = secret_api_key or settings.JUDGE_MODEL_API_KEY
-
-    judge_endpoint = _build_judge_endpoint(resolved_api_url) if resolved_api_url else ""
-    use_remote_judge = bool(judge_endpoint)
-    remote_client: httpx.AsyncClient | None = None
-    if use_remote_judge:
-        remote_client = httpx.AsyncClient(timeout=60.0)
+    if use_local_judge and local_spec is not None:
+        local_target = await _resolve_local_judge_target(
+            project_id=project_id,
+            run_id=str(local_spec.get("run_id") or "").strip() or None,
+            model_override=str(local_spec.get("model_override") or "").strip() or None,
+            judge_model=judge_model,
+        )
+        judge_provider = "local_serve"
+        judge_client = httpx.AsyncClient(timeout=90.0)
+    else:
+        secret_api_url = await get_project_secret_value(db, project_id, "judge_model", "api_url")
+        secret_api_key = await get_project_secret_value(db, project_id, "judge_model", "api_key")
+        resolved_api_url = secret_api_url or settings.JUDGE_MODEL_API_URL
+        resolved_api_key = secret_api_key or settings.JUDGE_MODEL_API_KEY
+        judge_endpoint = _build_judge_endpoint(resolved_api_url) if resolved_api_url else ""
+        use_remote_judge = bool(judge_endpoint)
+        if use_remote_judge:
+            judge_provider = "remote_api"
+            judge_client = httpx.AsyncClient(timeout=60.0)
 
     try:
         for row in predictions:
@@ -763,10 +965,26 @@ async def evaluate_with_llm_judge(
             reference = str(row.get("reference", "") or "")
             prediction = str(row.get("prediction", "") or "")
 
-            if use_remote_judge and remote_client is not None:
+            if use_local_judge and judge_client is not None and local_target is not None:
+                try:
+                    score, rationale = await _judge_with_local_serve(
+                        judge_client,
+                        endpoint=str(local_target.get("endpoint") or ""),
+                        method=str(local_target.get("method") or "POST"),
+                        transport=str(local_target.get("transport") or "openai_chat"),
+                        judge_model=str(local_target.get("model") or "local-judge"),
+                        prompt=prompt,
+                        reference=reference,
+                        prediction=prediction,
+                    )
+                except Exception:
+                    score, rationale = _heuristic_judge_score(reference, prediction)
+                    fallback_count += 1
+                    rationale = f"{rationale} (fallback)"
+            elif use_remote_judge and judge_client is not None:
                 try:
                     score, rationale = await _judge_with_remote_model(
-                        client=remote_client,
+                        client=judge_client,
                         endpoint=judge_endpoint,
                         api_key=resolved_api_key,
                         judge_model=judge_model,
@@ -794,15 +1012,15 @@ async def evaluate_with_llm_judge(
                 }
             )
     finally:
-        if remote_client is not None:
-            await remote_client.aclose()
+        if judge_client is not None:
+            await judge_client.aclose()
 
     avg_score = total_score / len(predictions) if predictions else 0.0
     pass_rate = passed_count / len(predictions) if predictions else 0.0
 
     metrics = {
         "judge_model": judge_model,
-        "judge_provider": "remote_api" if use_remote_judge else "heuristic",
+        "judge_provider": judge_provider,
         "fallback_count": fallback_count,
         "average_score": round(avg_score, 2),
         "pass_rate": round(pass_rate, 4),
@@ -816,6 +1034,13 @@ async def evaluate_with_llm_judge(
         },
         "scored_predictions": scored_predictions[:50],  # Keep bounded payload size.
     }
+    if local_target is not None:
+        metrics["local_judge"] = {
+            "run_id": local_target.get("run_id"),
+            "endpoint": local_target.get("endpoint"),
+            "transport": local_target.get("transport"),
+            "model": local_target.get("model"),
+        }
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(
         "llm_judge",

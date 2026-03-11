@@ -21,6 +21,7 @@ from app.models.experiment import (
 from app.models.project import Project
 from app.services.training_preflight_service import run_training_preflight
 from app.services.alignment_dataset_service import (
+    compose_alignment_training_dataset,
     filter_preference_dataset_by_quality,
     resolve_alignment_dataset_path,
 )
@@ -350,6 +351,13 @@ async def _monitor_external_training(
 async def _simulate_training_loop(experiment_id: int, config: dict):
     """Simulate a training loop reporting metrics for demo purposes."""
     try:
+        project_id: int | None = None
+        async with async_session_factory() as db:
+            exp_result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
+            exp = exp_result.scalar_one_or_none()
+            if exp is not None:
+                project_id = int(exp.project_id)
+
         epochs = config.get("num_epochs", 3)
         steps_per_epoch = 100
         total_steps = epochs * steps_per_epoch
@@ -390,6 +398,62 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
             }
 
             await broadcast_metric(experiment_id, metric)
+
+            if project_id is not None and (step % 25 == 0 or eval_loss is not None):
+                from app.services.training_telemetry_service import record_observability_event
+
+                layer_gradients = []
+                for idx in range(6):
+                    layer_gradients.append(
+                        {
+                            "layer": f"transformer.layers.{idx}",
+                            "grad_norm": round(random.uniform(0.15, 1.8) * (1.0 + (idx * 0.07)), 6),
+                            "weight_norm": round(random.uniform(10.0, 42.0), 6),
+                            "update_ratio": round(random.uniform(0.0002, 0.0065), 8),
+                        }
+                    )
+                if step % 120 == 0:
+                    layer_gradients.append(
+                        {
+                            "layer": "transformer.layers.5",
+                            "grad_norm": round(random.uniform(5.1, 8.0), 6),
+                            "weight_norm": round(random.uniform(10.0, 42.0), 6),
+                            "update_ratio": round(random.uniform(0.0050, 0.0100), 8),
+                        }
+                    )
+                attention_focus = [
+                    {
+                        "token": "domain_fact",
+                        "weight": round(random.uniform(0.18, 0.55), 6),
+                        "source": "context",
+                    },
+                    {
+                        "token": "retrieval_anchor",
+                        "weight": round(random.uniform(0.12, 0.40), 6),
+                        "source": "retrieval",
+                    },
+                ]
+                if step % 150 == 0:
+                    attention_focus.append(
+                        {
+                            "token": "unknown_entity",
+                            "weight": round(random.uniform(0.35, 0.7), 6),
+                            "source": "out_of_context",
+                        }
+                    )
+
+                record_observability_event(
+                    project_id,
+                    payload={
+                        "experiment_id": experiment_id,
+                        "step": step,
+                        "epoch": round(epoch_float, 2),
+                        "split": "eval" if eval_loss is not None else "train",
+                        "layer_gradients": layer_gradients,
+                        "attention_focus": attention_focus,
+                        "notes": "simulate_runtime_observability",
+                    },
+                )
 
             # Periodic checkpoint
             if step % save_steps == 0 or step == total_steps:
@@ -553,6 +617,39 @@ async def start_training(
                 "drop_count": filter_report.get("drop_count"),
                 "average_quality_score": filter_report.get("average_quality_score"),
                 "filter_report_path": filter_report.get("filter_report_path"),
+            }
+
+        include_playground_feedback = _coerce_bool(
+            resolved_config.get("alignment_include_playground_feedback"),
+            True,
+        )
+        feedback_pairs_float = _coerce_float(resolved_config.get("alignment_playground_max_pairs"))
+        feedback_pair_cap = int(feedback_pairs_float) if feedback_pairs_float is not None else 5000
+        feedback_pair_cap = max(1, min(feedback_pair_cap, 50000))
+        if include_playground_feedback and custom_alignment_path is None:
+            active_learning_report = compose_alignment_training_dataset(
+                project_id,
+                source_path=str(train_file),
+                include_playground_pairs=True,
+                target_path=None,
+                max_playground_pairs=feedback_pair_cap,
+            )
+            effective_train_path = str(active_learning_report.get("effective_train_path") or "").strip()
+            if effective_train_path:
+                train_file = Path(effective_train_path)
+            runtime_config["active_learning_feedback"] = {
+                **active_learning_report,
+                "enabled": True,
+            }
+        else:
+            runtime_config["active_learning_feedback"] = {
+                "enabled": bool(include_playground_feedback),
+                "skipped": custom_alignment_path is not None or not include_playground_feedback,
+                "reason": (
+                    "custom_alignment_dataset_path"
+                    if custom_alignment_path is not None
+                    else "disabled_in_config"
+                ),
             }
 
     exp.status = ExperimentStatus.RUNNING

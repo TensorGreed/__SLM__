@@ -94,6 +94,12 @@ def _write_jsonl_rows(path: Path, rows: list[dict[str, str]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _append_jsonl_row(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def _parse_rows_input(
     *,
     rows: list[dict[str, Any]] | None = None,
@@ -286,6 +292,270 @@ def resolve_alignment_dataset_path(project_id: int, candidate_path: str | None) 
     if not token:
         return None
     return _resolve_project_path(project_id, token)
+
+
+def _active_learning_dir(project_id: int) -> Path:
+    path = _alignment_dir(project_id) / "active_learning"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _playground_rejected_path(project_id: int) -> Path:
+    return _active_learning_dir(project_id) / "playground_rejected.jsonl"
+
+
+def _playground_auto_pairs_path(project_id: int) -> Path:
+    return _active_learning_dir(project_id) / "playground_auto_pairs.jsonl"
+
+
+def _playground_merged_train_path(project_id: int) -> Path:
+    return _active_learning_dir(project_id) / "train.with_playground_feedback.jsonl"
+
+
+def _playground_feedback_log_path(project_id: int) -> Path:
+    return _project_dir(project_id) / "telemetry" / "playground_feedback_logs.jsonl"
+
+
+def _normalize_prompt_key(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def capture_playground_rejected_feedback(
+    project_id: int,
+    *,
+    event: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = dict(event or {})
+    rating = payload.get("rating")
+    try:
+        rating_value = int(rating)
+    except (TypeError, ValueError):
+        rating_value = None
+    if rating_value is None or rating_value >= 0:
+        return {
+            "project_id": int(project_id),
+            "captured": False,
+            "reason": "rating_not_negative",
+            "rejected_path": str(_playground_rejected_path(project_id)),
+        }
+
+    prompt = _coerce_text(payload.get("prompt"))
+    rejected = _coerce_text(payload.get("reply") or payload.get("rejected"))
+    if not prompt or not rejected:
+        return {
+            "project_id": int(project_id),
+            "captured": False,
+            "reason": "missing_prompt_or_reply",
+            "rejected_path": str(_playground_rejected_path(project_id)),
+        }
+
+    preferred_reply = _coerce_text(payload.get("preferred_reply") or payload.get("chosen"))
+    event_id = _coerce_text(payload.get("event_id"))
+    timestamp = _coerce_text(payload.get("timestamp")) or datetime.now(timezone.utc).isoformat()
+    rejected_path = _playground_rejected_path(project_id)
+    existing_rows = _load_jsonl_rows(rejected_path, max_rows=200000)
+    if event_id and any(_coerce_text(item.get("event_id")) == event_id for item in existing_rows):
+        summary = summarize_playground_active_learning(project_id)
+        return {
+            "project_id": int(project_id),
+            "captured": False,
+            "reason": "duplicate_event_id",
+            "event_id": event_id,
+            "rejected_path": str(rejected_path),
+            "summary": summary,
+        }
+
+    row = {
+        "event_id": event_id or None,
+        "timestamp": timestamp,
+        "prompt": prompt,
+        "rejected": rejected,
+        "preferred_reply": preferred_reply or None,
+        "provider": _coerce_text(payload.get("provider")) or None,
+        "model_name": _coerce_text(payload.get("model_name")) or None,
+        "preset_id": _coerce_text(payload.get("preset_id")) or None,
+        "session_id": payload.get("session_id"),
+        "message_index": payload.get("message_index"),
+        "tags": list(payload.get("tags") or []) if isinstance(payload.get("tags"), list) else [],
+        "notes": _coerce_text(payload.get("notes")) or None,
+    }
+    _append_jsonl_row(rejected_path, row)
+    summary = summarize_playground_active_learning(project_id)
+    return {
+        "project_id": int(project_id),
+        "captured": True,
+        "event_id": event_id or None,
+        "rejected_path": str(rejected_path),
+        "summary": summary,
+    }
+
+
+def materialize_playground_preference_pairs(
+    project_id: int,
+    *,
+    max_pairs: int = 5000,
+) -> dict[str, Any]:
+    rejected_path = _playground_rejected_path(project_id)
+    auto_pairs_path = _playground_auto_pairs_path(project_id)
+    rejected_rows = _load_jsonl_rows(rejected_path, max_rows=200000)
+
+    positive_reply_by_prompt: dict[str, str] = {}
+    feedback_events = _load_jsonl_rows(_playground_feedback_log_path(project_id), max_rows=200000)
+    for event in feedback_events:
+        try:
+            rating = int(event.get("rating"))
+        except (TypeError, ValueError):
+            rating = None
+        if rating is None or rating <= 0:
+            continue
+        prompt = _coerce_text(event.get("prompt"))
+        reply = _coerce_text(event.get("reply"))
+        key = _normalize_prompt_key(prompt)
+        if not key or not reply:
+            continue
+        positive_reply_by_prompt[key] = reply
+
+    unique_pairs: set[tuple[str, str, str]] = set()
+    output_pairs: list[dict[str, str]] = []
+    pairs_limit = max(1, min(int(max_pairs or 5000), 50000))
+    skipped_missing_chosen = 0
+    for row in rejected_rows:
+        prompt = _coerce_text(row.get("prompt"))
+        rejected = _coerce_text(row.get("rejected") or row.get("reply"))
+        if not prompt or not rejected:
+            continue
+        chosen = _coerce_text(row.get("preferred_reply"))
+        if not chosen:
+            chosen = positive_reply_by_prompt.get(_normalize_prompt_key(prompt), "")
+        if not chosen:
+            skipped_missing_chosen += 1
+            continue
+        if chosen.strip() == rejected.strip():
+            continue
+        key = (prompt, chosen, rejected)
+        if key in unique_pairs:
+            continue
+        unique_pairs.add(key)
+        output_pairs.append({"prompt": prompt, "chosen": chosen, "rejected": rejected})
+        if len(output_pairs) >= pairs_limit:
+            break
+
+    if output_pairs:
+        _write_jsonl_rows(auto_pairs_path, output_pairs)
+    elif auto_pairs_path.exists():
+        auto_pairs_path.unlink()
+
+    return {
+        "project_id": int(project_id),
+        "rejected_path": str(rejected_path),
+        "auto_pairs_path": str(auto_pairs_path),
+        "rejected_count": len(rejected_rows),
+        "pair_count": len(output_pairs),
+        "skipped_missing_chosen": skipped_missing_chosen,
+    }
+
+
+def summarize_playground_active_learning(project_id: int) -> dict[str, Any]:
+    rejected_path = _playground_rejected_path(project_id)
+    rejected_rows = _load_jsonl_rows(rejected_path, max_rows=200000)
+    negative_events_with_preferred = sum(
+        1 for row in rejected_rows if _coerce_text(row.get("preferred_reply"))
+    )
+    latest_rejected_at: str | None = None
+    for row in rejected_rows:
+        timestamp = _coerce_text(row.get("timestamp"))
+        if timestamp:
+            latest_rejected_at = timestamp
+
+    materialized = materialize_playground_preference_pairs(project_id)
+    return {
+        "project_id": int(project_id),
+        "rejected_path": str(rejected_path),
+        "auto_pairs_path": str(materialized.get("auto_pairs_path")),
+        "rejected_count": len(rejected_rows),
+        "auto_pair_count": int(materialized.get("pair_count", 0)),
+        "negative_events_with_preferred_reply": int(negative_events_with_preferred),
+        "latest_rejected_at": latest_rejected_at,
+    }
+
+
+def compose_alignment_training_dataset(
+    project_id: int,
+    *,
+    source_path: str | None = None,
+    include_playground_pairs: bool = True,
+    target_path: str | None = None,
+    max_playground_pairs: int = 5000,
+) -> dict[str, Any]:
+    if source_path:
+        source_file = _resolve_project_path(project_id, source_path)
+    else:
+        source_file = _project_train_file(project_id)
+
+    source_rows = _load_jsonl_rows(source_file) if source_file.exists() else []
+    canonical_source_rows, source_invalid_rows = _canonicalize_valid_rows(source_rows)
+
+    playground_report = {
+        "project_id": int(project_id),
+        "pair_count": 0,
+        "auto_pairs_path": str(_playground_auto_pairs_path(project_id)),
+    }
+    playground_rows: list[dict[str, str]] = []
+    if include_playground_pairs:
+        playground_report = materialize_playground_preference_pairs(
+            project_id,
+            max_pairs=max_playground_pairs,
+        )
+        playground_rows, _ = _canonicalize_valid_rows(
+            _load_jsonl_rows(Path(str(playground_report.get("auto_pairs_path") or "")))
+        )
+
+    if not playground_rows:
+        return {
+            "project_id": int(project_id),
+            "source_path": str(source_file),
+            "target_path": str(source_file),
+            "effective_train_path": str(source_file),
+            "written": False,
+            "source_rows": len(canonical_source_rows),
+            "source_invalid_rows": len(source_invalid_rows),
+            "playground_rows": 0,
+            "rows_written": len(canonical_source_rows),
+            "playground": playground_report,
+        }
+
+    dedupe: set[tuple[str, str, str]] = set()
+    merged_rows: list[dict[str, str]] = []
+    for row in [*canonical_source_rows, *playground_rows]:
+        key = (
+            _coerce_text(row.get("prompt")),
+            _coerce_text(row.get("chosen")),
+            _coerce_text(row.get("rejected")),
+        )
+        if not key[0] or not key[1] or not key[2]:
+            continue
+        if key in dedupe:
+            continue
+        dedupe.add(key)
+        merged_rows.append({"prompt": key[0], "chosen": key[1], "rejected": key[2]})
+
+    if target_path:
+        output_file = _resolve_project_path(project_id, target_path)
+    else:
+        output_file = _playground_merged_train_path(project_id)
+    _write_jsonl_rows(output_file, merged_rows)
+    return {
+        "project_id": int(project_id),
+        "source_path": str(source_file),
+        "target_path": str(output_file),
+        "effective_train_path": str(output_file),
+        "written": True,
+        "source_rows": len(canonical_source_rows),
+        "source_invalid_rows": len(source_invalid_rows),
+        "playground_rows": len(playground_rows),
+        "rows_written": len(merged_rows),
+        "playground": playground_report,
+    }
 
 
 def filter_preference_dataset_by_quality(

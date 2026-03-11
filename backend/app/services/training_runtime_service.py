@@ -77,11 +77,15 @@ class _RuntimePlugin:
     spec: TrainingRuntimeSpec
     validate: RuntimeValidateFn
     start: RuntimeStartFn
+    source_module: str = "builtin"
 
 
 _registry_lock = threading.Lock()
 _runtime_plugins: dict[str, _RuntimePlugin] = {}
 _plugins_loaded = False
+_loaded_plugin_modules: set[str] = set()
+_plugin_load_errors: dict[str, str] = {}
+_registration_source_context: str | None = None
 
 _LEGACY_RUNTIME_ALIASES = {
     LEGACY_SIMULATE_BACKEND: BUILTIN_SIMULATE_RUNTIME_ID,
@@ -91,6 +95,11 @@ _LEGACY_RUNTIME_ALIASES = {
 
 def _normalize_runtime_id(value: str | None) -> str:
     return str(value or "").strip().lower()
+
+
+def _normalize_source_module(value: str | None) -> str:
+    token = str(value or "").strip()
+    return token or "custom"
 
 
 def _register_plugin(plugin: _RuntimePlugin) -> None:
@@ -112,6 +121,7 @@ def register_training_runtime_plugin(
     supports_task_tracking: bool = False,
     supports_cancellation: bool = True,
     is_builtin: bool = False,
+    source_module: str | None = None,
 ) -> None:
     """Public plugin SDK entry-point for custom runtime modules."""
 
@@ -149,6 +159,11 @@ def register_training_runtime_plugin(
             spec=spec,
             validate=validate,
             start=start,
+            source_module=_normalize_source_module(
+                source_module
+                or _registration_source_context
+                or ("builtin" if is_builtin else "custom")
+            ),
         )
     )
 
@@ -274,25 +289,61 @@ async def _start_builtin_external_celery(ctx: TrainingRuntimeStartContext) -> Tr
     )
 
 
-def _load_runtime_plugins_from_settings() -> None:
-    for module_path in settings.TRAINING_RUNTIME_PLUGIN_MODULES:
-        path = str(module_path or "").strip()
-        if not path:
+def _load_runtime_plugins_from_settings(*, force_reload: bool = False) -> dict[str, Any]:
+    requested_modules = [
+        str(item).strip()
+        for item in list(settings.TRAINING_RUNTIME_PLUGIN_MODULES or [])
+        if str(item).strip()
+    ]
+    loaded_modules: list[str] = []
+    failed_modules: dict[str, str] = {}
+    registered_runtime_count = 0
+
+    global _registration_source_context
+    for module_name in requested_modules:
+        if module_name in _loaded_plugin_modules and not force_reload:
+            loaded_modules.append(module_name)
             continue
-        module = importlib.import_module(path)
-        register_fn = getattr(module, "register_training_runtime_plugins", None)
-        if register_fn is None:
-            continue
-        if not callable(register_fn):
-            raise ValueError(
-                f"Training runtime plugin module '{path}' has non-callable "
-                "'register_training_runtime_plugins'."
-            )
-        signature = inspect.signature(register_fn)
-        if len(signature.parameters) == 0:
-            register_fn()
-            continue
-        register_fn(register_training_runtime_plugin)
+
+        try:
+            module = importlib.import_module(module_name)
+            if force_reload:
+                module = importlib.reload(module)
+
+            register_fn = getattr(module, "register_training_runtime_plugins", None)
+            before = set(_runtime_plugins.keys())
+            prior_context = _registration_source_context
+            _registration_source_context = module_name
+            try:
+                if register_fn is not None:
+                    if not callable(register_fn):
+                        raise ValueError(
+                            f"Training runtime plugin module '{module_name}' has non-callable "
+                            "'register_training_runtime_plugins'."
+                        )
+                    signature = inspect.signature(register_fn)
+                    if len(signature.parameters) == 0:
+                        register_fn()
+                    else:
+                        register_fn(register_training_runtime_plugin)
+            finally:
+                _registration_source_context = prior_context
+
+            _loaded_plugin_modules.add(module_name)
+            _plugin_load_errors.pop(module_name, None)
+            loaded_modules.append(module_name)
+            registered_runtime_count += max(0, len(_runtime_plugins) - len(before))
+        except Exception as exc:  # noqa: PERF203
+            message = str(exc)
+            _plugin_load_errors[module_name] = message
+            failed_modules[module_name] = message
+
+    return {
+        "requested_modules": requested_modules,
+        "loaded_modules": sorted(set(loaded_modules)),
+        "failed_modules": failed_modules,
+        "registered_runtime_count": registered_runtime_count,
+    }
 
 
 def _ensure_plugins_loaded() -> None:
@@ -313,6 +364,7 @@ def _ensure_plugins_loaded() -> None:
             supports_task_tracking=False,
             supports_cancellation=True,
             is_builtin=True,
+            source_module="builtin",
         )
         register_training_runtime_plugin(
             runtime_id=BUILTIN_EXTERNAL_CELERY_RUNTIME_ID,
@@ -328,9 +380,44 @@ def _ensure_plugins_loaded() -> None:
             supports_task_tracking=True,
             supports_cancellation=True,
             is_builtin=True,
+            source_module="builtin",
         )
         _load_runtime_plugins_from_settings()
         _plugins_loaded = True
+
+
+def clear_runtime_plugins() -> None:
+    """Reset runtime plugin registry and loader metadata."""
+    global _plugins_loaded
+    with _registry_lock:
+        _runtime_plugins.clear()
+        _loaded_plugin_modules.clear()
+        _plugin_load_errors.clear()
+        _plugins_loaded = False
+
+
+def reload_runtime_plugins_from_settings() -> dict[str, Any]:
+    """Reload runtime plugins from settings and return load/catalog report."""
+    clear_runtime_plugins()
+    _ensure_plugins_loaded()
+    return {
+        "reload": runtime_plugin_status(),
+        "catalog": list_runtime_catalog(),
+    }
+
+
+def runtime_plugin_status() -> dict[str, Any]:
+    _ensure_plugins_loaded()
+    return {
+        "requested_modules": [
+            str(item).strip()
+            for item in list(settings.TRAINING_RUNTIME_PLUGIN_MODULES or [])
+            if str(item).strip()
+        ],
+        "loaded_modules": sorted(_loaded_plugin_modules),
+        "failed_modules": dict(_plugin_load_errors),
+        "registered_runtime_count": len(_runtime_plugins),
+    }
 
 
 def resolve_default_training_runtime_id() -> str:
@@ -410,7 +497,15 @@ def list_runtime_catalog() -> dict[str, Any]:
     _ensure_plugins_loaded()
     default_runtime_id = resolve_default_training_runtime_id()
     runtimes: list[dict[str, Any]] = []
-    for spec in list_runtime_specs():
+    ordered_plugins = sorted(
+        _runtime_plugins.values(),
+        key=lambda plugin: (
+            0 if plugin.spec.is_builtin else 1,
+            plugin.spec.runtime_id,
+        ),
+    )
+    for plugin in ordered_plugins:
+        spec = plugin.spec
         runtimes.append(
             {
                 "runtime_id": spec.runtime_id,
@@ -421,12 +516,15 @@ def list_runtime_catalog() -> dict[str, Any]:
                 "supports_task_tracking": spec.supports_task_tracking,
                 "supports_cancellation": spec.supports_cancellation,
                 "is_builtin": spec.is_builtin,
+                "source_module": plugin.source_module,
             }
         )
     return {
         "default_runtime_id": default_runtime_id,
         "runtime_count": len(runtimes),
         "legacy_aliases": dict(_LEGACY_RUNTIME_ALIASES),
+        "loaded_plugin_modules": sorted(_loaded_plugin_modules),
+        "plugin_load_errors": dict(_plugin_load_errors),
         "runtimes": runtimes,
     }
 
@@ -438,4 +536,3 @@ async def start_runtime(runtime_id: str, ctx: TrainingRuntimeStartContext) -> Tr
     if plugin is None:
         raise ValueError(f"Unknown training runtime '{runtime_id}'")
     return await plugin.start(ctx)
-
