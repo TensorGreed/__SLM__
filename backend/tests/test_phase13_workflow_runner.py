@@ -185,6 +185,66 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertIn("plan.cloud_burst", run_nodes["cloud_burst"]["published_artifact_keys"])
         self.assertIn("report.compression", run_nodes["model_merge"]["published_artifact_keys"])
 
+    def test_autopilot_scorecard_recommends_guided_after_safe_success_runs(self):
+        project_id = self._create_project("phase13-autopilot-scorecard")
+        templates_res = self.client.get(f"/api/projects/{project_id}/pipeline/graph/templates")
+        self.assertEqual(templates_res.status_code, 200, templates_res.text)
+        templates = templates_res.json().get("templates", [])
+        autopilot = next(
+            (item for item in templates if item.get("template_id") == "template.autopilot_chat"),
+            None,
+        )
+        self.assertIsNotNone(autopilot, "template.autopilot_chat was not found")
+        graph = dict(autopilot.get("graph") or {})
+
+        run_payload = {
+            "allow_fallback": False,
+            "use_saved_override": False,
+            "execution_backend": "local",
+            "max_retries": 1,
+            "stop_on_blocked": True,
+            "stop_on_failure": True,
+            "graph": graph,
+            "config": {
+                "bootstrap_source_artifacts": True,
+                "autopilot_template_id": "template.autopilot_chat",
+                "autopilot": {
+                    "profile": "safe",
+                    "preflight": {
+                        "passed": True,
+                    },
+                },
+            },
+        }
+
+        first = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json=run_payload,
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json().get("status"), "completed")
+
+        second = self.client.post(
+            f"/api/projects/{project_id}/pipeline/graph/run",
+            json=run_payload,
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json().get("status"), "completed")
+
+        scorecard = self.client.get(
+            f"/api/projects/{project_id}/pipeline/graph/autopilot/scorecard",
+            params={"limit": 20},
+        )
+        self.assertEqual(scorecard.status_code, 200, scorecard.text)
+        payload = scorecard.json()
+        self.assertEqual(payload.get("latest_profile"), "safe")
+        self.assertEqual(payload.get("recommended_profile"), "guided")
+        self.assertTrue(bool(payload.get("promotion_available")))
+        safe_stats = (payload.get("by_profile") or {}).get("safe") or {}
+        self.assertGreaterEqual(int(safe_stats.get("runs") or 0), 2)
+        self.assertGreaterEqual(int(safe_stats.get("completed_runs") or 0), 2)
+        self.assertGreaterEqual(float(safe_stats.get("success_rate") or 0.0), 0.9)
+
     def test_workflow_run_executes_local_data_adapter_preview_node(self):
         project_id = self._create_project("phase13-adapter-node")
         graph_override = {

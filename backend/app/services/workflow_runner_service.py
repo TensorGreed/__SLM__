@@ -36,6 +36,14 @@ from app.services.workflow_graph_service import (
     resolve_project_workflow_graph,
 )
 
+AUTOPILOT_TEMPLATE_ID = "template.autopilot_chat"
+AUTOPILOT_PROFILES = ("safe", "guided", "full")
+AUTOPILOT_PROFILE_RANK = {name: index for index, name in enumerate(AUTOPILOT_PROFILES)}
+AUTOPILOT_MIN_PROFILE_RUNS = 2
+AUTOPILOT_PROMOTION_SUCCESS_RATE = 0.75
+AUTOPILOT_PROMOTION_BLOCKED_FAILED_RATE = 0.25
+AUTOPILOT_PROMOTION_PREFLIGHT_PASS_RATE = 0.60
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -158,6 +166,99 @@ def _coerce_export_format(value: object) -> ExportFormat:
         return ExportFormat(token)
     except ValueError:
         return ExportFormat.GGUF
+
+
+def _coerce_autopilot_profile(value: object) -> str | None:
+    token = str(value or "").strip().lower()
+    if token in AUTOPILOT_PROFILE_RANK:
+        return token
+    return None
+
+
+def _extract_autopilot_run_metadata(run_config: object) -> tuple[str | None, bool | None, str | None]:
+    if not isinstance(run_config, dict):
+        return None, None, None
+    cfg = run_config.get("config")
+    if not isinstance(cfg, dict):
+        return None, None, None
+
+    template_id_text = str(cfg.get("autopilot_template_id") or "").strip()
+    template_id = template_id_text or None
+
+    autopilot_cfg = cfg.get("autopilot")
+    profile: str | None = None
+    preflight_passed: bool | None = None
+    if isinstance(autopilot_cfg, dict):
+        profile = _coerce_autopilot_profile(autopilot_cfg.get("profile"))
+        preflight = autopilot_cfg.get("preflight")
+        if isinstance(preflight, dict) and "passed" in preflight:
+            preflight_passed = _coerce_bool(preflight.get("passed"), default=False)
+
+    if profile is None and template_id == AUTOPILOT_TEMPLATE_ID:
+        profile = "safe"
+
+    return profile, preflight_passed, template_id
+
+
+def _empty_autopilot_profile_stats() -> dict[str, Any]:
+    return {
+        "runs": 0,
+        "completed_runs": 0,
+        "failed_runs": 0,
+        "blocked_runs": 0,
+        "cancelled_runs": 0,
+        "pending_runs": 0,
+        "running_runs": 0,
+        "preflight_checks": 0,
+        "preflight_passed": 0,
+        "success_rate": None,
+        "blocked_or_failed_rate": None,
+        "preflight_pass_rate": None,
+        "last_run_id": None,
+        "last_run_at": None,
+    }
+
+
+def _finalize_autopilot_profile_stats(stats: dict[str, Any]) -> None:
+    runs = int(stats.get("runs") or 0)
+    completed_runs = int(stats.get("completed_runs") or 0)
+    blocked_runs = int(stats.get("blocked_runs") or 0)
+    failed_runs = int(stats.get("failed_runs") or 0)
+    preflight_checks = int(stats.get("preflight_checks") or 0)
+    preflight_passed = int(stats.get("preflight_passed") or 0)
+
+    if runs > 0:
+        stats["success_rate"] = round(completed_runs / runs, 4)
+        stats["blocked_or_failed_rate"] = round((blocked_runs + failed_runs) / runs, 4)
+    else:
+        stats["success_rate"] = None
+        stats["blocked_or_failed_rate"] = None
+
+    if preflight_checks > 0:
+        stats["preflight_pass_rate"] = round(preflight_passed / preflight_checks, 4)
+    else:
+        stats["preflight_pass_rate"] = None
+
+
+def _autopilot_profile_is_stable(stats: dict[str, Any]) -> bool:
+    runs = int(stats.get("runs") or 0)
+    if runs < AUTOPILOT_MIN_PROFILE_RUNS:
+        return False
+
+    success_rate = float(stats.get("success_rate") or 0.0)
+    blocked_or_failed_rate = float(stats.get("blocked_or_failed_rate") or 1.0)
+    if success_rate < AUTOPILOT_PROMOTION_SUCCESS_RATE:
+        return False
+    if blocked_or_failed_rate > AUTOPILOT_PROMOTION_BLOCKED_FAILED_RATE:
+        return False
+
+    preflight_checks = int(stats.get("preflight_checks") or 0)
+    if preflight_checks >= AUTOPILOT_MIN_PROFILE_RUNS:
+        preflight_pass_rate = float(stats.get("preflight_pass_rate") or 0.0)
+        if preflight_pass_rate < AUTOPILOT_PROMOTION_PREFLIGHT_PASS_RATE:
+            return False
+
+    return True
 
 
 def _resolve_step_config(
@@ -2547,6 +2648,176 @@ async def list_workflow_runs(
     for item in node_rows.scalars().all():
         by_run[item.run_id].append(item)
     return [_serialize_run(item, by_run.get(item.id, [])) for item in runs]
+
+
+async def summarize_autopilot_scorecard(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    limit: int = 30,
+) -> dict[str, Any]:
+    """Aggregate autopilot run outcomes and recommend next execution profile."""
+    safe_limit = max(5, min(int(limit or 30), 100))
+    sample_limit = min(max(safe_limit * 4, 80), 500)
+
+    rows = await db.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.project_id == project_id)
+        .order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())
+        .limit(sample_limit)
+    )
+    candidate_runs = list(rows.scalars().all())
+
+    autopilot_runs: list[dict[str, Any]] = []
+    for run in candidate_runs:
+        profile, preflight_passed, template_id = _extract_autopilot_run_metadata(run.run_config)
+        if profile is None:
+            continue
+        autopilot_runs.append(
+            {
+                "run": run,
+                "profile": profile,
+                "preflight_passed": preflight_passed,
+                "template_id": template_id,
+            }
+        )
+        if len(autopilot_runs) >= safe_limit:
+            break
+
+    by_profile: dict[str, dict[str, Any]] = {
+        profile: _empty_autopilot_profile_stats()
+        for profile in AUTOPILOT_PROFILES
+    }
+    recent_runs: list[dict[str, Any]] = []
+
+    for item in autopilot_runs:
+        run = item["run"]
+        profile = str(item["profile"])
+        preflight_passed = item["preflight_passed"]
+        stats = by_profile.get(profile)
+        if stats is None:
+            continue
+
+        stats["runs"] = int(stats["runs"]) + 1
+        status_value = run.status.value if isinstance(run.status, WorkflowRunStatus) else str(run.status or "")
+        if status_value == WorkflowRunStatus.COMPLETED.value:
+            stats["completed_runs"] = int(stats["completed_runs"]) + 1
+        elif status_value == WorkflowRunStatus.FAILED.value:
+            stats["failed_runs"] = int(stats["failed_runs"]) + 1
+        elif status_value == WorkflowRunStatus.BLOCKED.value:
+            stats["blocked_runs"] = int(stats["blocked_runs"]) + 1
+        elif status_value == WorkflowRunStatus.CANCELLED.value:
+            stats["cancelled_runs"] = int(stats["cancelled_runs"]) + 1
+        elif status_value == WorkflowRunStatus.RUNNING.value:
+            stats["running_runs"] = int(stats["running_runs"]) + 1
+        else:
+            stats["pending_runs"] = int(stats["pending_runs"]) + 1
+
+        if preflight_passed is not None:
+            stats["preflight_checks"] = int(stats["preflight_checks"]) + 1
+            if bool(preflight_passed):
+                stats["preflight_passed"] = int(stats["preflight_passed"]) + 1
+
+        if stats.get("last_run_id") is None:
+            stats["last_run_id"] = int(run.id)
+        if stats.get("last_run_at") is None:
+            stats["last_run_at"] = (
+                run.created_at.isoformat()
+                if run.created_at
+                else (run.updated_at.isoformat() if run.updated_at else None)
+            )
+
+        recent_runs.append(
+            {
+                "run_id": int(run.id),
+                "profile": profile,
+                "status": status_value,
+                "execution_backend": str(run.execution_backend or ""),
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                "preflight_passed": preflight_passed,
+                "template_id": item.get("template_id"),
+            }
+        )
+
+    for stats in by_profile.values():
+        _finalize_autopilot_profile_stats(stats)
+
+    latest_profile = str(autopilot_runs[0]["profile"]) if autopilot_runs else None
+    latest_run_id = int(autopilot_runs[0]["run"].id) if autopilot_runs else None
+    recommended_profile = "safe"
+    recommendation_reason = "No autopilot run history yet. Start with the safe profile."
+
+    if latest_profile in AUTOPILOT_PROFILE_RANK:
+        recommended_profile = latest_profile
+        latest_stats = by_profile[latest_profile]
+
+        if latest_profile == "safe":
+            if _autopilot_profile_is_stable(latest_stats):
+                recommended_profile = "guided"
+                recommendation_reason = (
+                    "Safe profile has stable outcomes and preflight signals. "
+                    "Promote to guided for synthetic + semantic execution."
+                )
+            else:
+                recommendation_reason = (
+                    "Keep safe profile until completion and preflight pass rates stabilize."
+                )
+        elif latest_profile == "guided":
+            if _autopilot_profile_is_stable(latest_stats):
+                recommended_profile = "full"
+                recommendation_reason = (
+                    "Guided profile is stable. Promote to full for distillation and model merge."
+                )
+            elif (
+                int(latest_stats.get("runs") or 0) >= AUTOPILOT_MIN_PROFILE_RUNS
+                and float(latest_stats.get("blocked_or_failed_rate") or 0.0) > 0.4
+            ):
+                recommended_profile = "safe"
+                recommendation_reason = (
+                    "Guided profile is unstable (high blocked/failed rate). "
+                    "Fall back to safe to recover baseline reliability."
+                )
+            else:
+                recommendation_reason = (
+                    "Keep guided profile while collecting more successful runs."
+                )
+        elif latest_profile == "full":
+            if (
+                int(latest_stats.get("runs") or 0) >= AUTOPILOT_MIN_PROFILE_RUNS
+                and not _autopilot_profile_is_stable(latest_stats)
+            ):
+                recommended_profile = "guided"
+                recommendation_reason = (
+                    "Full profile is unstable. Step down to guided before retrying full."
+                )
+            else:
+                recommendation_reason = (
+                    "Full profile remains recommended from recent outcomes."
+                )
+
+    latest_rank = AUTOPILOT_PROFILE_RANK.get(latest_profile or "safe", 0)
+    recommended_rank = AUTOPILOT_PROFILE_RANK.get(recommended_profile, 0)
+    promotion_available = recommended_rank > latest_rank
+    demotion_suggested = recommended_rank < latest_rank
+
+    return {
+        "project_id": int(project_id),
+        "template_id": AUTOPILOT_TEMPLATE_ID,
+        "generated_at": _utcnow().isoformat(),
+        "run_window_limit": safe_limit,
+        "run_window_count": len(autopilot_runs),
+        "autopilot_run_count": len(autopilot_runs),
+        "latest_run_id": latest_run_id,
+        "latest_profile": latest_profile,
+        "recommended_profile": recommended_profile,
+        "promotion_available": promotion_available,
+        "demotion_suggested": demotion_suggested,
+        "reason": recommendation_reason,
+        "profiles": list(AUTOPILOT_PROFILES),
+        "by_profile": by_profile,
+        "recent_runs": recent_runs[: min(10, len(recent_runs))],
+    }
 
 
 async def get_workflow_run(

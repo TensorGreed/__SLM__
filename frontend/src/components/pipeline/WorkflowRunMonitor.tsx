@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
 import type {
+    PipelineAutopilotScorecardResponse,
+    PipelineGraphCompileResponse,
     PipelineGraphContractSaveResponse,
+    PipelineGraphResponse,
     PipelineGraphTemplate,
     PipelineGraphTemplateListResponse,
     PipelineStage,
@@ -22,6 +25,28 @@ interface WorkflowRunQueuedResponse {
     run_id: number;
     run: WorkflowRun;
 }
+
+type AutopilotProfile = 'safe' | 'guided' | 'full';
+
+interface AutopilotGateResult {
+    profile: AutopilotProfile;
+    checked_at: string;
+    passed: boolean;
+    valid_graph: boolean;
+    active_stage_ready: boolean;
+    missing_inputs: string[];
+    missing_runtime: string[];
+    errors: string[];
+    warnings: string[];
+    notes: string[];
+}
+
+const SOURCE_ARTIFACTS = new Set(['source.file', 'source.remote_dataset']);
+const AUTOPILOT_PROFILE_RANK: Record<AutopilotProfile, number> = {
+    safe: 0,
+    guided: 1,
+    full: 2,
+};
 
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
@@ -50,12 +75,112 @@ function formatDateTime(value: string | null | undefined): string {
     return date.toLocaleString();
 }
 
+function formatRate(value: number | null | undefined): string {
+    if (typeof value !== 'number' || Number.isNaN(value)) {
+        return 'n/a';
+    }
+    return `${Math.round(value * 100)}%`;
+}
+
 function statusClass(status: string): string {
     const normalized = status.toLowerCase();
     if (normalized === 'completed') return 'ok';
     if (normalized === 'running') return 'active';
     if (normalized === 'failed' || normalized === 'blocked') return 'error';
     return 'neutral';
+}
+
+function normalizeAutopilotProfile(value: unknown): AutopilotProfile | null {
+    const token = String(value || '').trim().toLowerCase();
+    if (token === 'safe' || token === 'guided' || token === 'full') {
+        return token;
+    }
+    return null;
+}
+
+function normalizeConfig(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+    return value as Record<string, unknown>;
+}
+
+function cloneGraph(graph: PipelineGraphResponse): PipelineGraphResponse {
+    return {
+        ...graph,
+        nodes: (graph.nodes || []).map((node) => ({
+            ...node,
+            config: normalizeConfig(node.config),
+        })),
+        edges: [...(graph.edges || [])],
+    };
+}
+
+function patchStageConfig(
+    graph: PipelineGraphResponse,
+    stageName: string,
+    patch: Record<string, unknown>,
+): PipelineGraphResponse {
+    return {
+        ...graph,
+        nodes: graph.nodes.map((node) => {
+            if (String(node.stage) !== stageName) {
+                return node;
+            }
+            const currentConfig = normalizeConfig(node.config);
+            return {
+                ...node,
+                config: {
+                    ...currentConfig,
+                    ...patch,
+                },
+            };
+        }),
+    };
+}
+
+function graphForAutopilotProfile(
+    baseGraph: PipelineGraphResponse,
+    profile: AutopilotProfile,
+): PipelineGraphResponse {
+    let next = cloneGraph(baseGraph);
+
+    next = patchStageConfig(next, 'cloud_burst', {
+        mode: 'plan',
+    });
+
+    if (profile === 'safe') {
+        next = patchStageConfig(next, 'synthetic_conversation', { mode: 'noop' });
+        next = patchStageConfig(next, 'semantic_curation', { mode: 'noop' });
+        next = patchStageConfig(next, 'distillation', { mode: 'noop' });
+        next = patchStageConfig(next, 'model_merge', { mode: 'noop' });
+        return next;
+    }
+
+    if (profile === 'guided') {
+        next = patchStageConfig(next, 'synthetic_conversation', {
+            mode: 'generate_and_save',
+        });
+        next = patchStageConfig(next, 'semantic_curation', { mode: 'analyze' });
+        next = patchStageConfig(next, 'distillation', { mode: 'noop' });
+        next = patchStageConfig(next, 'model_merge', { mode: 'noop' });
+        return next;
+    }
+
+    next = patchStageConfig(next, 'synthetic_conversation', {
+        mode: 'generate_and_save',
+    });
+    next = patchStageConfig(next, 'semantic_curation', {
+        mode: 'analyze',
+    });
+    next = patchStageConfig(next, 'distillation', {
+        mode: 'create_and_start',
+        name: 'autopilot-distillation',
+    });
+    next = patchStageConfig(next, 'model_merge', {
+        mode: 'queue_merge',
+    });
+    return next;
 }
 
 export default function WorkflowRunMonitor({ projectId, currentStage }: WorkflowRunMonitorProps) {
@@ -75,6 +200,12 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
     const [stopOnBlocked, setStopOnBlocked] = useState(true);
     const [stopOnFailure, setStopOnFailure] = useState(true);
     const [selectedTemplateId, setSelectedTemplateId] = useState('__saved__');
+    const [autopilotProfile, setAutopilotProfile] = useState<AutopilotProfile>('safe');
+    const [isAutopilotPreflightRunning, setIsAutopilotPreflightRunning] = useState(false);
+    const [autopilotGate, setAutopilotGate] = useState<AutopilotGateResult | null>(null);
+    const [autopilotScorecard, setAutopilotScorecard] = useState<PipelineAutopilotScorecardResponse | null>(null);
+    const [isAutopilotScorecardLoading, setIsAutopilotScorecardLoading] = useState(false);
+    const [autopilotProfileManual, setAutopilotProfileManual] = useState(false);
 
     const selectedTemplate = useMemo(
         () => templates.find((template) => template.template_id === selectedTemplateId) || null,
@@ -88,6 +219,24 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
         () => selectedTemplate?.template_id === 'template.autopilot_chat',
         [selectedTemplate],
     );
+    const autopilotGraph = useMemo(() => {
+        if (!selectedTemplate || !isAutopilotTemplate) {
+            return null;
+        }
+        return graphForAutopilotProfile(selectedTemplate.graph, autopilotProfile);
+    }, [autopilotProfile, isAutopilotTemplate, selectedTemplate]);
+    const recommendedAutopilotProfile = useMemo(
+        () => normalizeAutopilotProfile(autopilotScorecard?.recommended_profile),
+        [autopilotScorecard],
+    );
+    const autopilotPromotionAvailable = useMemo(() => {
+        if (!autopilotScorecard || !recommendedAutopilotProfile) {
+            return false;
+        }
+        const currentRank = AUTOPILOT_PROFILE_RANK[autopilotProfile];
+        const recommendedRank = AUTOPILOT_PROFILE_RANK[recommendedAutopilotProfile];
+        return Boolean(autopilotScorecard.promotion_available) && recommendedRank > currentRank;
+    }, [autopilotProfile, autopilotScorecard, recommendedAutopilotProfile]);
 
     const loadRuns = useCallback(async () => {
         setIsLoading(true);
@@ -152,6 +301,51 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
         return () => window.clearInterval(intervalId);
     }, [selectedRunId, selectedRunIsActive, fetchRunDetail]);
 
+    const loadAutopilotScorecard = useCallback(async () => {
+        if (!isAutopilotTemplate) {
+            setAutopilotScorecard(null);
+            return;
+        }
+        setIsAutopilotScorecardLoading(true);
+        try {
+            const res = await api.get<PipelineAutopilotScorecardResponse>(
+                `/projects/${projectId}/pipeline/graph/autopilot/scorecard`,
+                { params: { limit: 30 } },
+            );
+            setAutopilotScorecard(res.data);
+        } catch {
+            setAutopilotScorecard(null);
+        } finally {
+            setIsAutopilotScorecardLoading(false);
+        }
+    }, [isAutopilotTemplate, projectId]);
+
+    useEffect(() => {
+        if (!isAutopilotTemplate) {
+            setAutopilotScorecard(null);
+            setAutopilotProfileManual(false);
+            return;
+        }
+        void loadAutopilotScorecard();
+    }, [isAutopilotTemplate, loadAutopilotScorecard, selectedTemplateId]);
+
+    useEffect(() => {
+        setAutopilotGate(null);
+    }, [autopilotProfile, selectedTemplateId]);
+
+    useEffect(() => {
+        if (!isAutopilotTemplate) {
+            return;
+        }
+        if (autopilotProfileManual) {
+            return;
+        }
+        if (!recommendedAutopilotProfile) {
+            return;
+        }
+        setAutopilotProfile(recommendedAutopilotProfile);
+    }, [autopilotProfileManual, isAutopilotTemplate, recommendedAutopilotProfile]);
+
     const handleRunWorkflow = async () => {
         setIsRunning(true);
         setStatusMessage('');
@@ -176,12 +370,84 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
             setSelectedRun(res.data.run);
             setErrorMessage('');
             await loadRuns();
+            if (isAutopilotTemplate) {
+                await loadAutopilotScorecard();
+            }
         } catch (error) {
             setErrorMessage(extractErrorMessage(error));
         } finally {
             setIsRunning(false);
         }
     };
+
+    const runAutopilotPreflightGate = useCallback(async (
+        graphOverride?: PipelineGraphResponse,
+    ): Promise<AutopilotGateResult | null> => {
+        const graph = graphOverride || autopilotGraph;
+        if (!graph || !isAutopilotTemplate) {
+            return null;
+        }
+        setIsAutopilotPreflightRunning(true);
+        setStatusMessage('');
+        try {
+            const res = await api.post<PipelineGraphCompileResponse>(
+                `/projects/${projectId}/pipeline/graph/compile`,
+                {
+                    graph,
+                    allow_fallback: false,
+                    use_saved_override: false,
+                },
+            );
+            const checks = res.data?.checks || {
+                active_stage_present: false,
+                active_stage_ready_now: false,
+                active_stage_missing_inputs: [],
+                active_stage_missing_runtime_requirements: [],
+            };
+            const rawMissingInputs = Array.isArray(checks.active_stage_missing_inputs)
+                ? checks.active_stage_missing_inputs
+                : [];
+            const missingInputs = rawMissingInputs.filter((item) => !SOURCE_ARTIFACTS.has(String(item)));
+            const bootstrappedInputs = rawMissingInputs.filter((item) => SOURCE_ARTIFACTS.has(String(item)));
+            const missingRuntime = Array.isArray(checks.active_stage_missing_runtime_requirements)
+                ? checks.active_stage_missing_runtime_requirements
+                : [];
+            const errors = Array.isArray(res.data?.errors) ? res.data.errors : [];
+            const warnings = Array.isArray(res.data?.warnings) ? res.data.warnings : [];
+            const notes: string[] = [];
+            if (bootstrappedInputs.length > 0) {
+                notes.push(`Source artifacts will be auto-bootstrapped: ${bootstrappedInputs.join(', ')}`);
+            }
+            const activeStageReady = Boolean(checks.active_stage_present) && missingInputs.length === 0 && missingRuntime.length === 0;
+            const passed = Boolean(res.data?.valid_graph) && errors.length === 0 && activeStageReady;
+            const gate: AutopilotGateResult = {
+                profile: autopilotProfile,
+                checked_at: new Date().toISOString(),
+                passed,
+                valid_graph: Boolean(res.data?.valid_graph),
+                active_stage_ready: activeStageReady,
+                missing_inputs: missingInputs,
+                missing_runtime: missingRuntime,
+                errors,
+                warnings,
+                notes,
+            };
+            setAutopilotGate(gate);
+            if (passed) {
+                setStatusMessage('Autopilot preflight passed.');
+                setErrorMessage('');
+            } else {
+                setStatusMessage('Autopilot preflight blocked. Review gate diagnostics.');
+            }
+            return gate;
+        } catch (error) {
+            setAutopilotGate(null);
+            setErrorMessage(extractErrorMessage(error));
+            return null;
+        } finally {
+            setIsAutopilotPreflightRunning(false);
+        }
+    }, [autopilotGraph, autopilotProfile, isAutopilotTemplate, projectId]);
 
     const handleApplyTemplateDefaults = useCallback(async () => {
         if (!selectedTemplate) {
@@ -192,53 +458,91 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
         try {
             await api.put<PipelineGraphContractSaveResponse>(
                 `/projects/${projectId}/pipeline/graph/contract`,
-                { graph: selectedTemplate.graph },
+                { graph: autopilotGraph || selectedTemplate.graph },
             );
             setErrorMessage('');
             setStatusMessage(
-                `Template '${selectedTemplate.display_name}' saved. Stage panels can now prefill from this graph contract.`,
+                (
+                    `Template '${selectedTemplate.display_name}' saved. `
+                    + `Stage panels can now prefill from this graph contract`
+                    + `${isAutopilotTemplate ? ` (profile: ${autopilotProfile})` : ''}.`
+                ),
             );
         } catch (error) {
             setErrorMessage(extractErrorMessage(error));
         } finally {
             setIsApplyingTemplate(false);
         }
-    }, [projectId, selectedTemplate]);
+    }, [autopilotGraph, autopilotProfile, isAutopilotTemplate, projectId, selectedTemplate]);
 
     const handleRunAutopilot = useCallback(async () => {
-        if (!selectedTemplate || !isAutopilotTemplate) {
+        if (!selectedTemplate || !isAutopilotTemplate || !autopilotGraph) {
             return;
         }
         setIsRunning(true);
         setStatusMessage('');
         try {
+            const gate = await runAutopilotPreflightGate(autopilotGraph);
+            if (!gate || !gate.passed) {
+                setStatusMessage('Autopilot run blocked by preflight gate.');
+                return;
+            }
+            const profileMaxRetries = autopilotProfile === 'full' ? 2 : 1;
             const payload: Record<string, unknown> = {
                 allow_fallback: true,
                 use_saved_override: false,
                 execution_backend: 'local',
-                max_retries: 1,
+                max_retries: profileMaxRetries,
                 stop_on_blocked: true,
                 stop_on_failure: true,
-                graph: selectedTemplate.graph,
+                graph: autopilotGraph,
                 config: {
                     bootstrap_source_artifacts: true,
                     autopilot_template_id: selectedTemplate.template_id,
+                    autopilot: {
+                        profile: autopilotProfile,
+                        preflight: {
+                            checked_at: gate.checked_at,
+                            passed: gate.passed,
+                            valid_graph: gate.valid_graph,
+                            active_stage_ready: gate.active_stage_ready,
+                            missing_inputs: gate.missing_inputs,
+                            missing_runtime: gate.missing_runtime,
+                            errors: gate.errors,
+                            warnings: gate.warnings,
+                            notes: gate.notes,
+                        },
+                    },
                 },
             };
             const res = await api.post<WorkflowRunQueuedResponse>(`/projects/${projectId}/pipeline/graph/run-async`, payload);
             setStatusMessage(
-                `Autopilot run #${res.data.run_id} queued (local backend, retries=1, source bootstrap enabled).`,
+                (
+                    `Autopilot run #${res.data.run_id} queued `
+                    + `(profile=${autopilotProfile}, backend=local, retries=${profileMaxRetries}).`
+                ),
             );
             setSelectedRunId(res.data.run_id);
             setSelectedRun(res.data.run);
             setErrorMessage('');
             await loadRuns();
+            await loadAutopilotScorecard();
         } catch (error) {
             setErrorMessage(extractErrorMessage(error));
         } finally {
             setIsRunning(false);
         }
-    }, [isAutopilotTemplate, loadRuns, projectId, selectedTemplate]);
+    }, [autopilotGraph, autopilotProfile, isAutopilotTemplate, loadAutopilotScorecard, loadRuns, projectId, runAutopilotPreflightGate, selectedTemplate]);
+
+    const handleUseRecommendedProfile = useCallback(() => {
+        if (!recommendedAutopilotProfile) {
+            return;
+        }
+        setAutopilotProfileManual(true);
+        setAutopilotProfile(recommendedAutopilotProfile);
+        setErrorMessage('');
+        setStatusMessage(`Autopilot profile set to recommended '${recommendedAutopilotProfile}'.`);
+    }, [recommendedAutopilotProfile]);
 
     return (
         <div className="card workflow-run-card">
@@ -328,16 +632,41 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
                     <div className="workflow-run-autopilot__text">
                         <strong>Autopilot Chat Flow</strong>
                         <span>
-                            Save this template to prefill Synthetic, Semantic, Cloud Burst, and Merge panels,
-                            then launch one guided run.
+                            Select execution profile, run preflight gate, save prefills, then launch one guided run.
                         </span>
+                    </div>
+                    <div className="workflow-run-autopilot__profile">
+                        <label>
+                            Execution Profile
+                            <select
+                                className="input"
+                                value={autopilotProfile}
+                                onChange={(e) => {
+                                    setAutopilotProfileManual(true);
+                                    setAutopilotProfile(e.target.value as AutopilotProfile);
+                                }}
+                                disabled={isApplyingTemplate || isRunning || isAutopilotPreflightRunning}
+                            >
+                                <option value="safe">Safe (noops on advanced heavy steps)</option>
+                                <option value="guided">Guided (synthetic + semantic enabled)</option>
+                                <option value="full">Full (enables distillation + model merge)</option>
+                            </select>
+                        </label>
                     </div>
                     <div className="workflow-run-autopilot__actions">
                         <button
                             type="button"
                             className="btn btn-secondary"
+                            onClick={() => void runAutopilotPreflightGate()}
+                            disabled={isApplyingTemplate || isRunning || isAutopilotPreflightRunning}
+                        >
+                            {isAutopilotPreflightRunning ? 'Checking...' : 'Run Preflight Gate'}
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
                             onClick={() => void handleApplyTemplateDefaults()}
-                            disabled={isApplyingTemplate || isRunning}
+                            disabled={isApplyingTemplate || isRunning || isAutopilotPreflightRunning}
                         >
                             {isApplyingTemplate ? 'Applying...' : 'Apply Prefills'}
                         </button>
@@ -345,11 +674,82 @@ export default function WorkflowRunMonitor({ projectId, currentStage }: Workflow
                             type="button"
                             className="btn btn-primary"
                             onClick={() => void handleRunAutopilot()}
-                            disabled={isApplyingTemplate || isRunning}
+                            disabled={isApplyingTemplate || isRunning || isAutopilotPreflightRunning}
                         >
                             {isRunning ? 'Running...' : 'Run Autopilot Path'}
                         </button>
                     </div>
+                    <div className="workflow-run-autopilot__scorecard">
+                        <div className="workflow-run-autopilot__scorecard-head">
+                            <strong>Scorecard</strong>
+                            {isAutopilotScorecardLoading && <span>Refreshing...</span>}
+                            {!isAutopilotScorecardLoading && recommendedAutopilotProfile && (
+                                <span>
+                                    recommended: {recommendedAutopilotProfile}
+                                    {autopilotPromotionAvailable ? ' (promotion ready)' : ''}
+                                </span>
+                            )}
+                        </div>
+                        {autopilotScorecard?.reason && (
+                            <div className="workflow-run-autopilot__scorecard-line">
+                                {autopilotScorecard.reason}
+                            </div>
+                        )}
+                        {autopilotScorecard && (
+                            <div className="workflow-run-autopilot__scorecard-line">
+                                safe {autopilotScorecard.by_profile.safe.runs} runs ({formatRate(autopilotScorecard.by_profile.safe.success_rate)} success) • guided {autopilotScorecard.by_profile.guided.runs} runs ({formatRate(autopilotScorecard.by_profile.guided.success_rate)} success) • full {autopilotScorecard.by_profile.full.runs} runs ({formatRate(autopilotScorecard.by_profile.full.success_rate)} success)
+                            </div>
+                        )}
+                        {recommendedAutopilotProfile && recommendedAutopilotProfile !== autopilotProfile && (
+                            <div className="workflow-run-autopilot__scorecard-actions">
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={handleUseRecommendedProfile}
+                                    disabled={isApplyingTemplate || isRunning || isAutopilotPreflightRunning}
+                                >
+                                    Use Recommended Profile
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    {autopilotGate && (
+                        <div className={`workflow-run-autopilot__gate ${autopilotGate.passed ? 'ok' : 'blocked'}`}>
+                            <div className="workflow-run-autopilot__gate-head">
+                                <strong>
+                                    Preflight: {autopilotGate.passed ? 'PASS' : 'BLOCKED'}
+                                </strong>
+                                <span>
+                                    profile={autopilotGate.profile} • {formatDateTime(autopilotGate.checked_at)}
+                                </span>
+                            </div>
+                            {autopilotGate.notes.length > 0 && (
+                                <div className="workflow-run-autopilot__gate-line">
+                                    notes: {autopilotGate.notes.join(' | ')}
+                                </div>
+                            )}
+                            {autopilotGate.missing_inputs.length > 0 && (
+                                <div className="workflow-run-autopilot__gate-line">
+                                    missing inputs: {autopilotGate.missing_inputs.join(', ')}
+                                </div>
+                            )}
+                            {autopilotGate.missing_runtime.length > 0 && (
+                                <div className="workflow-run-autopilot__gate-line">
+                                    missing runtime: {autopilotGate.missing_runtime.join(', ')}
+                                </div>
+                            )}
+                            {autopilotGate.errors.length > 0 && (
+                                <div className="workflow-run-autopilot__gate-line">
+                                    errors: {autopilotGate.errors.join(' | ')}
+                                </div>
+                            )}
+                            {autopilotGate.warnings.length > 0 && (
+                                <div className="workflow-run-autopilot__gate-line">
+                                    warnings: {autopilotGate.warnings.join(' | ')}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 

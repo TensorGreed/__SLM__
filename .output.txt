@@ -1,0 +1,212 @@
+backend/app/services/training_recipe_service.py:        "recipe_id": "recipe.distill.logits",
+backend/app/services/training_recipe_service.py:        "display_name": "Distillation (Teacher->Student)",
+backend/app/services/training_recipe_service.py:        "description": "SFT + KL distillation against a teacher model for stronger small-model transfer.",
+backend/app/services/training_recipe_service.py:        "category": "distillation",
+backend/app/services/training_recipe_service.py:        "tags": ["distillation", "teacher-student", "logits"],
+backend/app/services/training_recipe_service.py:        "required_fields": ["base_model", "distillation_teacher_model"],
+backend/app/services/training_recipe_service.py:            "distillation_enabled": True,
+backend/app/services/training_recipe_service.py:            "distillation_alpha": 0.6,
+backend/app/services/training_recipe_service.py:            "distillation_temperature": 2.0,
+backend/app/services/training_recipe_service.py:            "distillation_hidden_state_weight": 0.0,
+backend/app/services/training_recipe_service.py:            "distillation_hidden_state_loss": "mse",
+backend/app/services/workflow_graph_service.py:    "distillation": {
+backend/app/services/workflow_graph_service.py:        "step_type": "core.distillation_training",
+backend/app/services/workflow_graph_service.py:        "description": "Run teacher-guided distillation training for compact student models.",
+backend/app/services/workflow_graph_service.py:        "config_schema_ref": "slm.step.distillation_training/v1",
+backend/app/services/workflow_graph_service.py:        "description": "Queue TIES/DEX style model merge to produce deployable merged artifacts.",
+backend/app/services/workflow_graph_service.py:            "template_id": "template.distill",
+backend/app/services/workflow_graph_service.py:            "display_name": "Distillation Pipeline",
+backend/app/services/workflow_graph_service.py:            "description": "Distillation-style pipeline emphasizing synthetic data and iterative evaluation.",
+backend/app/services/workflow_graph_service.py:                template_id="template.distill",
+backend/app/services/workflow_graph_service.py:                template_label="Distillation Pipeline",
+backend/app/services/workflow_graph_service.py:                template_description="Distillation-style pipeline emphasizing synthetic data and iterative evaluation.",
+backend/app/services/workflow_graph_service.py:                        "config_schema_ref": "slm.step.training.distill/v1",
+backend/app/services/workflow_graph_service.py:                        "description": "Train student model with teacher-guided distillation objectives.",
+backend/app/services/workflow_graph_service.py:                    "distillation",
+backend/app/services/workflow_graph_service.py:                    "distillation": {
+backend/app/services/workflow_graph_service.py:                        "description": "Run teacher-guided distillation objective execution for student model.",
+backend/app/services/workflow_graph_service.py:                            "distillation_enabled": True,
+backend/app/services/workflow_graph_service.py:                            "distillation_teacher_model": "meta-llama/Llama-3.1-8B-Instruct",
+backend/app/services/workflow_graph_service.py:                            "distillation_alpha": 0.6,
+backend/app/services/workflow_graph_service.py:                            "distillation_temperature": 2.0,
+backend/app/services/workflow_graph_service.py:                        "description": "Queue TIES/DEX model soup merge for checkpoint ensemble packaging.",
+backend/app/services/workflow_graph_service.py:                            "merge_method": "ties",
+backend/app/services/workflow_graph_service.py:                            "ties_density": 0.2,
+backend/app/services/workflow_graph_service.py:            "template_id": "template.remote_distill",
+backend/app/services/workflow_graph_service.py:            "display_name": "Remote Distill + Merge",
+backend/app/services/workflow_graph_service.py:            "description": "Lean remote path: cloud burst planning, distillation, evaluation, and model merge/export.",
+backend/app/services/workflow_graph_service.py:                template_id="template.remote_distill",
+backend/app/services/workflow_graph_service.py:                template_label="Remote Distill + Merge",
+backend/app/services/workflow_graph_service.py:                    "Lean remote path: cloud burst planning, distillation, evaluation, "
+backend/app/services/workflow_graph_service.py:                    "distillation",
+backend/app/services/workflow_graph_service.py:                        "description": "Optional baseline training before distillation pass.",
+backend/app/services/workflow_graph_service.py:                    "distillation": {
+backend/app/services/workflow_graph_service.py:                        "config_schema_ref": "slm.step.training.distill/v2",
+backend/app/services/workflow_runner_service.py:async def _execute_local_distillation_attempt(
+backend/app/services/workflow_runner_service.py:    base_cfg = _resolve_step_config(config, step_key="distillation", node_config=node_config)
+backend/app/services/workflow_runner_service.py:        distill_cfg = dict(training_cfg_payload)
+backend/app/services/workflow_runner_service.py:        distill_cfg = {}
+backend/app/services/workflow_runner_service.py:    if "distillation_enabled" not in distill_cfg:
+backend/app/services/workflow_runner_service.py:        if "distillation_enabled" in base_cfg:
+backend/app/services/workflow_runner_service.py:            distill_cfg["distillation_enabled"] = _coerce_bool(base_cfg.get("distillation_enabled"), default=True)
+backend/app/services/workflow_runner_service.py:            distill_cfg["distillation_enabled"] = True
+backend/app/services/workflow_runner_service.py:    teacher_model = str(base_cfg.get("distillation_teacher_model") or "").strip()
+backend/app/services/workflow_runner_service.py:    if teacher_model and "distillation_teacher_model" not in distill_cfg:
+backend/app/services/workflow_runner_service.py:        distill_cfg["distillation_teacher_model"] = teacher_model
+backend/app/services/workflow_runner_service.py:    if "distillation_alpha" in base_cfg and "distillation_alpha" not in distill_cfg:
+backend/app/services/workflow_runner_service.py:        alpha = _to_float(base_cfg.get("distillation_alpha"))
+backend/app/services/workflow_runner_service.py:            distill_cfg["distillation_alpha"] = alpha
+backend/app/services/workflow_runner_service.py:    if "distillation_temperature" in base_cfg and "distillation_temperature" not in distill_cfg:
+backend/app/services/workflow_runner_service.py:        temperature = _to_float(base_cfg.get("distillation_temperature"))
+backend/app/services/workflow_runner_service.py:            distill_cfg["distillation_temperature"] = temperature
+backend/app/services/workflow_runner_service.py:    training_node_cfg["config"] = distill_cfg
+backend/app/services/workflow_runner_service.py:        payload.setdefault("distillation", {})
+backend/app/services/workflow_runner_service.py:        if isinstance(payload.get("distillation"), dict):
+backend/app/services/workflow_runner_service.py:            payload["distillation"] = {
+backend/app/services/workflow_runner_service.py:                **dict(payload.get("distillation") or {}),
+backend/app/services/workflow_runner_service.py:                "enabled": bool(distill_cfg.get("distillation_enabled")),
+backend/app/services/workflow_runner_service.py:                "teacher_model": distill_cfg.get("distillation_teacher_model"),
+backend/app/services/workflow_runner_service.py:                "alpha": distill_cfg.get("distillation_alpha"),
+backend/app/services/workflow_runner_service.py:                "temperature": distill_cfg.get("distillation_temperature"),
+backend/app/services/workflow_runner_service.py:            payload["message"] = f"local distillation step completed for {node_id}"
+backend/app/services/workflow_runner_service.py:        merge_method=str(base_cfg.get("merge_method") or "ties"),
+backend/app/services/workflow_runner_service.py:        ties_density=_coerce_float(base_cfg.get("ties_density"), default=0.2, minimum=0.01, maximum=1.0),
+backend/app/services/workflow_runner_service.py:    if step_type == "core.distillation_training":
+backend/app/services/workflow_runner_service.py:        return await _execute_local_distillation_attempt(
+backend/app/services/workflow_runner_service.py:                    "Guided profile is stable. Promote to full for distillation and model merge."
+backend/app/services/compression_service.py:    merge_method: str = "ties",
+backend/app/services/compression_service.py:    ties_density: float = 0.2,
+backend/app/services/compression_service.py:    """Queue multi-model merge using TIES/DEX style model soup command."""
+backend/app/services/compression_service.py:    method = str(merge_method or "ties").strip().lower()
+backend/app/services/compression_service.py:    if method not in {"ties", "dex"}:
+backend/app/services/compression_service.py:        raise ValueError("merge_method must be one of: ties, dex.")
+backend/app/services/compression_service.py:    safe_ties_density = max(0.01, min(float(ties_density), 1.0))
+backend/app/services/compression_service.py:    output_dir = _compression_dir(project_id) / f"model_soup_{method}"
+backend/app/services/compression_service.py:            "ties_density": safe_ties_density,
+backend/app/services/compression_service.py:                "ties_density": safe_ties_density,
+backend/app/services/compression_service.py:            "ties_density": safe_ties_density,
+backend/app/services/compression_service.py:        "ties_density": safe_ties_density,
+grep: backend/app/services/__pycache__/workflow_graph_service.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/training_preflight_service.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/training_recipe_service.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/compression_service.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/record_normalization.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/workflow_runner_service.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/runtime_settings_service.cpython-312.pyc: binary file matches
+grep: backend/app/services/__pycache__/data_adapter_service.cpython-312.pyc: binary file matches
+backend/app/services/training_preflight_service.py:    distillation_enabled = _coerce_bool(resolved_config.get("distillation_enabled"), False)
+backend/app/services/training_preflight_service.py:    distillation_teacher_model = str(resolved_config.get("distillation_teacher_model") or "").strip()
+backend/app/services/training_preflight_service.py:    if distillation_enabled:
+backend/app/services/training_preflight_service.py:                "distillation_enabled is incompatible with training_mode=dpo/orpo."
+backend/app/services/training_preflight_service.py:                "distillation_enabled currently supports task_type=causal_lm only."
+backend/app/services/training_preflight_service.py:        if not distillation_teacher_model:
+backend/app/services/training_preflight_service.py:                "distillation_enabled=true requires distillation_teacher_model."
+backend/app/services/training_preflight_service.py:        elif distillation_teacher_model == model_id:
+backend/app/services/training_preflight_service.py:                "distillation_teacher_model matches base_model; transfer gain may be limited."
+backend/app/services/training_preflight_service.py:        distillation_temperature = _coerce_float(
+backend/app/services/training_preflight_service.py:            resolved_config.get("distillation_temperature"),
+backend/app/services/training_preflight_service.py:        if distillation_temperature <= 0.0:
+backend/app/services/training_preflight_service.py:            errors.append("distillation_temperature must be > 0.")
+backend/app/services/training_preflight_service.py:        distillation_alpha = max(
+backend/app/services/training_preflight_service.py:            min(_coerce_float(resolved_config.get("distillation_alpha"), 0.6, minimum=0.0), 1.0),
+backend/app/services/training_preflight_service.py:        if distillation_alpha <= 0.0:
+backend/app/services/training_preflight_service.py:                "distillation_alpha is 0, so training uses only distillation loss and no supervised CE."
+backend/app/services/training_preflight_service.py:        if distillation_alpha >= 1.0:
+backend/app/services/training_preflight_service.py:                "distillation_alpha is 1, so distillation loss is disabled and run behaves like standard SFT."
+backend/app/services/training_preflight_service.py:    if distillation_enabled and not dependencies.get("torch", False):
+backend/app/services/training_preflight_service.py:            "distillation_enabled=true requires dependency 'torch'."
+backend/app/services/training_preflight_service.py:    if distillation_enabled and not dependencies.get("transformers", False):
+backend/app/services/training_preflight_service.py:            "distillation_enabled=true requires dependency 'transformers'."
+backend/app/services/training_preflight_service.py:        "distillation": {
+backend/app/services/training_preflight_service.py:            "enabled": distillation_enabled,
+backend/app/services/training_preflight_service.py:            "teacher_model": distillation_teacher_model or None,
+backend/app/services/training_preflight_service.py:            "alpha": _coerce_float(resolved_config.get("distillation_alpha"), 0.6, minimum=0.0),
+backend/app/services/training_preflight_service.py:            "temperature": _coerce_float(resolved_config.get("distillation_temperature"), 2.0, minimum=0.1),
+backend/app/services/training_preflight_service.py:                resolved_config.get("distillation_hidden_state_weight"),
+backend/app/services/training_preflight_service.py:            "hidden_state_loss": str(resolved_config.get("distillation_hidden_state_loss") or "mse").strip().lower() or "mse",
+backend/app/services/data_adapter_service.py:            "structured_output": ["structured_output", "json", "labels", "entities", "extracted", "target", "answer"],
+backend/app/services/data_adapter_service.py:        "entities",
+backend/app/services/runtime_settings_service.py:        description="Command template used for TIES/DEX multi-model merge jobs.",
+backend/app/services/record_normalization.py:"""Generic record normalization utilities for arbitrary tabular/text datasets."""
+backend/scripts/model_merge.py:"""External model merge runtime (TIES/DEX model soup).
+backend/scripts/model_merge.py:    parser.add_argument("--method", type=str, default="ties", choices=["ties", "dex"])
+backend/scripts/model_merge.py:    parser.add_argument("--ties-density", type=float, default=0.2)
+backend/scripts/model_merge.py:    ties_density: float,
+backend/scripts/model_merge.py:        "ties_density": ties_density,
+backend/scripts/model_merge.py:def _merge_ties(
+backend/scripts/model_merge.py:    ties_density: float,
+backend/scripts/model_merge.py:    density = max(0.01, min(float(ties_density), 1.0))
+backend/scripts/model_merge.py:    ties_density = max(0.01, min(float(args.ties_density), 1.0))
+backend/scripts/model_merge.py:            ties_density=ties_density,
+backend/scripts/model_merge.py:            ties_density=ties_density,
+backend/scripts/model_merge.py:        merged_state = _merge_ties(
+backend/scripts/model_merge.py:            ties_density=ties_density,
+backend/scripts/model_merge.py:        "ties_density": ties_density,
+backend/scripts/train.py:    distillation_enabled = bool(config.get("distillation_enabled", False))
+backend/scripts/train.py:    distillation_teacher_model = str(config.get("distillation_teacher_model") or "").strip()
+backend/scripts/train.py:    distillation_alpha = float(config.get("distillation_alpha", 0.6))
+backend/scripts/train.py:    distillation_temperature = _coerce_float(
+backend/scripts/train.py:        config.get("distillation_temperature"),
+backend/scripts/train.py:    distillation_hidden_state_weight = _coerce_float(
+backend/scripts/train.py:        config.get("distillation_hidden_state_weight"),
+backend/scripts/train.py:    distillation_hidden_state_loss = str(
+backend/scripts/train.py:        config.get("distillation_hidden_state_loss", "mse")
+backend/scripts/train.py:    if distillation_enabled and training_mode in {"dpo", "orpo"}:
+backend/scripts/train.py:            "distillation_enabled is incompatible with DPO/ORPO pairwise objectives."
+backend/scripts/train.py:    if distillation_enabled and normalized_task_type != "causal_lm":
+backend/scripts/train.py:            "distillation_enabled currently supports task_type=causal_lm only."
+backend/scripts/train.py:    if distillation_enabled and not distillation_teacher_model:
+backend/scripts/train.py:            "distillation_enabled=true requires distillation_teacher_model."
+backend/scripts/train.py:    if distillation_hidden_state_loss not in {"mse", "cosine"}:
+backend/scripts/train.py:            f"Unknown distillation_hidden_state_loss='{distillation_hidden_state_loss}', defaulting to mse."
+backend/scripts/train.py:        distillation_hidden_state_loss = "mse"
+backend/scripts/train.py:    distillation_alpha = max(0.0, min(float(distillation_alpha), 1.0))
+backend/scripts/train.py:    runtime_environment["distillation_enabled"] = bool(distillation_enabled)
+backend/scripts/train.py:    if distillation_enabled:
+backend/scripts/train.py:        runtime_environment["distillation_teacher_model"] = distillation_teacher_model
+backend/scripts/train.py:        runtime_environment["distillation_alpha"] = round(distillation_alpha, 4)
+backend/scripts/train.py:        runtime_environment["distillation_temperature"] = round(distillation_temperature, 4)
+backend/scripts/train.py:        runtime_environment["distillation_hidden_state_weight"] = round(
+backend/scripts/train.py:            distillation_hidden_state_weight,
+backend/scripts/train.py:        runtime_environment["distillation_hidden_state_loss"] = distillation_hidden_state_loss
+backend/scripts/train.py:    if distillation_enabled:
+backend/scripts/train.py:        if distillation_hidden_state_weight > 0:
+backend/scripts/train.py:                model_name=distillation_teacher_model,
+backend/scripts/train.py:                    model_name=distillation_teacher_model,
+backend/scripts/train.py:                    "distillation may fail on out-of-range token ids."
+backend/scripts/train.py:        if distillation_enabled:
+backend/scripts/train.py:                raise RuntimeError("Distillation is enabled but teacher model failed to load.")
+backend/scripts/train.py:            class DistillationTrainer(Trainer):
+backend/scripts/train.py:                    distill_alpha: float,
+backend/scripts/train.py:                    distill_temperature: float,
+backend/scripts/train.py:                    self.distill_alpha = max(0.0, min(float(distill_alpha), 1.0))
+backend/scripts/train.py:                    self.distill_temperature = max(0.1, float(distill_temperature))
+backend/scripts/train.py:                    self._last_distill_log_step = -1
+backend/scripts/train.py:                        student_logits / self.distill_temperature,
+backend/scripts/train.py:                        teacher_logits / self.distill_temperature,
+backend/scripts/train.py:                        * (self.distill_temperature ** 2)
+backend/scripts/train.py:                        (self.distill_alpha * student_loss)
+backend/scripts/train.py:                        + ((1.0 - self.distill_alpha) * kd_loss)
+backend/scripts/train.py:                    if step != self._last_distill_log_step and step % 10 == 0:
+backend/scripts/train.py:                            "distill_total_loss": float(total_loss.detach().cpu()),
+backend/scripts/train.py:                            "distill_kd_loss": float(kd_loss.detach().cpu()),
+backend/scripts/train.py:                            "distill_ce_loss": float(student_loss.detach().cpu()),
+backend/scripts/train.py:                            "distill_alpha": self.distill_alpha,
+backend/scripts/train.py:                            "distill_temperature": self.distill_temperature,
+backend/scripts/train.py:                            metrics["distill_hidden_loss"] = float(hidden_loss_value.detach().cpu())
+backend/scripts/train.py:                        self._last_distill_log_step = step
+backend/scripts/train.py:            trainer_cls = DistillationTrainer
+backend/scripts/train.py:            trainer_kwargs["distill_alpha"] = distillation_alpha
+backend/scripts/train.py:            trainer_kwargs["distill_temperature"] = distillation_temperature
+backend/scripts/train.py:            trainer_kwargs["hidden_state_weight"] = distillation_hidden_state_weight
+backend/scripts/train.py:            trainer_kwargs["hidden_state_loss_type"] = distillation_hidden_state_loss
+backend/scripts/train.py:        if distillation_enabled:
+backend/scripts/train.py:        "distillation": {
+backend/scripts/train.py:            "enabled": bool(distillation_enabled),
+backend/scripts/train.py:            "teacher_model": distillation_teacher_model if distillation_enabled else None,
+backend/scripts/train.py:            "alpha": distillation_alpha if distillation_enabled else None,
+backend/scripts/train.py:            "temperature": distillation_temperature if distillation_enabled else None,
+backend/scripts/train.py:                distillation_hidden_state_weight if distillation_enabled else None
+backend/scripts/train.py:                distillation_hidden_state_loss if distillation_enabled else None
+grep: backend/scripts/__pycache__/model_merge.cpython-312.pyc: binary file matches
+grep: backend/scripts/__pycache__/train.cpython-312.pyc: binary file matches

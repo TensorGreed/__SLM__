@@ -48,6 +48,7 @@ from app.services.workflow_runner_service import (
     mark_workflow_run_cancelled,
     mark_workflow_run_failed,
     run_workflow_graph,
+    summarize_autopilot_scorecard,
     serialize_workflow_run,
 )
 from app.services.workflow_graph_service import (
@@ -1544,6 +1545,24 @@ async def get_pipeline_workflow_run(
     if payload is None:
         raise HTTPException(404, f"Workflow run {run_id} not found")
     return payload
+
+
+@router.get("/graph/autopilot/scorecard")
+async def get_pipeline_autopilot_scorecard(
+    project_id: int,
+    limit: int = 30,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return autopilot run scorecard and profile recommendation."""
+    result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Project not found")
+
+    return await summarize_autopilot_scorecard(
+        db=db,
+        project_id=project_id,
+        limit=limit,
+    )
 
 
 @router.post("/advance")

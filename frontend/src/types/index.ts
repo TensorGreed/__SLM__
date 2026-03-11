@@ -468,6 +468,52 @@ export interface WorkflowRunListResponse {
     runs: WorkflowRun[];
 }
 
+export interface PipelineAutopilotProfileStats {
+    runs: number;
+    completed_runs: number;
+    failed_runs: number;
+    blocked_runs: number;
+    cancelled_runs: number;
+    pending_runs: number;
+    running_runs: number;
+    preflight_checks: number;
+    preflight_passed: number;
+    success_rate: number | null;
+    blocked_or_failed_rate: number | null;
+    preflight_pass_rate: number | null;
+    last_run_id: number | null;
+    last_run_at: string | null;
+}
+
+export interface PipelineAutopilotRecentRun {
+    run_id: number;
+    profile: 'safe' | 'guided' | 'full';
+    status: string;
+    execution_backend: string;
+    created_at: string | null;
+    finished_at: string | null;
+    preflight_passed: boolean | null;
+    template_id: string | null;
+}
+
+export interface PipelineAutopilotScorecardResponse {
+    project_id: number;
+    template_id: string;
+    generated_at: string;
+    run_window_limit: number;
+    run_window_count: number;
+    autopilot_run_count: number;
+    latest_run_id: number | null;
+    latest_profile: 'safe' | 'guided' | 'full' | null;
+    recommended_profile: 'safe' | 'guided' | 'full';
+    promotion_available: boolean;
+    demotion_suggested: boolean;
+    reason: string;
+    profiles: Array<'safe' | 'guided' | 'full'>;
+    by_profile: Record<'safe' | 'guided' | 'full', PipelineAutopilotProfileStats>;
+    recent_runs: PipelineAutopilotRecentRun[];
+}
+
 export interface EvalResult {
     id: number;
     experiment_id: number;
