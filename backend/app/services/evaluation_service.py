@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 from urllib.parse import parse_qs
 
 import httpx
@@ -680,7 +681,28 @@ def _build_judge_endpoint(api_url: str) -> str:
     return f"{base}/v1/chat/completions"
 
 
-def _parse_local_judge_spec(judge_model: str) -> dict[str, str | None] | None:
+def _parse_query_bool(value: str | None, *, default: bool = False) -> bool:
+    token = str(value or "").strip().lower()
+    if not token:
+        return default
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _parse_query_int(value: str | None, *, minimum: int = 0) -> int | None:
+    try:
+        parsed = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    if parsed < minimum:
+        return None
+    return parsed
+
+
+def _parse_local_judge_spec(judge_model: str) -> dict[str, Any] | None:
     token = str(judge_model or "").strip()
     prefixes = ("local_serve:", "serve_run:", "serve-run:")
     selected: str | None = None
@@ -695,11 +717,36 @@ def _parse_local_judge_spec(judge_model: str) -> dict[str, str | None] | None:
     run_id = run_selector.strip() or "auto"
     query_values = parse_qs(query)
     model_override = str(query_values.get("model", [""])[0] or "").strip() or None
+    source = str(query_values.get("source", ["export"])[0] or "export").strip().lower()
+    if source not in {"export", "registry"}:
+        source = "export"
+    auto_start = _parse_query_bool(str(query_values.get("auto_start", ["0"])[0] or "0"), default=False)
+    auto_stop = _parse_query_bool(str(query_values.get("auto_stop", ["0"])[0] or "0"), default=False)
+    export_id = _parse_query_int(str(query_values.get("export_id", [""])[0] or ""), minimum=1)
+    model_id = _parse_query_int(str(query_values.get("model_id", [""])[0] or ""), minimum=1)
+    template_id = str(query_values.get("template_id", [""])[0] or "").strip() or None
+    host = str(query_values.get("host", ["127.0.0.1"])[0] or "127.0.0.1").strip() or "127.0.0.1"
+    port = _parse_query_int(str(query_values.get("port", ["8000"])[0] or "8000"), minimum=1)
+    startup_timeout_s = _parse_query_int(
+        str(query_values.get("startup_timeout_s", ["90"])[0] or "90"),
+        minimum=5,
+    )
+    smoke_test_prompt = str(query_values.get("smoke_test_prompt", [""])[0] or "").strip() or "Judge health check"
     if run_id.lower() in {"auto", "latest", "running"}:
         run_id = ""
     return {
         "run_id": run_id or None,
         "model_override": model_override,
+        "source": source,
+        "auto_start": bool(auto_start),
+        "auto_stop": bool(auto_stop),
+        "export_id": export_id,
+        "model_id": model_id,
+        "template_id": template_id,
+        "host": host,
+        "port": port if port is not None else 8000,
+        "startup_timeout_s": startup_timeout_s if startup_timeout_s is not None else 90,
+        "smoke_test_prompt": smoke_test_prompt,
     }
 
 
@@ -707,11 +754,49 @@ def _local_judge_transport_from_endpoint(endpoint: str) -> str:
     lower = str(endpoint or "").strip().lower()
     if "/v1/chat/completions" in lower or lower.endswith("/chat/completions"):
         return "openai_chat"
-    if "/api/generate" in lower:
+    if lower.endswith("/api/generate"):
         return "ollama_generate"
     if lower.endswith("/generate"):
         return "plain_generate"
-    return "openai_chat"
+    return "unsupported"
+
+
+def _supported_local_endpoint_formats() -> list[str]:
+    return [
+        "/v1/chat/completions (OpenAI-compatible)",
+        "/api/generate (Ollama)",
+        "/generate (plain JSON generate endpoint)",
+    ]
+
+
+def _validate_local_judge_transport(*, endpoint: str, method: str, transport: str) -> None:
+    if transport == "unsupported":
+        supported = "; ".join(_supported_local_endpoint_formats())
+        raise ValueError(
+            f"Unsupported local judge endpoint format '{endpoint}'. Supported formats: {supported}."
+        )
+    normalized_method = str(method or "").strip().upper() or "POST"
+    if normalized_method != "POST":
+        raise ValueError(
+            (
+                f"Unsupported local judge HTTP method '{normalized_method}' for endpoint '{endpoint}'. "
+                "Only POST is supported."
+            )
+        )
+
+
+def _is_local_judge_autostart_recoverable_error(error: Exception) -> bool:
+    """Return True when local judge auto-start can recover from resolve failure."""
+    if not isinstance(error, ValueError):
+        return False
+    message = str(error or "").strip().lower()
+    if not message:
+        return False
+    recoverable_markers = [
+        "no serve runtime found",
+        "not found in project",
+    ]
+    return any(marker in message for marker in recoverable_markers)
 
 
 def _extract_local_response_text(payload: dict, *, transport: str) -> str:
@@ -735,7 +820,7 @@ async def _resolve_local_judge_target(
     run_id: str | None,
     model_override: str | None,
     judge_model: str,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     from app.services.serve_runtime_service import (
         get_serve_run_status,
         list_serve_runs,
@@ -773,7 +858,12 @@ async def _resolve_local_judge_target(
     endpoint = smoke_url or first_token_url
     if not endpoint:
         raise ValueError("Serve run does not expose smoke/first-token URL for local judge requests.")
+    method = str(
+        (telemetry.get("smoke_method") if smoke_url else telemetry.get("first_token_method"))
+        or "POST"
+    ).strip().upper()
     transport = _local_judge_transport_from_endpoint(endpoint)
+    _validate_local_judge_transport(endpoint=endpoint, method=method, transport=transport)
 
     body_hint = telemetry.get("smoke_json_body")
     if not isinstance(body_hint, dict):
@@ -788,13 +878,122 @@ async def _resolve_local_judge_target(
     return {
         "run_id": str(run_payload.get("run_id") or "").strip(),
         "endpoint": endpoint,
-        "method": str(
-            (telemetry.get("smoke_method") if smoke_url else telemetry.get("first_token_method"))
-            or "POST"
-        ).strip().upper(),
+        "method": method,
         "transport": transport,
         "model": selected_model,
+        "source": str(run_payload.get("source") or "").strip() or None,
+        "export_id": str(run_payload.get("export_id") or "").strip() or None,
+        "model_id": str(run_payload.get("model_id") or "").strip() or None,
     }
+
+
+def _select_local_judge_template(plan: dict[str, Any], template_id: str | None) -> dict[str, Any]:
+    from app.services.serve_service import select_serve_template
+
+    if template_id:
+        return select_serve_template(plan, template_id)
+    templates = [item for item in list(plan.get("templates") or []) if isinstance(item, dict)]
+    if not templates:
+        raise ValueError("No serve templates available for local judge auto-start.")
+    preferred_ids = ["runner.vllm", "runner.ollama", "builtin.fastapi", "runner.tgi"]
+    for preferred in preferred_ids:
+        match = next((item for item in templates if str(item.get("template_id")) == preferred), None)
+        if match is not None:
+            return match
+    return templates[0]
+
+
+async def _start_local_judge_serve_run(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    spec: dict[str, Any],
+) -> dict[str, Any]:
+    from app.services.serve_runtime_service import start_serve_run
+    from app.services.serve_service import (
+        build_export_serve_plan,
+        build_registry_serve_plan,
+    )
+
+    source = str(spec.get("source") or "export").strip().lower()
+    template_id = str(spec.get("template_id") or "").strip() or None
+    host = str(spec.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+    port = _parse_query_int(str(spec.get("port") or "8000"), minimum=1) or 8000
+    smoke_test_prompt = str(spec.get("smoke_test_prompt") or "Judge health check").strip() or "Judge health check"
+
+    if source == "registry":
+        model_id = _parse_query_int(str(spec.get("model_id") or ""), minimum=1)
+        if model_id is None:
+            raise ValueError(
+                "Local judge auto_start with source=registry requires model_id in judge_model spec."
+            )
+        plan = await build_registry_serve_plan(
+            db,
+            project_id=project_id,
+            model_id=model_id,
+            host=host,
+            port=port,
+            smoke_test_prompt=smoke_test_prompt,
+            target_ids=None,
+        )
+        template = _select_local_judge_template(plan, template_id)
+        return await start_serve_run(
+            project_id=project_id,
+            source="registry",
+            export_id=plan.get("export_id"),
+            model_id=model_id,
+            template=template,
+        )
+
+    export_id = _parse_query_int(str(spec.get("export_id") or ""), minimum=1)
+    if export_id is None:
+        raise ValueError(
+            "Local judge auto_start with source=export requires export_id in judge_model spec."
+        )
+    plan = await build_export_serve_plan(
+        db,
+        project_id=project_id,
+        export_id=export_id,
+        host=host,
+        port=port,
+        smoke_test_prompt=smoke_test_prompt,
+        target_ids=None,
+    )
+    template = _select_local_judge_template(plan, template_id)
+    return await start_serve_run(
+        project_id=project_id,
+        source="export",
+        export_id=export_id,
+        model_id=None,
+        template=template,
+    )
+
+
+async def _wait_for_local_judge_ready(
+    *,
+    project_id: int,
+    run_id: str,
+    timeout_seconds: int = 90,
+) -> None:
+    from app.services.serve_runtime_service import get_serve_run_status
+
+    timeout_s = max(5, int(timeout_seconds))
+    started = perf_counter()
+    while (perf_counter() - started) < timeout_s:
+        run = await get_serve_run_status(project_id=project_id, run_id=run_id, logs_tail=0)
+        status = str(run.get("status") or "").strip().lower()
+        if status in {"failed", "cancelled"}:
+            raise ValueError(f"Local judge serve run {run_id} entered terminal status '{status}'.")
+        telemetry = dict(run.get("telemetry") or {})
+        if str(telemetry.get("first_healthy_at") or "").strip():
+            return
+        has_healthcheck = bool(str(telemetry.get("healthcheck_url") or "").strip())
+        if not has_healthcheck and status in {"running", "completed"}:
+            return
+        await asyncio.sleep(1.0)
+    raise ValueError(
+        f"Timed out waiting for local judge serve run {run_id} readiness after {timeout_s} seconds."
+    )
 
 
 async def _judge_with_local_serve(
@@ -931,7 +1130,10 @@ async def evaluate_with_llm_judge(
     passed_count = 0
     fallback_count = 0
     judge_provider = "heuristic"
-    local_target: dict[str, str] | None = None
+    local_target: dict[str, Any] | None = None
+    local_run_started: dict[str, Any] | None = None
+    auto_stop_local_run = False
+    local_judge_notes: list[str] = []
     judge_endpoint = ""
     resolved_api_key = ""
     local_spec = _parse_local_judge_spec(judge_model)
@@ -940,12 +1142,40 @@ async def evaluate_with_llm_judge(
     judge_client: httpx.AsyncClient | None = None
 
     if use_local_judge and local_spec is not None:
-        local_target = await _resolve_local_judge_target(
-            project_id=project_id,
-            run_id=str(local_spec.get("run_id") or "").strip() or None,
-            model_override=str(local_spec.get("model_override") or "").strip() or None,
-            judge_model=judge_model,
-        )
+        requested_run_id = str(local_spec.get("run_id") or "").strip() or None
+        try:
+            local_target = await _resolve_local_judge_target(
+                project_id=project_id,
+                run_id=requested_run_id,
+                model_override=str(local_spec.get("model_override") or "").strip() or None,
+                judge_model=judge_model,
+            )
+        except Exception as resolve_error:
+            if not bool(local_spec.get("auto_start")):
+                raise
+            if not _is_local_judge_autostart_recoverable_error(resolve_error):
+                raise
+            local_run_started = await _start_local_judge_serve_run(
+                db,
+                project_id=project_id,
+                spec=local_spec,
+            )
+            started_run_id = str(local_run_started.get("run_id") or "").strip()
+            if not started_run_id:
+                raise ValueError("Local judge auto_start did not return a serve run id.")
+            await _wait_for_local_judge_ready(
+                project_id=project_id,
+                run_id=started_run_id,
+                timeout_seconds=int(local_spec.get("startup_timeout_s") or 90),
+            )
+            local_target = await _resolve_local_judge_target(
+                project_id=project_id,
+                run_id=started_run_id,
+                model_override=str(local_spec.get("model_override") or "").strip() or None,
+                judge_model=judge_model,
+            )
+            auto_stop_local_run = bool(local_spec.get("auto_stop"))
+            local_judge_notes.append("auto_started_serve_run")
         judge_provider = "local_serve"
         judge_client = httpx.AsyncClient(timeout=90.0)
     else:
@@ -1014,6 +1244,17 @@ async def evaluate_with_llm_judge(
     finally:
         if judge_client is not None:
             await judge_client.aclose()
+        if local_run_started is not None and auto_stop_local_run:
+            try:
+                from app.services.serve_runtime_service import stop_serve_run
+
+                await stop_serve_run(
+                    project_id=project_id,
+                    run_id=str(local_run_started.get("run_id") or ""),
+                )
+                local_judge_notes.append("auto_stopped_serve_run")
+            except Exception:
+                local_judge_notes.append("auto_stop_failed")
 
     avg_score = total_score / len(predictions) if predictions else 0.0
     pass_rate = passed_count / len(predictions) if predictions else 0.0
@@ -1040,6 +1281,14 @@ async def evaluate_with_llm_judge(
             "endpoint": local_target.get("endpoint"),
             "transport": local_target.get("transport"),
             "model": local_target.get("model"),
+            "source": local_target.get("source"),
+            "export_id": local_target.get("export_id"),
+            "model_id": local_target.get("model_id"),
+            "auto_started_run_id": (
+                local_run_started.get("run_id") if isinstance(local_run_started, dict) else None
+            ),
+            "auto_stop_enabled": bool(auto_stop_local_run),
+            "notes": local_judge_notes,
         }
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(

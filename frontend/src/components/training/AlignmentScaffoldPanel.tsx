@@ -74,6 +74,26 @@ interface AlignmentDatasetFilterResponse {
   filter_report_path?: string;
 }
 
+interface AlignmentActiveLearningSummaryResponse {
+  rejected_path?: string;
+  auto_pairs_path?: string;
+  rejected_count?: number;
+  auto_pair_count?: number;
+  negative_events_with_preferred_reply?: number;
+  latest_rejected_at?: string | null;
+}
+
+interface AlignmentActiveLearningComposeResponse {
+  source_path?: string;
+  target_path?: string;
+  effective_train_path?: string;
+  written?: boolean;
+  source_rows?: number;
+  source_invalid_rows?: number;
+  playground_rows?: number;
+  rows_written?: number;
+}
+
 interface AlignmentScaffoldPanelProps {
   projectId: number;
 }
@@ -131,8 +151,15 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
   const [datasetSummary, setDatasetSummary] = useState<AlignmentDatasetSummaryResponse | null>(null);
   const [importReport, setImportReport] = useState<AlignmentDatasetImportResponse | null>(null);
   const [filterReport, setFilterReport] = useState<AlignmentDatasetFilterResponse | null>(null);
+  const [activeLearningSummary, setActiveLearningSummary] = useState<AlignmentActiveLearningSummaryResponse | null>(null);
+  const [activeLearningComposeReport, setActiveLearningComposeReport] =
+    useState<AlignmentActiveLearningComposeResponse | null>(null);
+  const [activeLearningMaxPairs, setActiveLearningMaxPairs] = useState('5000');
+  const [includePlaygroundPairsOnCompose, setIncludePlaygroundPairsOnCompose] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const parsedActiveLearningMaxPairs = Number.parseInt(activeLearningMaxPairs, 10);
 
   const loadDatasetSummary = async () => {
     try {
@@ -152,6 +179,26 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
     }
   };
 
+  const loadActiveLearningSummary = async (refreshPairs = true) => {
+    try {
+      const maxPairs = Number.isFinite(parsedActiveLearningMaxPairs)
+        ? Math.max(1, Math.min(parsedActiveLearningMaxPairs, 50000))
+        : 5000;
+      const res = await api.get<AlignmentActiveLearningSummaryResponse>(
+        `/projects/${projectId}/training/alignment/active-learning`,
+        {
+          params: {
+            refresh_pairs: refreshPairs,
+            max_playground_pairs: maxPairs,
+          },
+        },
+      );
+      setActiveLearningSummary(res.data || null);
+    } catch {
+      setActiveLearningSummary(null);
+    }
+  };
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -163,7 +210,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
         if (rows.length > 0) {
           setSelectedRecipeId(rows[0].recipe_id);
         }
-        await loadDatasetSummary();
+        await Promise.all([loadDatasetSummary(), loadActiveLearningSummary(true)]);
       } catch (err: unknown) {
         const detail =
           typeof err === 'object' &&
@@ -229,6 +276,37 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || ''
           : '';
       setError(detail || 'Failed to resolve alignment recipe.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const composeActiveLearningDataset = async () => {
+    setLoading(true);
+    setError('');
+    setActiveLearningComposeReport(null);
+    try {
+      const maxPairs = Number.isFinite(parsedActiveLearningMaxPairs)
+        ? Math.max(1, Math.min(parsedActiveLearningMaxPairs, 50000))
+        : 5000;
+      const res = await api.post<AlignmentActiveLearningComposeResponse>(
+        `/projects/${projectId}/training/alignment/active-learning/compose`,
+        {
+          include_playground_pairs: includePlaygroundPairsOnCompose,
+          max_playground_pairs: maxPairs,
+        },
+      );
+      setActiveLearningComposeReport(res.data || null);
+      await Promise.all([loadDatasetSummary(), loadActiveLearningSummary(true)]);
+    } catch (err: unknown) {
+      const detail =
+        typeof err === 'object' &&
+        err !== null &&
+        'response' in err &&
+        typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || ''
+          : '';
+      setError(detail || 'Failed to compose active-learning dataset.');
     } finally {
       setLoading(false);
     }
@@ -455,6 +533,35 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
         </button>
       </div>
 
+      <div className="alignment-scaffold__controls alignment-scaffold__controls--quality">
+        <div className="form-group">
+          <label className="form-label">Playground Max Pairs</label>
+          <input
+            className="input"
+            value={activeLearningMaxPairs}
+            onChange={(e) => setActiveLearningMaxPairs(e.target.value)}
+            placeholder="5000"
+          />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Compose Includes Playground Pairs</label>
+          <select
+            className="input"
+            value={includePlaygroundPairsOnCompose ? 'yes' : 'no'}
+            onChange={(e) => setIncludePlaygroundPairsOnCompose(e.target.value === 'yes')}
+          >
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <button className="btn btn-secondary" onClick={() => void loadActiveLearningSummary(true)} disabled={loading}>
+          Refresh Active Learning
+        </button>
+        <button className="btn btn-primary" onClick={() => void composeActiveLearningDataset()} disabled={loading}>
+          Compose Train + Feedback
+        </button>
+      </div>
+
       {error ? <div className="alignment-scaffold__error">{error}</div> : null}
 
       {datasetSummary ? (
@@ -470,6 +577,17 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
               ? `${(Number(datasetSummary.quality?.keep_ratio) * 100).toFixed(1)}%`
               : '0.0%'}
           </span>
+        </div>
+      ) : null}
+
+      {activeLearningSummary ? (
+        <div className="alignment-scaffold__summary">
+          <span className="badge badge-info">Active Learning</span>
+          <span>Rejected: {activeLearningSummary.rejected_count ?? 0}</span>
+          <span>Auto Pairs: {activeLearningSummary.auto_pair_count ?? 0}</span>
+          <span>With Preferred Reply: {activeLearningSummary.negative_events_with_preferred_reply ?? 0}</span>
+          <span>Rejected Path: {activeLearningSummary.rejected_path || 'n/a'}</span>
+          <span>Pairs Path: {activeLearningSummary.auto_pairs_path || 'n/a'}</span>
         </div>
       ) : null}
 
@@ -530,6 +648,16 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
               ? `${(Number(filterReport.keep_ratio) * 100).toFixed(1)}%`
               : '0.0%'}
           </span>
+        </div>
+      ) : null}
+
+      {activeLearningComposeReport ? (
+        <div className="alignment-scaffold__summary">
+          <span className="badge badge-success">Active-Learning Compose</span>
+          <span>Source Rows: {activeLearningComposeReport.source_rows ?? 0}</span>
+          <span>Feedback Rows: {activeLearningComposeReport.playground_rows ?? 0}</span>
+          <span>Written: {activeLearningComposeReport.rows_written ?? 0}</span>
+          <span>Output: {activeLearningComposeReport.target_path || activeLearningComposeReport.effective_train_path || 'n/a'}</span>
         </div>
       ) : null}
     </div>

@@ -1218,6 +1218,10 @@ async def ws_training_status(
                             metric = dict(envelope["metric"])
                             metric.setdefault("experiment_id", experiment_id)
                             await websocket.send_json({"type": "metric", "metric": metric})
+                        elif event_type == "observability" and isinstance(envelope.get("payload"), dict):
+                            payload = dict(envelope.get("payload") or {})
+                            payload.setdefault("experiment_id", experiment_id)
+                            await websocket.send_json({"type": "observability", "payload": payload})
                         elif event_type == "status":
                             payload = {"type": "status", "status": envelope.get("status", "")}
                             if "error" in envelope:

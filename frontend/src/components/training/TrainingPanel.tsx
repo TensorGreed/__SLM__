@@ -138,6 +138,41 @@ interface TrainingRuntimeCatalogResponse {
   runtimes?: TrainingRuntimeSpec[];
 }
 
+interface ObservabilityLayerSummary {
+  layer?: string;
+  event_count?: number;
+  avg_grad_norm?: number;
+  max_grad_norm?: number;
+  avg_update_ratio?: number;
+}
+
+interface ObservabilityTokenSummary {
+  token?: string;
+  count?: number;
+}
+
+interface TrainingObservabilitySummary {
+  event_count?: number;
+  gradient_anomaly_count?: number;
+  gradient_anomaly_rate?: number;
+  hallucination_signal_count?: number;
+  hallucination_signal_rate?: number;
+  step_min?: number | null;
+  step_max?: number | null;
+  top_layers?: ObservabilityLayerSummary[];
+  top_attention_tokens?: ObservabilityTokenSummary[];
+  last_event_at?: string | null;
+  path?: string;
+}
+
+interface TrainingObservabilityResponse {
+  summary?: TrainingObservabilitySummary;
+  recent?: {
+    count?: number;
+    events?: Array<Record<string, unknown>>;
+  };
+}
+
 interface TrainingRecipe {
   recipe_id: string;
   display_name: string;
@@ -384,7 +419,14 @@ type ConfigFieldKey =
   | 'alignment_max_prompt_length'
   | 'alignment_max_length'
   | 'alignment_min_keep_ratio'
-  | 'alignment_dataset_path';
+  | 'alignment_dataset_path'
+  | 'alignment_include_playground_feedback'
+  | 'alignment_playground_max_pairs'
+  | 'observability_enabled'
+  | 'observability_log_steps'
+  | 'observability_max_layers'
+  | 'observability_probe_attention'
+  | 'observability_probe_top_k';
 
 type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
 
@@ -441,6 +483,13 @@ export default function TrainingPanel({
   const [alignmentMaxLength, setAlignmentMaxLength] = useState('2048');
   const [alignmentMinKeepRatio, setAlignmentMinKeepRatio] = useState('0.4');
   const [alignmentDatasetPath, setAlignmentDatasetPath] = useState('');
+  const [alignmentIncludePlaygroundFeedback, setAlignmentIncludePlaygroundFeedback] = useState(true);
+  const [alignmentPlaygroundMaxPairs, setAlignmentPlaygroundMaxPairs] = useState('5000');
+  const [observabilityEnabled, setObservabilityEnabled] = useState(true);
+  const [observabilityLogSteps, setObservabilityLogSteps] = useState(50);
+  const [observabilityMaxLayers, setObservabilityMaxLayers] = useState(12);
+  const [observabilityProbeAttention, setObservabilityProbeAttention] = useState(true);
+  const [observabilityProbeTopK, setObservabilityProbeTopK] = useState(6);
   const [useProfileDefaults, setUseProfileDefaults] = useState(true);
   const [touchedConfig, setTouchedConfig] = useState<Record<ConfigFieldKey, boolean>>({
     training_mode: false,
@@ -475,6 +524,13 @@ export default function TrainingPanel({
     alignment_max_length: false,
     alignment_min_keep_ratio: false,
     alignment_dataset_path: false,
+    alignment_include_playground_feedback: false,
+    alignment_playground_max_pairs: false,
+    observability_enabled: false,
+    observability_log_steps: false,
+    observability_max_layers: false,
+    observability_probe_attention: false,
+    observability_probe_top_k: false,
   });
   const [lastCreateSummary, setLastCreateSummary] = useState<{
     domainPackApplied: string | null;
@@ -529,6 +585,10 @@ export default function TrainingPanel({
   const [cloudBurstQuote, setCloudBurstQuote] = useState<CloudBurstQuoteResponse | null>(null);
   const [cloudBurstPlan, setCloudBurstPlan] = useState<CloudBurstLaunchPlanResponse | null>(null);
   const [cloudBurstPrefillStage, setCloudBurstPrefillStage] = useState('');
+  const [observabilitySummary, setObservabilitySummary] = useState<TrainingObservabilitySummary | null>(null);
+  const [observabilityRecentCount, setObservabilityRecentCount] = useState(0);
+  const [observabilityError, setObservabilityError] = useState('');
+  const [observabilityLoading, setObservabilityLoading] = useState(false);
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -597,6 +657,7 @@ export default function TrainingPanel({
     const alignmentPromptLengthValue = Number.parseInt(alignmentMaxPromptLength, 10);
     const alignmentMaxLengthValue = Number.parseInt(alignmentMaxLength, 10);
     const alignmentKeepRatio = Number.parseFloat(alignmentMinKeepRatio);
+    const alignmentFeedbackMaxPairsValue = Number.parseInt(alignmentPlaygroundMaxPairs, 10);
     const parsedTargetModules = targetModules
       .split(',')
       .map((s) => s.trim())
@@ -652,6 +713,19 @@ export default function TrainingPanel({
     if (includeField('alignment_dataset_path')) {
       config.alignment_dataset_path = alignmentDatasetPath.trim();
     }
+    if (includeField('alignment_include_playground_feedback')) {
+      config.alignment_include_playground_feedback = alignmentIncludePlaygroundFeedback;
+    }
+    if (includeField('alignment_playground_max_pairs') && Number.isFinite(alignmentFeedbackMaxPairsValue)) {
+      config.alignment_playground_max_pairs = alignmentFeedbackMaxPairsValue;
+    }
+    if (includeField('observability_enabled')) config.observability_enabled = observabilityEnabled;
+    if (includeField('observability_log_steps')) config.observability_log_steps = observabilityLogSteps;
+    if (includeField('observability_max_layers')) config.observability_max_layers = observabilityMaxLayers;
+    if (includeField('observability_probe_attention')) {
+      config.observability_probe_attention = observabilityProbeAttention;
+    }
+    if (includeField('observability_probe_top_k')) config.observability_probe_top_k = observabilityProbeTopK;
     return config;
   };
 
@@ -721,6 +795,17 @@ export default function TrainingPanel({
     setAlignmentMaxLength(String(config.alignment_max_length ?? alignmentMaxLength));
     setAlignmentMinKeepRatio(String(config.alignment_min_keep_ratio ?? alignmentMinKeepRatio));
     setAlignmentDatasetPath(parseString(config.alignment_dataset_path, alignmentDatasetPath));
+    setAlignmentIncludePlaygroundFeedback(
+      parseBoolean(config.alignment_include_playground_feedback, alignmentIncludePlaygroundFeedback),
+    );
+    setAlignmentPlaygroundMaxPairs(String(config.alignment_playground_max_pairs ?? alignmentPlaygroundMaxPairs));
+    setObservabilityEnabled(parseBoolean(config.observability_enabled, observabilityEnabled));
+    setObservabilityLogSteps(Math.max(1, parseNumber(config.observability_log_steps, observabilityLogSteps)));
+    setObservabilityMaxLayers(Math.max(1, parseNumber(config.observability_max_layers, observabilityMaxLayers)));
+    setObservabilityProbeAttention(
+      parseBoolean(config.observability_probe_attention, observabilityProbeAttention),
+    );
+    setObservabilityProbeTopK(Math.max(1, parseNumber(config.observability_probe_top_k, observabilityProbeTopK)));
 
     setUseProfileDefaults(false);
     setTouchedConfig((prev) => {
@@ -843,6 +928,39 @@ export default function TrainingPanel({
     } catch (err: any) {
       setRuntimeCatalog(null);
       setRuntimeCatalogError(err?.response?.data?.detail || 'Failed to load runtime catalog');
+    }
+  };
+
+  const loadObservabilitySummary = async (experimentId: number, options?: { silent?: boolean }) => {
+    if (!Number.isFinite(experimentId) || experimentId <= 0) {
+      setObservabilitySummary(null);
+      setObservabilityRecentCount(0);
+      return;
+    }
+    if (!options?.silent) {
+      setObservabilityLoading(true);
+    }
+    try {
+      const res = await api.get<TrainingObservabilityResponse>(
+        `/projects/${projectId}/training/observability/telemetry`,
+        {
+          params: {
+            experiment_id: experimentId,
+            limit: 100,
+          },
+        },
+      );
+      setObservabilitySummary(res.data?.summary || null);
+      setObservabilityRecentCount(Number(res.data?.recent?.count || 0));
+      setObservabilityError('');
+    } catch (err: any) {
+      if (!options?.silent) {
+        setObservabilityError(err?.response?.data?.detail || 'Failed to load observability telemetry');
+      }
+    } finally {
+      if (!options?.silent) {
+        setObservabilityLoading(false);
+      }
     }
   };
 
@@ -1170,6 +1288,13 @@ export default function TrainingPanel({
     setAlignmentMaxLength('2048');
     setAlignmentMinKeepRatio('0.4');
     setAlignmentDatasetPath('');
+    setAlignmentIncludePlaygroundFeedback(true);
+    setAlignmentPlaygroundMaxPairs('5000');
+    setObservabilityEnabled(true);
+    setObservabilityLogSteps(50);
+    setObservabilityMaxLayers(12);
+    setObservabilityProbeAttention(true);
+    setObservabilityProbeTopK(6);
     setUseProfileDefaults(true);
     setTouchedConfig({
       training_mode: false,
@@ -1204,6 +1329,13 @@ export default function TrainingPanel({
       alignment_max_length: false,
       alignment_min_keep_ratio: false,
       alignment_dataset_path: false,
+      alignment_include_playground_feedback: false,
+      alignment_playground_max_pairs: false,
+      observability_enabled: false,
+      observability_log_steps: false,
+      observability_max_layers: false,
+      observability_probe_attention: false,
+      observability_probe_top_k: false,
     });
     setLastCreateSummary(null);
     setEffectivePreview(null);
@@ -1245,6 +1377,10 @@ export default function TrainingPanel({
     setCloudBurstQuote(null);
     setCloudBurstPlan(null);
     setCloudBurstPrefillStage('');
+    setObservabilitySummary(null);
+    setObservabilityRecentCount(0);
+    setObservabilityError('');
+    setObservabilityLoading(false);
     void loadPreferredPlanProfile();
     void loadTrainingRuntimes();
     void loadTrainingRecipes();
@@ -1444,6 +1580,23 @@ export default function TrainingPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCreate, forceCreateVisible, projectId]);
 
+  useEffect(() => {
+    if (!activeExperiment) {
+      setObservabilitySummary(null);
+      setObservabilityRecentCount(0);
+      setObservabilityError('');
+      setObservabilityLoading(false);
+      return;
+    }
+    const experimentId = activeExperiment.id;
+    void loadObservabilitySummary(experimentId, { silent: false });
+    const pollMs = activeExperiment.status === 'running' ? 7000 : 15000;
+    const interval = window.setInterval(() => {
+      void loadObservabilitySummary(experimentId, { silent: true });
+    }, pollMs);
+    return () => window.clearInterval(interval);
+  }, [activeExperimentKey, projectId]);
+
   const handleCreate = async () => {
     if (!name.trim()) return;
     setTrainingError('');
@@ -1513,6 +1666,13 @@ export default function TrainingPanel({
         alignment_max_length: false,
         alignment_min_keep_ratio: false,
         alignment_dataset_path: false,
+        alignment_include_playground_feedback: false,
+        alignment_playground_max_pairs: false,
+        observability_enabled: false,
+        observability_log_steps: false,
+        observability_max_layers: false,
+        observability_probe_attention: false,
+        observability_probe_top_k: false,
       });
     } catch (err: any) {
       setTrainingError(err?.response?.data?.detail || 'Failed to create experiment');
@@ -1551,6 +1711,10 @@ export default function TrainingPanel({
         setActiveExperiment({ ...exp, status: 'running' });
         setMetrics([]);
         setTrainingLogs([]);
+        setObservabilitySummary(null);
+        setObservabilityRecentCount(0);
+        setObservabilityError('');
+        void loadObservabilitySummary(experimentId, { silent: true });
       }
     } catch (err: any) {
       setTrainingError(err?.response?.data?.detail || 'Failed to start training');
@@ -1575,6 +1739,10 @@ export default function TrainingPanel({
     setTrainingLogs([]);
     setTaskState('');
     setTrainingWarnings([]);
+    setObservabilitySummary(null);
+    setObservabilityRecentCount(0);
+    setObservabilityError('');
+    void loadObservabilitySummary(exp.id, { silent: true });
   };
 
   const toggleCompareSelection = (expId: number) => {
@@ -1610,6 +1778,14 @@ export default function TrainingPanel({
     }
     const currentTrainLoss = latestMetric.train_loss !== undefined ? latestMetric.train_loss : null;
     const currentEvalLoss = latestMetric.eval_loss !== undefined ? latestMetric.eval_loss : null;
+    const anomalyRate = Number(observabilitySummary?.gradient_anomaly_rate || 0);
+    const hallucinationRate = Number(observabilitySummary?.hallucination_signal_rate || 0);
+    const topLayers = Array.isArray(observabilitySummary?.top_layers)
+      ? observabilitySummary?.top_layers || []
+      : [];
+    const topTokens = Array.isArray(observabilitySummary?.top_attention_tokens)
+      ? observabilitySummary?.top_attention_tokens || []
+      : [];
 
     return (
       <div className="animate-fade-in training-panel-stack">
@@ -1692,6 +1868,62 @@ export default function TrainingPanel({
             <div className="metric-box box-purple">
               <span className="mb-label">Eval Loss</span>
               <span className="mb-value">{currentEvalLoss !== null ? Number(currentEvalLoss).toFixed(4) : '--'}</span>
+            </div>
+          </div>
+
+          <div className="training-observability-panel">
+            <div className="training-observability-panel__head">
+              <h4>Observability Telemetry</h4>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => void loadObservabilitySummary(activeExperiment.id)}
+                disabled={observabilityLoading}
+              >
+                {observabilityLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+            {observabilityError && (
+              <div className="training-alert training-alert--warning training-alert--tight">{observabilityError}</div>
+            )}
+            <div className="training-observability-panel__stats">
+              <span className="badge badge-info">Events {observabilitySummary?.event_count ?? 0}</span>
+              <span>Recent payloads: {observabilityRecentCount}</span>
+              <span>Gradient anomaly rate: {(anomalyRate * 100).toFixed(1)}%</span>
+              <span>Hallucination signal rate: {(hallucinationRate * 100).toFixed(1)}%</span>
+              <span>Step range: {observabilitySummary?.step_min ?? '—'} - {observabilitySummary?.step_max ?? '—'}</span>
+            </div>
+            <div className="training-observability-panel__grid">
+              <div>
+                <div className="training-observability-panel__subtitle">Top Layers</div>
+                <div className="training-observability-panel__list">
+                  {topLayers.length === 0 ? (
+                    <div className="training-observability-panel__muted">No gradient snapshots yet.</div>
+                  ) : (
+                    topLayers.slice(0, 6).map((layer, idx) => (
+                      <div key={`obs-layer-${idx}`} className="training-observability-panel__row">
+                        <span>{layer.layer || 'layer'}</span>
+                        <strong>avg {Number(layer.avg_grad_norm || 0).toFixed(4)}</strong>
+                        <span>max {Number(layer.max_grad_norm || 0).toFixed(4)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="training-observability-panel__subtitle">Top Attention Tokens</div>
+                <div className="training-observability-panel__list">
+                  {topTokens.length === 0 ? (
+                    <div className="training-observability-panel__muted">No attention probe samples yet.</div>
+                  ) : (
+                    topTokens.slice(0, 8).map((token, idx) => (
+                      <div key={`obs-token-${idx}`} className="training-observability-panel__row">
+                        <span>{token.token || 'token'}</span>
+                        <strong>{token.count ?? 0}</strong>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2935,8 +3167,111 @@ export default function TrainingPanel({
                         Leave empty to use prepared train split. Path is project-relative under data/projects/&lt;id&gt;.
                       </div>
                     </div>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={alignmentIncludePlaygroundFeedback}
+                        onChange={(e) => {
+                          setAlignmentIncludePlaygroundFeedback(e.target.checked);
+                          setTouchedConfig((prev) => ({
+                            ...prev,
+                            alignment_include_playground_feedback: true,
+                          }));
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">
+                        Merge playground downvote pairs into alignment train dataset
+                      </label>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Playground Feedback Max Pairs</label>
+                        <input
+                          className="input"
+                          value={alignmentPlaygroundMaxPairs}
+                          onChange={(e) => {
+                            setAlignmentPlaygroundMaxPairs(e.target.value);
+                            setTouchedConfig((prev) => ({
+                              ...prev,
+                              alignment_playground_max_pairs: true,
+                            }));
+                          }}
+                          placeholder="5000"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
+                <div className="training-lora-box">
+                  <h5 className="training-config-section-title" style={{ marginTop: 0 }}>
+                    Observability Telemetry
+                  </h5>
+                  <div className="form-group training-toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={observabilityEnabled}
+                      onChange={(e) => {
+                        setObservabilityEnabled(e.target.checked);
+                        setTouchedConfig((prev) => ({ ...prev, observability_enabled: true }));
+                      }}
+                    />
+                    <label className="form-label form-label-inline-tight">Enable gradient/attention telemetry emission</label>
+                  </div>
+                  <div className="form-group training-toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={observabilityProbeAttention}
+                      onChange={(e) => {
+                        setObservabilityProbeAttention(e.target.checked);
+                        setTouchedConfig((prev) => ({ ...prev, observability_probe_attention: true }));
+                      }}
+                    />
+                    <label className="form-label form-label-inline-tight">Run attention probe on logging steps</label>
+                  </div>
+                  <div className="training-grid-2">
+                    <div className="form-group">
+                      <label className="form-label">Observability Log Steps</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={1}
+                        value={observabilityLogSteps}
+                        onChange={(e) => {
+                          setObservabilityLogSteps(Math.max(1, Number(e.target.value) || 1));
+                          setTouchedConfig((prev) => ({ ...prev, observability_log_steps: true }));
+                        }}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Max Gradient Layers</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={1}
+                        value={observabilityMaxLayers}
+                        onChange={(e) => {
+                          setObservabilityMaxLayers(Math.max(1, Number(e.target.value) || 1));
+                          setTouchedConfig((prev) => ({ ...prev, observability_max_layers: true }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="training-grid-2">
+                    <div className="form-group">
+                      <label className="form-label">Attention Top-K Tokens</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={1}
+                        value={observabilityProbeTopK}
+                        onChange={(e) => {
+                          setObservabilityProbeTopK(Math.max(1, Number(e.target.value) || 1));
+                          setTouchedConfig((prev) => ({ ...prev, observability_probe_top_k: true }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
                   </div>
                 </div>
               </div>

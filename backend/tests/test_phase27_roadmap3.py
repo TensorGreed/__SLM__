@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import time
 import unittest
@@ -205,6 +207,84 @@ class Phase27Roadmap3Tests(unittest.TestCase):
         self.assertGreaterEqual(int(recent.get("count", 0)), 1)
         self.assertTrue(bool(summary.get("top_layers")))
 
+    def test_item2_observability_stream_event_ingest_from_external_monitor(self):
+        from app.services.training_service import TRAINING_EVENT_PREFIX, _monitor_external_training
+
+        project_id = self._create_project("phase27-item2-stream")
+        exp_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "phase27-observability-stream-ingest",
+                "config": {"base_model": "microsoft/phi-2"},
+            },
+        )
+        self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
+        exp_payload = exp_resp.json()
+        experiment_id = int(exp_payload["id"])
+        output_dir = Path(str(exp_payload.get("output_dir") or ""))
+        self.assertTrue(output_dir.exists(), output_dir)
+
+        event_payload = {
+            "event": "observability",
+            "experiment_id": experiment_id,
+            "step": 7,
+            "epoch": 0.1,
+            "split": "train",
+            "layer_gradients": [
+                {
+                    "layer": "transformer.layers.0",
+                    "grad_norm": 0.77,
+                    "weight_norm": 23.0,
+                    "update_ratio": 0.0033,
+                }
+            ],
+            "attention_focus": [{"token": "domain_fact", "weight": 0.41, "source": "context"}],
+            "notes": "monitor-stream-ingest",
+        }
+        captured_stdout = "\n".join(
+            [
+                "plain training log",
+                f"{TRAINING_EVENT_PREFIX}{json.dumps(event_payload)}",
+            ]
+        )
+
+        class _StubProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+        status = asyncio.run(
+            _monitor_external_training(
+                experiment_id=experiment_id,
+                process=_StubProcess(),
+                command="python backend/scripts/train.py --dry-run",
+                log_path=output_dir / "external_monitor_stream_ingest.json",
+                output_dir=output_dir,
+                captured_stdout=captured_stdout,
+                captured_stderr="",
+            )
+        )
+        self.assertEqual(status, "completed")
+
+        summary_resp = self.client.get(
+            f"/api/projects/{project_id}/training/observability/telemetry",
+            params={"experiment_id": experiment_id, "limit": 20},
+        )
+        self.assertEqual(summary_resp.status_code, 200, summary_resp.text)
+        payload = summary_resp.json()
+        recent_events = list(payload.get("recent", {}).get("events") or [])
+        matched = next(
+            (
+                event
+                for event in recent_events
+                if int(event.get("step") or 0) == 7
+                and str(event.get("notes") or "") == "monitor-stream-ingest"
+            ),
+            None,
+        )
+        self.assertIsNotNone(matched)
+
     def test_item3_local_judge_mode_uses_serve_target(self):
         project_id = self._create_project("phase27-item3")
         exp_resp = self.client.post(
@@ -256,6 +336,172 @@ class Phase27Roadmap3Tests(unittest.TestCase):
         local_judge = metrics.get("local_judge", {})
         self.assertEqual(local_judge.get("run_id"), "serve123")
         self.assertEqual(int(metrics.get("fallback_count", 0)), 0)
+
+    def test_item3_local_judge_list_serve_runs_filters_candidates(self):
+        project_id = self._create_project("phase27-item3-runs")
+        mocked_runs = {
+            "runs": [
+                {
+                    "run_id": "run-usable-smoke",
+                    "status": "running",
+                    "source": "export",
+                    "template_id": "builtin.fastapi",
+                    "template_name": "FastAPI",
+                    "export_id": 11,
+                    "model_id": None,
+                    "telemetry": {
+                        "smoke_url": "http://127.0.0.1:8100/v1/chat/completions",
+                        "first_healthy_at": "2026-03-11T12:00:00Z",
+                        "startup_latency_ms": 1345,
+                    },
+                },
+                {
+                    "run_id": "run-not-usable",
+                    "status": "running",
+                    "source": "export",
+                    "template_id": "builtin.fastapi",
+                    "template_name": "FastAPI",
+                    "telemetry": {},
+                },
+                {
+                    "run_id": "run-usable-first-token",
+                    "status": "completed",
+                    "source": "registry",
+                    "template_id": "runner.vllm",
+                    "template_name": "vLLM",
+                    "export_id": 12,
+                    "model_id": 99,
+                    "telemetry": {
+                        "first_token_url": "http://127.0.0.1:8200/v1/chat/completions",
+                        "first_healthy_at": "2026-03-11T12:00:03Z",
+                        "startup_latency_ms": 1560,
+                    },
+                },
+            ]
+        }
+        with patch("app.api.evaluation.list_serve_runs", new=AsyncMock(return_value=mocked_runs)):
+            resp = self.client.get(f"/api/projects/{project_id}/evaluation/local-judge/serve-runs")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(int(payload.get("count", 0)), 2)
+        runs = [item for item in payload.get("runs", []) if isinstance(item, dict)]
+        run_ids = {str(item.get("run_id")) for item in runs}
+        self.assertEqual(run_ids, {"run-usable-smoke", "run-usable-first-token"})
+
+    def test_item3_local_judge_auto_start_and_auto_stop(self):
+        project_id = self._create_project("phase27-item3-auto-start")
+        exp_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "phase27-local-judge-auto-start-exp",
+                "config": {"base_model": "microsoft/phi-2"},
+            },
+        )
+        self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
+        experiment_id = int(exp_resp.json()["id"])
+
+        resolve_mock = AsyncMock(
+            side_effect=[
+                ValueError(
+                    "No serve runtime found for local judge. Start a serve run first or configure remote judge API."
+                ),
+                {
+                    "run_id": "serve456",
+                    "endpoint": "http://127.0.0.1:8000/v1/chat/completions",
+                    "method": "POST",
+                    "transport": "openai_chat",
+                    "model": "local-judge",
+                },
+            ]
+        )
+        start_mock = AsyncMock(return_value={"run_id": "serve456", "status": "running"})
+        wait_mock = AsyncMock(return_value=None)
+        judge_mock = AsyncMock(return_value=(4, "Auto-started local serve judge score"))
+        stop_mock = AsyncMock(return_value={"run_id": "serve456", "status": "cancelled"})
+
+        with patch("app.services.evaluation_service._resolve_local_judge_target", new=resolve_mock), patch(
+            "app.services.evaluation_service._start_local_judge_serve_run",
+            new=start_mock,
+        ), patch(
+            "app.services.evaluation_service._wait_for_local_judge_ready",
+            new=wait_mock,
+        ), patch(
+            "app.services.evaluation_service._judge_with_local_serve",
+            new=judge_mock,
+        ), patch(
+            "app.services.serve_runtime_service.stop_serve_run",
+            new=stop_mock,
+        ):
+            judge_resp = self.client.post(
+                f"/api/projects/{project_id}/evaluation/llm-judge",
+                json={
+                    "experiment_id": experiment_id,
+                    "dataset_name": "heldout",
+                    "judge_model": "local_serve:auto?auto_start=1&auto_stop=1&source=export&export_id=15",
+                    "predictions": [
+                        {
+                            "prompt": "How should logs be retained?",
+                            "reference": "Retain logs for 30 days.",
+                            "prediction": "Retain logs for 30 days.",
+                        }
+                    ],
+                },
+            )
+        self.assertEqual(judge_resp.status_code, 201, judge_resp.text)
+        metrics = judge_resp.json().get("metrics", {})
+        self.assertEqual(str(metrics.get("judge_provider")), "local_serve")
+        local_judge = metrics.get("local_judge", {})
+        self.assertEqual(local_judge.get("auto_started_run_id"), "serve456")
+        self.assertEqual(bool(local_judge.get("auto_stop_enabled")), True)
+        notes = [str(item) for item in list(local_judge.get("notes") or [])]
+        self.assertIn("auto_started_serve_run", notes)
+        self.assertIn("auto_stopped_serve_run", notes)
+        self.assertEqual(resolve_mock.await_count, 2)
+        start_mock.assert_awaited_once()
+        wait_mock.assert_awaited_once()
+        stop_mock.assert_awaited_once()
+
+    def test_item3_local_judge_auto_start_does_not_mask_endpoint_errors(self):
+        project_id = self._create_project("phase27-item3-auto-start-errors")
+        exp_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "phase27-local-judge-auto-start-errors-exp",
+                "config": {"base_model": "microsoft/phi-2"},
+            },
+        )
+        self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
+        experiment_id = int(exp_resp.json()["id"])
+
+        resolve_mock = AsyncMock(
+            side_effect=ValueError(
+                "Unsupported local judge endpoint format 'http://127.0.0.1:9999/foo'. "
+                "Supported formats: /v1/chat/completions (OpenAI-compatible)."
+            )
+        )
+        start_mock = AsyncMock(return_value={"run_id": "serve999"})
+        with patch("app.services.evaluation_service._resolve_local_judge_target", new=resolve_mock), patch(
+            "app.services.evaluation_service._start_local_judge_serve_run",
+            new=start_mock,
+        ):
+            judge_resp = self.client.post(
+                f"/api/projects/{project_id}/evaluation/llm-judge",
+                json={
+                    "experiment_id": experiment_id,
+                    "dataset_name": "heldout",
+                    "judge_model": "local_serve:auto?auto_start=1&source=export&export_id=21",
+                    "predictions": [
+                        {
+                            "prompt": "How should secrets be stored?",
+                            "reference": "Use encrypted secret managers.",
+                            "prediction": "Use encrypted secret managers.",
+                        }
+                    ],
+                },
+            )
+        self.assertEqual(judge_resp.status_code, 404, judge_resp.text)
+        self.assertIn("Unsupported local judge endpoint format", judge_resp.text)
+        self.assertEqual(start_mock.await_count, 0)
 
     def test_item4_runtime_plugin_reload_and_catalog(self):
         project_id = self._create_project("phase27-item4")

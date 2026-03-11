@@ -9,7 +9,7 @@ interface EvalPanelProps {
     onNextStep?: () => void;
 }
 
-type Provider = 'hf' | 'ollama' | 'openai';
+type Provider = 'hf' | 'ollama' | 'openai' | 'local_serve';
 type HeldoutEvalType = 'exact_match' | 'f1' | 'llm_judge';
 
 interface ExperimentSummary {
@@ -59,6 +59,25 @@ interface HeldoutEvalRequest {
     temperature: number;
     model_path?: string;
     judge_model?: string;
+}
+
+interface LocalJudgeServeRun {
+    run_id: string;
+    status?: string;
+    source?: string;
+    template_id?: string;
+    template_name?: string;
+    export_id?: number | null;
+    model_id?: number | null;
+    smoke_url?: string | null;
+    first_token_url?: string | null;
+    first_healthy_at?: string | null;
+    startup_latency_ms?: number | null;
+}
+
+interface LocalJudgeServeRunListResponse {
+    count?: number;
+    runs?: LocalJudgeServeRun[];
 }
 
 interface EvaluationPackSummary {
@@ -139,6 +158,17 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [showRunForm, setShowRunForm] = useState(false);
     const [provider, setProvider] = useState<Provider>('hf');
     const [judgeModel, setJudgeModel] = useState('meta-llama/Meta-Llama-3-70B-Instruct');
+    const [localServeRuns, setLocalServeRuns] = useState<LocalJudgeServeRun[]>([]);
+    const [loadingLocalServeRuns, setLoadingLocalServeRuns] = useState(false);
+    const [selectedLocalServeRunId, setSelectedLocalServeRunId] = useState('auto');
+    const [localServeAutoStart, setLocalServeAutoStart] = useState(false);
+    const [localServeAutoStop, setLocalServeAutoStop] = useState(true);
+    const [localServeSource, setLocalServeSource] = useState<'export' | 'registry'>('export');
+    const [localServeExportId, setLocalServeExportId] = useState('');
+    const [localServeModelId, setLocalServeModelId] = useState('');
+    const [localServeTemplateId, setLocalServeTemplateId] = useState('runner.vllm');
+    const [localServeHost, setLocalServeHost] = useState('127.0.0.1');
+    const [localServePort, setLocalServePort] = useState('8000');
     const [datasetName, setDatasetName] = useState('test');
     const [evalType, setEvalType] = useState<HeldoutEvalType>('exact_match');
     const [maxSamples, setMaxSamples] = useState(100);
@@ -173,6 +203,16 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         setActivePackSource('default');
         setGateReport(null);
         setShowRunForm(false);
+        setLocalServeRuns([]);
+        setSelectedLocalServeRunId('auto');
+        setLocalServeAutoStart(false);
+        setLocalServeAutoStop(true);
+        setLocalServeSource('export');
+        setLocalServeExportId('');
+        setLocalServeModelId('');
+        setLocalServeTemplateId('runner.vllm');
+        setLocalServeHost('127.0.0.1');
+        setLocalServePort('8000');
     }, [projectId]);
 
     useEffect(() => {
@@ -225,6 +265,22 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         }
     };
 
+    const loadLocalServeRuns = async () => {
+        setLoadingLocalServeRuns(true);
+        try {
+            const res = await api.get<LocalJudgeServeRunListResponse>(
+                `/projects/${projectId}/evaluation/local-judge/serve-runs`,
+                { params: { limit: 50 } },
+            );
+            const runs = Array.isArray(res.data?.runs) ? res.data.runs : [];
+            setLocalServeRuns(runs);
+        } catch {
+            setLocalServeRuns([]);
+        } finally {
+            setLoadingLocalServeRuns(false);
+        }
+    };
+
     const loadGateReport = async (expId: number) => {
         setIsLoadingGateReport(true);
         setGateErrorMessage(null);
@@ -242,6 +298,17 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     useEffect(() => {
         void loadPackState();
     }, [projectId]);
+
+    useEffect(() => {
+        if (evalType !== 'llm_judge') {
+            return;
+        }
+        if (provider !== 'local_serve') {
+            return;
+        }
+        void loadLocalServeRuns();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId, evalType, provider]);
 
     const savePackPreference = async (packId: string | null) => {
         setIsSavingPackPreference(true);
@@ -267,7 +334,9 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
     const handleProviderChange = (nextProvider: Provider) => {
         setProvider(nextProvider);
-        if (nextProvider === 'ollama') {
+        if (nextProvider === 'local_serve') {
+            setJudgeModel('local-judge');
+        } else if (nextProvider === 'ollama') {
             setJudgeModel('llama3');
         } else if (nextProvider === 'openai') {
             setJudgeModel('gpt-4o');
@@ -316,7 +385,43 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             payload.model_path = modelPath.trim();
         }
         if (evalType === 'llm_judge') {
-            payload.judge_model = judgeModel;
+            if (provider === 'local_serve') {
+                const runToken = selectedLocalServeRunId.trim() || 'auto';
+                const params = new URLSearchParams();
+                const judgeModelToken = judgeModel.trim();
+                if (judgeModelToken) {
+                    params.set('model', judgeModelToken);
+                }
+                if (localServeAutoStart) {
+                    params.set('auto_start', '1');
+                    params.set('source', localServeSource);
+                    const exportId = Number.parseInt(localServeExportId, 10);
+                    const modelId = Number.parseInt(localServeModelId, 10);
+                    if (localServeSource === 'export' && Number.isFinite(exportId) && exportId > 0) {
+                        params.set('export_id', String(exportId));
+                    }
+                    if (localServeSource === 'registry' && Number.isFinite(modelId) && modelId > 0) {
+                        params.set('model_id', String(modelId));
+                    }
+                    if (localServeTemplateId.trim()) {
+                        params.set('template_id', localServeTemplateId.trim());
+                    }
+                    if (localServeHost.trim()) {
+                        params.set('host', localServeHost.trim());
+                    }
+                    const port = Number.parseInt(localServePort, 10);
+                    if (Number.isFinite(port) && port > 0) {
+                        params.set('port', String(port));
+                    }
+                    if (localServeAutoStop) {
+                        params.set('auto_stop', '1');
+                    }
+                }
+                const suffix = params.toString();
+                payload.judge_model = `local_serve:${runToken}${suffix ? `?${suffix}` : ''}`;
+            } else {
+                payload.judge_model = judgeModel;
+            }
         }
 
         try {
@@ -633,19 +738,161 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     value={provider}
                                     onChange={(e) => handleProviderChange(e.target.value as Provider)}
                                 >
+                                    <option value="local_serve">Local Serve Runtime</option>
                                     <option value="hf">HuggingFace (vLLM)</option>
                                     <option value="ollama">Local (Ollama)</option>
                                     <option value="openai">Cloud (OpenAI)</option>
                                 </select>
                             </div>
                             <div className="form-group">
-                                <label className="form-label">Judge Model</label>
+                                <label className="form-label">
+                                    {provider === 'local_serve' ? 'Judge Model Alias (served)' : 'Judge Model'}
+                                </label>
                                 <input
                                     className="input"
                                     value={judgeModel}
                                     onChange={(e) => setJudgeModel(e.target.value)}
-                                    placeholder={provider === 'openai' ? 'gpt-4o' : provider === 'ollama' ? 'llama3' : 'meta-llama/...'}
+                                    placeholder={
+                                        provider === 'openai'
+                                            ? 'gpt-4o'
+                                            : provider === 'ollama'
+                                              ? 'llama3'
+                                              : provider === 'local_serve'
+                                                ? 'local-judge'
+                                                : 'meta-llama/...'
+                                    }
                                 />
+                            </div>
+                        </div>
+                    )}
+
+                    {evalType === 'llm_judge' && provider === 'local_serve' && (
+                        <div className="eval-pack-card" style={{ marginTop: 'var(--space-md)' }}>
+                            <div className="eval-pack-header">
+                                <div>
+                                    <h4 style={{ margin: 0, fontSize: 'var(--font-size-sm)' }}>Local Judge Serve Runtime</h4>
+                                    <p className="eval-pack-subtitle">
+                                        Select an existing serve run or auto-start one for judge evaluation.
+                                    </p>
+                                </div>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => void loadLocalServeRuns()}
+                                    disabled={loadingLocalServeRuns}
+                                >
+                                    {loadingLocalServeRuns ? 'Refreshing...' : 'Refresh Runs'}
+                                </button>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                                <div className="form-group">
+                                    <label className="form-label">Serve Run</label>
+                                    <select
+                                        className="input"
+                                        value={selectedLocalServeRunId}
+                                        onChange={(e) => setSelectedLocalServeRunId(e.target.value)}
+                                    >
+                                        <option value="auto">Auto (latest compatible run)</option>
+                                        {localServeRuns.map((run) => (
+                                            <option key={run.run_id} value={run.run_id}>
+                                                {run.run_id} • {run.template_id || run.template_name || 'template'} • {run.status || 'unknown'}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Auto Start Missing Run</label>
+                                    <select
+                                        className="input"
+                                        value={localServeAutoStart ? 'yes' : 'no'}
+                                        onChange={(e) => setLocalServeAutoStart(e.target.value === 'yes')}
+                                    >
+                                        <option value="no">No</option>
+                                        <option value="yes">Yes</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                                <div className="form-group">
+                                    <label className="form-label">Auto Stop After Eval</label>
+                                    <select
+                                        className="input"
+                                        value={localServeAutoStop ? 'yes' : 'no'}
+                                        onChange={(e) => setLocalServeAutoStop(e.target.value === 'yes')}
+                                        disabled={!localServeAutoStart}
+                                    >
+                                        <option value="yes">Yes</option>
+                                        <option value="no">No</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Auto Start Source</label>
+                                    <select
+                                        className="input"
+                                        value={localServeSource}
+                                        onChange={(e) => setLocalServeSource(e.target.value as 'export' | 'registry')}
+                                        disabled={!localServeAutoStart}
+                                    >
+                                        <option value="export">Export</option>
+                                        <option value="registry">Registry</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                                {localServeSource === 'export' ? (
+                                    <div className="form-group">
+                                        <label className="form-label">Export ID (auto-start)</label>
+                                        <input
+                                            className="input"
+                                            value={localServeExportId}
+                                            onChange={(e) => setLocalServeExportId(e.target.value)}
+                                            disabled={!localServeAutoStart}
+                                            placeholder="e.g. 12"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="form-group">
+                                        <label className="form-label">Registry Model ID (auto-start)</label>
+                                        <input
+                                            className="input"
+                                            value={localServeModelId}
+                                            onChange={(e) => setLocalServeModelId(e.target.value)}
+                                            disabled={!localServeAutoStart}
+                                            placeholder="e.g. 7"
+                                        />
+                                    </div>
+                                )}
+                                <div className="form-group">
+                                    <label className="form-label">Template ID (optional)</label>
+                                    <input
+                                        className="input"
+                                        value={localServeTemplateId}
+                                        onChange={(e) => setLocalServeTemplateId(e.target.value)}
+                                        disabled={!localServeAutoStart}
+                                        placeholder="runner.vllm"
+                                    />
+                                </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)' }}>
+                                <div className="form-group">
+                                    <label className="form-label">Host (auto-start)</label>
+                                    <input
+                                        className="input"
+                                        value={localServeHost}
+                                        onChange={(e) => setLocalServeHost(e.target.value)}
+                                        disabled={!localServeAutoStart}
+                                        placeholder="127.0.0.1"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Port (auto-start)</label>
+                                    <input
+                                        className="input"
+                                        value={localServePort}
+                                        onChange={(e) => setLocalServePort(e.target.value)}
+                                        disabled={!localServeAutoStart}
+                                        placeholder="8000"
+                                    />
+                                </div>
                             </div>
                         </div>
                     )}

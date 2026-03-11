@@ -721,6 +721,14 @@ def _run_training_attempt(
     distillation_hidden_state_loss = str(
         config.get("distillation_hidden_state_loss", "mse")
     ).strip().lower() or "mse"
+    observability_enabled = bool(config.get("observability_enabled", True))
+    observability_log_steps = _coerce_int(config.get("observability_log_steps"), 50, minimum=5)
+    observability_max_layers = _coerce_int(config.get("observability_max_layers"), 12, minimum=1)
+    observability_probe_attention = bool(config.get("observability_probe_attention", True))
+    observability_probe_top_k = _coerce_int(config.get("observability_probe_top_k"), 6, minimum=1)
+    observability_probe_prompt = str(
+        config.get("observability_probe_prompt") or "Summarize domain policy facts accurately."
+    ).strip() or "Summarize domain policy facts accurately."
 
     try:
         import torch
@@ -869,6 +877,11 @@ def _run_training_attempt(
     use_cuda = torch.cuda.is_available()
     runtime_environment = _collect_runtime_environment(torch, use_cuda, warnings)
     runtime_environment["distillation_enabled"] = bool(distillation_enabled)
+    runtime_environment["observability_enabled"] = bool(observability_enabled)
+    runtime_environment["observability_log_steps"] = int(observability_log_steps)
+    runtime_environment["observability_max_layers"] = int(observability_max_layers)
+    runtime_environment["observability_probe_attention"] = bool(observability_probe_attention)
+    runtime_environment["observability_probe_top_k"] = int(observability_probe_top_k)
     if distillation_enabled:
         runtime_environment["distillation_teacher_model"] = distillation_teacher_model
         runtime_environment["distillation_alpha"] = round(distillation_alpha, 4)
@@ -1110,6 +1123,184 @@ def _run_training_attempt(
             if epoch is None:
                 return
             _emit_runtime_event("epoch_end", {"epoch": max(1, int(round(epoch)))})
+
+    class ObservabilityCallback(TrainerCallback):
+        """Emit structured observability events for gradient/attention diagnostics."""
+
+        def __init__(
+            self,
+            *,
+            enabled: bool,
+            log_steps: int,
+            max_layers: int,
+            probe_attention: bool,
+            probe_top_k: int,
+            probe_prompt: str,
+        ) -> None:
+            self.enabled = bool(enabled)
+            self.log_steps = max(1, int(log_steps))
+            self.max_layers = max(1, int(max_layers))
+            self.probe_attention = bool(probe_attention)
+            self.probe_top_k = max(1, int(probe_top_k))
+            self.probe_prompt = str(probe_prompt or "").strip() or "Summarize domain policy facts accurately."
+            self._last_emitted_step = -1
+            self._last_attention_error: str | None = None
+
+        def _layer_bucket(self, name: str) -> str:
+            token = str(name or "")
+            markers = ["layers.", "layer.", "h.", "block.", "encoder.layer.", "decoder.layer."]
+            for marker in markers:
+                idx = token.find(marker)
+                if idx < 0:
+                    continue
+                suffix = token[idx:]
+                parts = suffix.split(".")
+                if len(parts) >= 2 and parts[1].isdigit():
+                    return f"{parts[0]}.{parts[1]}"
+                return parts[0]
+            parts = token.split(".")
+            if len(parts) >= 2:
+                return f"{parts[0]}.{parts[1]}"
+            return token or "model"
+
+        def _collect_layer_gradients(self, model_ref) -> list[dict[str, Any]]:  # noqa: ANN001
+            buckets: dict[str, dict[str, float]] = {}
+            for name, parameter in model_ref.named_parameters():
+                grad = getattr(parameter, "grad", None)
+                if grad is None:
+                    continue
+                try:
+                    grad_norm = float(grad.detach().float().norm().item())
+                    weight_norm = float(parameter.detach().float().norm().item())
+                except Exception:
+                    continue
+                layer = self._layer_bucket(name)
+                bucket = buckets.get(layer)
+                if bucket is None:
+                    bucket = {
+                        "grad_norm_sum": 0.0,
+                        "weight_norm_sum": 0.0,
+                        "update_ratio_sum": 0.0,
+                        "count": 0.0,
+                    }
+                    buckets[layer] = bucket
+                update_ratio = grad_norm / max(weight_norm, 1e-8)
+                bucket["grad_norm_sum"] += grad_norm
+                bucket["weight_norm_sum"] += weight_norm
+                bucket["update_ratio_sum"] += update_ratio
+                bucket["count"] += 1.0
+
+            rows: list[dict[str, Any]] = []
+            for layer, aggregate in buckets.items():
+                count = max(1.0, float(aggregate.get("count", 1.0)))
+                rows.append(
+                    {
+                        "layer": layer,
+                        "grad_norm": float(aggregate.get("grad_norm_sum", 0.0)) / count,
+                        "weight_norm": float(aggregate.get("weight_norm_sum", 0.0)) / count,
+                        "update_ratio": float(aggregate.get("update_ratio_sum", 0.0)) / count,
+                    }
+                )
+            rows.sort(key=lambda item: float(item.get("grad_norm", 0.0)), reverse=True)
+            return rows[: self.max_layers]
+
+        def _collect_attention_focus(self, model_ref) -> list[dict[str, Any]]:  # noqa: ANN001
+            if not self.probe_attention:
+                return []
+            prompt = self.probe_prompt
+            if not prompt:
+                return []
+            try:
+                encoded = tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=min(256, max_seq_length),
+                )
+                model_device = next(model_ref.parameters()).device
+                encoded = {key: value.to(model_device) for key, value in encoded.items()}
+                model_ref.eval()
+                with torch.no_grad():
+                    outputs = model_ref(**encoded, output_attentions=True)
+                attentions = getattr(outputs, "attentions", None)
+                if not isinstance(attentions, tuple) and not isinstance(attentions, list):
+                    return []
+                if len(attentions) == 0:
+                    return []
+                last = attentions[-1]
+                if last is None or getattr(last, "ndim", 0) < 4:
+                    return []
+                scores = last[0].float().mean(dim=0)  # [seq, seq]
+                if scores.ndim != 2 or scores.shape[0] == 0 or scores.shape[1] == 0:
+                    return []
+                focus_weights = scores[-1]
+                top_k = min(int(self.probe_top_k), int(focus_weights.shape[0]))
+                if top_k <= 0:
+                    return []
+                values, indices = torch.topk(focus_weights, k=top_k)
+                input_ids = encoded.get("input_ids")
+                if input_ids is None:
+                    return []
+                ids_row = input_ids[0]
+                rows: list[dict[str, Any]] = []
+                for idx, val in zip(indices.tolist(), values.tolist()):
+                    token_text = ""
+                    if isinstance(idx, int) and 0 <= idx < int(ids_row.shape[0]):
+                        token_id = int(ids_row[idx].item())
+                        token_text = tokenizer.decode([token_id], skip_special_tokens=False).strip()
+                    rows.append(
+                        {
+                            "token": token_text or f"token_{idx}",
+                            "weight": float(val),
+                            "source": "probe_prompt",
+                        }
+                    )
+                self._last_attention_error = None
+                return rows
+            except Exception as attention_error:  # noqa: BLE001
+                self._last_attention_error = str(attention_error)
+                return []
+
+        def on_log(self, args, state, control, logs=None, model=None, **kwargs):  # noqa: ANN001, ANN201
+            _ = args, control, kwargs
+            if not self.enabled:
+                return
+            if model is None:
+                return
+            step = getattr(state, "global_step", None)
+            if not isinstance(step, int):
+                if isinstance(logs, dict) and isinstance(logs.get("step"), int):
+                    step = int(logs["step"])
+            if not isinstance(step, int) or step <= 0:
+                return
+            if step == self._last_emitted_step:
+                return
+            if step % self.log_steps != 0:
+                return
+            layer_gradients = self._collect_layer_gradients(model)
+            if not layer_gradients:
+                return
+            attention_focus = self._collect_attention_focus(model)
+            max_grad = max(float(item.get("grad_norm", 0.0)) for item in layer_gradients)
+            notes = []
+            if self._last_attention_error:
+                notes.append(f"attention_probe_error: {self._last_attention_error}")
+            _emit_runtime_event(
+                "observability",
+                {
+                    "step": step,
+                    "epoch": _safe_float(getattr(state, "epoch", None)),
+                    "split": "train",
+                    "layer_gradients": layer_gradients,
+                    "attention_focus": attention_focus,
+                    "gradient_anomaly": bool(max_grad >= 5.0),
+                    "hallucination_signal": any(
+                        "<unk>" in str(item.get("token", "")).lower() for item in attention_focus
+                    ),
+                    "notes": "; ".join(notes) if notes else "",
+                },
+            )
+            self._last_emitted_step = step
 
     alignment_native_objective = False
     if training_mode in {"dpo", "orpo"}:
@@ -1508,6 +1699,16 @@ def _run_training_attempt(
             trainer = trainer_cls(**safe_trainer_kwargs)
 
     trainer.add_callback(StreamingMetricCallback())
+    trainer.add_callback(
+        ObservabilityCallback(
+            enabled=observability_enabled,
+            log_steps=observability_log_steps,
+            max_layers=observability_max_layers,
+            probe_attention=observability_probe_attention,
+            probe_top_k=observability_probe_top_k,
+            probe_prompt=observability_probe_prompt,
+        )
+    )
 
     resume_checkpoint = _resolve_resume_checkpoint(
         output_dir=output_dir,

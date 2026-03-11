@@ -424,6 +424,9 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                                 else "[event] epoch completed"
                             )
                             return
+                        if event_type in {"observability", "training_observability"}:
+                            _queue_publish({"type": "observability", "payload": stream_event})
+                            return
 
                     if TQDM_PROGRESS_RE.match(text_line):
                         # Progress bars can emit very frequently (stderr with \r updates).

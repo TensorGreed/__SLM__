@@ -26,6 +26,7 @@ from app.services.evaluation_service import (
     run_evaluation,
     run_heldout_evaluation,
 )
+from app.services.serve_runtime_service import list_serve_runs
 
 router = APIRouter(prefix="/projects/{project_id}/evaluation", tags=["Evaluation"])
 
@@ -117,6 +118,43 @@ async def run_eval_on_heldout(
         return EvalResultResponse.model_validate(result)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.get("/local-judge/serve-runs")
+async def list_local_judge_serve_runs(
+    project_id: int,
+    limit: int = 30,
+):
+    """List serve runs that can be selected as local LLM-judge backends."""
+    payload = await list_serve_runs(project_id=project_id, limit=limit, logs_tail=0)
+    runs = [item for item in list(payload.get("runs") or []) if isinstance(item, dict)]
+    candidates: list[dict] = []
+    for run in runs:
+        telemetry = dict(run.get("telemetry") or {})
+        smoke_url = str(telemetry.get("smoke_url") or "").strip()
+        first_token_url = str(telemetry.get("first_token_url") or "").strip()
+        if not (smoke_url or first_token_url):
+            continue
+        candidates.append(
+            {
+                "run_id": str(run.get("run_id") or "").strip(),
+                "status": str(run.get("status") or "").strip(),
+                "source": str(run.get("source") or "").strip(),
+                "template_id": str(run.get("template_id") or "").strip(),
+                "template_name": str(run.get("template_name") or "").strip(),
+                "export_id": run.get("export_id"),
+                "model_id": run.get("model_id"),
+                "smoke_url": smoke_url or None,
+                "first_token_url": first_token_url or None,
+                "first_healthy_at": telemetry.get("first_healthy_at"),
+                "startup_latency_ms": telemetry.get("startup_latency_ms"),
+            }
+        )
+    return {
+        "project_id": project_id,
+        "count": len(candidates),
+        "runs": candidates,
+    }
 
 
 @router.get("/packs")

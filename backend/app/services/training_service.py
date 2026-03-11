@@ -34,6 +34,7 @@ from app.services.training_runtime_service import (
 )
 
 active_websockets: dict[int, list[WebSocket]] = {}
+TRAINING_EVENT_PREFIX = "SLM_EVENT "
 
 def register_websocket(experiment_id: int, ws: WebSocket):
     if experiment_id not in active_websockets:
@@ -152,6 +153,42 @@ def _extract_step_from_checkpoint_dir(path: Path) -> int | None:
     return int(suffix)
 
 
+def _parse_stream_event_payload(line: str) -> dict | None:
+    token = str(line or "").strip()
+    if not token:
+        return None
+    marker = token.find(TRAINING_EVENT_PREFIX)
+    if marker < 0:
+        return None
+    body = token[marker + len(TRAINING_EVENT_PREFIX):].strip()
+    if not body:
+        return None
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _collect_observability_event_payloads(*streams: str | None) -> list[dict]:
+    events: list[dict] = []
+    for stream in streams:
+        text = str(stream or "")
+        if not text:
+            continue
+        for line in text.splitlines():
+            payload = _parse_stream_event_payload(line)
+            if not isinstance(payload, dict):
+                continue
+            event_name = str(payload.get("event") or "").strip().lower()
+            if event_name not in {"observability", "training_observability"}:
+                continue
+            events.append(payload)
+    return events
+
+
 async def _monitor_external_training(
     experiment_id: int,
     process: asyncio.subprocess.Process,
@@ -216,6 +253,22 @@ async def _monitor_external_training(
                 "returncode": process.returncode,
                 }
             )
+            observability_events_ingested = 0
+            observability_ingest_error = ""
+            try:
+                from app.services.training_telemetry_service import record_observability_event
+
+                for payload in _collect_observability_event_payloads(stdout_text, stderr_text):
+                    data = dict(payload)
+                    data.pop("event", None)
+                    data.setdefault("experiment_id", experiment_id)
+                    record_observability_event(int(exp.project_id), payload=data)
+                    observability_events_ingested += 1
+            except Exception as telemetry_error:  # noqa: BLE001
+                observability_ingest_error = str(telemetry_error)
+            runtime["observability_events_ingested"] = observability_events_ingested
+            if observability_ingest_error:
+                runtime["observability_ingest_error"] = observability_ingest_error
             config["_runtime"] = runtime
             report_path = output_dir / "training_report.json"
             if report_path.exists():
