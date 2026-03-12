@@ -18,6 +18,7 @@ interface TrainingPanelProps {
   hideCreateControls?: boolean;
   hideExperimentList?: boolean;
   forceCreateVisible?: boolean;
+  setupMode?: 'essentials' | 'advanced';
 }
 
 interface ExperimentConfig {
@@ -464,6 +465,7 @@ type ConfigFieldKey =
   | 'observability_probe_top_k';
 
 type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
+type TrainingSetupTab = 'basics' | 'config' | 'power' | 'review';
 
 export default function TrainingPanel({
   projectId,
@@ -473,6 +475,7 @@ export default function TrainingPanel({
   hideCreateControls = false,
   hideExperimentList = false,
   forceCreateVisible = false,
+  setupMode = 'advanced',
 }: TrainingPanelProps) {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [showCreate, setShowCreate] = useState(Boolean(forceCreateVisible && !hideCreateControls));
@@ -594,6 +597,7 @@ export default function TrainingPanel({
   const [recipeResolveLoading, setRecipeResolveLoading] = useState(false);
   const [recipeResolveError, setRecipeResolveError] = useState('');
   const [workspaceView, setWorkspaceView] = useState<TrainingWorkspaceView>('overview');
+  const [setupTab, setSetupTab] = useState<TrainingSetupTab>('basics');
   const [wizardTargetDevice, setWizardTargetDevice] = useState('laptop');
   const [wizardPrimaryLanguage, setWizardPrimaryLanguage] = useState('english');
   const [wizardVramGb, setWizardVramGb] = useState('8');
@@ -646,6 +650,17 @@ export default function TrainingPanel({
   const canViewRuns = !hideExperimentList;
   const showWorkspaceTabs = canConfigureExperiments && canViewRuns;
   const isAlignmentMode = trainingMode === 'dpo' || trainingMode === 'orpo';
+  const isSetupAdvancedMode = setupMode === 'advanced';
+  const setupTabOrder: TrainingSetupTab[] = isSetupAdvancedMode
+    ? ['basics', 'config', 'power', 'review']
+    : ['basics', 'config', 'review'];
+  const setupTabIndex = setupTabOrder.indexOf(setupTab);
+  const showSetupBasics = setupTab === 'basics';
+  const showSetupConfig = setupTab === 'config';
+  const showSetupPower = isSetupAdvancedMode && setupTab === 'power';
+  const showSetupReview = setupTab === 'review';
+  const canSetupGoBack = setupTabIndex > 0;
+  const canSetupGoNext = setupTabIndex >= 0 && setupTabIndex < setupTabOrder.length - 1;
 
   const experimentStats = useMemo(() => {
     const running = experiments.filter((item) => item.status === 'running').length;
@@ -1320,6 +1335,22 @@ export default function TrainingPanel({
     }
   };
 
+  const goToNextSetupTab = () => {
+    if (!canSetupGoNext) return;
+    const nextTab = setupTabOrder[setupTabIndex + 1];
+    if (nextTab) {
+      setSetupTab(nextTab);
+    }
+  };
+
+  const goToPreviousSetupTab = () => {
+    if (!canSetupGoBack) return;
+    const prevTab = setupTabOrder[setupTabIndex - 1];
+    if (prevTab) {
+      setSetupTab(prevTab);
+    }
+  };
+
   const refreshExperiments = async () => {
     const res = await api.get(`/projects/${projectId}/training/experiments`);
     setExperiments(res.data || []);
@@ -1347,6 +1378,7 @@ export default function TrainingPanel({
     setSelectedForCompare([]);
     setShowCompare(false);
     setShowCreate(Boolean(forceCreateVisible && !hideCreateControls));
+    setSetupTab('basics');
     setTaskState('');
     setTrainingError('');
     setTrainingMode('sft');
@@ -1508,7 +1540,20 @@ export default function TrainingPanel({
   }, [projectId]);
 
   useEffect(() => {
+    if (workspaceView !== 'setup') {
+      setSetupTab('basics');
+      return;
+    }
+    if (!setupTabOrder.includes(setupTab)) {
+      setSetupTab('basics');
+    }
+  }, [workspaceView, setupTabOrder, setupTab]);
+
+  useEffect(() => {
     if (workspaceView !== 'setup' || !createFormVisible) {
+      return;
+    }
+    if (!isSetupAdvancedMode || setupTab !== 'power') {
       return;
     }
     if (wizardAutoRan || wizardLoading) {
@@ -1520,7 +1565,7 @@ export default function TrainingPanel({
     setWizardAutoRan(true);
     void runModelWizard({ silent: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceView, createFormVisible, wizardAutoRan, wizardLoading, projectId]);
+  }, [workspaceView, createFormVisible, wizardAutoRan, wizardLoading, projectId, isSetupAdvancedMode, setupTab]);
 
   useEffect(() => {
     if (forceCreateVisible || !canViewRuns) {
@@ -2119,6 +2164,7 @@ export default function TrainingPanel({
               className="btn btn-primary"
               onClick={() => {
                 setWorkspaceView('setup');
+                setSetupTab('basics');
                 setShowCreate(true);
                 setPreflightPreview(null);
                 setPreflightPreviewError('');
@@ -2167,6 +2213,7 @@ export default function TrainingPanel({
               className={`training-workspace-tab ${workspaceView === 'setup' ? 'active' : ''}`}
               onClick={() => {
                 setWorkspaceView('setup');
+                setSetupTab('basics');
                 if (!forceCreateVisible) {
                   setShowCreate(true);
                 }
@@ -2213,6 +2260,7 @@ export default function TrainingPanel({
                   className="btn btn-secondary"
                   onClick={() => {
                     setWorkspaceView('setup');
+                    setSetupTab('basics');
                     if (!forceCreateVisible) setShowCreate(true);
                   }}
                 >
@@ -2248,67 +2296,116 @@ export default function TrainingPanel({
             <div className="training-create-shell__head">
               <strong>Create Experiment</strong>
               <span className="training-create-shell__hint">
-                Use recipe + defaults for quick setup, then open advanced sections only if needed.
+                {isSetupAdvancedMode
+                  ? 'Use recipe + defaults for quick setup, then open advanced sections only if needed.'
+                  : 'Essentials mode keeps only launch-critical controls visible. Switch to Advanced for full tuning.'}
               </span>
             </div>
-            <div className="form-group">
-              <label className="form-label">Experiment Name</label>
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. llama3-sft-v1" />
-            </div>
-            <div className="form-group form-group--spaced">
-              <label className="form-label form-label-inline">
-                <input
-                  type="checkbox"
-                  checked={useProfileDefaults}
-                  onChange={(e) => setUseProfileDefaults(e.target.checked)}
-                />
-                Use domain runtime defaults for untouched fields
-              </label>
-              <div className="form-hint">
-                Base model is always sent. Other fields are only sent after you edit them.
-              </div>
-            </div>
-            <div className="form-group form-group--spaced">
-              <label className="form-label">Recipe Starter</label>
-              <div className="form-inline-actions">
-                <select
-                  className="input training-recipe-select"
-                  value={selectedRecipeId}
-                  onChange={(e) => setSelectedRecipeId(e.target.value)}
-                >
-                  <option value="">Select recipe</option>
-                  {trainingRecipes.map((recipe) => (
-                    <option key={recipe.recipe_id} value={recipe.recipe_id}>
-                      {recipe.display_name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => void applySelectedRecipe()}
-                  disabled={recipeResolveLoading || !selectedRecipeId}
-                >
-                  {recipeResolveLoading ? 'Applying...' : 'Apply Recipe'}
-                </button>
-                <div className="form-action-divider" style={{ borderLeft: '1px solid var(--border-color)', margin: '0 var(--space-sm)' }} />
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowHardwareModal(true)}
-                  title="Optimize settings for target hardware"
-                >
-                  ✨ Hardware Auto-Tuner
-                </button>
-              </div>
-              <div className="form-hint">
-                Recipe applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
-              </div>
-              {recipeResolveError && (
-                <div className="training-alert training-alert--warning training-alert--tight">
-                  {recipeResolveError}
-                </div>
-              )}
+            <div className="training-setup-tabs" role="tablist" aria-label="Training setup steps">
+              {setupTabOrder.map((tab, idx) => {
+                const label = tab === 'basics'
+                  ? 'Basics'
+                  : tab === 'config'
+                    ? 'Config'
+                    : tab === 'power'
+                      ? 'Power Tools'
+                      : 'Review';
+                return (
+                  <button
+                    key={tab}
+                    className={`training-setup-tab ${setupTab === tab ? 'active' : ''}`}
+                    onClick={() => setSetupTab(tab)}
+                    role="tab"
+                    aria-selected={setupTab === tab}
+                  >
+                    <span className="setup-tab-index">{idx + 1}</span>
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
             </div>
 
+            {showSetupBasics && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">Experiment Name</label>
+                  <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. llama3-sft-v1" />
+                </div>
+                <div className="form-group form-group--spaced">
+                  <label className="form-label form-label-inline">
+                    <input
+                      type="checkbox"
+                      checked={useProfileDefaults}
+                      onChange={(e) => setUseProfileDefaults(e.target.checked)}
+                    />
+                    Use domain runtime defaults for untouched fields
+                  </label>
+                  <div className="form-hint">
+                    Base model is always sent. Other fields are only sent after you edit them.
+                  </div>
+                </div>
+                <div className="form-group form-group--spaced">
+                  <label className="form-label">Recipe Starter</label>
+                  <div className="form-inline-actions">
+                    <select
+                      className="input training-recipe-select"
+                      value={selectedRecipeId}
+                      onChange={(e) => setSelectedRecipeId(e.target.value)}
+                    >
+                      <option value="">Select recipe</option>
+                      {trainingRecipes.map((recipe) => (
+                        <option key={recipe.recipe_id} value={recipe.recipe_id}>
+                          {recipe.display_name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void applySelectedRecipe()}
+                      disabled={recipeResolveLoading || !selectedRecipeId}
+                    >
+                      {recipeResolveLoading ? 'Applying...' : 'Apply Recipe'}
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setShowHardwareModal(true)}
+                      title="Optimize settings for target hardware"
+                    >
+                      ✨ Hardware Auto-Tuner
+                    </button>
+                  </div>
+                  <div className="form-hint">
+                    Recipe applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
+                  </div>
+                  {recipeResolveError && (
+                    <div className="training-alert training-alert--warning training-alert--tight">
+                      {recipeResolveError}
+                    </div>
+                  )}
+                </div>
+
+                {!isSetupAdvancedMode && (
+                  <div className="training-essentials-tools">
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void runPreflightPreview()}
+                      disabled={preflightPreviewLoading}
+                    >
+                      {preflightPreviewLoading ? 'Checking...' : 'Run Quick Preflight'}
+                    </button>
+                    {preflightPreview && (
+                      <span className={`training-essentials-preflight ${preflightPreview.ok ? 'ok' : 'blocked'}`}>
+                        {preflightPreview.ok
+                          ? 'Preflight passed'
+                          : `${preflightPreview.errors.length} blocking issue(s)`}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {showSetupPower && (
             <details className="training-collapsible">
               <summary>
                 <span>Validation & Planning</span>
@@ -2526,7 +2623,9 @@ export default function TrainingPanel({
                 )}
               </div>
             </details>
+            )}
 
+            {showSetupPower && (
             <details className="training-collapsible">
               <summary>
                 <span>Cloud Burst Planning</span>
@@ -2745,16 +2844,25 @@ export default function TrainingPanel({
                 )}
               </div>
             </details>
+            )}
 
+            {(showSetupConfig || showSetupPower) && (
             <details className="training-collapsible" open>
               <summary>
-                <span>Model & Hyperparameters</span>
-                <small>Core settings plus advanced memory/PEFT controls</small>
+                <span>{showSetupPower ? 'Power Tools' : 'Core Configuration'}</span>
+                <small>
+                  {showSetupPower
+                    ? 'Advanced tuning, model recommendation, and PEFT controls'
+                    : 'Only required controls for a reliable run'}
+                </small>
               </summary>
               <div className="training-collapsible__content">
-                <div className="training-config-grid">
+                <div className={showSetupPower ? 'training-config-grid' : 'training-config-grid training-config-grid--essentials'}>
                   <div>
-                    <h4 className="training-config-section-title">Basic HParams</h4>
+                    <h4 className="training-config-section-title">
+                      {showSetupPower ? 'Model & Recommender' : 'Essentials'}
+                    </h4>
+                    {showSetupPower && (
                     <div className="training-model-wizard">
                       <div className="training-model-wizard__head">
                         <strong>Model Selection Wizard</strong>
@@ -2874,6 +2982,9 @@ export default function TrainingPanel({
                         </div>
                       )}
                     </div>
+                    )}
+                    {showSetupConfig && (
+                      <>
                     <div className="form-group">
                       <label className="form-label">Base Model</label>
                       <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
@@ -2930,60 +3041,6 @@ export default function TrainingPanel({
                     </div>
                     <div className="training-grid-2">
                       <div className="form-group">
-                        <label className="form-label">Task Type</label>
-                        <select
-                          className="input"
-                          value={taskType}
-                          onChange={(e) => {
-                            setTaskType(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, task_type: true }));
-                          }}
-                          disabled={isAlignmentMode}
-                        >
-                          <option value="causal_lm">Causal LM</option>
-                          <option value="seq2seq">Seq2Seq</option>
-                          <option value="classification">Classification</option>
-                        </select>
-                        {isAlignmentMode && (
-                          <div className="form-hint">
-                            DPO/ORPO currently run on causal LM preference pairs.
-                          </div>
-                        )}
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Trainer Backend</label>
-                        <select
-                          className="input"
-                          value={trainerBackend}
-                          onChange={(e) => {
-                            setTrainerBackend(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, trainer_backend: true }));
-                          }}
-                        >
-                          <option value="auto">Auto (HF Trainer)</option>
-                          <option value="hf_trainer">HF Trainer</option>
-                          <option value="trl_sft">TRL SFTTrainer</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Chat Template</label>
-                      <select
-                        className="input"
-                        value={chatTemplate}
-                        onChange={(e) => {
-                          setChatTemplate(e.target.value);
-                          setTouchedConfig((prev) => ({ ...prev, chat_template: true }));
-                        }}
-                      >
-                        <option value="llama3">Llama-3</option>
-                        <option value="chatml">ChatML</option>
-                        <option value="zephyr">Zephyr</option>
-                        <option value="phi3">Phi-3</option>
-                      </select>
-                    </div>
-                    <div className="training-grid-2">
-                      <div className="form-group">
                         <label className="form-label">Epochs</label>
                         <input
                           className="input"
@@ -3035,64 +3092,125 @@ export default function TrainingPanel({
                         </select>
                       </div>
                     </div>
-                    <div className="training-grid-2">
-                      <div className="form-group">
-                        <label className="form-label">Grad Accum Steps</label>
-                        <input
-                          className="input"
-                          type="number"
-                          min={1}
-                          value={gradientAccumulationSteps}
-                          onChange={(e) => {
-                            setGradientAccumulationSteps(Math.max(1, Number(e.target.value) || 1));
-                            setTouchedConfig((prev) => ({ ...prev, gradient_accumulation_steps: true }));
-                          }}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Max Seq Length</label>
-                        <input
-                          className="input"
-                          type="number"
-                          min={128}
-                          value={maxSeqLength}
-                          onChange={(e) => {
-                            setMaxSeqLength(Math.max(128, Number(e.target.value) || 128));
-                            setTouchedConfig((prev) => ({ ...prev, max_seq_length: true }));
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div className="training-grid-2">
-                      <div className="form-group">
-                        <label className="form-label">Save Steps</label>
-                        <input
-                          className="input"
-                          type="number"
-                          min={1}
-                          value={saveSteps}
-                          onChange={(e) => {
-                            setSaveSteps(Math.max(1, Number(e.target.value) || 1));
-                            setTouchedConfig((prev) => ({ ...prev, save_steps: true }));
-                          }}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Eval Steps</label>
-                        <input
-                          className="input"
-                          type="number"
-                          min={1}
-                          value={evalSteps}
-                          onChange={(e) => {
-                            setEvalSteps(Math.max(1, Number(e.target.value) || 1));
-                            setTouchedConfig((prev) => ({ ...prev, eval_steps: true }));
-                          }}
-                        />
-                      </div>
-                    </div>
+                      </>
+                    )}
+                    {showSetupPower && (
+                      <>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Task Type</label>
+                            <select
+                              className="input"
+                              value={taskType}
+                              onChange={(e) => {
+                                setTaskType(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, task_type: true }));
+                              }}
+                              disabled={isAlignmentMode}
+                            >
+                              <option value="causal_lm">Causal LM</option>
+                              <option value="seq2seq">Seq2Seq</option>
+                              <option value="classification">Classification</option>
+                            </select>
+                            {isAlignmentMode && (
+                              <div className="form-hint">
+                                DPO/ORPO currently run on causal LM preference pairs.
+                              </div>
+                            )}
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Trainer Backend</label>
+                            <select
+                              className="input"
+                              value={trainerBackend}
+                              onChange={(e) => {
+                                setTrainerBackend(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, trainer_backend: true }));
+                              }}
+                            >
+                              <option value="auto">Auto (HF Trainer)</option>
+                              <option value="hf_trainer">HF Trainer</option>
+                              <option value="trl_sft">TRL SFTTrainer</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Chat Template</label>
+                          <select
+                            className="input"
+                            value={chatTemplate}
+                            onChange={(e) => {
+                              setChatTemplate(e.target.value);
+                              setTouchedConfig((prev) => ({ ...prev, chat_template: true }));
+                            }}
+                          >
+                            <option value="llama3">Llama-3</option>
+                            <option value="chatml">ChatML</option>
+                            <option value="zephyr">Zephyr</option>
+                            <option value="phi3">Phi-3</option>
+                          </select>
+                        </div>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Grad Accum Steps</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={1}
+                              value={gradientAccumulationSteps}
+                              onChange={(e) => {
+                                setGradientAccumulationSteps(Math.max(1, Number(e.target.value) || 1));
+                                setTouchedConfig((prev) => ({ ...prev, gradient_accumulation_steps: true }));
+                              }}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Max Seq Length</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={128}
+                              value={maxSeqLength}
+                              onChange={(e) => {
+                                setMaxSeqLength(Math.max(128, Number(e.target.value) || 128));
+                                setTouchedConfig((prev) => ({ ...prev, max_seq_length: true }));
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Save Steps</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={1}
+                              value={saveSteps}
+                              onChange={(e) => {
+                                setSaveSteps(Math.max(1, Number(e.target.value) || 1));
+                                setTouchedConfig((prev) => ({ ...prev, save_steps: true }));
+                              }}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Eval Steps</label>
+                            <input
+                              className="input"
+                              type="number"
+                              min={1}
+                              value={evalSteps}
+                              onChange={(e) => {
+                                setEvalSteps(Math.max(1, Number(e.target.value) || 1));
+                                setTouchedConfig((prev) => ({ ...prev, eval_steps: true }));
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
 
+                  {showSetupPower && (
                   <div>
                     <h4 className="training-config-section-title">Advanced & PEFT</h4>
                     <div className="form-group training-toggle-row">
@@ -3455,27 +3573,110 @@ export default function TrainingPanel({
                       </div>
                     </div>
                   </div>
+                  )}
                 </div>
               </div>
             </details>
+            )}
 
-            <div className="training-create-shell__actions">
-              <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
-              {!forceCreateVisible && (
+            {showSetupReview && (
+              <div className="training-review-panel">
+                <div className="training-review-grid">
+                  <div className="training-review-item">
+                    <span>Name</span>
+                    <strong>{name || 'Untitled experiment'}</strong>
+                  </div>
+                  <div className="training-review-item">
+                    <span>Base Model</span>
+                    <strong>{baseModel || 'not set'}</strong>
+                  </div>
+                  <div className="training-review-item">
+                    <span>Runtime</span>
+                    <strong>{trainingRuntimeId}</strong>
+                  </div>
+                  <div className="training-review-item">
+                    <span>Training</span>
+                    <strong>{epochs} epochs · batch {batchSize} · lr {lr}</strong>
+                  </div>
+                </div>
+                {!isSetupAdvancedMode && (
+                  <div className="training-essentials-tools">
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => void runPreflightPreview()}
+                      disabled={preflightPreviewLoading}
+                    >
+                      {preflightPreviewLoading ? 'Checking...' : 'Run Quick Preflight'}
+                    </button>
+                    {preflightPreview && (
+                      <span className={`training-essentials-preflight ${preflightPreview.ok ? 'ok' : 'blocked'}`}>
+                        {preflightPreview.ok
+                          ? 'Preflight passed'
+                          : `${preflightPreview.errors.length} blocking issue(s)`}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!showSetupReview && (
+              <div className="training-create-shell__actions training-create-shell__actions--step">
                 <button
                   className="btn btn-secondary"
-                  onClick={() => {
-                    setShowCreate(false);
-                    setPreflightPreview(null);
-                    setPreflightPreviewError('');
-                    setPreflightPlan(null);
-                    setPreflightPlanError('');
-                  }}
+                  onClick={goToPreviousSetupTab}
+                  disabled={!canSetupGoBack}
                 >
-                  Cancel
+                  Back
                 </button>
-              )}
-            </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={goToNextSetupTab}
+                  disabled={!canSetupGoNext}
+                >
+                  Continue
+                </button>
+                {!forceCreateVisible && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setShowCreate(false);
+                      setSetupTab('basics');
+                      setPreflightPreview(null);
+                      setPreflightPreviewError('');
+                      setPreflightPlan(null);
+                      setPreflightPlanError('');
+                    }}
+                  >
+                    Close
+                  </button>
+                )}
+              </div>
+            )}
+
+            {showSetupReview && (
+              <div className="training-create-shell__actions">
+                <button className="btn btn-secondary" onClick={goToPreviousSetupTab}>
+                  Back
+                </button>
+                <button className="btn btn-primary" onClick={handleCreate}>Create Experiment</button>
+                {!forceCreateVisible && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setShowCreate(false);
+                      setSetupTab('basics');
+                      setPreflightPreview(null);
+                      setPreflightPreviewError('');
+                      setPreflightPlan(null);
+                      setPreflightPlanError('');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
@@ -8,6 +9,7 @@ import './ProjectTrainingConfigPage.css';
 export default function ProjectTrainingConfigPage() {
     const navigate = useNavigate();
     const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
+    const [configMode, setConfigMode] = useState<'essentials' | 'advanced'>('essentials');
 
     return (
         <div className="workspace-page">
@@ -15,15 +17,35 @@ export default function ProjectTrainingConfigPage() {
                 <div>
                     <h2 className="workspace-page-title">Training Configurations</h2>
                     <p className="workspace-page-subtitle">
-                        Configure base model, runtime, recipes, preflight, and hyperparameters.
+                        Start in Essentials for a cleaner launch flow. Switch to Advanced for full controls.
                     </p>
                 </div>
-                <button
-                    className="btn btn-secondary"
-                    onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
-                >
-                    Open Training Stage
-                </button>
+                <div className="training-config-header-actions">
+                    <div className="training-config-mode-switch" role="tablist" aria-label="Training configuration mode">
+                        <button
+                            className={`training-config-mode-btn ${configMode === 'essentials' ? 'active' : ''}`}
+                            onClick={() => setConfigMode('essentials')}
+                            role="tab"
+                            aria-selected={configMode === 'essentials'}
+                        >
+                            Essentials
+                        </button>
+                        <button
+                            className={`training-config-mode-btn ${configMode === 'advanced' ? 'active' : ''}`}
+                            onClick={() => setConfigMode('advanced')}
+                            role="tab"
+                            aria-selected={configMode === 'advanced'}
+                        >
+                            Advanced
+                        </button>
+                    </div>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
+                    >
+                        Open Training Stage
+                    </button>
+                </div>
             </section>
 
             <TrainingPanel
@@ -32,6 +54,7 @@ export default function ProjectTrainingConfigPage() {
                 forceCreateVisible
                 hideExperimentList
                 hideStepFooter
+                setupMode={configMode}
             />
 
             <section className="card training-config-link-card">
@@ -48,7 +71,7 @@ export default function ProjectTrainingConfigPage() {
                     Open Playground
                 </button>
             </section>
-            <AlignmentScaffoldPanel projectId={projectId} />
+            {configMode === 'advanced' && <AlignmentScaffoldPanel projectId={projectId} />}
         </div>
     );
 }
