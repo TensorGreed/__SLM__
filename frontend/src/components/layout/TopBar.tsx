@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Bell, CircleHelp } from 'lucide-react';
 
 import api from '../../api/client';
 import './TopBar.css';
@@ -7,6 +8,7 @@ interface TopBarProps {
     title: string;
     subtitle?: string;
     actions?: ReactNode;
+    withSidebar?: boolean;
 }
 
 interface MeResponse {
@@ -35,7 +37,7 @@ interface RuntimeSettingsResponse {
     fields: RuntimeSettingField[];
 }
 
-export default function TopBar({ title, subtitle, actions }: TopBarProps) {
+export default function TopBar({ title, subtitle, actions, withSidebar = false }: TopBarProps) {
     const menuRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
@@ -161,13 +163,20 @@ export default function TopBar({ title, subtitle, actions }: TopBarProps) {
 
     return (
         <>
-            <header className="topbar">
+            <header className={`topbar ${withSidebar ? 'topbar--with-sidebar' : ''}`}>
                 <div className="topbar-left">
+                    <div className="topbar-kicker">Workspace</div>
                     <h1 className="topbar-title">{title}</h1>
                     {subtitle && <span className="topbar-subtitle">{subtitle}</span>}
                 </div>
                 <div className="topbar-actions">
                     {actions}
+                    <button className="topbar-icon-btn" title="Help">
+                        <CircleHelp size={16} />
+                    </button>
+                    <button className="topbar-icon-btn" title="Notifications">
+                        <Bell size={16} />
+                    </button>
                     <div className="topbar-user" ref={menuRef}>
                         <button
                             className="topbar-user-btn"

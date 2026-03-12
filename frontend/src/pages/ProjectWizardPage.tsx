@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import api from '../api/client';
 import EDADashboard from '../components/data/EDADashboard';
@@ -18,67 +18,52 @@ export default function ProjectWizardPage() {
 
     const [currentStep, setCurrentStep] = useState(1);
 
-    // Step 1: Upload Data
     const [uploading, setUploading] = useState(false);
     const [docsCount, setDocsCount] = useState(0);
+    const [runName, setRunName] = useState('Discovery-Triggered Run');
 
-    // Step 3: Hardware
     const [hardware, setHardware] = useState('rtx-3090');
+    const [trainingStrategy, setTrainingStrategy] = useState<'classification' | 'classification_entitlement'>('classification');
     const [benchmarkLoading, setBenchmarkLoading] = useState(false);
     const [benchmarkRows, setBenchmarkRows] = useState<BenchmarkRow[]>([]);
     const [benchmarkError, setBenchmarkError] = useState('');
+    const [extraFilters, setExtraFilters] = useState<string[]>([]);
 
-    // Step 4: Training
     const [trainingProgress, setTrainingProgress] = useState(0);
 
     useEffect(() => {
-        // Fetch docs to see if we can skip Step 1
         api.get<any[]>(`/projects/${projectId}/ingestion/documents`)
             .then((res) => {
-                setDocsCount(res.data.length);
-                if (res.data.length > 0 && currentStep === 1) {
+                const count = Array.isArray(res.data) ? res.data.length : 0;
+                setDocsCount(count);
+                if (count > 0 && currentStep === 1) {
                     setCurrentStep(2);
                 }
             })
             .catch(() => { });
     }, [projectId, currentStep]);
 
+    const stepItems = useMemo(() => ([
+        { num: 1, label: 'Upload Data' },
+        { num: 2, label: 'Review Data' },
+        { num: 3, label: 'Select Hardware' },
+        { num: 4, label: 'Auto-Train' },
+        { num: 5, label: 'Chat with Model' },
+    ]), []);
+
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.length) return;
         setUploading(true);
         const formData = new FormData();
         Array.from(e.target.files).forEach((f) => formData.append('files', f));
-
         try {
             await api.post(`/projects/${projectId}/ingestion/upload-batch`, formData);
-            setDocsCount(docsCount + e.target.files.length);
+            setDocsCount((prev) => prev + e.target.files!.length);
             setCurrentStep(2);
-        } catch (err) {
+        } catch {
             alert('Upload failed');
         } finally {
             setUploading(false);
-        }
-    };
-
-    const handleStartTraining = async () => {
-        setCurrentStep(4);
-
-        try {
-            // Mock advance pipeline steps up to training if needed
-            // For wizard, we just trigger a run and poll
-            await api.post(`/projects/${projectId}/pipeline/advance`);
-            await api.post(`/projects/${projectId}/pipeline/advance`);
-            await api.post(`/projects/${projectId}/pipeline/advance`);
-
-            // Wait to simulate training progress since actual is complex
-            for (let i = 0; i <= 100; i += 10) {
-                setTrainingProgress(i);
-                await new Promise(r => setTimeout(r, 1000));
-            }
-
-            setCurrentStep(5);
-        } catch (e) {
-            alert('Training failed to start');
         }
     };
 
@@ -102,6 +87,7 @@ export default function ProjectWizardPage() {
                 target_device: hardwareToTargetDevice(hardware),
                 primary_language: 'english',
                 available_vram_gb: hardwareToVram(hardware),
+                task_profile: trainingStrategy === 'classification_entitlement' ? 'classification' : undefined,
                 max_models: 3,
             });
             setBenchmarkRows(Array.isArray(res.data?.matrix) ? res.data.matrix : []);
@@ -113,101 +99,142 @@ export default function ProjectWizardPage() {
         }
     };
 
+    const handleStartTraining = async () => {
+        setCurrentStep(4);
+        try {
+            await api.post(`/projects/${projectId}/pipeline/advance`);
+            await api.post(`/projects/${projectId}/pipeline/advance`);
+            await api.post(`/projects/${projectId}/pipeline/advance`);
+            for (let i = 0; i <= 100; i += 10) {
+                setTrainingProgress(i);
+                await new Promise((r) => setTimeout(r, 800));
+            }
+            setCurrentStep(5);
+        } catch {
+            alert('Training failed to start');
+        }
+    };
+
+    const addFilter = () => {
+        const token = `Filter ${extraFilters.length + 1}`;
+        setExtraFilters((prev) => [...prev, token]);
+    };
+
     return (
-        <div className="wizard-page animate-fade-in" style={{ padding: '0 2rem 3rem' }}>
-            <div className="wizard-header">
-                <h2>✨ Guided SLM Creator</h2>
-                <p>Follow these steps to go from raw data to a finished domain expert model.</p>
-                <button className="btn btn-ghost" onClick={() => navigate(`/project/${projectId}/pipeline`)}>
-                    Switch to Advanced DAG Mode
-                </button>
-            </div>
-
-            <div className="wizard-stepper">
-                {[
-                    { num: 1, label: 'Upload Data' },
-                    { num: 2, label: 'Review Data' },
-                    { num: 3, label: 'Select Hardware' },
-                    { num: 4, label: 'Auto-Train' },
-                    { num: 5, label: 'Chat' }
-                ].map((s) => (
-                    <div key={s.num} className={`wizard-step-indicator ${currentStep >= s.num ? 'active' : ''} ${currentStep > s.num ? 'completed' : ''}`}>
-                        <div className="step-circle">{currentStep > s.num ? '✓' : s.num}</div>
-                        <div className="step-label">{s.label}</div>
+        <div className="wizard-page animate-fade-in">
+            <div className="wizard-shell card">
+                <div className="wizard-header">
+                    <div>
+                        <h2>Guided Setup</h2>
+                        <p>Configure data discovery and model training with a simplified flow.</p>
                     </div>
-                ))}
-            </div>
+                    <button className="btn btn-secondary" onClick={() => navigate(`/project/${projectId}/pipeline`)}>
+                        Advanced Mode
+                    </button>
+                </div>
 
-            <div className="wizard-content">
-                {currentStep === 1 && (
-                    <div className="wizard-step-card animate-fade-in">
-                        <h3>Step 1: Upload Your Data</h3>
-                        <p>Our AI will automatically clean, chunk, and prepare your data for training.</p>
-
-                        <div className="upload-box">
-                            <input type="file" multiple id="wizard-upload" onChange={handleUpload} />
-                            <label htmlFor="wizard-upload" className="btn btn-primary btn-lg">
-                                {uploading ? 'Uploading...' : 'Browse Files'}
-                            </label>
-                            <span className="hint">PDF, TXT, CSV, JSON supported</span>
+                <div className="wizard-stepper">
+                    {stepItems.map((item) => (
+                        <div key={item.num} className={`wizard-step-indicator ${currentStep >= item.num ? 'active' : ''}`}>
+                            <div className={`step-circle ${currentStep > item.num ? 'complete' : ''}`}>
+                                {currentStep > item.num ? '✓' : item.num}
+                            </div>
+                            <div className="step-label">{item.label}</div>
                         </div>
-                    </div>
+                    ))}
+                </div>
+
+                {currentStep === 1 && (
+                    <section className="wizard-section">
+                        <h3>General Info</h3>
+                        <label className="form-label">Run name</label>
+                        <input
+                            className="input"
+                            value={runName}
+                            onChange={(e) => setRunName(e.target.value)}
+                            placeholder="Discovery-Triggered Run"
+                        />
+                        <div className="wizard-upload-box">
+                            <input type="file" multiple id="wizard-upload" onChange={handleUpload} />
+                            <label htmlFor="wizard-upload" className="btn btn-primary">
+                                {uploading ? 'Uploading...' : 'Select Files'}
+                            </label>
+                            <span>PDF, TXT, CSV and JSON supported.</span>
+                        </div>
+                    </section>
                 )}
 
                 {currentStep === 2 && (
-                    <div className="wizard-step-card animate-fade-in">
-                        <h3>Step 2: Review Data Health</h3>
-                        <p>We've analyzed your {docsCount} documents. Here's a quick summary before we proceed.</p>
-
-                        <div className="eda-wrapper">
+                    <section className="wizard-section">
+                        <h3>Review Data</h3>
+                        <p className="wizard-muted">Detected {docsCount} documents. Review quality before continuing.</p>
+                        <div className="wizard-panel">
                             <EDADashboard projectId={projectId} />
                         </div>
-
                         <div className="wizard-actions">
-                            <button className="btn btn-primary btn-lg" onClick={() => setCurrentStep(3)}>
-                                Looks Good, Continue →
-                            </button>
+                            <button className="btn btn-secondary" onClick={() => setCurrentStep(1)}>Back</button>
+                            <button className="btn btn-primary" onClick={() => setCurrentStep(3)}>Continue</button>
                         </div>
-                    </div>
+                    </section>
                 )}
 
                 {currentStep === 3 && (
-                    <div className="wizard-step-card animate-fade-in">
-                        <h3>Step 3: Select Target Hardware</h3>
-                        <p>Where do you plan to run your final model? We will select the optimal base model and quantization.</p>
-
-                        <div className="hardware-grid">
-                            {[
-                                { id: 'macbook', name: 'MacBook / Laptop', icon: '💻', desc: '8GB+ Unified Memory. Selects deep quantization.' },
-                                { id: 'rtx-3090', name: 'RTX 3090 / 4090', icon: '🎮', desc: '24GB VRAM. High throughput balance.' },
-                                { id: 'server', name: 'A100 / Server', icon: '🖥️', desc: '80GB VRAM. Maximum quality base models.' }
-                            ].map(h => (
-                                <div
-                                    key={h.id}
-                                    className={`hw-card ${hardware === h.id ? 'selected' : ''}`}
-                                    onClick={() => setHardware(h.id)}
-                                >
-                                    <div className="hw-icon">{h.icon}</div>
-                                    <div className="hw-name">{h.name}</div>
-                                    <div className="hw-desc">{h.desc}</div>
+                    <section className="wizard-section">
+                        <h3>Select Scan Type</h3>
+                        <div className="wizard-option-grid">
+                            <button
+                                className={`wizard-option-card ${trainingStrategy === 'classification' ? 'selected' : ''}`}
+                                onClick={() => setTrainingStrategy('classification')}
+                            >
+                                <div className="wizard-option-title">Classification</div>
+                                <div className="wizard-option-tags">
+                                    <span className="option-tag">Classification</span>
                                 </div>
-                            ))}
+                                <p>Scans your environment to locate and classify sensitive data for compliance flows.</p>
+                            </button>
+                            <button
+                                className={`wizard-option-card ${trainingStrategy === 'classification_entitlement' ? 'selected' : ''}`}
+                                onClick={() => setTrainingStrategy('classification_entitlement')}
+                            >
+                                <div className="wizard-option-title">Classification and Entitlement</div>
+                                <div className="wizard-option-tags">
+                                    <span className="option-tag">Classification</span>
+                                    <span className="option-tag">Entitlement</span>
+                                </div>
+                                <p>Combines classification with access-oriented checks for entitlement analysis.</p>
+                            </button>
                         </div>
 
-                        <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                            <button className="btn btn-secondary btn-sm" onClick={() => void runQuickBenchmark()} disabled={benchmarkLoading}>
+                        <h3 className="wizard-subhead">Classification Search Parameters</h3>
+                        <p className="wizard-muted">Define profiles and filters that training should focus on.</p>
+                        <div className="wizard-param-row">
+                            <label className="form-label">Target hardware</label>
+                            <select
+                                className="input"
+                                value={hardware}
+                                onChange={(e) => setHardware(e.target.value)}
+                            >
+                                <option value="macbook">MacBook / Laptop</option>
+                                <option value="rtx-3090">RTX 3090 / 4090</option>
+                                <option value="server">A100 / Server</option>
+                            </select>
+                        </div>
+
+                        <div className="wizard-param-row">
+                            <button className="btn btn-secondary" onClick={() => void runQuickBenchmark()} disabled={benchmarkLoading}>
                                 {benchmarkLoading ? 'Benchmarking...' : 'Run 5-Minute Model Benchmark'}
                             </button>
-                            {benchmarkError && <span style={{ color: 'var(--danger)' }}>{benchmarkError}</span>}
+                            {benchmarkError && <span className="wizard-error">{benchmarkError}</span>}
                         </div>
+
                         {benchmarkRows.length > 0 && (
-                            <div style={{ marginTop: '0.75rem', overflowX: 'auto' }}>
-                                <table style={{ width: '100%', fontSize: '0.9rem' }}>
+                            <div className="wizard-table-wrap">
+                                <table className="wizard-table">
                                     <thead>
                                         <tr>
-                                            <th style={{ textAlign: 'left' }}>Model</th>
-                                            <th style={{ textAlign: 'left' }}>Accuracy</th>
-                                            <th style={{ textAlign: 'left' }}>Latency</th>
+                                            <th>Model</th>
+                                            <th>Accuracy</th>
+                                            <th>Latency</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -223,41 +250,48 @@ export default function ProjectWizardPage() {
                             </div>
                         )}
 
-                        <div className="wizard-actions">
-                            <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>← Back</button>
-                            <button className="btn btn-primary btn-lg" onClick={handleStartTraining}>
-                                Start Auto-Training 🚀
-                            </button>
+                        <div className="wizard-filters">
+                            <button className="btn btn-ghost" onClick={addFilter}>+ Add filter</button>
+                            {extraFilters.length > 0 && (
+                                <div className="wizard-filter-list">
+                                    {extraFilters.map((filter) => (
+                                        <span key={filter} className="wizard-filter-chip">{filter}</span>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    </div>
+
+                        <div className="wizard-actions wizard-actions-bottom">
+                            <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleStartTraining}>Save</button>
+                        </div>
+                    </section>
                 )}
 
                 {currentStep === 4 && (
-                    <div className="wizard-step-card animate-fade-in">
-                        <h3>Step 4: Training in Progress</h3>
-                        <p>Sit tight. Our system is auto-tuning the hyperparameters and running LoRA fine-tuning.</p>
-
-                        <div className="progress-bar-container">
-                            <div className="progress-bar-fill" style={{ width: `${trainingProgress}%` }}></div>
+                    <section className="wizard-section">
+                        <h3>Auto-Train</h3>
+                        <p className="wizard-muted">Training is running with auto-selected parameters.</p>
+                        <div className="wizard-progress">
+                            <div className="wizard-progress-fill" style={{ width: `${trainingProgress}%` }} />
                         </div>
-                        <div className="progress-status">{trainingProgress}% Complete</div>
-                    </div>
+                        <div className="wizard-progress-label">{trainingProgress}% complete</div>
+                    </section>
                 )}
 
                 {currentStep === 5 && (
-                    <div className="wizard-step-card animate-fade-in">
-                        <h3>Step 5: Training Complete! 🎉</h3>
-                        <p>Your Domain Expert SLM is ready to use.</p>
-
+                    <section className="wizard-section">
+                        <h3>Training Complete</h3>
+                        <p className="wizard-muted">Your model is ready for prompt testing and export.</p>
                         <div className="wizard-actions">
-                            <button className="btn btn-primary btn-lg" onClick={() => navigate(`/project/${projectId}/playground`)}>
-                                Chat with Model
-                            </button>
-                            <button className="btn btn-secondary btn-lg" onClick={() => navigate(`/project/${projectId}/pipeline/export`)}>
+                            <button className="btn btn-secondary" onClick={() => navigate(`/project/${projectId}/pipeline/export`)}>
                                 Export Model
                             </button>
+                            <button className="btn btn-primary" onClick={() => navigate(`/project/${projectId}/playground`)}>
+                                Open Playground
+                            </button>
                         </div>
-                    </div>
+                    </section>
                 )}
             </div>
         </div>

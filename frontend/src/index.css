@@ -11,43 +11,43 @@
 
 /* ── Design Tokens ──────────────────────────────────────────────────── */
 :root {
-  /* Colors — Dark Theme */
-  --bg-primary: #0a0e1a;
-  --bg-secondary: #111827;
-  --bg-tertiary: #1a2035;
-  --bg-card: rgba(17, 24, 39, 0.7);
-  --bg-card-hover: rgba(26, 32, 53, 0.9);
-  --bg-glass: rgba(17, 24, 39, 0.45);
+  /* Colors — Workspace Light */
+  --bg-primary: #edf1f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f7f9fc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #ffffff;
+  --bg-glass: rgba(255, 255, 255, 0.9);
 
-  --border-primary: rgba(99, 102, 241, 0.15);
-  --border-secondary: rgba(148, 163, 184, 0.08);
-  --border-hover: rgba(99, 102, 241, 0.35);
+  --border-primary: #cfd7e6;
+  --border-secondary: #e5eaf3;
+  --border-hover: #93b0e8;
 
   /* Brand */
-  --accent-primary: #6366f1;
-  --accent-primary-hover: #818cf8;
-  --accent-secondary: #8b5cf6;
-  --accent-gradient: linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa);
-  --accent-glow: rgba(99, 102, 241, 0.25);
+  --accent-primary: #1d4ed8;
+  --accent-primary-hover: #1e40af;
+  --accent-secondary: #2563eb;
+  --accent-gradient: linear-gradient(135deg, #1f5fd8, #2f74ef);
+  --accent-glow: rgba(37, 99, 235, 0.22);
 
   /* Semantic */
-  --color-success: #22c55e;
-  --color-success-bg: rgba(34, 197, 94, 0.1);
-  --color-warning: #f59e0b;
-  --color-warning-bg: rgba(245, 158, 11, 0.1);
-  --color-error: #ef4444;
-  --color-error-bg: rgba(239, 68, 68, 0.1);
-  --color-info: #3b82f6;
-  --color-info-bg: rgba(59, 130, 246, 0.1);
+  --color-success: #15803d;
+  --color-success-bg: #e8f7ee;
+  --color-warning: #b45309;
+  --color-warning-bg: #fff4e6;
+  --color-error: #b91c1c;
+  --color-error-bg: #feecef;
+  --color-info: #1d4ed8;
+  --color-info-bg: #e9f0ff;
 
   /* Text */
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
   --text-tertiary: #64748b;
-  --text-accent: #a78bfa;
+  --text-accent: #1d4ed8;
 
   /* Typography */
-  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family: 'IBM Plex Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.8125rem;
   --font-size-md: 0.9375rem;
@@ -84,8 +84,19 @@
   --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Layout */
-  --sidebar-width: 260px;
+  --sidebar-rail-width: 72px;
+  --sidebar-panel-width: 268px;
+  --sidebar-width: calc(var(--sidebar-rail-width) + var(--sidebar-panel-width));
   --topbar-height: 64px;
+
+  /* Workspace shell */
+  --nav-rail-bg: #07123a;
+  --nav-panel-bg: #040b2a;
+  --nav-panel-border: rgba(255, 255, 255, 0.12);
+  --nav-text: #d5ddf7;
+  --nav-text-muted: #9ba9d8;
+  --nav-active-bg: rgba(56, 121, 255, 0.24);
+  --nav-active-border: rgba(102, 163, 255, 0.62);
 }
 
 /* ── Global ─────────────────────────────────────────────────────────── */
@@ -110,8 +121,8 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(99, 102, 241, 0.06), transparent),
-    radial-gradient(ellipse 60% 40% at 80% 20%, rgba(139, 92, 246, 0.05), transparent);
+    radial-gradient(ellipse 65% 45% at 12% 8%, rgba(65, 119, 223, 0.1), transparent),
+    radial-gradient(ellipse 50% 35% at 90% 10%, rgba(157, 190, 244, 0.12), transparent);
   pointer-events: none;
   z-index: 0;
 }
@@ -152,28 +163,29 @@ a:hover {
 /* Glass card */
 .glass-card {
   background: var(--bg-glass);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border-secondary);
   border-radius: var(--radius-lg);
   transition: border-color var(--transition-base), box-shadow var(--transition-base);
 }
 .glass-card:hover {
   border-color: var(--border-hover);
-  box-shadow: var(--shadow-glow);
+  box-shadow: 0 8px 18px rgba(30, 64, 175, 0.08);
 }
 
 /* Solid card */
 .card {
   background: var(--bg-card);
-  border: 1px solid var(--border-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   transition: all var(--transition-base);
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.02);
 }
 .card:hover {
   background: var(--bg-card-hover);
-  border-color: var(--border-primary);
+  border-color: #c0cbdf;
 }
 
 /* Buttons */
@@ -204,12 +216,12 @@ a:hover {
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: #ffffff;
+  color: var(--text-secondary);
   border: 1px solid var(--border-primary);
 }
 .btn-secondary:hover {
-  background: var(--bg-card-hover);
+  background: #f2f5fb;
   border-color: var(--border-hover);
 }
 
@@ -220,7 +232,7 @@ a:hover {
 }
 .btn-ghost:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: #eef2fb;
 }
 
 .btn-danger {
@@ -235,8 +247,8 @@ a:hover {
 .input {
   width: 100%;
   padding: 0.625rem 0.875rem;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-secondary);
+  background: #ffffff;
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-family: var(--font-family);
@@ -249,7 +261,7 @@ a:hover {
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 .input::placeholder {
-  color: var(--text-tertiary);
+  color: #8ea0bb;
 }
 
 /* Badge */
@@ -372,7 +384,7 @@ a:hover {
 }
 .tab:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
+  background: #eef3ff;
 }
 .tab.active {
   color: var(--accent-primary-hover);
@@ -413,7 +425,7 @@ a:hover {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(15, 23, 42, 0.32);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -431,6 +443,20 @@ a:hover {
   max-width: 600px;
   width: 90%;
   box-shadow: var(--shadow-lg);
+}
+
+@media (max-width: 980px) {
+  :root {
+    --sidebar-width: 0px;
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+
+  .page-container {
+    padding: var(--space-lg);
+  }
 }
 
 .modal-header {

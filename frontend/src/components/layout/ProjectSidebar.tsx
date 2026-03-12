@@ -1,5 +1,18 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import {
+    BookOpen,
+    Bot,
+    Boxes,
+    Compass,
+    FileCog,
+    FolderTree,
+    Home,
+    Layers,
+    Settings2,
+    Sparkles,
+    Workflow,
+} from 'lucide-react';
 
 import { PIPELINE_TABS } from '../../types';
 import type { PipelineStatusResponse, TabKey } from '../../types';
@@ -11,7 +24,22 @@ interface ProjectSidebarProps {
     pipelineStatus: PipelineStatusResponse | null;
 }
 
-const STAGE_ORDER = ['ingestion', 'cleaning', 'gold_set', 'synthetic', 'dataset_prep', 'data_adapter_preview', 'tokenization', 'training', 'evaluation', 'compression', 'export', 'completed'];
+type RailKey = 'home' | 'pipeline' | 'training' | 'playground' | 'workflow' | 'domain';
+
+const STAGE_ORDER = [
+    'ingestion',
+    'cleaning',
+    'gold_set',
+    'synthetic',
+    'dataset_prep',
+    'data_adapter_preview',
+    'tokenization',
+    'training',
+    'evaluation',
+    'compression',
+    'export',
+    'completed',
+];
 
 const TAB_PREREQ_INDEX: Record<TabKey, number> = {
     data: 0,
@@ -52,8 +80,33 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
         location.pathname === `/project/${projectId}/domain/packs`
         || location.pathname === `/project/${projectId}/domain`;
     const isDomainProfilesRoute = location.pathname === `/project/${projectId}/domain/profiles`;
-
     const isWizardRoute = location.pathname === `/project/${projectId}/wizard`;
+
+    const selectedRailKey: RailKey = useMemo(() => {
+        if (isPipelineRoute) return 'pipeline';
+        if (isTrainingConfigRoute) return 'training';
+        if (isPlaygroundRoute) return 'playground';
+        if (isWorkflowRoute || isRecipesRoute) return 'workflow';
+        if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
+        return 'home';
+    }, [
+        isPipelineRoute,
+        isTrainingConfigRoute,
+        isPlaygroundRoute,
+        isWorkflowRoute,
+        isRecipesRoute,
+        isDomainPacksRoute,
+        isDomainProfilesRoute,
+    ]);
+
+    const panelHeadingByRail: Record<RailKey, { kicker: string; title: string }> = {
+        home: { kicker: 'Guided', title: 'Start and Discover' },
+        pipeline: { kicker: 'Pipeline', title: 'Runs and Stages' },
+        training: { kicker: 'Training', title: 'Model Configuration' },
+        playground: { kicker: 'Playground', title: 'Prompt Testing' },
+        workflow: { kicker: 'Automation', title: 'Recipes and Flows' },
+        domain: { kicker: 'Domain', title: 'Packs and Profiles' },
+    };
 
     const getStageStatus = (stageKey: string) => {
         if (!pipelineStatus) {
@@ -68,153 +121,241 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
         return currentStageIndex >= requiredIndex;
     };
 
+    const railItems: Array<{ key: RailKey; icon: ReactNode; title: string; onClick: () => void }> = [
+        {
+            key: 'home',
+            icon: <Home size={16} />,
+            title: 'Start',
+            onClick: () => navigate(`/project/${projectId}/guide`),
+        },
+        {
+            key: 'pipeline',
+            icon: <FolderTree size={16} />,
+            title: 'Pipeline',
+            onClick: () => navigate(`/project/${projectId}/pipeline/data`),
+        },
+        {
+            key: 'training',
+            icon: <Settings2 size={16} />,
+            title: 'Training',
+            onClick: () => navigate(`/project/${projectId}/training-config`),
+        },
+        {
+            key: 'playground',
+            icon: <Bot size={16} />,
+            title: 'Playground',
+            onClick: () => navigate(`/project/${projectId}/playground`),
+        },
+        {
+            key: 'workflow',
+            icon: <Workflow size={16} />,
+            title: 'Automation',
+            onClick: () => navigate(`/project/${projectId}/workflow`),
+        },
+        {
+            key: 'domain',
+            icon: <Layers size={16} />,
+            title: 'Domain',
+            onClick: () => navigate(`/project/${projectId}/domain/packs`),
+        },
+    ];
+
     return (
         <aside className="project-sidebar">
-            <div
-                className="project-sidebar-header"
-                onClick={() => navigate('/')}
-                role="button"
-                tabIndex={0}
-            >
-                <div className="project-sidebar-logo">
-                    <span className="logo-icon">◈</span>
-                    <span className="logo-text">SLM Platform</span>
+            <div className="project-sidebar-rail">
+                <button
+                    className="rail-logo"
+                    onClick={() => navigate('/')}
+                    title="Back to projects"
+                >
+                    SLM
+                </button>
+                <div className="project-sidebar-rail-nav">
+                    {railItems.map((item) => (
+                        <button
+                            key={item.key}
+                            className={`rail-item ${selectedRailKey === item.key ? 'active' : ''}`}
+                            onClick={item.onClick}
+                            title={item.title}
+                        >
+                            {item.icon}
+                        </button>
+                    ))}
                 </div>
-            </div>
-
-            <div className="project-sidebar-project">
-                <span className="project-label">Project</span>
-                <span className="project-name">{projectName}</span>
-            </div>
-
-            <nav className="project-sidebar-nav">
-                <div className="nav-section-label">Guided Flow</div>
                 <button
-                    className={`workspace-nav-item ${isGuideRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/guide`)}
-                >
-                    <span className="nav-icon">1</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Start Here</span>
-                        <span className="nav-caption">Recommended next step for your project.</span>
-                    </span>
-                </button>
-                <button
-                    className={`workspace-nav-item ${isWizardRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/wizard`)}
-                >
-                    <span className="nav-icon">✨</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Wizard Mode</span>
-                        <span className="nav-caption">Guided step-by-step autopilot.</span>
-                    </span>
-                </button>
-                <button
-                    className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
-                >
-                    <span className="nav-icon">2</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Data Pipeline</span>
-                        <span className="nav-caption">Ingest, clean, prepare, tokenize, train.</span>
-                    </span>
-                </button>
-                <button
-                    className={`workspace-nav-item ${isTrainingConfigRoute ? 'active' : ''}`}
+                    className="rail-item rail-item-bottom"
                     onClick={() => navigate(`/project/${projectId}/training-config`)}
+                    title="Settings"
                 >
-                    <span className="nav-icon">3</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Training Setup</span>
-                        <span className="nav-caption">Model, hyperparameters, runtime profile.</span>
-                    </span>
+                    <FileCog size={16} />
                 </button>
-                <button
-                    className={`workspace-nav-item ${isPlaygroundRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/playground`)}
-                >
-                    <span className="nav-icon">PG</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Playground</span>
-                        <span className="nav-caption">Prompt presets, runtime adapters, and eval logs.</span>
-                    </span>
-                </button>
+            </div>
 
-                <div className="nav-section-label">Automation</div>
-                <button
-                    className={`workspace-nav-item ${isWorkflowRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/workflow`)}
-                >
-                    <span className="nav-icon">⚙</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Workflow Builder</span>
-                        <span className="nav-caption">Canvas DAG editor and workflow runs.</span>
-                    </span>
-                </button>
-                <button
-                    className={`workspace-nav-item ${isRecipesRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/recipes`)}
-                >
-                    <span className="nav-icon">🧪</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Pipeline Recipes</span>
-                        <span className="nav-caption">Reusable end-to-end execution templates.</span>
-                    </span>
-                </button>
+            <div className="project-sidebar-panel">
+                <div className="project-sidebar-header">
+                    <div className="project-sidebar-heading">
+                        <span className="heading-kicker">{panelHeadingByRail[selectedRailKey].kicker}</span>
+                        <span className="heading-title">{panelHeadingByRail[selectedRailKey].title}</span>
+                    </div>
+                    <span className="project-sidebar-collapse">«</span>
+                </div>
 
-                <div className="nav-section-label">Domain</div>
-                <button
-                    className={`workspace-nav-item ${isDomainPacksRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/domain/packs`)}
-                >
-                    <span className="nav-icon">🧩</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Domain Packs</span>
-                        <span className="nav-caption">Evaluation and policy defaults.</span>
-                    </span>
-                </button>
-                <button
-                    className={`workspace-nav-item ${isDomainProfilesRoute ? 'active' : ''}`}
-                    onClick={() => navigate(`/project/${projectId}/domain/profiles`)}
-                >
-                    <span className="nav-icon">📘</span>
-                    <span className="nav-copy">
-                        <span className="nav-label">Domain Profiles</span>
-                        <span className="nav-caption">Task intent and quality bar definitions.</span>
-                    </span>
-                </button>
+                <div className="project-sidebar-project">
+                    <span className="project-label">Project</span>
+                    <span className="project-name" title={projectName}>{projectName}</span>
+                </div>
 
-                {isPipelineRoute && (
-                    <>
-                        <div className="nav-section-label submenu-label">Pipeline Stages</div>
-                        {PIPELINE_TABS.map((tab) => {
-                            const status = getStageStatus(tab.stage);
-                            const unlocked = isTabUnlocked(tab.key);
-                            const active = location.pathname === `/project/${projectId}/pipeline/${tab.key}`;
-                            return (
-                                <button
-                                    key={tab.key}
-                                    className={`pipeline-subnav-item ${active ? 'active' : ''}`}
-                                    onClick={() => {
-                                        if (unlocked) {
-                                            navigate(`/project/${projectId}/pipeline/${tab.key}`);
-                                        }
-                                    }}
-                                    disabled={!unlocked}
-                                    title={unlocked ? tab.label : 'Complete earlier steps first'}
-                                >
-                                    <span>{unlocked ? tab.icon : '🔒'}</span>
-                                    <span className="nav-label">{tab.label}</span>
-                                    <span className={`nav-status-dot ${status}`} />
-                                </button>
-                            );
-                        })}
-                    </>
-                )}
-            </nav>
+                <nav className="project-sidebar-nav">
+                    {selectedRailKey === 'home' && (
+                        <>
+                            <div className="nav-section-label">Data Source Discovery</div>
+                            <button
+                                className={`workspace-nav-item ${isGuideRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/guide`)}
+                            >
+                                <Compass size={15} />
+                                <span className="nav-label">Start Here</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isWizardRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/wizard`)}
+                            >
+                                <Sparkles size={15} />
+                                <span className="nav-label">Wizard Mode</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
+                            >
+                                <FolderTree size={15} />
+                                <span className="nav-label">Go to Data Pipeline</span>
+                            </button>
+                        </>
+                    )}
 
-            <div className="project-sidebar-footer">
-                <div className="footer-version">v0.1.0</div>
+                    {selectedRailKey === 'pipeline' && (
+                        <>
+                            <div className="nav-section-label">Data Pipeline</div>
+                            <button
+                                className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
+                            >
+                                <FolderTree size={15} />
+                                <span className="nav-label">Runs</span>
+                            </button>
+                            <div className="nav-section-label submenu-label">Pipeline Stages</div>
+                            {PIPELINE_TABS.map((tab) => {
+                                const status = getStageStatus(tab.stage);
+                                const unlocked = isTabUnlocked(tab.key);
+                                const active = location.pathname === `/project/${projectId}/pipeline/${tab.key}`;
+                                return (
+                                    <button
+                                        key={tab.key}
+                                        className={`pipeline-subnav-item ${active ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (unlocked) {
+                                                navigate(`/project/${projectId}/pipeline/${tab.key}`);
+                                            }
+                                        }}
+                                        disabled={!unlocked}
+                                        title={unlocked ? tab.label : 'Complete earlier steps first'}
+                                    >
+                                        <span className="pipeline-subnav-leading">{unlocked ? tab.icon : '•'}</span>
+                                        <span className="nav-label">{tab.label}</span>
+                                        <span className={`nav-status-dot ${status}`} />
+                                    </button>
+                                );
+                            })}
+                        </>
+                    )}
+
+                    {selectedRailKey === 'training' && (
+                        <>
+                            <div className="nav-section-label">Classification and Entitlements</div>
+                            <button
+                                className={`workspace-nav-item ${isTrainingConfigRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/training-config`)}
+                            >
+                                <Settings2 size={15} />
+                                <span className="nav-label">Configurations</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isWizardRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/wizard`)}
+                            >
+                                <Sparkles size={15} />
+                                <span className="nav-label">Guided Setup</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
+                            >
+                                <FolderTree size={15} />
+                                <span className="nav-label">Training Stage</span>
+                            </button>
+                        </>
+                    )}
+
+                    {selectedRailKey === 'playground' && (
+                        <>
+                            <div className="nav-section-label">Validation and Vibe Check</div>
+                            <button
+                                className={`workspace-nav-item ${isPlaygroundRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/playground`)}
+                            >
+                                <Bot size={15} />
+                                <span className="nav-label">Playground Runs</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isTrainingConfigRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/training-config`)}
+                            >
+                                <Settings2 size={15} />
+                                <span className="nav-label">Model Configuration</span>
+                            </button>
+                        </>
+                    )}
+
+                    {selectedRailKey === 'workflow' && (
+                        <>
+                            <div className="nav-section-label">Automation</div>
+                            <button
+                                className={`workspace-nav-item ${isWorkflowRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/workflow`)}
+                            >
+                                <Workflow size={15} />
+                                <span className="nav-label">Workflow Builder</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isRecipesRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/recipes`)}
+                            >
+                                <BookOpen size={15} />
+                                <span className="nav-label">Recipes</span>
+                            </button>
+                        </>
+                    )}
+
+                    {selectedRailKey === 'domain' && (
+                        <>
+                            <div className="nav-section-label">Domain Controls</div>
+                            <button
+                                className={`workspace-nav-item ${isDomainPacksRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/domain/packs`)}
+                            >
+                                <Boxes size={15} />
+                                <span className="nav-label">Domain Packs</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isDomainProfilesRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/domain/profiles`)}
+                            >
+                                <Layers size={15} />
+                                <span className="nav-label">Domain Profiles</span>
+                            </button>
+                        </>
+                    )}
+                </nav>
             </div>
         </aside>
     );

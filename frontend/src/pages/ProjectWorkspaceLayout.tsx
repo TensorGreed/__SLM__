@@ -74,6 +74,7 @@ export default function ProjectWorkspaceLayout() {
                 <TopBar
                     title={activeProject.name}
                     subtitle={activeProject.description || undefined}
+                    withSidebar
                     actions={
                         <span className={`badge ${activeProject.status === 'active' ? 'badge-success' : 'badge-info'}`}>
                             {activeProject.status}
