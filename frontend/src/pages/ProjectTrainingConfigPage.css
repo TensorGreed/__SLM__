@@ -1,0 +1,18 @@
+.training-config-link-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.training-config-link-card h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+}
+
+.training-config-link-card p {
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}

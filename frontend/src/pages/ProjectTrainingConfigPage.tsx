@@ -3,17 +3,18 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
+import './ProjectTrainingConfigPage.css';
 
 export default function ProjectTrainingConfigPage() {
     const navigate = useNavigate();
     const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
-            <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+        <div className="workspace-page">
+            <section className="workspace-page-header">
                 <div>
-                    <h3 style={{ margin: 0 }}>Training Config</h3>
-                    <p style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
+                    <h2 className="workspace-page-title">Training Configurations</h2>
+                    <p className="workspace-page-subtitle">
                         Configure base model, runtime, recipes, preflight, and hyperparameters.
                     </p>
                 </div>
@@ -23,7 +24,7 @@ export default function ProjectTrainingConfigPage() {
                 >
                     Open Training Stage
                 </button>
-            </div>
+            </section>
 
             <TrainingPanel
                 projectId={projectId}
@@ -33,10 +34,10 @@ export default function ProjectTrainingConfigPage() {
                 hideStepFooter
             />
 
-            <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+            <section className="card training-config-link-card">
                 <div>
-                    <h3 style={{ margin: 0 }}>Playground moved to dedicated page</h3>
-                    <p style={{ marginTop: 6, color: 'var(--text-secondary)' }}>
+                    <h3>Playground moved to dedicated page</h3>
+                    <p>
                         Use Playground for prompt presets, runtime adapters, and feedback logging.
                     </p>
                 </div>
@@ -46,7 +47,7 @@ export default function ProjectTrainingConfigPage() {
                 >
                     Open Playground
                 </button>
-            </div>
+            </section>
             <AlignmentScaffoldPanel projectId={projectId} />
         </div>
     );

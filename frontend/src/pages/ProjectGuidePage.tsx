@@ -74,7 +74,7 @@ export default function ProjectGuidePage() {
     const firstIncompleteIndex = steps.findIndex((step) => !step.complete);
 
     return (
-        <div className="project-guide-page">
+        <div className="project-guide-page workspace-page">
             <section className="card project-guide-hero">
                 <div>
                     <h3>Start Here</h3>

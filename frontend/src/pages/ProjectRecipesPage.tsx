@@ -425,7 +425,7 @@ export default function ProjectRecipesPage() {
     };
 
     return (
-        <div className="pipeline-recipes-page">
+        <div className="pipeline-recipes-page workspace-page">
             <div className="card pipeline-recipes-header">
                 <div>
                     <h3>Pipeline Recipes</h3>

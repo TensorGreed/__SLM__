@@ -10,7 +10,15 @@ export default function ProjectDomainPage() {
     const { setActiveProject } = useProjectStore();
 
     return (
-        <>
+        <div className="workspace-page">
+            <section className="workspace-page-header">
+                <div>
+                    <h2 className="workspace-page-title">Domain Controls</h2>
+                    <p className="workspace-page-subtitle">
+                        Manage domain packs and profiles that shape preprocessing, validation, and defaults.
+                    </p>
+                </div>
+            </section>
             <DomainPackManager
                 projectId={projectId}
                 activeDomainPackId={project.domain_pack_id}
@@ -21,6 +29,6 @@ export default function ProjectDomainPage() {
                 activeDomainProfileId={project.domain_profile_id}
                 onAssigned={(updated: Project) => setActiveProject(updated)}
             />
-        </>
+        </div>
     );
 }

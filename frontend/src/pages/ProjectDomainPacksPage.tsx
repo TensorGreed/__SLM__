@@ -10,10 +10,20 @@ export default function ProjectDomainPacksPage() {
     const { setActiveProject } = useProjectStore();
 
     return (
-        <DomainPackManager
-            projectId={projectId}
-            activeDomainPackId={project.domain_pack_id}
-            onAssigned={(updated: Project) => setActiveProject(updated)}
-        />
+        <div className="workspace-page">
+            <section className="workspace-page-header">
+                <div>
+                    <h2 className="workspace-page-title">Domain Packs</h2>
+                    <p className="workspace-page-subtitle">
+                        Set reusable policy bundles and hook defaults for this project.
+                    </p>
+                </div>
+            </section>
+            <DomainPackManager
+                projectId={projectId}
+                activeDomainPackId={project.domain_pack_id}
+                onAssigned={(updated: Project) => setActiveProject(updated)}
+            />
+        </div>
     );
 }

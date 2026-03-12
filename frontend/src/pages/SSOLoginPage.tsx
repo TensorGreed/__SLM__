@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import api from '../api/client';
+import './SSOLoginPage.css';
 
 export default function SSOLoginPage() {
     const [searchParams] = useSearchParams();
@@ -46,31 +47,15 @@ export default function SSOLoginPage() {
     };
 
     return (
-        <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: '100vh',
-            background: 'var(--bg-primary)'
-        }}>
-            <div className="card" style={{ maxWidth: 400, width: '100%', textAlign: 'center', padding: 'var(--space-2xl)' }}>
-                <div style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 12,
-                    background: 'linear-gradient(135deg, #a855f7 0%, #ec4899 100%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto var(--space-xl)',
-                    boxShadow: '0 4px 20px rgba(168, 85, 247, 0.4)'
-                }}>
+        <div className="auth-page">
+            <div className="card auth-card">
+                <div className="auth-logo">
                     <Activity color="white" size={24} />
                 </div>
-                <h1 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 700, marginBottom: 'var(--space-sm)' }}>
+                <h1 className="auth-title">
                     SLM Studio
                 </h1>
-                <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-2xl)' }}>
+                <p className="auth-subtitle">
                     Enterprise authentication required
                 </p>
 
@@ -83,9 +68,9 @@ export default function SSOLoginPage() {
                         Sign in with SSO
                     </button>
                 ) : (
-                    <form onSubmit={handleLocalLogin} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                        <div style={{ textAlign: 'left' }}>
-                            <label style={{ display: 'block', marginBottom: 'var(--space-xs)', color: 'var(--text-secondary)' }}>Username</label>
+                    <form onSubmit={handleLocalLogin} className="auth-form">
+                        <div className="auth-field">
+                            <label>Username</label>
                             <input
                                 required
                                 type="text"
@@ -93,11 +78,10 @@ export default function SSOLoginPage() {
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
                                 placeholder="Enter your username"
-                                style={{ width: '100%', boxSizing: 'border-box' }}
                             />
                         </div>
-                        <div style={{ textAlign: 'left' }}>
-                            <label style={{ display: 'block', marginBottom: 'var(--space-xs)', color: 'var(--text-secondary)' }}>Password</label>
+                        <div className="auth-field">
+                            <label>Password</label>
                             <input
                                 required
                                 type="password"
@@ -105,11 +89,10 @@ export default function SSOLoginPage() {
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="API Key or Password"
-                                style={{ width: '100%', boxSizing: 'border-box' }}
                             />
                         </div>
                         {error && (
-                            <div style={{ color: 'var(--danger)', fontSize: 'var(--font-size-sm)' }}>
+                            <div className="auth-error">
                                 {error}
                             </div>
                         )}
@@ -117,7 +100,7 @@ export default function SSOLoginPage() {
                             type="submit"
                             className="btn btn-primary"
                             disabled={loading || !username || !password}
-                            style={{ width: '100%', padding: 'var(--space-md)', marginTop: 'var(--space-sm)' }}
+                            style={{ width: '100%', padding: 'var(--space-md)' }}
                         >
                             {loading ? 'Signing in...' : 'Sign in'}
                         </button>

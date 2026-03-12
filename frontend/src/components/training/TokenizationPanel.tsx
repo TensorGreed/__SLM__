@@ -136,7 +136,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
         ? Math.min(32768, Math.pow(2, Math.ceil(Math.log2(Math.max(1, stats.p95_tokens)))))
         : null;
 
-    const histogramColors = ['#6c5ce7', '#a855f7', '#c4a1f7'];
+    const histogramColors = ['#2f74d9', '#4f96ea', '#79b2f5'];
 
     return (
         <div className="tok-panel">
@@ -148,14 +148,14 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                     Analyze how your dataset tokenizes under a specific model's tokenizer. This helps you set the optimal <code>max_seq_length</code> for training — balancing context coverage vs memory usage.
                 </div>
 
-                <p style={{ fontSize: '.78rem', color: 'rgba(255,255,255,.45)', margin: '0 0 .4rem' }}>Quick presets:</p>
+                <p style={{ fontSize: '.78rem', color: '#627a96', margin: '0 0 .4rem' }}>Quick presets:</p>
                 <div className="tok-presets">
                     {MODEL_PRESETS.map(m => (
                         <button
                             key={m.id}
                             className="tok-preset"
                             onClick={() => setModelName(m.id)}
-                            style={modelName === m.id ? { background: 'rgba(168,85,247,.3)', borderColor: '#a855f7' } : undefined}
+                            style={modelName === m.id ? { background: '#eaf2ff', borderColor: '#4a83d7', color: '#22508e' } : undefined}
                         >
                             {m.label}
                         </button>
@@ -188,7 +188,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
             {/* ── Results ──────────────────────────────────────── */}
             {stats && (
                 <div className="tok-section">
-                    <h3><span className="icon">📈</span> Token Statistics — <span style={{ color: '#a855f7' }}>{stats.model_name}</span></h3>
+                    <h3><span className="icon">📈</span> Token Statistics — <span style={{ color: '#2f74d9' }}>{stats.model_name}</span></h3>
 
                     <div className="tok-stats-grid">
                         <div className="tok-stat">
@@ -231,11 +231,11 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                             <div className="tok-chart-label">Token Length Distribution</div>
                             <ResponsiveContainer width="100%" height={200}>
                                 <BarChart data={stats.histogram} margin={{ left: 10, right: 10 }}>
-                                    <XAxis dataKey="bucket" tick={{ fill: 'rgba(255,255,255,.4)', fontSize: 11 }} />
-                                    <YAxis tick={{ fill: 'rgba(255,255,255,.4)', fontSize: 11 }} />
+                                    <XAxis dataKey="bucket" tick={{ fill: '#617b98', fontSize: 11 }} />
+                                    <YAxis tick={{ fill: '#617b98', fontSize: 11 }} />
                                     <Tooltip
-                                        contentStyle={{ background: '#1e1e3e', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8 }}
-                                        labelStyle={{ color: '#a855f7' }}
+                                        contentStyle={{ background: '#ffffff', border: '1px solid #d4e0f1', borderRadius: 8, color: '#1f3e67' }}
+                                        labelStyle={{ color: '#2f74d9' }}
                                     />
                                     <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                                         {stats.histogram.map((_, i) => (
@@ -258,7 +258,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                                     <span> You can safely reduce from {maxSeqLen} to save GPU memory.</span>
                                 )}
                                 {stats.exceeding_max > 0 && (
-                                    <span style={{ color: '#ff6b6b' }}>
+                                    <span style={{ color: '#cf4343' }}>
                                         &nbsp;⚠ {stats.exceeding_max} samples ({((stats.exceeding_max / stats.total_samples) * 100).toFixed(1)}%) exceed your current max — they will be truncated.
                                     </span>
                                 )}
@@ -276,7 +276,7 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
                         {vocabLoading ? '⏳ Loading...' : '📖 Load Vocab Sample'}
                     </button>
                     {vocab.length > 0 && (
-                        <span style={{ color: 'rgba(255,255,255,.4)', fontSize: '.82rem' }}>{vocab.length} tokens shown</span>
+                        <span style={{ color: '#6f86a4', fontSize: '.82rem' }}>{vocab.length} tokens shown</span>
                     )}
                 </div>
                 {vocab.length > 0 && (

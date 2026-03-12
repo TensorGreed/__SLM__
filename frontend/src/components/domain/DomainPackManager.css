@@ -75,7 +75,7 @@
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   padding: var(--space-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: #f8fbff;
   display: grid;
   gap: var(--space-md);
 }
@@ -115,7 +115,7 @@
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   padding: var(--space-sm);
-  background: rgba(0, 0, 0, 0.12);
+  background: #ffffff;
   min-width: 0;
 }
 
@@ -164,7 +164,7 @@
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   padding: var(--space-sm);
-  background: rgba(0, 0, 0, 0.12);
+  background: #ffffff;
   min-width: 0;
 }
 
@@ -182,7 +182,7 @@
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   padding: var(--space-sm) var(--space-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: #ffffff;
   display: flex;
   justify-content: space-between;
   gap: var(--space-sm);
@@ -228,7 +228,7 @@
   border-radius: var(--radius-md);
   padding: var(--space-md);
   margin-bottom: var(--space-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: #f8fbff;
   display: grid;
   gap: var(--space-sm);
 }

@@ -45,12 +45,12 @@ export default function DatasetVersionPanel({ projectId }: DatasetVersionPanelPr
 
     const typeColors: Record<string, string> = {
         raw: '#3b82f6',
-        cleaned: '#8b5cf6',
+        cleaned: '#2f74d9',
         gold_dev: '#f59e0b',
         gold_test: '#ef4444',
         synthetic: '#10b981',
-        train: '#ec4899',
-        val: '#6366f1',
+        train: '#2f74d9',
+        val: '#4f96ea',
         test: '#14b8a6',
     };
 
@@ -89,7 +89,7 @@ export default function DatasetVersionPanel({ projectId }: DatasetVersionPanelPr
                                 gap: 'var(--space-md)',
                                 padding: 'var(--space-md)',
                                 borderRadius: 'var(--radius-md)',
-                                background: selectedId === ds.id ? 'rgba(139, 92, 246, 0.08)' : 'transparent',
+                                background: selectedId === ds.id ? 'rgba(47, 116, 217, 0.1)' : 'transparent',
                                 border: `1px solid ${selectedId === ds.id ? 'var(--color-primary)' : 'var(--border-primary)'}`,
                                 cursor: 'pointer',
                                 transition: 'all 0.15s ease',

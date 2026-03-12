@@ -326,3 +326,50 @@
     font-size: var(--font-size-sm);
     color: var(--text-primary);
 }
+
+/* Light workspace overrides */
+.export-target-panel,
+.serve-template-card,
+.serve-run-card,
+.serve-run-telemetry__item {
+    background: #f8fbff;
+    border-color: #d5e1f3;
+}
+
+.export-target-option {
+    background: #ffffff;
+    border-color: #d2def0;
+}
+
+.export-target-option.selected {
+    border-color: #3d79cb;
+    background: #eaf2ff;
+}
+
+.export-history-table th {
+    background: #f2f7ff;
+}
+
+.export-row:hover {
+    background: #f7faff;
+}
+
+.export-row.expanded,
+.export-details-row {
+    background: #f4f8ff;
+}
+
+.manifest-viewer,
+.serve-template-code {
+    background: #f5f8fd;
+    color: #2f4a6f;
+    border-color: #d5e1f2;
+}
+
+.btn-icon:hover {
+    background: #edf3ff;
+}
+
+.serve-plan-run-dir code {
+    background: #edf3fd;
+}

@@ -10,10 +10,20 @@ export default function ProjectDomainProfilesPage() {
     const { setActiveProject } = useProjectStore();
 
     return (
-        <DomainProfileManager
-            projectId={projectId}
-            activeDomainProfileId={project.domain_profile_id}
-            onAssigned={(updated: Project) => setActiveProject(updated)}
-        />
+        <div className="workspace-page">
+            <section className="workspace-page-header">
+                <div>
+                    <h2 className="workspace-page-title">Domain Profiles</h2>
+                    <p className="workspace-page-subtitle">
+                        Configure task schemas, quality gates, and deployment checks for the active domain.
+                    </p>
+                </div>
+            </section>
+            <DomainProfileManager
+                projectId={projectId}
+                activeDomainProfileId={project.domain_profile_id}
+                onAssigned={(updated: Project) => setActiveProject(updated)}
+            />
+        </div>
     );
 }

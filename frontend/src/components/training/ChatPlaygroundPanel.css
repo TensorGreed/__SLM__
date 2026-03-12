@@ -40,7 +40,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
     padding: 10px;
-    background: rgba(15, 23, 42, 0.28);
+    background: #f8fbff;
 }
 
 .playground-sessions__title {
@@ -64,7 +64,7 @@
 .playground-session-item {
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
-    background: rgba(30, 41, 59, 0.45);
+    background: #ffffff;
     color: var(--text-primary);
     text-align: left;
     padding: 8px 10px;
@@ -74,8 +74,8 @@
 }
 
 .playground-session-item.active {
-    border-color: rgba(59, 130, 246, 0.7);
-    background: rgba(59, 130, 246, 0.18);
+    border-color: #4a83d7;
+    background: #edf4ff;
 }
 
 .playground-session-item__title {
@@ -109,7 +109,7 @@
     padding: 10px;
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
-    background: rgba(15, 23, 42, 0.35);
+    background: #f7faff;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -127,15 +127,15 @@
 }
 
 .playground-message.user {
-    background: rgba(59, 130, 246, 0.12);
+    background: #eaf2ff;
 }
 
 .playground-message.assistant {
-    background: rgba(16, 185, 129, 0.1);
+    background: #eaf8ef;
 }
 
 .playground-message.system {
-    background: rgba(148, 163, 184, 0.12);
+    background: #eff4fb;
 }
 
 .playground-message.streaming {

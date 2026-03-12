@@ -880,3 +880,49 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* Light workspace overrides */
+.resolved-defaults-panel__kv {
+    color: #546b88;
+}
+
+.resolved-defaults-panel__json {
+    background: #f5f8fd;
+    border-color: #d5e0f1;
+}
+
+.training-preflight-panel,
+.training-plan-card,
+.training-collapsible,
+.training-observability-panel__row,
+.training-vibe-card,
+.training-model-wizard__card {
+    background: #f8fbff;
+    border-color: #d8e2f2;
+}
+
+.training-collapsible > summary {
+    background: #eef4ff;
+}
+
+.training-workspace-tabs,
+.training-journey-card,
+.training-overview-card,
+.training-model-wizard,
+.training-lora-box {
+    background: #f8fbff;
+    border-color: #d8e2f2;
+}
+
+.training-workspace-tab:hover {
+    background: #edf3ff;
+}
+
+.training-workspace-tab.active {
+    background: #eaf2ff;
+    color: #1f4b89;
+}
+
+.training-compare-bar {
+    border-bottom: 1px solid #dde6f4;
+}

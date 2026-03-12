@@ -1,104 +1,84 @@
-/* ── Project Card ───────────────────────────────────────────────────── */
 .project-card {
-    padding: var(--space-lg);
-    cursor: pointer;
-    animation: fadeIn 0.4s ease-out;
-    animation-fill-mode: both;
     position: relative;
-    border: 1px solid var(--border-color);
-    transition: all 0.2s ease;
     display: flex;
     flex-direction: column;
+    gap: 0;
+    cursor: pointer;
+    border: 1px solid #cfdaeb;
+    border-radius: 14px;
+    padding: 16px;
+    background: #ffffff;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .project-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-    border-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+    border-color: #9bb5dc;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
 }
 
-/* Gradient Borders based on Status */
 .project-card::before {
     content: '';
     position: absolute;
-    top: 0;
     left: 0;
     right: 0;
+    top: 0;
     height: 3px;
-    border-top-left-radius: var(--radius-lg);
-    border-top-right-radius: var(--radius-lg);
-    opacity: 0.8;
+    border-radius: 14px 14px 0 0;
+    opacity: 0.9;
 }
 
 .project-card.status-active::before {
-    background: linear-gradient(90deg, #10b981, #3b82f6);
+    background: linear-gradient(90deg, #22a561, #2f74d9);
 }
 
 .project-card.status-draft::before {
-    background: linear-gradient(90deg, #63b3ed, #9f7aea);
+    background: linear-gradient(90deg, #4f9be6, #57bfd0);
 }
 
 .project-card.status-completed::before {
-    background: linear-gradient(90deg, #ecc94b, #ed8936);
+    background: linear-gradient(90deg, #d19f2a, #d88436);
 }
 
 .project-card.status-failed::before {
-    background: linear-gradient(90deg, #fc8181, #f56565);
-}
-
-.project-card:nth-child(2) {
-    animation-delay: 0.05s;
-}
-
-.project-card:nth-child(3) {
-    animation-delay: 0.1s;
-}
-
-.project-card:nth-child(4) {
-    animation-delay: 0.15s;
-}
-
-.project-card:nth-child(5) {
-    animation-delay: 0.2s;
+    background: linear-gradient(90deg, #dc5b5b, #cf4444);
 }
 
 .project-card-header {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    margin-bottom: var(--space-xs);
+    gap: 8px;
+    margin-bottom: 6px;
 }
 
 .project-card-name {
-    font-size: var(--font-size-lg);
-    font-weight: 700;
-    letter-spacing: -0.01em;
     margin: 0;
-    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 650;
+    color: #132948;
 }
 
 .project-card-desc {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
     margin-bottom: var(--space-md);
+    color: #516684;
+    font-size: var(--font-size-sm);
+    line-height: 1.45;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    line-height: 1.4;
     min-height: 2.8em;
-    /* Reserve space for 2 lines */
 }
 
-/* Pipeline Progress */
 .project-card-progress {
     margin-bottom: var(--space-md);
 }
 
 .progress-track {
     height: 6px;
-    background: rgba(255, 255, 255, 0.05);
+    background: #e8effa;
     border-radius: 999px;
     overflow: hidden;
     margin-bottom: 6px;
@@ -106,31 +86,31 @@
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--color-primary), #8b5cf6);
+    background: linear-gradient(90deg, #2f74d9, #4f96ea);
     border-radius: 999px;
-    transition: width 0.5s ease-out;
+    transition: width 0.45s ease-out;
 }
 
 .progress-text {
     display: flex;
     justify-content: space-between;
-    font-size: 0.75rem;
-    color: var(--text-tertiary);
+    font-size: 0.74rem;
+    color: #6b7f9b;
 }
 
 .stage-name {
-    font-weight: 500;
-    color: var(--color-primary-light);
+    font-weight: 600;
+    color: #315d99;
 }
 
-/* Meta Data */
 .project-card-meta {
     display: flex;
     justify-content: space-between;
     gap: var(--space-md);
     margin-bottom: var(--space-lg);
-    padding: var(--space-sm);
-    background: rgba(0, 0, 0, 0.15);
+    padding: 10px;
+    background: #f7faff;
+    border: 1px solid #dde7f6;
     border-radius: var(--radius-md);
 }
 
@@ -142,14 +122,14 @@
 }
 
 .meta-item:nth-child(2) {
-    border-left: 1px solid rgba(255, 255, 255, 0.05);
-    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    border-left: 1px solid #d7e1f0;
+    border-right: 1px solid #d7e1f0;
     padding: 0 var(--space-md);
 }
 
 .meta-label {
     font-size: 0.65rem;
-    color: var(--text-tertiary);
+    color: #7387a2;
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -157,29 +137,28 @@
 .meta-value {
     font-size: var(--font-size-sm);
     font-weight: 600;
-    color: var(--text-primary);
+    color: #19375f;
 }
 
 .truncate {
+    display: block;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    display: block;
 }
 
-/* Footer */
 .project-card-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding-top: var(--space-sm);
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: 1px solid #e2eaf6;
     margin-top: auto;
 }
 
 .project-date {
     font-size: var(--font-size-xs);
-    color: var(--text-tertiary);
+    color: #7e8fa8;
 }
 
 .btn-sm {
@@ -188,11 +167,11 @@
 }
 
 .btn-delete {
-    opacity: 0.5;
+    opacity: 0.58;
 }
 
 .btn-delete:hover {
     opacity: 1;
-    background: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
+    background: #feecef;
+    color: #c03434;
 }

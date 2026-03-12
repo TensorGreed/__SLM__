@@ -12,7 +12,15 @@ export default function ProjectWorkflowPage() {
     const currentStage = pipelineStatus?.current_stage || project.pipeline_stage;
 
     return (
-        <>
+        <div className="workspace-page">
+            <section className="workspace-page-header">
+                <div>
+                    <h2 className="workspace-page-title">Workflow Builder</h2>
+                    <p className="workspace-page-subtitle">
+                        Visualize the pipeline graph, orchestrate transitions, and monitor workflow execution.
+                    </p>
+                </div>
+            </section>
             {pipelineStatus && (
                 <div className="card progress-card">
                     <PipelineProgress
@@ -34,6 +42,6 @@ export default function ProjectWorkflowPage() {
                 projectId={projectId}
                 currentStage={currentStage}
             />
-        </>
+        </div>
     );
 }

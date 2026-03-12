@@ -68,7 +68,7 @@
 
 .pipeline-recipe-card.active {
     border-color: var(--accent-primary);
-    background: rgba(99, 102, 241, 0.08);
+    background: #eaf2ff;
 }
 
 .pipeline-recipe-card-head {

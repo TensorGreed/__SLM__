@@ -318,6 +318,61 @@
     color: var(--text-secondary);
 }
 
+/* Light-surface overrides for workspace theme */
+.pipeline-editor-palette,
+.pipeline-editor-inspector {
+    background: #f8fbff;
+}
+
+.pipeline-editor-palette-item {
+    border: 1px solid #c7d5e8;
+    background: #ffffff;
+    color: #18345c;
+}
+
+.pipeline-editor-canvas {
+    background:
+        linear-gradient(90deg, rgba(164, 181, 206, 0.23) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(164, 181, 206, 0.23) 1px, transparent 1px),
+        radial-gradient(circle at 20% 10%, rgba(91, 158, 239, 0.11), transparent 45%),
+        radial-gradient(circle at 90% 80%, rgba(47, 116, 217, 0.1), transparent 46%),
+        #eef3fb;
+}
+
+.pipeline-editor-canvas-node {
+    border: 1px solid #bccde5;
+    background: linear-gradient(180deg, #ffffff, #f8fbff);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+    color: #18345b;
+}
+
+.pipeline-editor-canvas-node-head {
+    border-bottom: 1px solid #d6e1f1;
+    background: #f1f6ff;
+}
+
+.pipeline-editor-canvas-node-head span {
+    color: #6e84a0;
+}
+
+.pipeline-editor-canvas-node-body p {
+    color: #4f6785;
+}
+
+.pipeline-editor-canvas-node-body code {
+    color: #1f5ea8;
+}
+
+.pipeline-editor-canvas-node-actions {
+    border-top: 1px solid #d6e1f1;
+    background: #f6f9ff;
+}
+
+.pipeline-editor-inspector-empty {
+    border: 1px dashed #c2d3ea;
+    background: #ffffff;
+}
+
 .pipeline-editor-textarea {
     min-height: 72px;
     resize: vertical;

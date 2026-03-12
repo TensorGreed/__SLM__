@@ -204,7 +204,21 @@ export default function ProjectPipelinePage() {
     };
 
     return (
-        <>
+        <div className="workspace-page">
+            <section className="workspace-page-header">
+                <div>
+                    <h2 className="workspace-page-title">Pipeline Runs</h2>
+                    <p className="workspace-page-subtitle">
+                        Run data preparation, training, evaluation, and export stages in sequence.
+                    </p>
+                </div>
+                <button
+                    className="btn btn-secondary"
+                    onClick={() => navigate(`/project/${projectId}/wizard`)}
+                >
+                    Open Guided Setup
+                </button>
+            </section>
             {pipelineStatus && (
                 <div className="card progress-card">
                     <PipelineProgress
@@ -283,6 +297,6 @@ export default function ProjectPipelinePage() {
                     <div className="tab-content">{renderTabContent()}</div>
                 </div>
             )}
-        </>
+        </div>
     );
 }

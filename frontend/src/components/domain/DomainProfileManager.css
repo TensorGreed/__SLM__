@@ -75,7 +75,7 @@
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   padding: var(--space-sm) var(--space-md);
-  background: rgba(255, 255, 255, 0.02);
+  background: #ffffff;
   display: flex;
   justify-content: space-between;
   gap: var(--space-sm);

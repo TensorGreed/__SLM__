@@ -9,6 +9,9 @@ import api from '../api/client';
 import type { DomainPackSummary, DomainProfileSummary } from '../types';
 import './ProjectListPage.css';
 
+const STATUS_FILTERS = ['all', 'draft', 'active', 'completed'] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+
 export default function ProjectListPage() {
     const navigate = useNavigate();
     const { projects, totalProjects, isLoadingProjects, fetchProjects, createProject, deleteProject } = useProjectStore();
@@ -27,7 +30,7 @@ export default function ProjectListPage() {
     const [domainProfiles, setDomainProfiles] = useState<DomainProfileSummary[]>([]);
 
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'active' | 'completed'>('all');
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
     useEffect(() => {
         fetchProjects();
@@ -73,8 +76,8 @@ export default function ProjectListPage() {
             setShowMagicModal(false);
             setMagicPrompt('');
             navigate(`/project/${res.data.id}`);
-        } catch (e: any) {
-            alert(e.response?.data?.detail || 'Magic create failed');
+        } catch (error: any) {
+            alert(error.response?.data?.detail || 'Magic create failed');
         } finally {
             setIsMagicCreating(false);
         }
@@ -86,13 +89,21 @@ export default function ProjectListPage() {
         }
     };
 
+    const filteredProjects = projects
+        .filter((project) => statusFilter === 'all' || project.status === statusFilter)
+        .filter((project) => {
+            if (!searchQuery) return true;
+            const query = searchQuery.toLowerCase();
+            return project.name.toLowerCase().includes(query) || project.description?.toLowerCase().includes(query);
+        });
+
     return (
-        <div className="main-content" style={{ marginLeft: 0 }}>
+        <div className="main-content project-list-main">
             <TopBar
                 title="SLM Platform"
                 subtitle={`${totalProjects} project${totalProjects !== 1 ? 's' : ''}`}
                 actions={
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div className="project-list-top-actions">
                         <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
                             ✨ Magic Create
                         </button>
@@ -103,36 +114,26 @@ export default function ProjectListPage() {
                 }
             />
 
-            <div className="page-container" style={{ paddingTop: 'calc(var(--topbar-height) + var(--space-xl))' }}>
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="page-container project-list-page">
+                <section className="card project-list-toolbar">
                     <input
-                        className="input"
-                        placeholder="🔍 Search projects..."
+                        className="input project-list-search"
+                        placeholder="Search projects..."
                         value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        style={{ maxWidth: 300, background: 'rgba(255 255 255 / .04)' }}
+                        onChange={(event) => setSearchQuery(event.target.value)}
                     />
-                    <div style={{ display: 'flex', gap: '.5rem' }}>
-                        {['all', 'draft', 'active', 'completed'].map(status => (
+                    <div className="project-list-filters">
+                        {STATUS_FILTERS.map((status) => (
                             <button
                                 key={status}
-                                onClick={() => setStatusFilter(status as any)}
-                                style={{
-                                    padding: '.4rem 1rem',
-                                    borderRadius: 999,
-                                    background: statusFilter === status ? 'rgba(168, 85, 247, .2)' : 'rgba(255 255 255 / .05)',
-                                    border: `1px solid ${statusFilter === status ? '#a855f7' : 'rgba(255 255 255 / .1)'}`,
-                                    color: statusFilter === status ? '#fff' : 'rgba(255 255 255 / .6)',
-                                    cursor: 'pointer',
-                                    textTransform: 'capitalize',
-                                    fontSize: '.85rem'
-                                }}
+                                className={`project-list-filter ${statusFilter === status ? 'active' : ''}`}
+                                onClick={() => setStatusFilter(status)}
                             >
                                 {status}
                             </button>
                         ))}
                     </div>
-                </div>
+                </section>
 
                 {isLoadingProjects ? (
                     <div className="project-grid">
@@ -146,7 +147,7 @@ export default function ProjectListPage() {
                         title="No projects yet"
                         description="Create your first SLM project to start building, evaluating, and exporting domain-specific language models."
                         action={
-                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                            <div className="project-list-empty-actions">
                                 <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
                                     ✨ Magic Create
                                 </button>
@@ -158,13 +159,10 @@ export default function ProjectListPage() {
                     />
                 ) : (
                     <div className="project-grid">
-                        {projects
-                            .filter(p => statusFilter === 'all' || p.status === statusFilter)
-                            .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.description?.toLowerCase().includes(searchQuery.toLowerCase()))
-                            .map((p) => (
+                        {filteredProjects.map((project) => (
                                 <ProjectCard
-                                    key={p.id}
-                                    project={p}
+                                    key={project.id}
+                                    project={project}
                                     onClick={(id) => navigate(`/project/${id}`)}
                                     onDelete={handleDelete}
                                 />
@@ -260,11 +258,11 @@ export default function ProjectListPage() {
                 <div className="modal-overlay" onClick={() => !isMagicCreating && setShowMagicModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
-                            <h2 className="modal-title">✨ Magic Create</h2>
+                            <h2 className="modal-title">Magic Create</h2>
                             <button className="btn btn-ghost" onClick={() => !isMagicCreating && setShowMagicModal(false)}>✕</button>
                         </div>
                         <div className="modal-body">
-                            <p style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                            <p className="project-list-magic-copy">
                                 Describe the dataset or SLM you want to build. Our AI Architect will automatically configure the pipeline, select the base model, and assign the right domain packs for you.
                             </p>
                             <div className="form-group">

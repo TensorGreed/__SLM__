@@ -46,6 +46,22 @@
   --text-tertiary: #64748b;
   --text-accent: #1d4ed8;
 
+  /* Compatibility aliases (legacy component styles) */
+  --accent: var(--accent-primary);
+  --primary: var(--accent-primary);
+  --primary-color: var(--accent-primary);
+  --color-primary: var(--accent-primary);
+  --color-primary-light: #2f6dd8;
+  --danger: var(--color-error);
+  --success-color: var(--color-success);
+  --warning-color: var(--color-warning);
+  --border-color: var(--border-primary);
+  --color-border: var(--border-primary);
+  --border: var(--border-primary);
+  --card-bg: var(--bg-card);
+  --color-surface: var(--bg-tertiary);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+
   /* Typography */
   --font-family: 'IBM Plex Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-size-xs: 0.75rem;
@@ -358,6 +374,37 @@ a:hover {
   padding: var(--space-xl) var(--space-2xl);
   max-width: 1440px;
   margin: 0 auto;
+}
+
+.workspace-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.workspace-page-header {
+  border: 1px solid var(--border-primary);
+  background: #f8fbff;
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.workspace-page-title {
+  margin: 0;
+  font-size: 1.08rem;
+  color: #122b50;
+}
+
+.workspace-page-subtitle {
+  margin-top: 4px;
+  color: #5e7390;
+  font-size: var(--font-size-sm);
+  max-width: 78ch;
 }
 
 /* ── Tab System ─────────────────────────────────────────────────────── */
