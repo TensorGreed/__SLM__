@@ -175,6 +175,39 @@ interface TrainingObservabilityResponse {
   };
 }
 
+interface VibeCheckOutput {
+  prompt_id?: string;
+  prompt?: string;
+  reply?: string;
+  provider?: string;
+  model_name?: string;
+  latency_ms?: number | null;
+  error?: string | null;
+}
+
+interface VibeCheckSnapshot {
+  step?: number;
+  epoch?: number | null;
+  progress?: number | null;
+  train_loss?: number | null;
+  eval_loss?: number | null;
+  created_at?: string | null;
+  outputs?: VibeCheckOutput[];
+}
+
+interface VibeCheckTimelineResponse {
+  config?: {
+    enabled?: boolean;
+    interval_steps?: number;
+    prompts?: string[];
+    provider?: string;
+    model_name?: string;
+  };
+  snapshot_count?: number;
+  snapshots?: VibeCheckSnapshot[];
+  latest_snapshot?: VibeCheckSnapshot | null;
+}
+
 interface TrainingRecipe {
   recipe_id: string;
   display_name: string;
@@ -591,6 +624,11 @@ export default function TrainingPanel({
   const [observabilityRecentCount, setObservabilityRecentCount] = useState(0);
   const [observabilityError, setObservabilityError] = useState('');
   const [observabilityLoading, setObservabilityLoading] = useState(false);
+  const [vibeTimeline, setVibeTimeline] = useState<VibeCheckSnapshot[]>([]);
+  const [vibeSelectedIndex, setVibeSelectedIndex] = useState(0);
+  const [vibeConfig, setVibeConfig] = useState<VibeCheckTimelineResponse['config'] | null>(null);
+  const [vibeError, setVibeError] = useState('');
+  const [vibeLoading, setVibeLoading] = useState(false);
   const [showHardwareModal, setShowHardwareModal] = useState(false);
 
   const statusColor = (status: string) =>
@@ -963,6 +1001,37 @@ export default function TrainingPanel({
     } finally {
       if (!options?.silent) {
         setObservabilityLoading(false);
+      }
+    }
+  };
+
+  const loadVibeTimeline = async (experimentId: number, options?: { silent?: boolean }) => {
+    if (!Number.isFinite(experimentId) || experimentId <= 0) {
+      setVibeTimeline([]);
+      setVibeConfig(null);
+      setVibeSelectedIndex(0);
+      return;
+    }
+    if (!options?.silent) {
+      setVibeLoading(true);
+    }
+    try {
+      const res = await api.get<VibeCheckTimelineResponse>(
+        `/projects/${projectId}/training/experiments/${experimentId}/vibe-check/timeline`,
+        { params: { limit: 120 } },
+      );
+      const rows = Array.isArray(res.data?.snapshots) ? res.data.snapshots : [];
+      setVibeTimeline(rows);
+      setVibeConfig(res.data?.config || null);
+      setVibeSelectedIndex(rows.length > 0 ? rows.length - 1 : 0);
+      setVibeError('');
+    } catch (err: any) {
+      if (!options?.silent) {
+        setVibeError(err?.response?.data?.detail || 'Failed to load vibe-check timeline');
+      }
+    } finally {
+      if (!options?.silent) {
+        setVibeLoading(false);
       }
     }
   };
@@ -1536,6 +1605,20 @@ export default function TrainingPanel({
           });
           return;
         }
+        if (data.type === 'vibe_check' && data.snapshot) {
+          const snapshot = data.snapshot as VibeCheckSnapshot;
+          let nextIndex = 0;
+          setVibeTimeline((prev) => {
+            const current = prev.filter((item) => Number(item.step || 0) !== Number(snapshot.step || 0));
+            const next = [...current, snapshot].sort((a, b) => Number(a.step || 0) - Number(b.step || 0));
+            const capped = next.slice(-120);
+            nextIndex = capped.length > 0 ? capped.length - 1 : 0;
+            return capped;
+          });
+          setVibeSelectedIndex(nextIndex);
+          setVibeError('');
+          return;
+        }
         if (data.type === 'log' && data.text) {
           const text = String(data.text);
           const metricFromLog = parseMetricFromLogLine(text, experimentId);
@@ -1589,13 +1672,20 @@ export default function TrainingPanel({
       setObservabilityRecentCount(0);
       setObservabilityError('');
       setObservabilityLoading(false);
+      setVibeTimeline([]);
+      setVibeConfig(null);
+      setVibeSelectedIndex(0);
+      setVibeError('');
+      setVibeLoading(false);
       return;
     }
     const experimentId = activeExperiment.id;
     void loadObservabilitySummary(experimentId, { silent: false });
+    void loadVibeTimeline(experimentId, { silent: false });
     const pollMs = activeExperiment.status === 'running' ? 7000 : 15000;
     const interval = window.setInterval(() => {
       void loadObservabilitySummary(experimentId, { silent: true });
+      void loadVibeTimeline(experimentId, { silent: true });
     }, pollMs);
     return () => window.clearInterval(interval);
   }, [activeExperimentKey, projectId]);
@@ -1761,7 +1851,12 @@ export default function TrainingPanel({
     setObservabilitySummary(null);
     setObservabilityRecentCount(0);
     setObservabilityError('');
+    setVibeTimeline([]);
+    setVibeConfig(null);
+    setVibeSelectedIndex(0);
+    setVibeError('');
     void loadObservabilitySummary(exp.id, { silent: true });
+    void loadVibeTimeline(exp.id, { silent: true });
   };
 
   const toggleCompareSelection = (expId: number) => {
@@ -1805,6 +1900,11 @@ export default function TrainingPanel({
     const topTokens = Array.isArray(observabilitySummary?.top_attention_tokens)
       ? observabilitySummary?.top_attention_tokens || []
       : [];
+    const safeVibeIndex = Math.min(
+      Math.max(vibeSelectedIndex, 0),
+      Math.max(0, vibeTimeline.length - 1),
+    );
+    const selectedVibeSnapshot = vibeTimeline.length > 0 ? vibeTimeline[safeVibeIndex] : null;
 
     return (
       <div className="animate-fade-in training-panel-stack">
@@ -1944,6 +2044,63 @@ export default function TrainingPanel({
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="training-vibe-panel">
+            <div className="training-vibe-panel__head">
+              <h4>Vibe Check Timeline</h4>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => void loadVibeTimeline(activeExperiment.id)}
+                disabled={vibeLoading}
+              >
+                {vibeLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+            {vibeError && (
+              <div className="training-alert training-alert--warning training-alert--tight">{vibeError}</div>
+            )}
+            <div className="training-vibe-panel__meta">
+              <span>Snapshots: {vibeTimeline.length}</span>
+              <span>Interval: {vibeConfig?.interval_steps ?? 50} steps</span>
+              <span>Provider: {vibeConfig?.provider || 'mock'}</span>
+              <span>Prompts: {Array.isArray(vibeConfig?.prompts) ? vibeConfig?.prompts.length : 0}</span>
+            </div>
+            {selectedVibeSnapshot ? (
+              <div className="training-vibe-panel__body">
+                <div className="training-vibe-panel__slider">
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, vibeTimeline.length - 1)}
+                    value={safeVibeIndex}
+                    onChange={(e) => setVibeSelectedIndex(Number(e.target.value || 0))}
+                  />
+                  <div className="training-vibe-panel__snapshot-meta">
+                    <span>Step {selectedVibeSnapshot.step ?? '—'}</span>
+                    <span>Epoch {selectedVibeSnapshot.epoch ?? '—'}</span>
+                    <span>
+                      Progress{' '}
+                      {typeof selectedVibeSnapshot.progress === 'number'
+                        ? `${(selectedVibeSnapshot.progress * 100).toFixed(1)}%`
+                        : '—'}
+                    </span>
+                  </div>
+                </div>
+                <div className="training-vibe-grid">
+                  {(Array.isArray(selectedVibeSnapshot.outputs) ? selectedVibeSnapshot.outputs : []).map((item, idx) => (
+                    <article className="training-vibe-card" key={`vibe-${selectedVibeSnapshot.step || 0}-${idx}`}>
+                      <div className="training-vibe-card__prompt">{item.prompt || 'Prompt'}</div>
+                      <div className="training-vibe-card__reply">{item.reply || 'No reply generated.'}</div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="training-vibe-panel__empty">
+                No vibe snapshots yet. Snapshots appear every configured interval during training.
+              </div>
+            )}
           </div>
 
           <TerminalConsole logs={trainingLogs} height="320px" />

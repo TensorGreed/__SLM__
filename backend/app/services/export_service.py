@@ -14,6 +14,7 @@ from app.models.export import Export, ExportFormat, ExportStatus
 from app.models.experiment import Experiment
 from app.services.deployment_target_service import (
     build_deploy_target_plan,
+    execute_deploy_target_plan,
     run_deployment_target_suite,
 )
 
@@ -537,6 +538,84 @@ async def build_export_deploy_plan(
         "export_format": export.export_format.value,
         "run_dir": str(run_dir),
         **plan,
+    }
+
+
+async def execute_export_deploy_plan(
+    db: AsyncSession,
+    project_id: int,
+    export_id: int,
+    *,
+    target_id: str,
+    endpoint_name: str | None = None,
+    region: str | None = None,
+    instance_type: str | None = None,
+    dry_run: bool = True,
+    hf_token: str | None = None,
+    managed_api_url: str | None = None,
+    managed_api_token: str | None = None,
+    sagemaker_role_arn: str | None = None,
+    sagemaker_image_uri: str | None = None,
+    sagemaker_model_data_url: str | None = None,
+) -> dict:
+    """Execute managed deploy action (or dry-run) for an existing export run."""
+    result = await db.execute(
+        select(Export).where(
+            Export.id == export_id,
+            Export.project_id == project_id,
+        )
+    )
+    export = result.scalar_one_or_none()
+    if not export:
+        raise ValueError(f"Export {export_id} not found in project {project_id}")
+
+    run_dir = _resolve_export_run_dir_from_export(export)
+    if run_dir is None:
+        raise ValueError("Export run directory not found. Run export first.")
+
+    model_name = str((export.manifest or {}).get("source_model") or f"project-{project_id}-export-{export_id}")
+    result_payload = await execute_deploy_target_plan(
+        run_dir=run_dir,
+        export_format=export.export_format,
+        target_id=target_id,
+        model_name=model_name,
+        endpoint_name=endpoint_name,
+        region=region,
+        instance_type=instance_type,
+        dry_run=dry_run,
+        hf_token=hf_token,
+        managed_api_url=managed_api_url,
+        managed_api_token=managed_api_token,
+        sagemaker_role_arn=sagemaker_role_arn,
+        sagemaker_image_uri=sagemaker_image_uri,
+        sagemaker_model_data_url=sagemaker_model_data_url,
+    )
+
+    manifest = export.manifest if isinstance(export.manifest, dict) else {}
+    history = list(manifest.get("deploy_execution_history") or [])
+    execution = result_payload.get("execution") if isinstance(result_payload, dict) else {}
+    history.append(
+        {
+            "target_id": str(result_payload.get("target_id") or target_id),
+            "target_kind": str(result_payload.get("target_kind") or ""),
+            "dry_run": bool((execution or {}).get("dry_run", dry_run)),
+            "status": str((execution or {}).get("status") or ""),
+            "started_at": (execution or {}).get("started_at"),
+            "finished_at": (execution or {}).get("finished_at"),
+        }
+    )
+    manifest["deploy_execution_history"] = history[-30:]
+    manifest["last_deploy_execution"] = execution
+    export.manifest = manifest
+    await db.flush()
+    await db.refresh(export)
+
+    return {
+        "project_id": project_id,
+        "export_id": export_id,
+        "export_format": export.export_format.value,
+        "run_dir": str(run_dir),
+        **result_payload,
     }
 
 

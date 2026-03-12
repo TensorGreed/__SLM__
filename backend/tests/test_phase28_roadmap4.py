@@ -107,6 +107,18 @@ class Phase28Roadmap4Tests(unittest.TestCase):
         self.assertEqual(str(run_resp.json().get("status")), "completed")
         return export_id
 
+    def _create_training_experiment(self, project_id: int, name: str = "phase28-vibe-exp") -> int:
+        exp_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": f"{name}-{uuid.uuid4().hex[:6]}",
+                "description": "phase28-vibe",
+                "config": {"base_model": "microsoft/phi-2", "num_epochs": 1},
+            },
+        )
+        self.assertEqual(exp_resp.status_code, 201, exp_resp.text)
+        return int(exp_resp.json()["id"])
+
     def test_phase1_magic_create_eda_and_outlier_cleanup(self):
         magic_resp = self.client.post(
             "/api/projects/magic-create",
@@ -229,6 +241,52 @@ class Phase28Roadmap4Tests(unittest.TestCase):
         self.assertTrue(str(payload.get("base", {}).get("reply") or "").strip())
         self.assertTrue(str(payload.get("tuned", {}).get("reply") or "").strip())
 
+    def test_phase4_vibe_check_timeline_snapshot(self):
+        project_id = self._create_project("phase28-vibe")
+
+        get_cfg = self.client.get(f"/api/projects/{project_id}/training/vibe-check/config")
+        self.assertEqual(get_cfg.status_code, 200, get_cfg.text)
+        self.assertGreaterEqual(len(get_cfg.json().get("prompts", [])), 1)
+
+        put_cfg = self.client.put(
+            f"/api/projects/{project_id}/training/vibe-check/config",
+            json={
+                "enabled": True,
+                "interval_steps": 40,
+                "provider": "mock",
+                "prompts": [
+                    "Prompt 1",
+                    "Prompt 2",
+                    "Prompt 3",
+                    "Prompt 4",
+                    "Prompt 5",
+                ],
+            },
+        )
+        self.assertEqual(put_cfg.status_code, 200, put_cfg.text)
+        self.assertEqual(int(put_cfg.json().get("interval_steps", 0)), 40)
+
+        experiment_id = self._create_training_experiment(project_id, name="phase28-vibe-exp")
+        snap_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/{experiment_id}/vibe-check/snapshot",
+            json={"step": 50, "epoch": 0.5},
+        )
+        self.assertEqual(snap_resp.status_code, 200, snap_resp.text)
+        snap_payload = snap_resp.json()
+        snapshot = snap_payload.get("snapshot") or {}
+        self.assertEqual(int(snapshot.get("step", 0)), 50)
+        self.assertGreaterEqual(len(snapshot.get("outputs", [])), 1)
+        timeline_path = Path(str(snap_payload.get("timeline_path") or ""))
+        self.assertTrue(timeline_path.exists(), timeline_path)
+
+        timeline_resp = self.client.get(
+            f"/api/projects/{project_id}/training/experiments/{experiment_id}/vibe-check/timeline"
+        )
+        self.assertEqual(timeline_resp.status_code, 200, timeline_resp.text)
+        timeline_payload = timeline_resp.json()
+        self.assertGreaterEqual(int(timeline_payload.get("snapshot_count", 0)), 1)
+        self.assertGreaterEqual(len(timeline_payload.get("snapshots", [])), 1)
+
     def test_phase5_deploy_plan_and_mobile_sdk_stub(self):
         project_id = self._create_project("phase28-deploy")
         export_id = self._create_completed_export(project_id)
@@ -240,6 +298,14 @@ class Phase28Roadmap4Tests(unittest.TestCase):
         self.assertEqual(deploy_resp.status_code, 200, deploy_resp.text)
         deploy_payload = deploy_resp.json()
         self.assertIn("curl_example", deploy_payload)
+
+        execute_dry_run = self.client.post(
+            f"/api/projects/{project_id}/export/{export_id}/deploy-as-api/execute",
+            json={"target_id": "deployment.hf_inference_endpoint", "dry_run": True},
+        )
+        self.assertEqual(execute_dry_run.status_code, 200, execute_dry_run.text)
+        execute_payload = execute_dry_run.json()
+        self.assertEqual(str((execute_payload.get("execution") or {}).get("status")), "dry_run")
 
         sdk_resp = self.client.post(
             f"/api/projects/{project_id}/export/{export_id}/deploy-as-api",

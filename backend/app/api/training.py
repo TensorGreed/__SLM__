@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -96,6 +97,12 @@ from app.services.cloud_burst_service import (
     estimate_cloud_burst_quote,
     list_cloud_burst_catalog,
 )
+from app.services.vibe_check_service import (
+    capture_vibe_check_snapshot,
+    load_project_vibe_check_config,
+    load_vibe_check_timeline,
+    save_project_vibe_check_config,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/training", tags=["Training"])
 
@@ -106,6 +113,25 @@ class TrainingEffectiveConfigRequest(BaseModel):
 
 class TrainingPreferencesUpdateRequest(BaseModel):
     preferred_plan_profile: str = Field(..., min_length=1, max_length=32)
+
+
+class VibeCheckConfigUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    interval_steps: int | None = Field(default=None, ge=10, le=1000)
+    prompts: list[str] | None = Field(default=None, min_length=1, max_length=5)
+    provider: str | None = Field(default=None, max_length=64)
+    model_name: str | None = Field(default=None, max_length=255)
+    api_url: str | None = Field(default=None, max_length=2048)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=32, le=4096)
+
+
+class VibeCheckSnapshotRequest(BaseModel):
+    step: int | None = Field(default=None, ge=1)
+    epoch: float | None = Field(default=None, ge=0.0)
+    train_loss: float | None = None
+    eval_loss: float | None = None
+    api_key: str | None = Field(default=None, max_length=8192)
 
 
 class TrainingRecipeResolveRequest(BaseModel):
@@ -1270,6 +1296,143 @@ async def set_training_preferences(
     }
 
 
+@router.get("/vibe-check/config")
+async def get_vibe_check_config(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read project-level vibe-check prompt configuration."""
+    await _get_project_or_404(db, project_id)
+    config = load_project_vibe_check_config(project_id)
+    return {
+        "project_id": project_id,
+        **config,
+    }
+
+
+@router.put("/vibe-check/config")
+async def set_vibe_check_config(
+    project_id: int,
+    req: VibeCheckConfigUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist project-level vibe-check prompt configuration."""
+    await _get_project_or_404(db, project_id)
+    updates = req.model_dump(exclude_none=True)
+    config = save_project_vibe_check_config(project_id, updates)
+    return {
+        "project_id": project_id,
+        **config,
+    }
+
+
+@router.get("/experiments/{experiment_id}/vibe-check/timeline")
+async def vibe_check_timeline(
+    project_id: int,
+    experiment_id: int,
+    limit: int = 200,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read qualitative vibe-check snapshots captured during training."""
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    exp = exp_result.scalar_one_or_none()
+    if exp is None:
+        raise HTTPException(404, f"Experiment {experiment_id} not found in project {project_id}")
+    output_dir_token = str(exp.output_dir or "").strip()
+    if not output_dir_token:
+        raise HTTPException(400, "Experiment output directory is not available.")
+    output_dir = Path(output_dir_token).expanduser()
+    if not output_dir.exists():
+        raise HTTPException(400, "Experiment output directory is not available.")
+    timeline = load_vibe_check_timeline(output_dir, limit=limit)
+    timeline["config"] = load_project_vibe_check_config(
+        project_id,
+        experiment_config=dict(exp.config or {}),
+    )
+    return {
+        "project_id": project_id,
+        "experiment_id": experiment_id,
+        "status": exp.status.value,
+        **timeline,
+    }
+
+
+@router.post("/experiments/{experiment_id}/vibe-check/snapshot")
+async def create_vibe_check_snapshot(
+    project_id: int,
+    experiment_id: int,
+    req: VibeCheckSnapshotRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Capture and persist one vibe-check snapshot immediately."""
+    payload = req or VibeCheckSnapshotRequest()
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    exp = exp_result.scalar_one_or_none()
+    if exp is None:
+        raise HTTPException(404, f"Experiment {experiment_id} not found in project {project_id}")
+
+    output_dir_token = str(exp.output_dir or "").strip()
+    if not output_dir_token:
+        raise HTTPException(400, "Experiment output directory is not available.")
+    output_dir = Path(output_dir_token).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    step_value: int | None = payload.step
+    if step_value is None:
+        ckpt_result = await db.execute(
+            select(Checkpoint)
+            .where(Checkpoint.experiment_id == experiment_id)
+            .order_by(Checkpoint.step.desc())
+        )
+        latest = ckpt_result.scalars().first()
+        if latest is not None:
+            step_value = int(latest.step)
+            if payload.epoch is None:
+                payload.epoch = float(latest.epoch)
+            if payload.train_loss is None and latest.train_loss is not None:
+                payload.train_loss = float(latest.train_loss)
+            if payload.eval_loss is None and latest.eval_loss is not None:
+                payload.eval_loss = float(latest.eval_loss)
+    if step_value is None:
+        step_value = 1
+
+    total_steps = int(exp.total_steps or 0)
+    if total_steps <= 0:
+        total_steps = int((dict(exp.config or {}).get("num_epochs") or 1) * 100)
+    if total_steps <= 0:
+        total_steps = max(1, step_value)
+
+    result = await capture_vibe_check_snapshot(
+        project_id=project_id,
+        experiment_id=experiment_id,
+        output_dir=output_dir,
+        step=step_value,
+        total_steps=total_steps,
+        base_model=str(exp.base_model or "microsoft/phi-2"),
+        epoch=payload.epoch,
+        train_loss=payload.train_loss,
+        eval_loss=payload.eval_loss,
+        experiment_config=dict(exp.config or {}),
+        api_key=payload.api_key,
+    )
+    return {
+        "project_id": project_id,
+        "experiment_id": experiment_id,
+        "status": exp.status.value,
+        **result,
+    }
+
+
 @router.websocket("/ws/{experiment_id}")
 async def ws_training_status(
     websocket: WebSocket,
@@ -1349,6 +1512,19 @@ async def ws_training_status(
                             payload = dict(envelope.get("payload") or {})
                             payload.setdefault("experiment_id", experiment_id)
                             await websocket.send_json({"type": "observability", "payload": payload})
+                        elif event_type == "vibe_check":
+                            snapshot = envelope.get("snapshot")
+                            if isinstance(snapshot, dict):
+                                await websocket.send_json(
+                                    {
+                                        "type": "vibe_check",
+                                        "snapshot": snapshot,
+                                        "timeline_path": envelope.get("timeline_path"),
+                                        "snapshot_count": envelope.get("snapshot_count"),
+                                    }
+                                )
+                            else:
+                                await websocket.send_json({"type": "log", "text": str(raw)})
                         elif event_type == "status":
                             payload = {"type": "status", "status": envelope.get("status", "")}
                             if "error" in envelope:

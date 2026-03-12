@@ -427,6 +427,16 @@ def run_training_job(self, experiment_id: int, command: str, log_path: str, outp
                         if event_type in {"observability", "training_observability"}:
                             _queue_publish({"type": "observability", "payload": stream_event})
                             return
+                        if event_type in {"vibe_check", "vibe_snapshot"}:
+                            snapshot_payload = stream_event.get("snapshot")
+                            event_payload = {"type": "vibe_check"}
+                            if isinstance(snapshot_payload, dict):
+                                event_payload["snapshot"] = snapshot_payload
+                            for key in ("timeline_path", "snapshot_count"):
+                                if key in stream_event:
+                                    event_payload[key] = stream_event.get(key)
+                            _queue_publish(event_payload)
+                            return
 
                     if TQDM_PROGRESS_RE.match(text_line):
                         # Progress bars can emit very frequently (stderr with \r updates).

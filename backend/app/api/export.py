@@ -13,6 +13,7 @@ from app.services.deployment_target_service import (
 from app.services.export_service import (
     build_export_deploy_plan,
     create_export,
+    execute_export_deploy_plan,
     list_exports,
     run_export,
     validate_export_deployment,
@@ -61,6 +62,20 @@ class ExportDeployPlanRequest(BaseModel):
     endpoint_name: str | None = None
     region: str | None = None
     instance_type: str | None = None
+
+
+class ExportDeployExecuteRequest(BaseModel):
+    target_id: str
+    endpoint_name: str | None = None
+    region: str | None = None
+    instance_type: str | None = None
+    dry_run: bool = True
+    hf_token: str | None = None
+    managed_api_url: str | None = None
+    managed_api_token: str | None = None
+    sagemaker_role_arn: str | None = None
+    sagemaker_image_uri: str | None = None
+    sagemaker_model_data_url: str | None = None
 
 
 @router.post("/create", status_code=201)
@@ -175,6 +190,38 @@ async def build_deploy_plan(
             endpoint_name=req.endpoint_name,
             region=req.region,
             instance_type=req.instance_type,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/{export_id}/deploy-as-api/execute")
+async def execute_deploy_plan(
+    project_id: int,
+    export_id: int,
+    req: ExportDeployExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute managed deploy target action (or dry-run) for an export run."""
+    try:
+        return await execute_export_deploy_plan(
+            db,
+            project_id=project_id,
+            export_id=export_id,
+            target_id=req.target_id,
+            endpoint_name=req.endpoint_name,
+            region=req.region,
+            instance_type=req.instance_type,
+            dry_run=bool(req.dry_run),
+            hf_token=req.hf_token,
+            managed_api_url=req.managed_api_url,
+            managed_api_token=req.managed_api_token,
+            sagemaker_role_arn=req.sagemaker_role_arn,
+            sagemaker_image_uri=req.sagemaker_image_uri,
+            sagemaker_model_data_url=req.sagemaker_model_data_url,
         )
     except ValueError as e:
         detail = str(e)

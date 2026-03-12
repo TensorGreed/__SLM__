@@ -878,3 +878,222 @@ def build_deploy_target_plan(
         "curl_example": curl,
         "source_run_dir": str(run_dir),
     }
+
+
+async def execute_deploy_target_plan(
+    *,
+    run_dir: Path,
+    export_format: ExportFormat | str,
+    target_id: str,
+    model_name: str = "",
+    endpoint_name: str | None = None,
+    region: str | None = None,
+    instance_type: str | None = None,
+    dry_run: bool = True,
+    hf_token: str | None = None,
+    managed_api_url: str | None = None,
+    managed_api_token: str | None = None,
+    sagemaker_role_arn: str | None = None,
+    sagemaker_image_uri: str | None = None,
+    sagemaker_model_data_url: str | None = None,
+) -> dict[str, Any]:
+    """
+    Execute managed deployment action for a target.
+
+    By default this runs in dry-run mode and returns an executable plan preview.
+    """
+    plan = build_deploy_target_plan(
+        run_dir=run_dir,
+        export_format=export_format,
+        target_id=target_id,
+        model_name=model_name,
+        endpoint_name=endpoint_name,
+        region=region,
+        instance_type=instance_type,
+    )
+    normalized_target_id = str(plan.get("target_id") or "").strip().lower()
+    started_at = _utcnow_iso()
+
+    if bool(dry_run):
+        return {
+            **plan,
+            "execution": {
+                "status": "dry_run",
+                "message": "Dry-run only. No provider API was called.",
+                "started_at": started_at,
+                "finished_at": _utcnow_iso(),
+                "provider": normalized_target_id,
+                "dry_run": True,
+            },
+        }
+
+    target_kind = str(plan.get("target_kind") or "").strip().lower()
+    if target_kind == "sdk":
+        return {
+            **plan,
+            "execution": {
+                "status": "completed",
+                "message": "SDK artifact generated (no remote deployment required).",
+                "started_at": started_at,
+                "finished_at": _utcnow_iso(),
+                "provider": normalized_target_id,
+                "dry_run": False,
+            },
+        }
+
+    if normalized_target_id == "deployment.hf_inference_endpoint":
+        token = str(hf_token or "").strip()
+        if not token:
+            raise ValueError("hf_token is required to execute HuggingFace endpoint deployment.")
+        endpoint = str(plan.get("endpoint_name") or "").strip()
+        if not endpoint:
+            raise ValueError("Unable to resolve endpoint_name for HuggingFace deployment.")
+        endpoint_url = f"https://api.endpoints.huggingface.cloud/v2/endpoint/{endpoint}"
+        payload = {"action": "resume"}
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(
+                    endpoint_url,
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                )
+        except Exception as exc:
+            raise ValueError(f"HuggingFace endpoint request failed: {exc}") from exc
+
+        body_preview = str(response.text or "")[:1200]
+        if response.status_code >= 400:
+            raise ValueError(
+                f"HuggingFace endpoint request failed ({response.status_code}): {body_preview}"
+            )
+        try:
+            response_json = response.json()
+        except Exception:
+            response_json = {"raw": body_preview}
+        return {
+            **plan,
+            "execution": {
+                "status": "submitted",
+                "message": "Deployment resume call sent to HuggingFace endpoint API.",
+                "started_at": started_at,
+                "finished_at": _utcnow_iso(),
+                "provider": normalized_target_id,
+                "dry_run": False,
+                "http_status": response.status_code,
+                "request": {"method": "POST", "url": endpoint_url, "payload": payload},
+                "response": response_json,
+            },
+        }
+
+    if normalized_target_id == "deployment.aws_sagemaker":
+        if importlib.util.find_spec("boto3") is None:
+            raise ValueError("boto3 is required for live SageMaker deployment execution.")
+        role_arn = str(sagemaker_role_arn or "").strip()
+        image_uri = str(sagemaker_image_uri or "").strip()
+        model_data_url = str(sagemaker_model_data_url or "").strip()
+        if not role_arn:
+            raise ValueError("sagemaker_role_arn is required for SageMaker execution.")
+        if not image_uri:
+            raise ValueError("sagemaker_image_uri is required for SageMaker execution.")
+        if not model_data_url:
+            raise ValueError("sagemaker_model_data_url is required for SageMaker execution.")
+
+        endpoint = str(plan.get("endpoint_name") or "").strip()
+        region_token = str(plan.get("region") or region or "us-east-1")
+        instance_token = str(plan.get("instance_type") or instance_type or "ml.g5.xlarge")
+        model_name_token = f"{endpoint}-model"
+        config_name_token = f"{endpoint}-cfg"
+        try:
+            import boto3
+
+            client = boto3.client("sagemaker", region_name=region_token)
+            client.create_model(
+                ModelName=model_name_token,
+                ExecutionRoleArn=role_arn,
+                PrimaryContainer={
+                    "Image": image_uri,
+                    "ModelDataUrl": model_data_url,
+                },
+            )
+            client.create_endpoint_config(
+                EndpointConfigName=config_name_token,
+                ProductionVariants=[
+                    {
+                        "VariantName": "AllTraffic",
+                        "ModelName": model_name_token,
+                        "InstanceType": instance_token,
+                        "InitialInstanceCount": 1,
+                    }
+                ],
+            )
+            client.create_endpoint(
+                EndpointName=endpoint,
+                EndpointConfigName=config_name_token,
+            )
+        except Exception as exc:
+            raise ValueError(f"SageMaker deployment request failed: {exc}") from exc
+        return {
+            **plan,
+            "execution": {
+                "status": "submitted",
+                "message": "SageMaker endpoint create request submitted.",
+                "started_at": started_at,
+                "finished_at": _utcnow_iso(),
+                "provider": normalized_target_id,
+                "dry_run": False,
+                "request": {
+                    "endpoint_name": endpoint,
+                    "endpoint_config_name": config_name_token,
+                    "model_name": model_name_token,
+                    "region": region_token,
+                },
+            },
+        }
+
+    # deployment.vllm_managed and future managed providers.
+    provision_url = str(managed_api_url or "https://managed-vllm.example.com/provision").strip()
+    if not provision_url:
+        raise ValueError("managed_api_url is required for managed vLLM deployment execution.")
+    payload = {
+        "name": str(plan.get("endpoint_name") or ""),
+        "model_path": f"{run_dir}/model",
+    }
+    headers = {"Content-Type": "application/json"}
+    token = str(managed_api_token or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(provision_url, json=payload, headers=headers)
+    except Exception as exc:
+        raise ValueError(f"Managed vLLM provision request failed: {exc}") from exc
+
+    body_preview = str(response.text or "")[:1200]
+    if response.status_code >= 400:
+        raise ValueError(
+            f"Managed vLLM provision request failed ({response.status_code}): {body_preview}"
+        )
+    try:
+        response_json = response.json()
+    except Exception:
+        response_json = {"raw": body_preview}
+    return {
+        **plan,
+        "execution": {
+            "status": "submitted",
+            "message": "Managed vLLM provisioning request submitted.",
+            "started_at": started_at,
+            "finished_at": _utcnow_iso(),
+            "provider": normalized_target_id,
+            "dry_run": False,
+            "http_status": response.status_code,
+            "request": {"method": "POST", "url": provision_url, "payload": payload},
+            "response": response_json,
+        },
+    }

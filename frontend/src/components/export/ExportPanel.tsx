@@ -159,6 +159,22 @@ interface DeployPlanResponse {
     };
 }
 
+interface DeployExecutionDetails {
+    status?: string;
+    message?: string;
+    provider?: string;
+    dry_run?: boolean;
+    started_at?: string;
+    finished_at?: string;
+    http_status?: number;
+    request?: Record<string, unknown> | null;
+    response?: Record<string, unknown> | null;
+}
+
+interface DeployExecuteResponse extends DeployPlanResponse {
+    execution?: DeployExecutionDetails;
+}
+
 function toErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -203,6 +219,13 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [deployTargetId, setDeployTargetId] = useState('deployment.hf_inference_endpoint');
     const [deployPlan, setDeployPlan] = useState<DeployPlanResponse | null>(null);
     const [isLoadingDeployPlan, setIsLoadingDeployPlan] = useState(false);
+    const [deployPlanExportId, setDeployPlanExportId] = useState<number | null>(null);
+    const [isExecutingDeployPlan, setIsExecutingDeployPlan] = useState(false);
+    const [deployExecution, setDeployExecution] = useState<DeployExecuteResponse | null>(null);
+    const [deployDryRun, setDeployDryRun] = useState(true);
+    const [deployHfToken, setDeployHfToken] = useState('');
+    const [deployManagedApiUrl, setDeployManagedApiUrl] = useState('');
+    const [deployManagedApiToken, setDeployManagedApiToken] = useState('');
 
     const refreshAll = async () => {
         setIsLoading(true);
@@ -231,6 +254,12 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setServePlan(null);
         setActiveServeRun(null);
         setDeployPlan(null);
+        setDeployPlanExportId(null);
+        setDeployExecution(null);
+        setDeployDryRun(true);
+        setDeployHfToken('');
+        setDeployManagedApiUrl('');
+        setDeployManagedApiToken('');
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -423,12 +452,55 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 },
             );
             setDeployPlan(res.data || null);
+            setDeployPlanExportId(exportId);
+            setDeployExecution(null);
             setStatusMessage(`Deploy plan generated for export ${exportId}.`);
         } catch (err) {
             setErrorMessage(toErrorMessage(err));
             setStatusMessage('');
         } finally {
             setIsLoadingDeployPlan(false);
+        }
+    };
+
+    const handleExecuteDeployPlan = async () => {
+        if (!deployPlan || !deployPlanExportId) return;
+        setIsExecutingDeployPlan(true);
+        setErrorMessage('');
+        setStatusMessage(
+            `${deployDryRun ? 'Running deploy dry-run' : 'Executing deploy action'} (${deployPlan.target_id})...`,
+        );
+        try {
+            const payload: Record<string, unknown> = {
+                target_id: deployPlan.target_id,
+                dry_run: deployDryRun,
+            };
+            if (!deployDryRun && deployPlan.target_id === 'deployment.hf_inference_endpoint' && deployHfToken.trim()) {
+                payload.hf_token = deployHfToken.trim();
+            }
+            if (!deployDryRun && deployPlan.target_id === 'deployment.vllm_managed') {
+                if (deployManagedApiUrl.trim()) {
+                    payload.managed_api_url = deployManagedApiUrl.trim();
+                }
+                if (deployManagedApiToken.trim()) {
+                    payload.managed_api_token = deployManagedApiToken.trim();
+                }
+            }
+            const res = await api.post<DeployExecuteResponse>(
+                `/projects/${projectId}/export/${deployPlanExportId}/deploy-as-api/execute`,
+                payload,
+            );
+            setDeployExecution(res.data || null);
+            setStatusMessage(
+                deployDryRun
+                    ? `Dry-run completed for ${deployPlan.target_id}.`
+                    : `Deployment request submitted for ${deployPlan.target_id}.`,
+            );
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+            setStatusMessage('');
+        } finally {
+            setIsExecutingDeployPlan(false);
         }
     };
 
@@ -1099,7 +1171,14 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                 {deployPlan.display_name || deployPlan.target_id}
                             </p>
                         </div>
-                        <button className="btn btn-secondary btn-sm" onClick={() => setDeployPlan(null)}>
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                                setDeployPlan(null);
+                                setDeployPlanExportId(null);
+                                setDeployExecution(null);
+                            }}
+                        >
                             Close
                         </button>
                     </div>
@@ -1119,6 +1198,61 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                             </ol>
                         </div>
                     )}
+                    <div className="serve-template-block">
+                        <div className="serve-template-block__label">Execution</div>
+                        <label className="export-smoke-toggle">
+                            <input
+                                type="checkbox"
+                                checked={deployDryRun}
+                                onChange={(e) => setDeployDryRun(e.target.checked)}
+                            />
+                            <span>Dry run (recommended before live deployment)</span>
+                        </label>
+                        {!deployDryRun && deployPlan.target_id === 'deployment.hf_inference_endpoint' && (
+                            <input
+                                className="input"
+                                type="password"
+                                placeholder="HuggingFace token (hf_...)"
+                                value={deployHfToken}
+                                onChange={(e) => setDeployHfToken(e.target.value)}
+                            />
+                        )}
+                        {!deployDryRun && deployPlan.target_id === 'deployment.vllm_managed' && (
+                            <>
+                                <input
+                                    className="input"
+                                    placeholder="Managed API URL (https://...)"
+                                    value={deployManagedApiUrl}
+                                    onChange={(e) => setDeployManagedApiUrl(e.target.value)}
+                                />
+                                <input
+                                    className="input"
+                                    type="password"
+                                    placeholder="Managed API token (optional)"
+                                    value={deployManagedApiToken}
+                                    onChange={(e) => setDeployManagedApiToken(e.target.value)}
+                                />
+                            </>
+                        )}
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => void handleExecuteDeployPlan()}
+                                disabled={isExecutingDeployPlan || deployPlanExportId === null}
+                            >
+                                {isExecutingDeployPlan
+                                    ? 'Executing...'
+                                    : deployDryRun
+                                        ? 'Run Dry-Run'
+                                        : 'Execute Deployment'}
+                            </button>
+                            {deployPlanExportId !== null && (
+                                <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
+                                    Export ID: {deployPlanExportId}
+                                </span>
+                            )}
+                        </div>
+                    </div>
                     {deployPlan.curl_example && (
                         <div className="serve-template-block">
                             <div className="serve-template-block__label">Command Template</div>
@@ -1143,6 +1277,30 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                     {copyState[`deploy-sdk-${deployPlan.target_id}`] ? 'Copied!' : 'Copy Zip Path'}
                                 </button>
                             </div>
+                        </div>
+                    )}
+                    {deployExecution?.execution && (
+                        <div className="serve-template-block">
+                            <div className="serve-template-block__label">Execution Result</div>
+                            <div style={{ fontSize: 'var(--font-size-sm)' }}>
+                                <strong>Status:</strong> {deployExecution.execution.status || 'unknown'}
+                                {deployExecution.execution.dry_run ? ' (dry-run)' : ''}
+                            </div>
+                            {deployExecution.execution.message && (
+                                <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                                    {deployExecution.execution.message}
+                                </div>
+                            )}
+                            {deployExecution.execution.request && (
+                                <pre className="serve-template-code">
+                                    {JSON.stringify(deployExecution.execution.request, null, 2)}
+                                </pre>
+                            )}
+                            {deployExecution.execution.response && (
+                                <pre className="serve-template-code">
+                                    {JSON.stringify(deployExecution.execution.response, null, 2)}
+                                </pre>
+                            )}
                         </div>
                     )}
                 </div>

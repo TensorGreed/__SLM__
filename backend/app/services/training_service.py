@@ -32,6 +32,10 @@ from app.services.training_runtime_service import (
     start_runtime,
     validate_runtime,
 )
+from app.services.vibe_check_service import (
+    capture_vibe_check_snapshot,
+    load_project_vibe_check_config,
+)
 
 active_websockets: dict[int, list[WebSocket]] = {}
 TRAINING_EVENT_PREFIX = "SLM_EVENT "
@@ -405,11 +409,26 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
     """Simulate a training loop reporting metrics for demo purposes."""
     try:
         project_id: int | None = None
+        experiment_output_dir: Path | None = None
+        base_model = str(config.get("base_model") or "microsoft/phi-2").strip() or "microsoft/phi-2"
+        experiment_config_snapshot: dict[str, object] = dict(config or {})
+        vibe_enabled = True
+        vibe_interval_steps = 50
         async with async_session_factory() as db:
             exp_result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
             exp = exp_result.scalar_one_or_none()
             if exp is not None:
                 project_id = int(exp.project_id)
+                if exp.output_dir:
+                    experiment_output_dir = Path(str(exp.output_dir))
+                base_model = str(exp.base_model or base_model).strip() or base_model
+                experiment_config_snapshot = dict(exp.config or {})
+                effective_vibe = load_project_vibe_check_config(
+                    project_id,
+                    experiment_config=experiment_config_snapshot,
+                )
+                vibe_enabled = bool(effective_vibe.get("enabled"))
+                vibe_interval_steps = max(1, int(effective_vibe.get("interval_steps") or 50))
 
         epochs = config.get("num_epochs", 3)
         steps_per_epoch = 100
@@ -451,6 +470,41 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
             }
 
             await broadcast_metric(experiment_id, metric)
+
+            should_capture_vibe = (
+                project_id is not None
+                and experiment_output_dir is not None
+                and vibe_enabled
+                and (step % vibe_interval_steps == 0 or step == total_steps)
+            )
+            if should_capture_vibe:
+                try:
+                    vibe_payload = await capture_vibe_check_snapshot(
+                        project_id=project_id,
+                        experiment_id=experiment_id,
+                        output_dir=experiment_output_dir,
+                        step=step,
+                        total_steps=total_steps,
+                        base_model=base_model,
+                        epoch=round(epoch_float, 2),
+                        train_loss=float(metric.get("train_loss") or 0.0),
+                        eval_loss=float(eval_loss) if isinstance(eval_loss, (float, int)) else None,
+                        experiment_config=experiment_config_snapshot,
+                    )
+                    snapshot = vibe_payload.get("snapshot")
+                    if isinstance(snapshot, dict):
+                        await broadcast_event(
+                            experiment_id,
+                            {
+                                "type": "vibe_check",
+                                "snapshot": snapshot,
+                                "timeline_path": vibe_payload.get("timeline_path"),
+                                "snapshot_count": vibe_payload.get("snapshot_count"),
+                            },
+                        )
+                except Exception:
+                    # Keep simulated training robust even if vibe capture fails.
+                    pass
 
             if project_id is not None and (step % 25 == 0 or eval_loss is not None):
                 from app.services.training_telemetry_service import record_observability_event
@@ -625,6 +679,18 @@ async def start_training(
         "runtime_label": runtime_spec.label,
         "execution_backend": runtime_spec.execution_backend,
         "preflight": preflight,
+    }
+    vibe_runtime_config = load_project_vibe_check_config(
+        project_id,
+        experiment_config=resolved_config,
+    )
+    runtime_config["vibe_check"] = {
+        "enabled": bool(vibe_runtime_config.get("enabled")),
+        "interval_steps": int(vibe_runtime_config.get("interval_steps") or 50),
+        "prompt_count": len(list(vibe_runtime_config.get("prompts") or [])),
+        "provider": str(vibe_runtime_config.get("provider") or "mock"),
+        "model_name": str(vibe_runtime_config.get("model_name") or exp.base_model or ""),
+        "api_url": str(vibe_runtime_config.get("api_url") or ""),
     }
     output_dir = Path(exp.output_dir) if exp.output_dir else _experiment_dir(project_id, experiment_id)
     output_dir.mkdir(parents=True, exist_ok=True)
