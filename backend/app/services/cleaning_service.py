@@ -25,6 +25,12 @@ PII_PATTERNS = {
     "aws_key": re.compile(r'AKIA[0-9A-Z]{16}'),
 }
 
+TOXIC_PATTERNS = {
+    "abusive_language": re.compile(r"\b(idiot|moron|stupid|dumb)\b", re.IGNORECASE),
+    "hate_speech": re.compile(r"\b(nazi|white\s+supremac|racist|ethnic\s+cleans)\b", re.IGNORECASE),
+    "violent_threat": re.compile(r"\b(kill|murder|bomb|shoot|burn\s+down)\b", re.IGNORECASE),
+}
+
 
 def detect_pii(text: str) -> list[dict]:
     """Detect PII patterns in text. Returns list of {type, match, position}."""
@@ -43,6 +49,29 @@ def redact_pii(text: str) -> str:
     """Replace PII patterns with [REDACTED] placeholders."""
     for pii_type, pattern in PII_PATTERNS.items():
         text = pattern.sub(f"[REDACTED_{pii_type.upper()}]", text)
+    return text
+
+
+def detect_toxicity(text: str) -> list[dict]:
+    """Detect simple toxicity patterns in text for safety filtering."""
+    findings: list[dict] = []
+    for category, pattern in TOXIC_PATTERNS.items():
+        for match in pattern.finditer(text):
+            value = match.group().strip()
+            findings.append(
+                {
+                    "type": category,
+                    "match": value[:30] + ("..." if len(value) > 30 else ""),
+                    "position": match.start(),
+                }
+            )
+    return findings
+
+
+def redact_toxicity(text: str) -> str:
+    """Replace matched toxic fragments with category-aware placeholders."""
+    for category, pattern in TOXIC_PATTERNS.items():
+        text = pattern.sub(f"[REDACTED_{category.upper()}]", text)
     return text
 
 
@@ -304,6 +333,7 @@ async def clean_document(
     chunk_size: int = 1000,
     chunk_overlap: int = 100,
     redact: bool = True,
+    redact_toxic: bool = False,
 ) -> dict:
     """Run full cleaning pipeline on a document."""
     result = await db.execute(
@@ -332,10 +362,13 @@ async def clean_document(
 
     # Step 2: PII detection
     pii_findings = detect_pii(cleaned)
+    toxicity_findings = detect_toxicity(cleaned)
 
     # Step 3: Redact PII if requested
     if redact and pii_findings:
         cleaned = redact_pii(cleaned)
+    if redact_toxic and toxicity_findings:
+        cleaned = redact_toxicity(cleaned)
 
     # Step 4: Quality scoring
     quality = compute_quality_score(cleaned)
@@ -405,6 +438,8 @@ async def clean_document(
         "text_hash": text_hash,
         "pii_count": len(pii_findings),
         "pii_types": list(set(f["type"] for f in pii_findings)),
+        "toxicity_count": len(toxicity_findings),
+        "toxicity_types": list(set(f["type"] for f in toxicity_findings)),
         "original_chars": len(raw_text),
         "cleaned_chars": len(cleaned),
         "chunk_count": len(chunks),
@@ -416,6 +451,7 @@ async def clean_document(
         "document_id": doc.id,
         "quality_score": quality,
         "pii_findings": pii_findings,
+        "toxicity_findings": toxicity_findings,
         "chunk_count": len(chunks),
         "original_chars": len(raw_text),
         "cleaned_chars": len(cleaned),

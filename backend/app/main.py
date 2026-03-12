@@ -18,6 +18,7 @@ from app.api.projects import router as projects_router
 from app.api.pipeline import router as pipeline_router
 from app.api.ingestion import router as ingestion_router
 from app.api.cleaning import router as cleaning_router
+from app.api.hardware import router as hardware_router
 from app.api.dataset import router as dataset_router
 from app.api.gold import router as gold_router
 from app.api.synthetic import router as synthetic_router
@@ -74,28 +75,28 @@ app.add_middleware(
 API_DEPENDENCIES = [Depends(authorize_request)]
 
 # Mount API routers
-app.include_router(auth.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(audit.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(api_settings.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(projects.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(pipeline.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(ingestion.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(hardware.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(cleaning.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(dataset.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(gold.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(synthetic.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(tokenization.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(training.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(evaluation.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(compression.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(export.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(comparison.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(registry.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(secrets.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(domain_packs.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(domain_profiles.router, prefix="/api", dependencies=API_DEPENDENCIES)
-app.include_router(artifacts.router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(projects_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(pipeline_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(ingestion_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(hardware_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(cleaning_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(tokenization_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(training_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(evaluation_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(compression_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(export_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(comparison_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(registry_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(secrets_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(domain_packs_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(domain_profiles_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(artifacts_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

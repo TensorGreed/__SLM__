@@ -20,6 +20,7 @@ interface CleaningResult {
     document_id: number;
     quality_score: number;
     pii_findings?: unknown[];
+    toxicity_findings?: unknown[];
     chunk_count: number;
     original_chars: number;
     cleaned_chars: number;
@@ -64,6 +65,7 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
     const [documents, setDocuments] = useState<DocToClean[]>([]);
     const [chunkSize, setChunkSize] = useState(1000);
     const [redactPii, setRedactPii] = useState(true);
+    const [redactToxicity, setRedactToxicity] = useState(false);
     const [cleaningResults, setCleaningResults] = useState<CleaningResult[]>([]);
     const [cleaningErrors, setCleaningErrors] = useState<CleaningBatchError[]>([]);
     const [isCleaning, setIsCleaning] = useState(false);
@@ -96,6 +98,7 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                 document_ids: acceptedDocs.map((d) => d.id),
                 chunk_size: chunkSize,
                 redact_pii: redactPii,
+                redact_toxicity: redactToxicity,
             });
             const cleaned = res.data.cleaned || 0;
             const errors = res.data.errors || [];
@@ -134,6 +137,16 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                             {' '}Redact PII & Secrets
                         </label>
                     </div>
+                    <div className="form-group">
+                        <label className="form-label">
+                            <input
+                                type="checkbox"
+                                checked={redactToxicity}
+                                onChange={e => setRedactToxicity(e.target.checked)}
+                            />
+                            {' '}Mask Toxic Language
+                        </label>
+                    </div>
                 </div>
                 <button className="btn btn-primary" onClick={handleCleanAll} disabled={!documents.length}>
                     {isCleaning ? 'Cleaning...' : '🧹 Clean All Documents'}
@@ -158,6 +171,7 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                                 <div className="result-stats">
                                     <div><strong>{r.chunk_count}</strong> chunks</div>
                                     <div><strong>{r.pii_findings?.length || 0}</strong> PII found</div>
+                                    <div><strong>{r.toxicity_findings?.length || 0}</strong> toxicity spans</div>
                                     <div>{r.original_chars?.toLocaleString()} → {r.cleaned_chars?.toLocaleString()} chars</div>
                                 </div>
                             </div>

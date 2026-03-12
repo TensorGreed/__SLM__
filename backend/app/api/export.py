@@ -11,6 +11,7 @@ from app.services.deployment_target_service import (
     list_deployment_targets,
 )
 from app.services.export_service import (
+    build_export_deploy_plan,
     create_export,
     list_exports,
     run_export,
@@ -53,6 +54,13 @@ class ExportServePlanRequest(BaseModel):
 
 class ExportServeRunStartRequest(ExportServePlanRequest):
     template_id: str
+
+
+class ExportDeployPlanRequest(BaseModel):
+    target_id: str
+    endpoint_name: str | None = None
+    region: str | None = None
+    instance_type: str | None = None
 
 
 @router.post("/create", status_code=201)
@@ -148,6 +156,31 @@ async def validate_deployment(
         }
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/{export_id}/deploy-as-api")
+async def build_deploy_plan(
+    project_id: int,
+    export_id: int,
+    req: ExportDeployPlanRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Build managed API deploy plan or mobile SDK stub bundle from an export run."""
+    try:
+        return await build_export_deploy_plan(
+            db,
+            project_id=project_id,
+            export_id=export_id,
+            target_id=req.target_id,
+            endpoint_name=req.endpoint_name,
+            region=req.region,
+            instance_type=req.instance_type,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.get("/list")

@@ -48,6 +48,7 @@ from app.services.alignment_dataset_service import (
     summarize_preference_dataset,
 )
 from app.services.model_selection_service import recommend_training_base_models
+from app.services.model_benchmark_service import benchmark_model_sweep
 from app.services.training_telemetry_service import (
     build_model_acceptance_bias,
     list_observability_events,
@@ -66,6 +67,10 @@ from app.services.playground_log_service import (
     list_playground_feedback,
     record_playground_feedback,
     summarize_playground_feedback,
+)
+from app.services.rag_sandbox_service import (
+    build_rag_context_block,
+    retrieve_project_rag_snippets,
 )
 from app.services.playground_session_service import (
     delete_playground_session,
@@ -134,6 +139,15 @@ class ModelSelectionTelemetryRequest(BaseModel):
     selected_score: float | None = None
 
 
+class ModelBenchmarkSweepRequest(BaseModel):
+    target_device: str = Field(default="laptop", min_length=1, max_length=32)
+    primary_language: str = Field(default="english", min_length=1, max_length=32)
+    available_vram_gb: float | None = Field(default=None, ge=0)
+    task_profile: str | None = Field(default=None, max_length=64)
+    model_ids: list[str] = Field(default_factory=list)
+    max_models: int = Field(default=3, ge=1, le=5)
+
+
 class ObservabilityTelemetryRequest(BaseModel):
     experiment_id: int | None = Field(default=None, ge=1)
     step: int | None = Field(default=None, ge=1)
@@ -189,6 +203,18 @@ class PlaygroundFeedbackRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     notes: str | None = Field(default=None, max_length=4000)
     preferred_reply: str | None = Field(default=None, max_length=64000)
+
+
+class PlaygroundRagCompareRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=20000)
+    provider: str = Field(default="mock", min_length=1, max_length=64)
+    base_model_name: str | None = Field(default=None, max_length=255)
+    tuned_model_name: str | None = Field(default=None, max_length=255)
+    api_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, max_length=8192)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, ge=16, le=4096)
+    top_k: int = Field(default=4, ge=1, le=10)
 
 
 class AlignmentRecipeResolveRequest(BaseModel):
@@ -461,6 +487,27 @@ async def recommend_training_models(
             "boosted_model_count": len(dict(adaptive_bias.get("bias_by_model") or {})),
         },
     }
+
+
+@router.post("/model-selection/benchmark-sweep")
+async def model_selection_benchmark_sweep(
+    project_id: int,
+    req: ModelBenchmarkSweepRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a fast benchmark matrix simulation across top base-model candidates."""
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return benchmark_model_sweep(
+        project_id=project_id,
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+        task_profile=req.task_profile,
+        model_ids=list(req.model_ids or []),
+        max_models=req.max_models,
+    )
 
 
 @router.post("/model-selection/telemetry")
@@ -830,6 +877,86 @@ async def playground_feedback_list(
     return {
         **logs,
         "summary": summarize_playground_feedback(project_id),
+    }
+
+
+@router.post("/playground/rag-compare")
+async def playground_rag_compare(
+    project_id: int,
+    req: PlaygroundRagCompareRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run side-by-side RAG answers for base model vs tuned model."""
+    project = await _get_project_or_404(db, project_id)
+
+    snippets = await retrieve_project_rag_snippets(
+        db,
+        project_id=project_id,
+        query=req.query,
+        top_k=req.top_k,
+    )
+    if not snippets:
+        raise HTTPException(
+            400,
+            "No retrieval snippets found. Upload and ingest project documents before using RAG compare.",
+        )
+
+    context_block = build_rag_context_block(snippets)
+    user_prompt = (
+        "Use only the provided snippets. Cite snippet IDs like [s1]. "
+        "If the answer is not present in snippets, say you do not have enough context.\n\n"
+        f"SNIPPETS:\n{context_block}\n\n"
+        f"QUESTION:\n{req.query}"
+    )
+    messages = [{"role": "user", "content": user_prompt}]
+
+    provider = str(req.provider or "mock").strip() or "mock"
+    base_model_name = str(req.base_model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    tuned_model_name = str(req.tuned_model_name or base_model_name).strip() or base_model_name
+
+    try:
+        base_response = await run_playground_chat(
+            provider=provider,
+            model_name=base_model_name,
+            messages=messages,
+            api_url=req.api_url,
+            api_key=req.api_key,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            system_prompt=(
+                "You are the base model baseline. Answer with concise factual style and cite snippet IDs."
+            ),
+        )
+        tuned_response = await run_playground_chat(
+            provider=provider,
+            model_name=tuned_model_name,
+            messages=messages,
+            api_url=req.api_url,
+            api_key=req.api_key,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            system_prompt=(
+                "You are the fine-tuned model candidate. Answer with domain-aware detail and cite snippet IDs."
+            ),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return {
+        "project_id": project_id,
+        "query": req.query,
+        "provider": provider,
+        "retrieved_snippets": snippets,
+        "base": {
+            "model_name": base_model_name,
+            "reply": str(base_response.get("reply") or "").strip(),
+            "latency_ms": base_response.get("latency_ms"),
+        },
+        "tuned": {
+            "model_name": tuned_model_name,
+            "reply": str(tuned_response.get("reply") or "").strip(),
+            "latency_ms": tuned_response.get("latency_ms"),
+        },
     }
 
 

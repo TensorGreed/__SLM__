@@ -108,6 +108,27 @@ interface PlaygroundLogListResponse {
   events?: PlaygroundLogEvent[];
 }
 
+interface RagSnippet {
+  snippet_id: string;
+  source_doc: string;
+  score: number;
+  text: string;
+}
+
+interface RagCompareResponse {
+  retrieved_snippets?: RagSnippet[];
+  base?: {
+    model_name?: string;
+    reply?: string;
+    latency_ms?: number;
+  };
+  tuned?: {
+    model_name?: string;
+    reply?: string;
+    latency_ms?: number;
+  };
+}
+
 interface PromptPreset {
   id: string;
   label: string;
@@ -201,6 +222,10 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [feedbackSummary, setFeedbackSummary] = useState<PlaygroundLogSummary | null>(null);
   const [feedbackEvents, setFeedbackEvents] = useState<PlaygroundLogEvent[]>([]);
+  const [ragQuery, setRagQuery] = useState('');
+  const [ragLoading, setRagLoading] = useState(false);
+  const [ragError, setRagError] = useState('');
+  const [ragResult, setRagResult] = useState<RagCompareResponse | null>(null);
 
   const loadSessions = async () => {
     setSessionsLoading(true);
@@ -270,6 +295,9 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     setFeedbackRating(null);
     setFeedbackTagsText('');
     setFeedbackNotes('');
+    setRagQuery('');
+    setRagError('');
+    setRagResult(null);
     void loadSessions();
     void loadModelOptions();
     void loadProviderCatalog();
@@ -398,7 +426,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
-  const saveFeedback = async () => {
+  const saveFeedback = async (forcedRating?: number | null) => {
     const assistantMessages = messages
       .map((item, idx) => ({ ...item, idx }))
       .filter((item) => item.role === 'assistant');
@@ -425,7 +453,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         preset_id: selectedPreset?.id || undefined,
         prompt: promptText || '(no user prompt found)',
         reply: lastAssistant.content,
-        rating: feedbackRating,
+        rating: forcedRating ?? feedbackRating,
         tags,
         notes: feedbackNotes.trim() || undefined,
       });
@@ -445,6 +473,12 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     } finally {
       setFeedbackSaving(false);
     }
+  };
+
+  const swipeFeedback = async (direction: 'left' | 'right') => {
+    const rating = direction === 'right' ? 1 : -1;
+    setFeedbackRating(rating);
+    await saveFeedback(rating);
   };
 
   const sendMessageNonStreaming = async (
@@ -616,6 +650,40 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
     }
   };
 
+  const runRagCompare = async () => {
+    const query = ragQuery.trim();
+    if (!query || ragLoading) {
+      return;
+    }
+    setRagLoading(true);
+    setRagError('');
+    try {
+      const res = await api.post<RagCompareResponse>(`/projects/${projectId}/training/playground/rag-compare`, {
+        query,
+        provider,
+        tuned_model_name: modelName || undefined,
+        api_url: provider === 'mock' ? undefined : apiUrl,
+        api_key: provider !== 'mock' && apiKey.trim() ? apiKey.trim() : undefined,
+        temperature: Number.isFinite(Number.parseFloat(temperature)) ? Number.parseFloat(temperature) : 0.2,
+        max_tokens: maxTokens,
+        top_k: 4,
+      });
+      setRagResult(res.data || null);
+    } catch (err: unknown) {
+      const message =
+        typeof err === 'object' &&
+        err !== null &&
+        'response' in err &&
+        typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail || ''
+          : '';
+      setRagResult(null);
+      setRagError(message || 'Failed to run RAG compare.');
+    } finally {
+      setRagLoading(false);
+    }
+  };
+
   return (
     <div className="card playground-panel">
       <div className="playground-panel__head">
@@ -778,6 +846,47 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
         />
       </div>
 
+      <div className="playground-settings">
+        <div className="form-group" style={{ flex: 1 }}>
+          <label className="form-label">RAG Compare Query</label>
+          <input
+            className="input"
+            value={ragQuery}
+            onChange={(e) => setRagQuery(e.target.value)}
+            placeholder="Ask a question to compare base vs fine-tuned with retrieved snippets"
+          />
+        </div>
+        <div className="form-group" style={{ alignSelf: 'end' }}>
+          <button className="btn btn-secondary" type="button" onClick={() => void runRagCompare()} disabled={ragLoading || !ragQuery.trim()}>
+            {ragLoading ? 'Comparing...' : 'Run RAG Compare'}
+          </button>
+        </div>
+      </div>
+      {ragError && <div className="playground-error">{ragError}</div>}
+      {ragResult && (
+        <div className="playground-settings" style={{ alignItems: 'stretch' }}>
+          <div className="form-group" style={{ flex: 1 }}>
+            <label className="form-label">
+              Base Model
+              {ragResult.base?.model_name ? ` (${ragResult.base.model_name})` : ''}
+            </label>
+            <textarea className="input playground-system" value={String(ragResult.base?.reply || '')} readOnly />
+          </div>
+          <div className="form-group" style={{ flex: 1 }}>
+            <label className="form-label">
+              Fine-Tuned Model
+              {ragResult.tuned?.model_name ? ` (${ragResult.tuned.model_name})` : ''}
+            </label>
+            <textarea className="input playground-system" value={String(ragResult.tuned?.reply || '')} readOnly />
+          </div>
+        </div>
+      )}
+      {ragResult && Array.isArray(ragResult.retrieved_snippets) && ragResult.retrieved_snippets.length > 0 && (
+        <div className="playground-meta">
+          Context snippets: {ragResult.retrieved_snippets.map((item) => item.snippet_id).join(', ')}
+        </div>
+      )}
+
       {error && <div className="playground-error">{error}</div>}
       {lastMeta && (
         <div className="playground-meta">
@@ -829,6 +938,12 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
               disabled={feedbackSaving}
             >
               Mark Bad
+            </button>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={() => void swipeFeedback('left')} disabled={feedbackSaving}>
+              Swipe Left (Reject)
+            </button>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={() => void swipeFeedback('right')} disabled={feedbackSaving}>
+              Swipe Right (Accept)
             </button>
           </div>
         </div>

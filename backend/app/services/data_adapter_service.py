@@ -1063,6 +1063,112 @@ def _validate_structured_extraction(mapped_records: list[dict[str, Any]], _confi
     }
 
 
+def _schema_vision_language_pair() -> dict[str, Any]:
+    return {
+        "input_candidates": {
+            "image_path": ["image_path", "image", "image_url", "image_file", "path"],
+            "caption": ["caption", "text", "description", "answer", "target_text"],
+        },
+        "output_shape": {
+            "text": "required",
+            "source_text": "required",
+            "target_text": "required",
+            "image_path": "required",
+            "answer": "optional",
+        },
+        "modality": "vision_language",
+    }
+
+
+def _detect_vision_language_pair(record: dict[str, Any], config: dict[str, Any]) -> bool | float:
+    return 1.0 if _map_vision_language_pair(record, config) else 0.0
+
+
+def _map_vision_language_pair(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    image_aliases = list(config.get("image_fields") or []) or ["image_path", "image", "image_url", "image_file", "path"]
+    caption_aliases = list(config.get("caption_fields") or []) or ["caption", "text", "description", "answer", "target_text"]
+    image_path = _pick_text(record, image_aliases)
+    caption = _pick_text(record, caption_aliases)
+    if not image_path or not caption:
+        return None
+    return {
+        "text": f"<image:{image_path}> {caption}",
+        "source_text": f"image:{image_path}",
+        "target_text": caption,
+        "image_path": image_path,
+        "answer": caption,
+    }
+
+
+def _validate_vision_language_pair(mapped_records: list[dict[str, Any]], _config: dict[str, Any]) -> dict[str, Any]:
+    total = len(mapped_records)
+    if total == 0:
+        return {"status": "warning", "mapped_records": 0, "coverage_ratio": 0.0}
+    complete = 0
+    for row in mapped_records:
+        if _coerce_text(row.get("image_path")) and _coerce_text(row.get("target_text")):
+            complete += 1
+    ratio = complete / total
+    return {
+        "status": "ok" if ratio >= 0.9 else "warning",
+        "mapped_records": total,
+        "coverage_ratio": round(ratio, 6),
+    }
+
+
+def _schema_audio_transcript() -> dict[str, Any]:
+    return {
+        "input_candidates": {
+            "audio_path": ["audio_path", "audio", "audio_url", "audio_file", "path"],
+            "transcript": ["transcript", "text", "caption", "target_text", "answer"],
+        },
+        "output_shape": {
+            "text": "required",
+            "source_text": "required",
+            "target_text": "required",
+            "audio_path": "required",
+            "answer": "optional",
+        },
+        "modality": "audio_text",
+    }
+
+
+def _detect_audio_transcript(record: dict[str, Any], config: dict[str, Any]) -> bool | float:
+    return 1.0 if _map_audio_transcript(record, config) else 0.0
+
+
+def _map_audio_transcript(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
+    audio_aliases = list(config.get("audio_fields") or []) or ["audio_path", "audio", "audio_url", "audio_file", "path"]
+    transcript_aliases = list(config.get("transcript_fields") or []) or ["transcript", "text", "caption", "target_text", "answer"]
+    audio_path = _pick_text(record, audio_aliases)
+    transcript = _pick_text(record, transcript_aliases)
+    if not audio_path or not transcript:
+        return None
+    return {
+        "text": f"<audio:{audio_path}> {transcript}",
+        "source_text": f"audio:{audio_path}",
+        "target_text": transcript,
+        "audio_path": audio_path,
+        "answer": transcript,
+    }
+
+
+def _validate_audio_transcript(mapped_records: list[dict[str, Any]], _config: dict[str, Any]) -> dict[str, Any]:
+    total = len(mapped_records)
+    if total == 0:
+        return {"status": "warning", "mapped_records": 0, "coverage_ratio": 0.0}
+    complete = 0
+    for row in mapped_records:
+        if _coerce_text(row.get("audio_path")) and _coerce_text(row.get("target_text")):
+            complete += 1
+    ratio = complete / total
+    return {
+        "status": "ok" if ratio >= 0.9 else "warning",
+        "mapped_records": total,
+        "coverage_ratio": round(ratio, 6),
+    }
+
+
 BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
     DEFAULT_ADAPTER_ID: {
         "description": "General canonical adapter (text/question/answer inference with best-effort fallback).",
@@ -1132,6 +1238,34 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
             "required_fields": ["text", "source_text", "target_text"],
             "optional_fields": ["answer", "structured_output"],
             "notes": ["normalizes rich labels into stable target_text"],
+        },
+    },
+    "vision-language-pair": {
+        "description": "Vision-language adapter for image-path + caption/instruction rows.",
+        "detect": _detect_vision_language_pair,
+        "map_row": _map_vision_language_pair,
+        "validate": _validate_vision_language_pair,
+        "schema_hint": _schema_vision_language_pair,
+        "task_profiles": ["instruction_sft", "seq2seq"],
+        "preferred_training_tasks": ["seq2seq", "causal_lm"],
+        "output_contract": {
+            "required_fields": ["text", "source_text", "target_text", "image_path"],
+            "optional_fields": ["answer"],
+            "notes": ["requires multimodal runtime (e.g., Vision2Seq) during training/inference"],
+        },
+    },
+    "audio-transcript": {
+        "description": "Audio-text adapter for audio-path + transcript supervision rows.",
+        "detect": _detect_audio_transcript,
+        "map_row": _map_audio_transcript,
+        "validate": _validate_audio_transcript,
+        "schema_hint": _schema_audio_transcript,
+        "task_profiles": ["instruction_sft", "seq2seq"],
+        "preferred_training_tasks": ["seq2seq", "causal_lm"],
+        "output_contract": {
+            "required_fields": ["text", "source_text", "target_text", "audio_path"],
+            "optional_fields": ["answer"],
+            "notes": ["requires multimodal runtime for raw waveform/audio feature ingestion"],
         },
     },
     "classification-label": {

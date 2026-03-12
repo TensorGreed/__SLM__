@@ -27,7 +27,8 @@ from app.services.domain_pack_service import assign_project_domain_pack, get_dom
 from app.services.domain_profile_service import assign_project_domain_profile, get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.nl2pipeline_service import magic_create_pipeline_recipe
-from app.services.pipeline_recipe_service import resolve_pipeline_recipe, apply_pipeline_recipe
+from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
+from app.services.dataset_service import save_project_dataset_adapter_preference
 
 class MagicCreateRequest(BaseModel):
     prompt: str
@@ -147,22 +148,35 @@ async def magic_create_project(
 ):
     """Create a project and apply a recommended pipeline recipe based on a natural language prompt."""
     try:
-        recommendation = await magic_create_pipeline_recipe(data.prompt)
+        recommendation = await magic_create_pipeline_recipe(data.prompt, allow_fallback=True)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    project_name = recommendation.get("project_name", "Magic Project")
+    project_name = str(recommendation.get("project_name") or "Magic Project").strip() or "Magic Project"
     
     # Ensure name uniqueness
     existing = await db.execute(select(Project).where(Project.name.like(f"{project_name}%")))
     if existing.scalars().all():
         project_name = f"{project_name} - {data.prompt[:10]}"
 
+    recommended_pack_db_id: int | None = None
+    recommended_pack = recommendation.get("domain_pack_id")
+    if isinstance(recommended_pack, int):
+        recommended_pack_db_id = recommended_pack
+    else:
+        recommended_pack_id = str(recommended_pack or "").strip().lower()
+        if recommended_pack_id:
+            pack = await get_domain_pack(db, recommended_pack_id)
+            if pack is not None:
+                recommended_pack_db_id = int(pack.id)
+
     project_data = ProjectCreate(
         name=project_name,
-        description=recommendation.get("project_description", f"Generated from prompt: {data.prompt}"),
-        base_model_name=recommendation.get("base_model_name", "meta-llama/Meta-Llama-3-8B-Instruct"),
-        domain_pack_id=recommendation.get("domain_pack_id", "general-pack-v1"),
+        description=str(recommendation.get("project_description") or f"Generated from prompt: {data.prompt}"),
+        base_model_name=str(
+            recommendation.get("base_model_name") or "meta-llama/Meta-Llama-3-8B-Instruct"
+        ),
+        domain_pack_id=recommended_pack_db_id,
     )
     
     # Use existing create_project logic
@@ -172,30 +186,42 @@ async def magic_create_project(
     # Apply the recommended recipe
     recipe_id = recommendation.get("pipeline_recipe_id", "recipe.pipeline.sft_default")
     
-    # Apply pipeline recipe overrides
-    recipe_request = {
-        "recipe_id": recipe_id,
-        "dataset_adapter": {
-            "adapter_id": recommendation.get("adapter_id", "default-canonical"),
-            "task_profile": recommendation.get("task_profile", "instruction_sft")
-        }
-    }
-    
-    # Need to save the adapter preference specifically, as apply_recipe handles that if provided in the recipe patch
-    # Actually wait, apply_pipeline_recipe expects a resolve output or we can set adapter via preferences.
-    # The simplest is to just set adapter preferences natively.
-    from app.services.data_adapter_service import save_adapter_preference
-    from app.schemas.dataset import AdapterPreferenceRequest
-    
-    await save_adapter_preference(
-        db, 
-        project_id, 
-        AdapterPreferenceRequest(
-            adapter_id=recommendation.get("adapter_id", "default-canonical"), 
-            task_profile=recommendation.get("task_profile", "instruction_sft"),
-            adapter_config={}
+    adapter_id = str(recommendation.get("adapter_id") or "default-canonical").strip() or "default-canonical"
+    task_profile = str(recommendation.get("task_profile") or "instruction_sft").strip() or "instruction_sft"
+    base_model_name = str(
+        recommendation.get("base_model_name") or "meta-llama/Meta-Llama-3-8B-Instruct"
+    ).strip() or "meta-llama/Meta-Llama-3-8B-Instruct"
+
+    try:
+        await apply_pipeline_recipe_blueprint(
+            db,
+            project_id=project_id,
+            recipe_id=recipe_id,
+            overrides={
+                "dataset_adapter": {
+                    "adapter_id": adapter_id,
+                    "task_profile": task_profile,
+                    "adapter_config": {},
+                },
+                "training": {
+                    "base_config": {
+                        "base_model": base_model_name,
+                    }
+                },
+            },
+            include_preflight=False,
+            mark_active=True,
         )
-    )
+    except ValueError:
+        # Graceful fallback: still persist adapter preference even when recipe resolution fails.
+        await save_project_dataset_adapter_preference(
+            db,
+            project_id,
+            adapter_id=adapter_id,
+            task_profile=task_profile,
+            adapter_config={},
+            field_mapping={},
+        )
 
     return project_response
 

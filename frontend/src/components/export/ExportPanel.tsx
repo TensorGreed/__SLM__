@@ -144,6 +144,21 @@ interface ServeRunStatusResponse {
     };
 }
 
+interface DeployPlanResponse {
+    target_id: string;
+    target_kind: string;
+    display_name?: string;
+    summary?: string;
+    endpoint_name?: string;
+    curl_example?: string;
+    steps?: string[];
+    sdk_artifact?: {
+        zip_path?: string;
+        readme_path?: string;
+        entrypoint_path?: string;
+    };
+}
+
 function toErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -185,6 +200,9 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [activeServeRun, setActiveServeRun] = useState<ServeRunStatusResponse | null>(null);
     const [isStartingServeRun, setIsStartingServeRun] = useState(false);
     const [isStoppingServeRun, setIsStoppingServeRun] = useState(false);
+    const [deployTargetId, setDeployTargetId] = useState('deployment.hf_inference_endpoint');
+    const [deployPlan, setDeployPlan] = useState<DeployPlanResponse | null>(null);
+    const [isLoadingDeployPlan, setIsLoadingDeployPlan] = useState(false);
 
     const refreshAll = async () => {
         setIsLoading(true);
@@ -212,6 +230,7 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setTargetLoadError('');
         setServePlan(null);
         setActiveServeRun(null);
+        setDeployPlan(null);
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -389,6 +408,27 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
             setStatusMessage('');
         } finally {
             setIsLoadingServePlan(false);
+        }
+    };
+
+    const handleBuildDeployPlan = async (exportId: number) => {
+        setIsLoadingDeployPlan(true);
+        setErrorMessage('');
+        setStatusMessage(`Building deploy plan (${deployTargetId})...`);
+        try {
+            const res = await api.post<DeployPlanResponse>(
+                `/projects/${projectId}/export/${exportId}/deploy-as-api`,
+                {
+                    target_id: deployTargetId,
+                },
+            );
+            setDeployPlan(res.data || null);
+            setStatusMessage(`Deploy plan generated for export ${exportId}.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+            setStatusMessage('');
+        } finally {
+            setIsLoadingDeployPlan(false);
         }
     };
 
@@ -627,6 +667,16 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                         <span>Run local smoke tests for selected runner targets</span>
                     </label>
                 </div>
+                <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
+                    <label className="form-label">Deploy / SDK Plan Target</label>
+                    <select className="input" value={deployTargetId} onChange={(e) => setDeployTargetId(e.target.value)}>
+                        <option value="deployment.hf_inference_endpoint">HuggingFace Inference Endpoint</option>
+                        <option value="deployment.aws_sagemaker">AWS SageMaker Endpoint</option>
+                        <option value="deployment.vllm_managed">Managed vLLM API</option>
+                        <option value="sdk.apple_coreml_stub">Apple CoreML Stub App</option>
+                        <option value="sdk.android_executorch_stub">Android ExecuTorch Stub App</option>
+                    </select>
+                </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button
                         className="btn btn-primary"
@@ -766,6 +816,16 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                                                     disabled={isLoadingServePlan}
                                                                 >
                                                                     {isLoadingServePlan ? 'Loading...' : 'Serve Plan'}
+                                                                </button>
+                                                                <button
+                                                                    className="btn btn-secondary btn-sm"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        void handleBuildDeployPlan(exp.id);
+                                                                    }}
+                                                                    disabled={isLoadingDeployPlan}
+                                                                >
+                                                                    {isLoadingDeployPlan ? 'Planning...' : 'Deploy / SDK Plan'}
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -1024,6 +1084,64 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                         {copyState[`run-first-token-${activeServeRun.run_id}`] ? 'Copied!' : 'Copy First-Token Curl'}
                                     </button>
                                 )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {deployPlan && (
+                <div className="card">
+                    <div className="serve-plan-header">
+                        <div>
+                            <h3 style={{ margin: 0, fontSize: 'var(--font-size-md)' }}>Deploy / SDK Plan</h3>
+                            <p style={{ margin: '6px 0 0', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>
+                                {deployPlan.display_name || deployPlan.target_id}
+                            </p>
+                        </div>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setDeployPlan(null)}>
+                            Close
+                        </button>
+                    </div>
+                    {deployPlan.summary && (
+                        <div className="serve-template-block">
+                            <div className="serve-template-block__label">Summary</div>
+                            <div>{deployPlan.summary}</div>
+                        </div>
+                    )}
+                    {Array.isArray(deployPlan.steps) && deployPlan.steps.length > 0 && (
+                        <div className="serve-template-block">
+                            <div className="serve-template-block__label">Steps</div>
+                            <ol style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                                {deployPlan.steps.map((step, idx) => (
+                                    <li key={`deploy-step-${idx}`}>{step}</li>
+                                ))}
+                            </ol>
+                        </div>
+                    )}
+                    {deployPlan.curl_example && (
+                        <div className="serve-template-block">
+                            <div className="serve-template-block__label">Command Template</div>
+                            <pre className="serve-template-code">{deployPlan.curl_example}</pre>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleCopy(`deploy-curl-${deployPlan.target_id}`, deployPlan.curl_example || '')}
+                            >
+                                {copyState[`deploy-curl-${deployPlan.target_id}`] ? 'Copied!' : 'Copy Command'}
+                            </button>
+                        </div>
+                    )}
+                    {deployPlan.sdk_artifact?.zip_path && (
+                        <div className="serve-template-block">
+                            <div className="serve-template-block__label">SDK Artifact Zip</div>
+                            <code>{deployPlan.sdk_artifact.zip_path}</code>
+                            <div style={{ marginTop: 8 }}>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => handleCopy(`deploy-sdk-${deployPlan.target_id}`, deployPlan.sdk_artifact?.zip_path || '')}
+                                >
+                                    {copyState[`deploy-sdk-${deployPlan.target_id}`] ? 'Copied!' : 'Copy Zip Path'}
+                                </button>
                             </div>
                         </div>
                     )}

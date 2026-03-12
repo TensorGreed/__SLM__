@@ -21,6 +21,7 @@ from app.services.ingestion_service import (
     queue_remote_import,
 )
 from app.services.dataset_intelligence_service import get_project_eda_stats
+from app.services.dataset_intelligence_service import remove_project_outliers
 
 router = APIRouter(prefix="/projects/{project_id}/ingestion", tags=["Ingestion"])
 
@@ -108,6 +109,13 @@ class RemoteImportRequest(BaseModel):
             return None
         token = str(value).strip()
         return token or None
+
+
+class EDAOutlierRemovalRequest(BaseModel):
+    min_tokens: int = Field(default=5, ge=1, le=4096)
+    max_tokens: int = Field(default=4096, ge=1, le=200000)
+    toxicity_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
+    max_rows: int = Field(default=100000, ge=1, le=2000000)
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
@@ -292,6 +300,27 @@ async def get_project_eda(
         return await get_project_eda_stats(db, project_id)
     except Exception as e:
         raise HTTPException(500, f"Error calculating EDA: {e}")
+
+
+@router.post("/eda/remove-outliers")
+async def remove_eda_outliers(
+    project_id: int,
+    req: EDAOutlierRemovalRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Filter out obvious short/long/toxic rows from prepared train split."""
+    payload = req or EDAOutlierRemovalRequest()
+    try:
+        return await remove_project_outliers(
+            db,
+            project_id=project_id,
+            min_tokens=payload.min_tokens,
+            max_tokens=payload.max_tokens,
+            toxicity_threshold=payload.toxicity_threshold,
+            max_rows=payload.max_rows,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/documents/{document_id}/process", response_model=DocumentResponse)

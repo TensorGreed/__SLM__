@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { useProjectStore } from '../stores/projectStore';
 import api from '../api/client';
 import EDADashboard from '../components/data/EDADashboard';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectWizardPage.css';
 
+interface BenchmarkRow {
+    rank: number;
+    model_id: string;
+    estimated_accuracy_percent: number;
+    estimated_latency_ms: number;
+}
+
 export default function ProjectWizardPage() {
-    const { projectId, pipelineStatus, refreshPipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
+    const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
     const navigate = useNavigate();
 
     const [currentStep, setCurrentStep] = useState(1);
@@ -18,9 +24,11 @@ export default function ProjectWizardPage() {
 
     // Step 3: Hardware
     const [hardware, setHardware] = useState('rtx-3090');
+    const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+    const [benchmarkRows, setBenchmarkRows] = useState<BenchmarkRow[]>([]);
+    const [benchmarkError, setBenchmarkError] = useState('');
 
     // Step 4: Training
-    const [training, setTraining] = useState(false);
     const [trainingProgress, setTrainingProgress] = useState(0);
 
     useEffect(() => {
@@ -53,7 +61,6 @@ export default function ProjectWizardPage() {
     };
 
     const handleStartTraining = async () => {
-        setTraining(true);
         setCurrentStep(4);
 
         try {
@@ -72,8 +79,37 @@ export default function ProjectWizardPage() {
             setCurrentStep(5);
         } catch (e) {
             alert('Training failed to start');
+        }
+    };
+
+    const hardwareToTargetDevice = (value: string): 'mobile' | 'laptop' | 'server' => {
+        if (value === 'server') return 'server';
+        if (value === 'macbook') return 'mobile';
+        return 'laptop';
+    };
+
+    const hardwareToVram = (value: string): number => {
+        if (value === 'server') return 80;
+        if (value === 'rtx-3090') return 24;
+        return 8;
+    };
+
+    const runQuickBenchmark = async () => {
+        setBenchmarkLoading(true);
+        setBenchmarkError('');
+        try {
+            const res = await api.post(`/projects/${projectId}/training/model-selection/benchmark-sweep`, {
+                target_device: hardwareToTargetDevice(hardware),
+                primary_language: 'english',
+                available_vram_gb: hardwareToVram(hardware),
+                max_models: 3,
+            });
+            setBenchmarkRows(Array.isArray(res.data?.matrix) ? res.data.matrix : []);
+        } catch (err: any) {
+            setBenchmarkRows([]);
+            setBenchmarkError(err.response?.data?.detail || err.message || 'Benchmark failed');
         } finally {
-            setTraining(false);
+            setBenchmarkLoading(false);
         }
     };
 
@@ -157,6 +193,35 @@ export default function ProjectWizardPage() {
                                 </div>
                             ))}
                         </div>
+
+                        <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            <button className="btn btn-secondary btn-sm" onClick={() => void runQuickBenchmark()} disabled={benchmarkLoading}>
+                                {benchmarkLoading ? 'Benchmarking...' : 'Run 5-Minute Model Benchmark'}
+                            </button>
+                            {benchmarkError && <span style={{ color: 'var(--danger)' }}>{benchmarkError}</span>}
+                        </div>
+                        {benchmarkRows.length > 0 && (
+                            <div style={{ marginTop: '0.75rem', overflowX: 'auto' }}>
+                                <table style={{ width: '100%', fontSize: '0.9rem' }}>
+                                    <thead>
+                                        <tr>
+                                            <th style={{ textAlign: 'left' }}>Model</th>
+                                            <th style={{ textAlign: 'left' }}>Accuracy</th>
+                                            <th style={{ textAlign: 'left' }}>Latency</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {benchmarkRows.map((item) => (
+                                            <tr key={item.model_id}>
+                                                <td>{item.model_id}</td>
+                                                <td>{Number(item.estimated_accuracy_percent || 0).toFixed(1)}%</td>
+                                                <td>{Number(item.estimated_latency_ms || 0).toFixed(1)} ms</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
 
                         <div className="wizard-actions">
                             <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>← Back</button>

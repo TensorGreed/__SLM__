@@ -65,6 +65,13 @@
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.eda-outlier-row {
+    margin-top: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
 .eda-keys {
     display: flex;
     flex-wrap: wrap;

@@ -11,6 +11,7 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,56 @@ _TARGET_CATALOG: list[dict[str, Any]] = [
         "supported_export_formats": ["gguf"],
         "smoke_supported": True,
         "launch_example": "ollama create my-model -f Modelfile && ollama run my-model",
+    },
+    {
+        "target_id": "deployment.hf_inference_endpoint",
+        "kind": "deployment",
+        "display_name": "HuggingFace Inference Endpoint",
+        "description": "Managed HTTPS endpoint deployment on Hugging Face.",
+        "artifact_profiles": ["huggingface"],
+        "supported_export_formats": ["huggingface", "docker"],
+        "smoke_supported": False,
+        "launch_example": "curl -X POST https://api.endpoints.huggingface.cloud/v2/endpoint/.../resume",
+    },
+    {
+        "target_id": "deployment.aws_sagemaker",
+        "kind": "deployment",
+        "display_name": "AWS SageMaker Endpoint",
+        "description": "Managed real-time inference endpoint on SageMaker.",
+        "artifact_profiles": ["huggingface", "onnx", "tensorrt"],
+        "supported_export_formats": ["huggingface", "onnx", "tensorrt", "docker"],
+        "smoke_supported": False,
+        "launch_example": "aws sagemaker create-endpoint --endpoint-name my-slm-endpoint ...",
+    },
+    {
+        "target_id": "deployment.vllm_managed",
+        "kind": "deployment",
+        "display_name": "Managed vLLM API",
+        "description": "Provision a managed vLLM instance and expose OpenAI-compatible API.",
+        "artifact_profiles": ["huggingface", "gguf"],
+        "supported_export_formats": ["huggingface", "gguf", "docker"],
+        "smoke_supported": False,
+        "launch_example": "curl -X POST https://managed-vllm.example.com/provision ...",
+    },
+    {
+        "target_id": "sdk.apple_coreml_stub",
+        "kind": "sdk",
+        "display_name": "Apple CoreML Stub App",
+        "description": "Generate iOS starter app scaffold to load exported model.",
+        "artifact_profiles": ["huggingface", "onnx", "gguf"],
+        "supported_export_formats": ["huggingface", "onnx", "gguf", "docker"],
+        "smoke_supported": False,
+        "launch_example": "Open iOS stub project in Xcode and run on device.",
+    },
+    {
+        "target_id": "sdk.android_executorch_stub",
+        "kind": "sdk",
+        "display_name": "Android ExecuTorch Stub App",
+        "description": "Generate Android starter app scaffold for edge runtime integration.",
+        "artifact_profiles": ["huggingface", "onnx", "gguf"],
+        "supported_export_formats": ["huggingface", "onnx", "gguf", "docker"],
+        "smoke_supported": False,
+        "launch_example": "Open Android stub project in Android Studio and run on device.",
     },
 ]
 
@@ -646,4 +697,184 @@ def run_deployment_target_suite(
             "runner_smoke_success_count": len(runner_smoke_success),
             "local_smoke_passed": (len(runner_smoke_success) > 0) if run_smoke_tests and compatible_runners else None,
         },
+    }
+
+
+def _safe_slug(value: str, *, fallback: str = "slm-endpoint") -> str:
+    token = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(value or "").strip().lower())
+    token = "-".join(part for part in token.split("-") if part)
+    return token[:96] or fallback
+
+
+def _write_mobile_stub_bundle(
+    *,
+    run_dir: Path,
+    target_id: str,
+    model_name: str,
+) -> dict[str, Any]:
+    base_dir = run_dir / "mobile_sdk" / _safe_slug(target_id, fallback="mobile-sdk")
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    if target_id == "sdk.apple_coreml_stub":
+        readme = base_dir / "README.md"
+        app_file = base_dir / "SLMStubApp.swift"
+        readme.write_text(
+            (
+                "# iOS CoreML Stub App\n\n"
+                f"Model: `{model_name}`\n\n"
+                "1. Drag your exported model artifact into this Xcode project.\n"
+                "2. Replace `ModelLoader.load()` with your CoreML model class.\n"
+                "3. Run on iPhone/iPad and call `generate(prompt:)`.\n"
+            ),
+            encoding="utf-8",
+        )
+        app_file.write_text(
+            (
+                "import Foundation\n"
+                "import CoreML\n\n"
+                "final class ModelLoader {\n"
+                "    func generate(prompt: String) -> String {\n"
+                "        // TODO: wire CoreML model inference here.\n"
+                "        return \"Stub response for: \\(prompt)\"\n"
+                "    }\n"
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+    else:
+        readme = base_dir / "README.md"
+        app_file = base_dir / "SLMStubApp.kt"
+        readme.write_text(
+            (
+                "# Android ExecuTorch Stub App\n\n"
+                f"Model: `{model_name}`\n\n"
+                "1. Copy exported model artifact into `app/src/main/assets/`.\n"
+                "2. Replace stub inference bridge with ExecuTorch runtime calls.\n"
+                "3. Run on Android device and call `generate(prompt)`.\n"
+            ),
+            encoding="utf-8",
+        )
+        app_file.write_text(
+            (
+                "package com.example.slmstub\n\n"
+                "class ModelLoader {\n"
+                "    fun generate(prompt: String): String {\n"
+                "        // TODO: wire ExecuTorch inference here.\n"
+                "        return \"Stub response for: $prompt\"\n"
+                "    }\n"
+                "}\n"
+            ),
+            encoding="utf-8",
+        )
+
+    zip_path = base_dir / "stub_app.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file_path in [readme, app_file]:
+            archive.write(file_path, arcname=file_path.name)
+
+    return {
+        "bundle_dir": str(base_dir),
+        "readme_path": str(readme),
+        "entrypoint_path": str(app_file),
+        "zip_path": str(zip_path),
+    }
+
+
+def build_deploy_target_plan(
+    *,
+    run_dir: Path,
+    export_format: ExportFormat | str,
+    target_id: str,
+    model_name: str = "",
+    endpoint_name: str | None = None,
+    region: str | None = None,
+    instance_type: str | None = None,
+) -> dict[str, Any]:
+    """Build actionable deploy plan for managed API targets and mobile SDK stubs."""
+    known = _target_by_id()
+    normalized_target_id = str(target_id or "").strip().lower()
+    target = known.get(normalized_target_id)
+    if target is None:
+        raise ValueError(f"Deployment target '{target_id}' is not registered.")
+
+    format_token = _normalize_token(export_format.value if isinstance(export_format, ExportFormat) else str(export_format))
+    profile = resolve_artifact_profile(format_token)
+    compatible = profile in [str(item) for item in list(target.get("artifact_profiles") or [])]
+    if not compatible:
+        raise ValueError(
+            f"Target '{normalized_target_id}' is not compatible with export format '{format_token}' (profile={profile})."
+        )
+
+    model_token = model_name.strip() or "exported-model"
+    endpoint_token = _safe_slug(endpoint_name or model_token, fallback="slm-endpoint")
+    region_token = str(region or "us-east-1").strip() or "us-east-1"
+    instance_token = str(instance_type or "ml.g5.xlarge").strip() or "ml.g5.xlarge"
+    kind = str(target.get("kind") or "")
+
+    if kind == "sdk":
+        sdk_artifact = _write_mobile_stub_bundle(
+            run_dir=run_dir,
+            target_id=normalized_target_id,
+            model_name=model_token,
+        )
+        return {
+            "target_id": normalized_target_id,
+            "target_kind": kind,
+            "display_name": str(target.get("display_name") or normalized_target_id),
+            "summary": "Mobile SDK stub generated.",
+            "steps": [
+                "Download the generated stub zip.",
+                "Open it in Xcode/Android Studio.",
+                "Replace the stub inference bridge with runtime-specific model execution.",
+            ],
+            "sdk_artifact": sdk_artifact,
+        }
+
+    if normalized_target_id == "deployment.hf_inference_endpoint":
+        curl = (
+            "curl -X POST \"https://api.endpoints.huggingface.cloud/v2/endpoint/{endpoint}\" "
+            "-H \"Authorization: Bearer <HF_TOKEN>\" -H \"Content-Type: application/json\" "
+            "--data '{{\"action\":\"resume\"}}'"
+        ).format(endpoint=endpoint_token)
+        steps = [
+            f"Upload export bundle from `{run_dir}` to HuggingFace model repo.",
+            "Create (or select) a HuggingFace Inference Endpoint linked to that repo.",
+            "Use the generated curl command to resume/deploy endpoint.",
+        ]
+    elif normalized_target_id == "deployment.aws_sagemaker":
+        curl = (
+            "aws sagemaker create-endpoint "
+            f"--endpoint-name {endpoint_token} "
+            f"--region {region_token} "
+            f"--endpoint-config-name {endpoint_token}-cfg"
+        )
+        steps = [
+            f"Push container/model artifact from `{run_dir}` to ECR/S3.",
+            f"Create SageMaker model and endpoint config using instance `{instance_token}`.",
+            "Call `create-endpoint` (command below) and wait for InService status.",
+        ]
+    else:
+        curl = (
+            "curl -X POST \"https://managed-vllm.example.com/provision\" "
+            "-H \"Authorization: Bearer <MANAGED_VLLM_TOKEN>\" "
+            "-H \"Content-Type: application/json\" "
+            f"--data '{{\"name\":\"{endpoint_token}\",\"model_path\":\"{run_dir}/model\"}}'"
+        )
+        steps = [
+            f"Upload model artifact from `{run_dir}/model` to your managed vLLM provider.",
+            "Provision API endpoint with selected model and autoscaling policy.",
+            "Use returned OpenAI-compatible URL with generated curl template.",
+        ]
+
+    return {
+        "target_id": normalized_target_id,
+        "target_kind": kind or "deployment",
+        "display_name": str(target.get("display_name") or normalized_target_id),
+        "summary": "Managed deployment plan generated.",
+        "endpoint_name": endpoint_token,
+        "region": region_token,
+        "instance_type": instance_token,
+        "steps": steps,
+        "curl_example": curl,
+        "source_run_dir": str(run_dir),
     }

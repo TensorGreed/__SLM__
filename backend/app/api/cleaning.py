@@ -15,6 +15,7 @@ class CleanRequest(BaseModel):
     chunk_size: int = Field(1000, ge=100, le=10000)
     chunk_overlap: int = Field(100, ge=0, le=500)
     redact_pii: bool = True
+    redact_toxicity: bool = False
 
     @model_validator(mode="after")
     def validate_overlap(self):
@@ -28,6 +29,7 @@ class CleanBatchRequest(BaseModel):
     chunk_size: int = Field(1000, ge=100, le=10000)
     chunk_overlap: int = Field(100, ge=0, le=500)
     redact_pii: bool = True
+    redact_toxicity: bool = False
 
     @model_validator(mode="after")
     def validate_overlap(self):
@@ -45,7 +47,13 @@ async def clean_single(
     """Clean a single document."""
     try:
         result = await clean_document(
-            db, project_id, req.document_id, req.chunk_size, req.chunk_overlap, req.redact_pii
+            db,
+            project_id,
+            req.document_id,
+            req.chunk_size,
+            req.chunk_overlap,
+            req.redact_pii,
+            req.redact_toxicity,
         )
         return result
     except ValueError as e:
@@ -64,7 +72,13 @@ async def clean_batch(
     for doc_id in req.document_ids:
         try:
             result = await clean_document(
-                db, project_id, doc_id, req.chunk_size, req.chunk_overlap, req.redact_pii
+                db,
+                project_id,
+                doc_id,
+                req.chunk_size,
+                req.chunk_overlap,
+                req.redact_pii,
+                req.redact_toxicity,
             )
             results.append(result)
         except Exception as e:

@@ -13,6 +13,7 @@ from app.config import settings
 from app.models.export import Export, ExportFormat, ExportStatus
 from app.models.experiment import Experiment
 from app.services.deployment_target_service import (
+    build_deploy_target_plan,
     run_deployment_target_suite,
 )
 
@@ -493,6 +494,50 @@ async def validate_export_deployment(
     await db.flush()
     await db.refresh(export)
     return report
+
+
+async def build_export_deploy_plan(
+    db: AsyncSession,
+    project_id: int,
+    export_id: int,
+    *,
+    target_id: str,
+    endpoint_name: str | None = None,
+    region: str | None = None,
+    instance_type: str | None = None,
+) -> dict:
+    """Build deployment/mobile SDK plan for an existing export run."""
+    result = await db.execute(
+        select(Export).where(
+            Export.id == export_id,
+            Export.project_id == project_id,
+        )
+    )
+    export = result.scalar_one_or_none()
+    if not export:
+        raise ValueError(f"Export {export_id} not found in project {project_id}")
+
+    run_dir = _resolve_export_run_dir_from_export(export)
+    if run_dir is None:
+        raise ValueError("Export run directory not found. Run export first.")
+
+    model_name = str((export.manifest or {}).get("source_model") or f"project-{project_id}-export-{export_id}")
+    plan = build_deploy_target_plan(
+        run_dir=run_dir,
+        export_format=export.export_format,
+        target_id=target_id,
+        model_name=model_name,
+        endpoint_name=endpoint_name,
+        region=region,
+        instance_type=instance_type,
+    )
+    return {
+        "project_id": project_id,
+        "export_id": export_id,
+        "export_format": export.export_format.value,
+        "run_dir": str(run_dir),
+        **plan,
+    }
 
 
 def _generate_dockerfile(export_format: ExportFormat) -> str:
