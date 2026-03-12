@@ -538,6 +538,8 @@ class Phase27Roadmap3Tests(unittest.TestCase):
             plugin_runtime.get("source_module"),
             "app.plugins.training_runtimes.example_runtime",
         )
+        self.assertEqual(plugin_runtime.get("supported_modalities"), ["text"])
+        self.assertTrue(bool(plugin_runtime.get("declares_supported_modalities")))
 
 
 if __name__ == "__main__":

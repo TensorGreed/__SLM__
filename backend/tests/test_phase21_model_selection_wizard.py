@@ -82,6 +82,10 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
 
         first = rows[0]
         self.assertTrue(bool(first.get("model_id")))
+        self.assertIn("metadata_source", first)
+        self.assertIn("architecture", first)
+        self.assertIn("context_length", first)
+        self.assertIn("license", first)
         defaults = first.get("suggested_defaults", {})
         self.assertIn(defaults.get("task_type"), {"causal_lm", "seq2seq", "classification"})
         self.assertTrue(bool(defaults.get("chat_template")))
@@ -123,6 +127,39 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
         self.assertTrue(any("available_vram_gb" in item for item in warnings), warnings)
         rows = [item for item in payload.get("recommendations", []) if isinstance(item, dict)]
         self.assertEqual(len(rows), 2)
+
+    def test_model_introspection_endpoint_resolves_local_config(self):
+        project_id = self._create_project("phase21-model-introspect-1")
+        local_model_dir = TEST_DATA_DIR / "hf_local_models" / "phase21-local-introspect"
+        local_model_dir.mkdir(parents=True, exist_ok=True)
+        (local_model_dir / "config.json").write_text(
+            """{
+  "architectures": ["LlamaForCausalLM"],
+  "model_type": "llama",
+  "hidden_size": 2048,
+  "num_hidden_layers": 18,
+  "vocab_size": 32000,
+  "max_position_embeddings": 8192
+}
+""",
+            encoding="utf-8",
+        )
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/model-selection/introspect",
+            json={
+                "model_id": local_model_dir.as_posix(),
+                "allow_network": False,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        introspection = payload.get("introspection", {})
+        self.assertTrue(bool(introspection.get("resolved")))
+        self.assertEqual(introspection.get("source"), "local_config")
+        self.assertEqual(introspection.get("architecture"), "causal_lm")
+        self.assertEqual(int(introspection.get("context_length") or 0), 8192)
+        self.assertTrue(float(introspection.get("params_estimate_b") or 0.0) > 0.0)
 
     def test_model_wizard_telemetry_records_recommend_and_apply(self):
         project_id = self._create_project("phase21-model-wizard-telemetry-1")

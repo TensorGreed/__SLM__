@@ -244,9 +244,25 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         payload = resp.json()
         runtimes = payload.get("runtimes", [])
         runtime_ids = {str(item.get("runtime_id")) for item in runtimes if isinstance(item, dict)}
+        runtime_by_id = {
+            str(item.get("runtime_id")): item
+            for item in runtimes
+            if isinstance(item, dict)
+        }
         self.assertIn("builtin.simulate", runtime_ids)
         self.assertIn("builtin.external_celery", runtime_ids)
         self.assertTrue(bool(payload.get("default_runtime_id")))
+        self.assertEqual(
+            runtime_by_id.get("builtin.external_celery", {}).get("supported_modalities"),
+            ["text"],
+        )
+        self.assertTrue(
+            bool(
+                runtime_by_id.get("builtin.external_celery", {}).get(
+                    "declares_supported_modalities"
+                )
+            )
+        )
 
     def test_preflight_blocks_unknown_runtime_id(self):
         project_id = self._create_project("phase14-runtime-catalog-2")

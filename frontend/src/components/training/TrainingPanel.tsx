@@ -128,6 +128,8 @@ interface TrainingRuntimeSpec {
   description?: string;
   execution_backend?: string;
   required_dependencies?: string[];
+  supported_modalities?: string[];
+  declares_supported_modalities?: boolean;
   supports_task_tracking?: boolean;
   supports_cancellation?: boolean;
   is_builtin?: boolean;
@@ -238,6 +240,12 @@ interface ModelWizardRecommendation {
   params_b?: number;
   estimated_min_vram_gb?: number;
   estimated_ideal_vram_gb?: number;
+  introspection_estimated_min_vram_gb?: number | null;
+  introspection_estimated_ideal_vram_gb?: number | null;
+  architecture?: string;
+  context_length?: number | null;
+  license?: string | null;
+  metadata_source?: string;
   supported_languages?: string[];
   strengths?: string[];
   caveats?: string[];
@@ -254,6 +262,7 @@ interface ModelWizardRecommendation {
 
 interface ModelWizardResponse {
   project_id: number;
+  catalog_strategy?: string;
   request?: {
     target_device?: string;
     primary_language?: string;
@@ -271,6 +280,30 @@ interface ModelWizardResponse {
     context_apply_events?: number;
     boosted_model_count?: number;
   };
+}
+
+interface ModelIntrospectionMemoryProfile {
+  estimated_min_vram_gb?: number;
+  estimated_ideal_vram_gb?: number;
+}
+
+interface ModelIntrospectionSummary {
+  model_id?: string;
+  resolved?: boolean;
+  source?: string;
+  model_type?: string | null;
+  architecture?: string;
+  architecture_hint?: string | null;
+  context_length?: number | null;
+  license?: string | null;
+  params_estimate_b?: number | null;
+  memory_profile?: ModelIntrospectionMemoryProfile | null;
+  warnings?: string[];
+}
+
+interface ModelIntrospectionResponse {
+  project_id: number;
+  introspection?: ModelIntrospectionSummary;
 }
 
 interface CloudBurstProvider {
@@ -421,6 +454,46 @@ function parseMetricFromLogLine(text: string, experimentId: number): TrainingMet
     ...(trainLoss !== null ? { train_loss: trainLoss } : {}),
     ...(evalLoss !== null ? { eval_loss: evalLoss } : {}),
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: string[] = [];
+  value.forEach((item) => {
+    const token = String(item || '').trim();
+    if (token && !out.includes(token)) {
+      out.push(token);
+    }
+  });
+  return out;
+}
+
+function parseBool(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const token = value.trim().toLowerCase();
+    if (token === 'true' || token === '1' || token === 'yes' || token === 'on') {
+      return true;
+    }
+    if (token === 'false' || token === '0' || token === 'no' || token === 'off' || token === '') {
+      return false;
+    }
+  }
+  return null;
 }
 
 type ConfigFieldKey =
@@ -605,6 +678,9 @@ export default function TrainingPanel({
   const [wizardLoading, setWizardLoading] = useState(false);
   const [wizardError, setWizardError] = useState('');
   const [wizardResult, setWizardResult] = useState<ModelWizardResponse | null>(null);
+  const [baseModelIntrospection, setBaseModelIntrospection] = useState<ModelIntrospectionSummary | null>(null);
+  const [baseModelIntrospectionLoading, setBaseModelIntrospectionLoading] = useState(false);
+  const [baseModelIntrospectionError, setBaseModelIntrospectionError] = useState('');
   const [wizardAutoRan, setWizardAutoRan] = useState(false);
   const [cloudBurstCatalog, setCloudBurstCatalog] = useState<CloudBurstCatalogResponse | null>(null);
   const [cloudBurstProviderId, setCloudBurstProviderId] = useState('');
@@ -704,6 +780,65 @@ export default function TrainingPanel({
   const cloudProviders = Array.isArray(cloudBurstCatalog?.providers) ? cloudBurstCatalog.providers : [];
   const cloudGpuSkus = Array.isArray(cloudBurstCatalog?.gpu_skus) ? cloudBurstCatalog.gpu_skus : [];
   const selectedCloudProvider = cloudProviders.find((item) => item.provider_id === cloudBurstProviderId) || null;
+  const runtimeOptions = Array.isArray(runtimeCatalog?.runtimes) ? runtimeCatalog.runtimes : [];
+  const selectedRuntimeCatalogId =
+    trainingRuntimeId === 'auto'
+      ? String(runtimeCatalog?.default_runtime_id || '').trim().toLowerCase()
+      : String(trainingRuntimeId || '').trim().toLowerCase();
+  const selectedRuntimeSpec =
+    runtimeOptions.find(
+      (item) => String(item.runtime_id || '').trim().toLowerCase() === selectedRuntimeCatalogId,
+    ) || null;
+  const selectedRuntimeModalities = asStringList(selectedRuntimeSpec?.supported_modalities);
+  const selectedRuntimeModalitiesDeclared = parseBool(
+    selectedRuntimeSpec?.declares_supported_modalities,
+  );
+
+  const preflightContractDetails = useMemo(() => {
+    const capabilitySummary = asRecord(preflightPreview?.capability_summary);
+    const capabilityContract = asRecord(capabilitySummary.capability_contract);
+    const dataset = asRecord(capabilitySummary.dataset);
+    const adapterContext = asRecord(dataset.adapter_context);
+    const runtimeSummary = asRecord(capabilitySummary.runtime);
+
+    const runtimeSupportedModalities = asStringList(
+      capabilityContract.runtime_supported_modalities ?? runtimeSummary.supported_modalities,
+    );
+    const adapterDeclaredProfiles = asStringList(capabilityContract.adapter_declared_task_profiles);
+    const adapterPreferredTasks = asStringList(capabilityContract.adapter_preferred_training_tasks);
+
+    return {
+      taskType: String(capabilityContract.task_type || capabilitySummary.task_type || 'unknown'),
+      trainingMode: String(capabilityContract.training_mode || capabilitySummary.training_mode || 'unknown'),
+      trainerBackend: String(
+        capabilityContract.trainer_backend_requested || capabilitySummary.trainer_backend_requested || 'unknown',
+      ),
+      runtimeId: String(
+        capabilityContract.runtime_id ||
+        runtimeSummary.resolved_runtime_id ||
+        runtimeSummary.requested_runtime_id ||
+        'unknown',
+      ),
+      runtimeBackend: String(capabilityContract.runtime_backend || capabilitySummary.runtime_backend || 'unknown'),
+      runtimeKnown: parseBool(capabilityContract.runtime_known),
+      runtimeSupportedModalities,
+      runtimeModalitiesDeclared: parseBool(
+        capabilityContract.runtime_modalities_declared ?? runtimeSummary.modalities_declared,
+      ),
+      adapterId: String(capabilityContract.adapter_id || adapterContext.adapter_id || 'unknown'),
+      adapterSource: String(adapterContext.adapter_source || 'unknown'),
+      adapterTaskProfile: String(
+        capabilityContract.adapter_task_profile || adapterContext.task_profile || 'none',
+      ),
+      adapterTaskProfileSource: String(adapterContext.task_profile_source || 'unknown'),
+      adapterModality: String(
+        capabilityContract.adapter_modality || adapterContext.adapter_modality || 'unknown',
+      ),
+      adapterDeclaredProfiles,
+      adapterPreferredTasks,
+      rawCapabilitySummary: capabilitySummary,
+    };
+  }, [preflightPreview]);
 
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
@@ -1213,6 +1348,39 @@ export default function TrainingPanel({
     }
   };
 
+  const introspectBaseModel = async (options?: { modelId?: string; silent?: boolean }) => {
+    const modelId = String(options?.modelId || baseModel || '').trim();
+    if (!modelId) {
+      if (!options?.silent) {
+        setBaseModelIntrospectionError('Enter a model id/path first.');
+      }
+      return;
+    }
+
+    setBaseModelIntrospectionLoading(true);
+    if (!options?.silent) {
+      setBaseModelIntrospectionError('');
+    }
+    try {
+      const res = await api.post<ModelIntrospectionResponse>(
+        `/projects/${projectId}/training/model-selection/introspect`,
+        {
+          model_id: modelId,
+          allow_network: true,
+        },
+      );
+      setBaseModelIntrospection(res.data?.introspection || null);
+    } catch (err: any) {
+      if (!options?.silent) {
+        setBaseModelIntrospectionError(
+          err?.response?.data?.detail || 'Failed to introspect base model metadata',
+        );
+      }
+    } finally {
+      setBaseModelIntrospectionLoading(false);
+    }
+  };
+
   const runModelWizard = async (options?: { silent?: boolean }) => {
     setWizardLoading(true);
     setWizardError('');
@@ -1300,6 +1468,7 @@ export default function TrainingPanel({
           : undefined,
       })
       .catch(() => { });
+    void introspectBaseModel({ modelId: item.model_id, silent: true });
   };
 
   const persistPreferredPlanProfile = async (profile: string) => {
@@ -1462,6 +1631,9 @@ export default function TrainingPanel({
     setWizardLoading(false);
     setWizardError('');
     setWizardResult(null);
+    setBaseModelIntrospection(null);
+    setBaseModelIntrospectionLoading(false);
+    setBaseModelIntrospectionError('');
     setWizardAutoRan(false);
     setCloudBurstCatalog(null);
     setCloudBurstProviderId('');
@@ -1548,6 +1720,20 @@ export default function TrainingPanel({
       setSetupTab('basics');
     }
   }, [workspaceView, setupTabOrder, setupTab]);
+
+  useEffect(() => {
+    const currentModel = String(baseModel || '').trim();
+    const inspectedModel = String(baseModelIntrospection?.model_id || '').trim();
+    if (!currentModel) {
+      setBaseModelIntrospection(null);
+      setBaseModelIntrospectionError('');
+      return;
+    }
+    if (inspectedModel && inspectedModel !== currentModel) {
+      setBaseModelIntrospection(null);
+      setBaseModelIntrospectionError('');
+    }
+  }, [baseModel, baseModelIntrospection?.model_id]);
 
   useEffect(() => {
     if (workspaceView !== 'setup' || !createFormVisible) {
@@ -2541,10 +2727,100 @@ export default function TrainingPanel({
                       </div>
                     )}
                     <div className="training-preflight-panel__section">
-                      <div className="training-preflight-panel__section-title">Capability Summary</div>
-                      <pre className="resolved-defaults-panel__json">
-                        {JSON.stringify(preflightPreview.capability_summary || {}, null, 2)}
-                      </pre>
+                      <div className="training-preflight-panel__section-title">Capability Contract Diagnostics</div>
+                      <div className="training-preflight-contract-grid">
+                        <div className="training-preflight-contract-card">
+                          <div className="training-preflight-contract-card__title">Task + Trainer</div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Task Type</span>
+                            <strong>{preflightContractDetails.taskType}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Training Mode</span>
+                            <strong>{preflightContractDetails.trainingMode}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Trainer Backend</span>
+                            <strong>{preflightContractDetails.trainerBackend}</strong>
+                          </div>
+                        </div>
+                        <div className="training-preflight-contract-card">
+                          <div className="training-preflight-contract-card__title">Runtime Contract</div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Runtime</span>
+                            <strong>{preflightContractDetails.runtimeId}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Backend</span>
+                            <strong>{preflightContractDetails.runtimeBackend}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Modalities</span>
+                            <strong>
+                              {preflightContractDetails.runtimeSupportedModalities.length > 0
+                                ? preflightContractDetails.runtimeSupportedModalities.join(', ')
+                                : 'text'}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Metadata</span>
+                            <strong>
+                              {preflightContractDetails.runtimeModalitiesDeclared === true
+                                ? 'Declared'
+                                : preflightContractDetails.runtimeModalitiesDeclared === false
+                                  ? 'Fallback assumption'
+                                  : 'Unknown'}
+                              {preflightContractDetails.runtimeKnown === false ? ' • runtime unresolved' : ''}
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="training-preflight-contract-card">
+                          <div className="training-preflight-contract-card__title">Adapter Contract</div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Adapter</span>
+                            <strong>{preflightContractDetails.adapterId}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Adapter Source</span>
+                            <strong>{preflightContractDetails.adapterSource}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Task Profile</span>
+                            <strong>
+                              {preflightContractDetails.adapterTaskProfile}
+                              {preflightContractDetails.adapterTaskProfileSource
+                                ? ` (${preflightContractDetails.adapterTaskProfileSource})`
+                                : ''}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Resolved Modality</span>
+                            <strong>{preflightContractDetails.adapterModality}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Declared Profiles</span>
+                            <strong>
+                              {preflightContractDetails.adapterDeclaredProfiles.length > 0
+                                ? preflightContractDetails.adapterDeclaredProfiles.join(', ')
+                                : 'n/a'}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Preferred Tasks</span>
+                            <strong>
+                              {preflightContractDetails.adapterPreferredTasks.length > 0
+                                ? preflightContractDetails.adapterPreferredTasks.join(', ')
+                                : 'n/a'}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+                      <details className="training-preflight-panel__details">
+                        <summary>Raw capability summary JSON</summary>
+                        <pre className="resolved-defaults-panel__json">
+                          {JSON.stringify(preflightContractDetails.rawCapabilitySummary || {}, null, 2)}
+                        </pre>
+                      </details>
                     </div>
                   </div>
                 )}
@@ -2964,6 +3240,31 @@ export default function TrainingPanel({
                                   ? `${Number(item.estimated_min_vram_gb)} GB`
                                   : 'n/a'}
                               </div>
+                              <div className="training-model-wizard__card-meta">
+                                {item.architecture || 'unknown'} • ctx{' '}
+                                {Number.isFinite(Number(item.context_length))
+                                  ? Number(item.context_length)
+                                  : 'n/a'}
+                                {item.license ? ` • ${item.license}` : ''}
+                              </div>
+                              {(Number.isFinite(Number(item.introspection_estimated_min_vram_gb))
+                                || Number.isFinite(Number(item.introspection_estimated_ideal_vram_gb))) && (
+                                  <div className="training-model-wizard__card-meta">
+                                    Introspection VRAM:{' '}
+                                    {Number.isFinite(Number(item.introspection_estimated_min_vram_gb))
+                                      ? `${Number(item.introspection_estimated_min_vram_gb)} GB min`
+                                      : 'n/a'}
+                                    {' / '}
+                                    {Number.isFinite(Number(item.introspection_estimated_ideal_vram_gb))
+                                      ? `${Number(item.introspection_estimated_ideal_vram_gb)} GB ideal`
+                                      : 'n/a'}
+                                  </div>
+                                )}
+                              {item.metadata_source && (
+                                <div className="training-model-wizard__meta-source">
+                                  Metadata: {item.metadata_source}
+                                </div>
+                              )}
                               {Array.isArray(item.match_reasons) && item.match_reasons.length > 0 && (
                                 <div className="training-model-wizard__reasons">
                                   {item.match_reasons.slice(0, 3).map((reason, idx) => (
@@ -2988,6 +3289,82 @@ export default function TrainingPanel({
                     <div className="form-group">
                       <label className="form-label">Base Model</label>
                       <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
+                      <div className="form-inline-actions">
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => void introspectBaseModel()}
+                          disabled={baseModelIntrospectionLoading}
+                        >
+                          {baseModelIntrospectionLoading ? 'Inspecting...' : 'Introspect Model'}
+                        </button>
+                        <span className="form-hint">
+                          Reads local/HF config metadata: architecture, context, license, memory hints.
+                        </span>
+                      </div>
+                      {baseModelIntrospectionError && (
+                        <div className="form-hint form-hint-warning">
+                          {baseModelIntrospectionError}
+                        </div>
+                      )}
+                      {baseModelIntrospection && (
+                        <div className="training-model-introspection">
+                          <div className="training-model-introspection__head">
+                            <strong>Model Introspection</strong>
+                            <span>{baseModelIntrospection.source || 'none'}</span>
+                          </div>
+                          <div className="training-model-introspection__grid">
+                            <div className="training-model-introspection__row">
+                              <span>Model ID</span>
+                              <strong>{baseModelIntrospection.model_id || baseModel}</strong>
+                            </div>
+                            <div className="training-model-introspection__row">
+                              <span>Architecture</span>
+                              <strong>{baseModelIntrospection.architecture || 'unknown'}</strong>
+                            </div>
+                            <div className="training-model-introspection__row">
+                              <span>Model Type</span>
+                              <strong>{baseModelIntrospection.model_type || 'unknown'}</strong>
+                            </div>
+                            <div className="training-model-introspection__row">
+                              <span>Context Length</span>
+                              <strong>
+                                {Number.isFinite(Number(baseModelIntrospection.context_length))
+                                  ? Number(baseModelIntrospection.context_length)
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-model-introspection__row">
+                              <span>License</span>
+                              <strong>{baseModelIntrospection.license || 'unknown'}</strong>
+                            </div>
+                            <div className="training-model-introspection__row">
+                              <span>Params (est)</span>
+                              <strong>
+                                {Number.isFinite(Number(baseModelIntrospection.params_estimate_b))
+                                  ? `${Number(baseModelIntrospection.params_estimate_b).toFixed(2)}B`
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-model-introspection__row">
+                              <span>VRAM (min/ideal)</span>
+                              <strong>
+                                {Number.isFinite(Number(baseModelIntrospection.memory_profile?.estimated_min_vram_gb))
+                                  ? `${Number(baseModelIntrospection.memory_profile?.estimated_min_vram_gb)} GB`
+                                  : 'n/a'}
+                                {' / '}
+                                {Number.isFinite(Number(baseModelIntrospection.memory_profile?.estimated_ideal_vram_gb))
+                                  ? `${Number(baseModelIntrospection.memory_profile?.estimated_ideal_vram_gb)} GB`
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                          </div>
+                          {Array.isArray(baseModelIntrospection.warnings) && baseModelIntrospection.warnings.length > 0 && (
+                            <div className="training-model-introspection__warnings">
+                              {baseModelIntrospection.warnings.join(' | ')}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="training-grid-2">
                       <div className="form-group">
@@ -3035,6 +3412,12 @@ export default function TrainingPanel({
                         {runtimeCatalogError && (
                           <div className="form-hint form-hint-warning">
                             {runtimeCatalogError}
+                          </div>
+                        )}
+                        {selectedRuntimeSpec && (
+                          <div className="form-hint">
+                            Modalities: {selectedRuntimeModalities.length > 0 ? selectedRuntimeModalities.join(', ') : 'text'}
+                            {selectedRuntimeModalitiesDeclared === false ? ' (assumed default)' : ''}
                           </div>
                         )}
                       </div>

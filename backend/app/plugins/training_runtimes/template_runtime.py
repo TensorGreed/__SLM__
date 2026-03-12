@@ -54,7 +54,7 @@ def register_training_runtime_plugins(register) -> None:
         validate=validate,
         start=start,
         required_dependencies=[],
+        supported_modalities=["text"],
         supports_task_tracking=False,
         supports_cancellation=True,
     )
-

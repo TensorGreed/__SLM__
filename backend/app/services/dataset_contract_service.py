@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.services.capability_contract_service import SUPPORTED_TRAINING_TASK_TYPES
 from app.services.data_adapter_service import (
     is_training_task_compatible,
     normalize_task_profile,
@@ -22,7 +23,7 @@ SUPPORTED_DATASET_SHAPES = (
     "classification_label",
 )
 
-SUPPORTED_TASK_TYPES = ("causal_lm", "seq2seq", "classification")
+SUPPORTED_TASK_TYPES = SUPPORTED_TRAINING_TASK_TYPES
 
 TASK_SHAPE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "causal_lm": ("text", "qa_pair", "chat_messages"),

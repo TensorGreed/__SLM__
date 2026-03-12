@@ -48,7 +48,10 @@ from app.services.alignment_dataset_service import (
     materialize_playground_preference_pairs,
     summarize_preference_dataset,
 )
-from app.services.model_selection_service import recommend_training_base_models
+from app.services.model_selection_service import (
+    introspect_training_base_model,
+    recommend_training_base_models,
+)
 from app.services.model_benchmark_service import benchmark_model_sweep
 from app.services.training_telemetry_service import (
     build_model_acceptance_bias,
@@ -92,6 +95,7 @@ from app.services.training_runtime_service import (
     reload_runtime_plugins_from_settings,
     runtime_plugin_status,
 )
+from app.services.capability_contract_service import build_training_capability_contract
 from app.services.cloud_burst_service import (
     build_cloud_burst_launch_plan,
     estimate_cloud_burst_quote,
@@ -147,6 +151,11 @@ class ModelSelectionRecommendRequest(BaseModel):
     available_vram_gb: float | None = Field(default=None, ge=0)
     task_profile: str | None = Field(default=None, max_length=64)
     top_k: int = Field(default=3, ge=1, le=5)
+
+
+class ModelSelectionIntrospectRequest(BaseModel):
+    model_id: str = Field(..., min_length=1, max_length=255)
+    allow_network: bool = True
 
 
 class ModelSelectionTelemetryRequest(BaseModel):
@@ -349,6 +358,17 @@ async def reload_training_runtime_plugins(
     }
 
 
+@router.get("/capability-contract")
+async def get_training_capability_contract(
+    project_id: int,
+):
+    """Return shared task/backend/modality capability contract metadata."""
+    return {
+        "project_id": project_id,
+        **build_training_capability_contract(),
+    }
+
+
 @router.get("/cloud-burst/catalog")
 async def get_cloud_burst_catalog(
     project_id: int,
@@ -512,6 +532,31 @@ async def recommend_training_models(
             "context_apply_events": adaptive_bias.get("context_apply_events"),
             "boosted_model_count": len(dict(adaptive_bias.get("bias_by_model") or {})),
         },
+    }
+
+
+@router.post("/model-selection/introspect")
+async def introspect_training_model(
+    project_id: int,
+    req: ModelSelectionIntrospectRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Inspect a model id/path and return architecture/context/license/memory hints."""
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    model_id = str(req.model_id or "").strip()
+    if not model_id:
+        raise HTTPException(400, "model_id is required")
+
+    payload = introspect_training_base_model(
+        model_id=model_id,
+        allow_network=bool(req.allow_network),
+    )
+    return {
+        "project_id": project_id,
+        "introspection": payload,
     }
 
 

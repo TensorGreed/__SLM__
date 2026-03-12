@@ -28,6 +28,21 @@ LEGACY_EXTERNAL_BACKEND = "external"
 BUILTIN_SIMULATE_RUNTIME_ID = "builtin.simulate"
 BUILTIN_EXTERNAL_CELERY_RUNTIME_ID = "builtin.external_celery"
 
+SUPPORTED_RUNTIME_MODALITIES: tuple[str, ...] = (
+    "text",
+    "vision_language",
+    "audio_text",
+    "multimodal",
+)
+
+_RUNTIME_MODALITY_ALIASES: dict[str, str] = {
+    "multi_modal": "multimodal",
+    "image": "vision_language",
+    "image_text": "vision_language",
+    "vision": "vision_language",
+    "audio": "audio_text",
+}
+
 
 @dataclass(frozen=True)
 class TrainingRuntimeSpec:
@@ -38,6 +53,8 @@ class TrainingRuntimeSpec:
     description: str
     execution_backend: str
     required_dependencies: list[str] = field(default_factory=list)
+    supported_modalities: list[str] = field(default_factory=lambda: ["text"])
+    declares_supported_modalities: bool = False
     supports_task_tracking: bool = False
     supports_cancellation: bool = True
     is_builtin: bool = False
@@ -102,6 +119,35 @@ def _normalize_source_module(value: str | None) -> str:
     return token or "custom"
 
 
+def _normalize_supported_modalities(
+    values: list[str] | tuple[str, ...] | set[str] | None,
+) -> tuple[list[str], bool]:
+    if values is None:
+        return ["text"], False
+
+    normalized: list[str] = []
+    for raw in list(values):
+        token = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if not token:
+            continue
+        token = _RUNTIME_MODALITY_ALIASES.get(token, token)
+        if token not in SUPPORTED_RUNTIME_MODALITIES:
+            raise ValueError(
+                (
+                    f"Unsupported modality '{raw}' in supported_modalities; expected one of: "
+                    f"{', '.join(SUPPORTED_RUNTIME_MODALITIES)}"
+                )
+            )
+        if token not in normalized:
+            normalized.append(token)
+
+    if not normalized:
+        raise ValueError(
+            "supported_modalities must contain at least one modality when provided"
+        )
+    return normalized, True
+
+
 def _register_plugin(plugin: _RuntimePlugin) -> None:
     runtime_id = _normalize_runtime_id(plugin.spec.runtime_id)
     if not runtime_id:
@@ -118,6 +164,7 @@ def register_training_runtime_plugin(
     validate: RuntimeValidateFn,
     start: RuntimeStartFn,
     required_dependencies: list[str] | None = None,
+    supported_modalities: list[str] | tuple[str, ...] | set[str] | None = None,
     supports_task_tracking: bool = False,
     supports_cancellation: bool = True,
     is_builtin: bool = False,
@@ -143,6 +190,7 @@ def register_training_runtime_plugin(
         token = str(item or "").strip()
         if token and token not in deps:
             deps.append(token)
+    modalities, modalities_declared = _normalize_supported_modalities(supported_modalities)
 
     spec = TrainingRuntimeSpec(
         runtime_id=runtime_token,
@@ -150,6 +198,8 @@ def register_training_runtime_plugin(
         description=str(description or "").strip() or "Custom training runtime plugin.",
         execution_backend=backend_token,
         required_dependencies=deps,
+        supported_modalities=modalities,
+        declares_supported_modalities=bool(modalities_declared),
         supports_task_tracking=bool(supports_task_tracking),
         supports_cancellation=bool(supports_cancellation),
         is_builtin=bool(is_builtin),
@@ -361,6 +411,7 @@ def _ensure_plugins_loaded() -> None:
             validate=_validate_builtin_simulate,
             start=_start_builtin_simulate,
             required_dependencies=[],
+            supported_modalities=["text", "vision_language", "audio_text", "multimodal"],
             supports_task_tracking=False,
             supports_cancellation=True,
             is_builtin=True,
@@ -377,6 +428,7 @@ def _ensure_plugins_loaded() -> None:
             validate=_validate_builtin_external_celery,
             start=_start_builtin_external_celery,
             required_dependencies=["torch", "transformers", "datasets", "accelerate"],
+            supported_modalities=["text"],
             supports_task_tracking=True,
             supports_cancellation=True,
             is_builtin=True,
@@ -513,6 +565,8 @@ def list_runtime_catalog() -> dict[str, Any]:
                 "description": spec.description,
                 "execution_backend": spec.execution_backend,
                 "required_dependencies": list(spec.required_dependencies),
+                "supported_modalities": list(spec.supported_modalities),
+                "declares_supported_modalities": bool(spec.declares_supported_modalities),
                 "supports_task_tracking": spec.supports_task_tracking,
                 "supports_cancellation": spec.supports_cancellation,
                 "is_builtin": spec.is_builtin,

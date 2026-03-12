@@ -500,8 +500,10 @@ Current enforced behavior:
   - `POST /api/projects/{project_id}/training/experiments/effective-config` previews resolved config pre-create.
   - `POST /api/projects/{project_id}/training/experiments/preflight` resolves config + runs capability/runtime preflight before create/start.
     - Includes dataset contract validation against requested `task_type` (`causal_lm`, `seq2seq`, `classification`) and emits explicit fix hints when coverage is insufficient.
+    - Includes adapter/runtime/task capability-contract checks (for example modality/runtime incompatibility) with actionable errors/warnings.
   - `POST /api/projects/{project_id}/training/experiments/preflight/plan` returns suggested configs (`safe`, `balanced`, `max_quality`) with estimated VRAM risk and per-profile preflight output.
   - `GET /api/projects/{project_id}/training/runtimes` lists registered training runtime plugins and server default runtime.
+  - `GET /api/projects/{project_id}/training/capability-contract` returns shared task/backend/modality support matrix used by preflight.
   - `GET /api/projects/{project_id}/training/recipes` lists built-in training recipes.
   - `POST /api/projects/{project_id}/training/recipes/resolve` applies recipe patch over base config, then resolves runtime defaults and preflight.
   - `GET /api/projects/{project_id}/training/preferences` reads persisted project training UI preferences.

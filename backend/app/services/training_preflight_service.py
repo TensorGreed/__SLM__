@@ -10,7 +10,14 @@ from app.services.alignment_service import (
     analyze_preference_dataset_contract,
     analyze_preference_dataset_quality,
 )
+from app.services.capability_contract_service import (
+    SUPPORTED_TRAINING_TASK_TYPES,
+    SUPPORTED_TRAINER_BACKENDS,
+    evaluate_training_capability_contract,
+    resolve_training_adapter_context,
+)
 from app.services.dataset_contract_service import analyze_prepared_dataset_contract
+from app.services.model_introspection_service import introspect_hf_model
 from app.services.training_runtime_service import (
     get_runtime_spec,
     resolve_training_runtime_id,
@@ -19,9 +26,6 @@ from app.services.training_runtime_service import (
 
 
 MODEL_CAPABILITY_MATRIX_VERSION = "v1"
-
-SUPPORTED_TASK_TYPES = {"causal_lm", "seq2seq", "classification"}
-SUPPORTED_TRAINER_BACKENDS = {"auto", "hf_trainer", "trl_sft"}
 
 _MODEL_CAPABILITY_MATRIX: list[dict[str, Any]] = [
     {
@@ -92,7 +96,7 @@ _MODEL_CAPABILITY_MATRIX: list[dict[str, Any]] = [
 _DEFAULT_MODEL_CAPABILITY: dict[str, Any] = {
     "family": "unknown",
     "architecture": "unknown",
-    "supported_task_types": sorted(SUPPORTED_TASK_TYPES),
+    "supported_task_types": sorted(SUPPORTED_TRAINING_TASK_TYPES),
     "supported_trainer_backends": sorted(SUPPORTED_TRAINER_BACKENDS),
     "recommended_chat_templates": ["llama3", "chatml", "zephyr", "phi3"],
     "max_seq_length_hint": None,
@@ -170,12 +174,44 @@ def _infer_model_capability(base_model: str) -> dict[str, Any]:
                 "recommended_chat_templates": list(item.get("recommended_chat_templates", [])),
                 "max_seq_length_hint": item.get("max_seq_length_hint"),
             }
-    return dict(_DEFAULT_MODEL_CAPABILITY)
+
+    introspection = introspect_hf_model(
+        model_id=str(base_model or "").strip(),
+        allow_network=True,
+        timeout_seconds=1.2,
+    )
+    architecture = str(introspection.get("architecture") or "unknown").strip().lower()
+    if architecture not in {"causal_lm", "seq2seq", "classification"}:
+        return dict(_DEFAULT_MODEL_CAPABILITY)
+
+    if architecture == "causal_lm":
+        supported_task_types = ["causal_lm", "classification"]
+        supported_trainer_backends = ["auto", "hf_trainer", "trl_sft"]
+        recommended_chat_templates = ["llama3", "chatml"]
+    elif architecture == "seq2seq":
+        supported_task_types = ["seq2seq", "classification"]
+        supported_trainer_backends = ["auto", "hf_trainer"]
+        recommended_chat_templates = ["chatml", "llama3"]
+    else:
+        supported_task_types = ["classification"]
+        supported_trainer_backends = ["auto", "hf_trainer"]
+        recommended_chat_templates = []
+
+    family_hint = str(introspection.get("model_type") or "").strip().lower() or "introspected"
+    return {
+        "family": family_hint,
+        "architecture": architecture,
+        "supported_task_types": supported_task_types,
+        "supported_trainer_backends": supported_trainer_backends,
+        "recommended_chat_templates": recommended_chat_templates,
+        "max_seq_length_hint": introspection.get("context_length"),
+        "introspection": introspection,
+    }
 
 
 def _normalize_task_type(value: Any, warnings: list[str]) -> str:
     candidate = str(value or "causal_lm").strip().lower()
-    if candidate in SUPPORTED_TASK_TYPES:
+    if candidate in SUPPORTED_TRAINING_TASK_TYPES:
         return candidate
     warnings.append(f"Unknown task_type '{candidate}', defaulting to causal_lm for preflight.")
     return "causal_lm"
@@ -371,11 +407,21 @@ def run_training_preflight(
     runtime_source = "unresolved"
     runtime_backend = "unknown"
     runtime_required_dependencies: list[str] = []
+    runtime_supported_modalities: list[str] = []
+    runtime_modalities_declared = False
     try:
         runtime_id, runtime_source = resolve_training_runtime_id(resolved_config)
         runtime_spec = get_runtime_spec(runtime_id)
         runtime_backend = str(runtime_spec.execution_backend or "unknown")
         runtime_required_dependencies = list(runtime_spec.required_dependencies or [])
+        runtime_supported_modalities = [
+            str(item).strip().lower()
+            for item in list(getattr(runtime_spec, "supported_modalities", []) or [])
+            if str(item).strip()
+        ]
+        runtime_modalities_declared = bool(
+            getattr(runtime_spec, "declares_supported_modalities", False)
+        )
         for item in validate_runtime(runtime_id):
             text = str(item).strip()
             if text and text not in errors:
@@ -574,6 +620,33 @@ def run_training_preflight(
                 "Lower alignment_quality_threshold or import cleaner preference pairs."
             )
 
+    adapter_context = resolve_training_adapter_context(
+        project_id=project_id,
+        config=resolved_config,
+    )
+    capability_contract = evaluate_training_capability_contract(
+        task_type=task_type,
+        training_mode=training_mode,
+        trainer_backend_requested=trainer_backend_requested,
+        runtime_id=runtime_id,
+        runtime_backend=runtime_backend,
+        adapter_id=str(adapter_context.get("adapter_id") or ""),
+        adapter_contract=dict(adapter_context.get("adapter_contract") or {}),
+        adapter_task_profile=adapter_context.get("task_profile"),
+    )
+    for item in capability_contract.get("errors", []):
+        text = str(item).strip()
+        if text and text not in errors:
+            errors.append(text)
+    for item in capability_contract.get("warnings", []):
+        text = str(item).strip()
+        if text and text not in warnings:
+            warnings.append(text)
+    for item in capability_contract.get("hints", []):
+        text = str(item).strip()
+        if text and text not in hints:
+            hints.append(text)
+
     capability_summary = {
         "matrix_version": MODEL_CAPABILITY_MATRIX_VERSION,
         "model": {
@@ -583,6 +656,7 @@ def run_training_preflight(
             "supported_task_types": supported_task_types,
             "supported_trainer_backends": supported_backends,
             "recommended_chat_templates": recommended_templates,
+            "introspection": capability.get("introspection"),
         },
         "task_type": task_type,
         "training_mode": training_mode,
@@ -611,6 +685,8 @@ def run_training_preflight(
             "resolved_runtime_id": runtime_id,
             "source": runtime_source,
             "required_dependencies": runtime_required_dependencies,
+            "supported_modalities": runtime_supported_modalities,
+            "modalities_declared": runtime_modalities_declared,
         },
         "runtime_environment": runtime_environment,
         "dependencies": dependencies,
@@ -620,10 +696,12 @@ def run_training_preflight(
             "train_file_exists": train_exists,
             "val_file": str(val_file),
             "val_file_exists": val_exists,
+            "adapter_context": adapter_context,
             "contract": dataset_contract or {},
             "alignment_contract": alignment_contract or {},
             "alignment_quality": alignment_quality or {},
         },
+        "capability_contract": capability_contract.get("summary", {}),
         "command_template_present": bool(settings.TRAINING_EXTERNAL_CMD.strip()),
     }
 

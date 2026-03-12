@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.capability_contract_service import SUPPORTED_TRAINING_TASK_TYPES
 from app.services.data_adapter_service import normalize_task_profile, task_profile_training_tasks
+from app.services.model_introspection_service import introspect_hf_model
 
 SUPPORTED_TARGET_DEVICES: tuple[str, ...] = ("mobile", "laptop", "server")
 SUPPORTED_PRIMARY_LANGUAGES: tuple[str, ...] = ("english", "multilingual", "coding")
@@ -35,7 +37,7 @@ _DEFAULT_DEVICE_VRAM_BUDGET_GB: dict[str, float] = {
     "server": 80.0,
 }
 
-_SUPPORTED_TRAINING_TASK_TYPES = {"causal_lm", "seq2seq", "classification"}
+_SUPPORTED_TRAINING_TASK_TYPES = set(SUPPORTED_TRAINING_TASK_TYPES)
 
 _MODEL_CATALOG: list[dict[str, Any]] = [
     {
@@ -321,6 +323,19 @@ def _score_model(
     return score, reasons
 
 
+def introspect_training_base_model(
+    *,
+    model_id: str,
+    allow_network: bool = True,
+) -> dict[str, Any]:
+    """Expose model introspection metadata for API consumers."""
+    return introspect_hf_model(
+        model_id=model_id,
+        allow_network=allow_network,
+        timeout_seconds=2.5,
+    )
+
+
 def recommend_training_base_models(
     *,
     target_device: str,
@@ -385,22 +400,44 @@ def recommend_training_base_models(
     )
 
     recommendations: list[dict[str, Any]] = []
+    introspection_warnings: list[str] = []
     for score, model, reasons, adaptive_bias in scored[:resolved_top_k]:
         min_vram_gb = float(model.get("estimated_min_vram_gb") or 0.0)
         params_b = float(model.get("params_b") or 0.0)
+        model_id = str(model.get("model_id") or "")
+        introspection = introspect_hf_model(
+            model_id=model_id,
+            allow_network=True,
+            timeout_seconds=1.2,
+        )
+        memory_profile = dict(introspection.get("memory_profile") or {})
+        introspection_min_vram = float(memory_profile.get("estimated_min_vram_gb") or 0.0)
+        introspection_ideal_vram = float(memory_profile.get("estimated_ideal_vram_gb") or 0.0)
+        metadata_source = str(introspection.get("source") or "none")
+        if metadata_source == "none":
+            introspection_warnings.append(
+                f"unable to introspect model metadata for '{model_id}' (using curated defaults)"
+            )
+
         recommendations.append(
             {
-                "model_id": str(model.get("model_id") or ""),
+                "model_id": model_id,
                 "family": str(model.get("family") or "unknown"),
                 "params_b": round(params_b, 2),
                 "estimated_min_vram_gb": round(min_vram_gb, 2),
                 "estimated_ideal_vram_gb": round(float(model.get("estimated_ideal_vram_gb") or min_vram_gb), 2),
+                "introspection_estimated_min_vram_gb": round(introspection_min_vram, 2) if introspection_min_vram > 0 else None,
+                "introspection_estimated_ideal_vram_gb": round(introspection_ideal_vram, 2) if introspection_ideal_vram > 0 else None,
                 "supported_languages": list(model.get("supported_languages") or []),
                 "strengths": list(model.get("strengths") or []),
                 "caveats": list(model.get("caveats") or []),
                 "match_reasons": reasons[:6],
                 "match_score": round(float(score), 4),
                 "adaptive_bias": round(float(adaptive_bias), 4),
+                "architecture": str(introspection.get("architecture") or "unknown"),
+                "context_length": introspection.get("context_length"),
+                "license": introspection.get("license"),
+                "metadata_source": metadata_source,
                 "suggested_defaults": {
                     "task_type": suggested_task_type,
                     "chat_template": str(model.get("preferred_chat_template") or "llama3"),
@@ -430,8 +467,11 @@ def recommend_training_base_models(
         warnings.append(
             "task_profile=preference currently maps to task_type=causal_lm in this wizard; DPO/ORPO flow is planned for a later phase."
         )
+    if introspection_warnings:
+        warnings.extend(introspection_warnings[:2])
 
     return {
+        "catalog_strategy": "curated_defaults_with_introspection_v2",
         "request": {
             "target_device": resolved_device,
             "primary_language": resolved_language,

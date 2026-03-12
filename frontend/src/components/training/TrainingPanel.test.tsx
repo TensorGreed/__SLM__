@@ -56,6 +56,28 @@ describe('TrainingPanel model wizard', () => {
           },
         };
       }
+      if (url.includes('/training/model-selection/introspect')) {
+        return {
+          data: {
+            project_id: 1,
+            introspection: {
+              model_id: 'microsoft/phi-2',
+              resolved: true,
+              source: 'hf_config',
+              architecture: 'causal_lm',
+              model_type: 'phi',
+              context_length: 2048,
+              license: 'mit',
+              params_estimate_b: 2.7,
+              memory_profile: {
+                estimated_min_vram_gb: 6.5,
+                estimated_ideal_vram_gb: 10.2,
+              },
+              warnings: [],
+            },
+          },
+        };
+      }
       if (url.includes('/training/experiments/effective-config')) {
         return { data: { resolved_training_config: {} } };
       }
@@ -74,8 +96,10 @@ describe('TrainingPanel model wizard', () => {
       />,
     );
 
+    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
     expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Apply Model + Defaults' }));
+    await user.click(screen.getByRole('tab', { name: /Config/i }));
 
     await waitFor(() => {
       expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
@@ -85,6 +109,29 @@ describe('TrainingPanel model wizard', () => {
       expect.objectContaining({
         action: 'apply',
         selected_model_id: 'acme/test-model',
+      }),
+    );
+  });
+
+  it('introspects base model metadata from setup config', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /Config/i }));
+    await user.click(screen.getByRole('button', { name: 'Introspect Model' }));
+
+    expect(await screen.findByText('Model Introspection')).toBeInTheDocument();
+    expect(await screen.findByText('causal_lm')).toBeInTheDocument();
+    expect(apiMock.post).toHaveBeenCalledWith(
+      '/projects/1/training/model-selection/introspect',
+      expect.objectContaining({
+        model_id: 'microsoft/phi-2',
       }),
     );
   });

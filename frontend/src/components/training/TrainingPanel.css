@@ -123,6 +123,67 @@
     font-size: var(--font-size-sm);
 }
 
+.training-preflight-contract-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.training-preflight-contract-card {
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.training-preflight-contract-card__title {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.training-preflight-contract-card__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.training-preflight-contract-card__row strong {
+    color: var(--text-primary);
+    text-align: right;
+}
+
+.training-preflight-panel__details {
+    margin-top: 10px;
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.training-preflight-panel__details > summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.training-preflight-panel__details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.training-preflight-panel__details pre {
+    margin: 0;
+    border-radius: 0;
+}
+
 .training-plan-panel {
     margin-bottom: var(--space-md);
     border: 1px solid var(--border-color);
@@ -852,12 +913,72 @@
     color: var(--text-secondary);
 }
 
+.training-model-wizard__meta-source {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
 .training-model-wizard__reasons {
     font-size: var(--font-size-xs);
     color: var(--text-tertiary);
     display: flex;
     flex-direction: column;
     gap: 2px;
+}
+
+.training-model-introspection {
+    margin-top: 8px;
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-sm);
+    padding: 8px;
+    background: rgba(15, 23, 42, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.training-model-introspection__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+}
+
+.training-model-introspection__head strong {
+    font-size: var(--font-size-xs);
+}
+
+.training-model-introspection__head span {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.training-model-introspection__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 6px;
+}
+
+.training-model-introspection__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.training-model-introspection__row strong {
+    color: var(--text-primary);
+    text-align: right;
+}
+
+.training-model-introspection__warnings {
+    font-size: var(--font-size-xs);
+    color: var(--color-warning);
 }
 
 .training-grid-2 {
@@ -1018,6 +1139,20 @@
 .training-model-wizard__card {
     background: #f8fbff;
     border-color: #d8e2f2;
+}
+
+.training-model-introspection {
+    background: #f2f7ff;
+    border-color: #d8e2f2;
+}
+
+.training-preflight-contract-card {
+    background: #f2f7ff;
+    border-color: #d8e2f2;
+}
+
+.training-preflight-panel__details > summary {
+    background: #edf3ff;
 }
 
 .training-collapsible > summary {
