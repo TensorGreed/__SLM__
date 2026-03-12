@@ -20,6 +20,7 @@ from app.services.ingestion_service import (
     process_document,
     queue_remote_import,
 )
+from app.services.dataset_intelligence_service import get_project_eda_stats
 
 router = APIRouter(prefix="/projects/{project_id}/ingestion", tags=["Ingestion"])
 
@@ -279,6 +280,18 @@ async def get_documents(
         return [DocumentResponse.model_validate(d) for d in docs]
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.get("/eda")
+async def get_project_eda(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get Exploratory Data Analysis (EDA) stats for the project's raw ingestion data."""
+    try:
+        return await get_project_eda_stats(db, project_id)
+    except Exception as e:
+        raise HTTPException(500, f"Error calculating EDA: {e}")
 
 
 @router.post("/documents/{document_id}/process", response_model=DocumentResponse)

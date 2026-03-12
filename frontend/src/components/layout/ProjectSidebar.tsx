@@ -53,6 +53,8 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
         || location.pathname === `/project/${projectId}/domain`;
     const isDomainProfilesRoute = location.pathname === `/project/${projectId}/domain/profiles`;
 
+    const isWizardRoute = location.pathname === `/project/${projectId}/wizard`;
+
     const getStageStatus = (stageKey: string) => {
         if (!pipelineStatus) {
             return 'pending';
@@ -95,6 +97,16 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                     <span className="nav-copy">
                         <span className="nav-label">Start Here</span>
                         <span className="nav-caption">Recommended next step for your project.</span>
+                    </span>
+                </button>
+                <button
+                    className={`workspace-nav-item ${isWizardRoute ? 'active' : ''}`}
+                    onClick={() => navigate(`/project/${projectId}/wizard`)}
+                >
+                    <span className="nav-icon">✨</span>
+                    <span className="nav-copy">
+                        <span className="nav-label">Wizard Mode</span>
+                        <span className="nav-caption">Guided step-by-step autopilot.</span>
                     </span>
                 </button>
                 <button

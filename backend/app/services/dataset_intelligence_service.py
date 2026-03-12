@@ -386,3 +386,86 @@ async def analyze_semantic_dataset_intelligence(
     report["report_path"] = str(report_path)
     return report
 
+async def get_project_eda_stats(db: AsyncSession, project_id: int) -> dict[str, Any]:
+    """Calculate basic EDA stats (row counts, token distributions, duplicate estimate) for project data."""
+    from app.models.dataset import Dataset, DatasetType, RawDocument
+    from sqlalchemy import select
+    
+    # 1. Fetch raw documents to read samples
+    docs_query = select(RawDocument).join(Dataset).where(
+        Dataset.project_id == project_id,
+        Dataset.dataset_type == DatasetType.RAW
+    )
+    result = await db.execute(docs_query)
+    docs = result.scalars().all()
+    
+    total_files = len(docs)
+    total_size_bytes = sum(doc.file_size_bytes for doc in docs)
+    
+    # 2. Sample records to compute token limits and schemas
+    sampled_texts = []
+    schema_keys: set[str] = set()
+    total_rows = 0
+    
+    # Try reading as JSONL or plain text
+    import json
+    for doc in docs:
+        path = Path(doc.file_path)
+        if not path.exists():
+            continue
+            
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for i, line in enumerate(f):
+                total_rows += 1
+                if i < 1000:  # Sample up to 1000 rows across raw docs
+                    text_content = ""
+                    try:
+                        record = json.loads(line)
+                        if isinstance(record, dict):
+                            for k in record.keys():
+                                schema_keys.add(k)
+                            text_content = _record_to_text(record)
+                    except json.JSONDecodeError:
+                        text_content = line.strip()
+                        
+                    if text_content:
+                        sampled_texts.append(text_content)
+                    
+    # 3. Calculate distributions on sample
+    token_counts = []
+    for text in sampled_texts:
+        # rough token estimate: words + punctuation
+        tokens = len(re.findall(r"\w+|[^\w\s]", text))
+        token_counts.append(tokens)
+        
+    token_counts.sort()
+    p50 = token_counts[len(token_counts) // 2] if token_counts else 0
+    p90 = token_counts[int(len(token_counts) * 0.9)] if token_counts else 0
+    p99 = token_counts[int(len(token_counts) * 0.99)] if token_counts else 0
+    
+    # 4. Rough duplicate estimate using hashing on samples
+    unique_hashes = set()
+    for text in sampled_texts:
+        import hashlib
+        h = hashlib.md5(text.encode("utf-8")).hexdigest()
+        unique_hashes.add(h)
+    
+    duplicate_ratio = 1.0 - (len(unique_hashes) / len(sampled_texts)) if sampled_texts else 0.0
+    
+    return {
+        "project_id": project_id,
+        "total_files": total_files,
+        "total_size_bytes": total_size_bytes,
+        "estimated_total_rows": total_rows,
+        "sample_size": len(sampled_texts),
+        "schema_keys_present": list(schema_keys)[:50],
+        "token_distribution": {
+            "p50": p50,
+            "p90": p90,
+            "p99": p99,
+            "max": token_counts[-1] if token_counts else 0
+        },
+        "estimated_duplicate_ratio": round(duplicate_ratio, 4)
+    }
+
+

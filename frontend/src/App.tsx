@@ -10,6 +10,7 @@ import ProjectRecipesPage from './pages/ProjectRecipesPage';
 import ProjectTrainingConfigPage from './pages/ProjectTrainingConfigPage';
 import ProjectPlaygroundPage from './pages/ProjectPlaygroundPage';
 import ProjectGuidePage from './pages/ProjectGuidePage';
+import ProjectWizardPage from './pages/ProjectWizardPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -30,6 +31,7 @@ function App() {
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
               <Route index element={<Navigate to="guide" replace />} />
               <Route path="guide" element={<ProjectGuidePage />} />
+              <Route path="wizard" element={<ProjectWizardPage />} />
               <Route path="pipeline" element={<Navigate to="data" replace />} />
               <Route path="pipeline/:tabKey" element={<ProjectPipelinePage />} />
               <Route path="workflow" element={<ProjectWorkflowPage />} />

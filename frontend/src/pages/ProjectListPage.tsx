@@ -14,6 +14,10 @@ export default function ProjectListPage() {
     const { projects, totalProjects, isLoadingProjects, fetchProjects, createProject, deleteProject } = useProjectStore();
 
     const [showModal, setShowModal] = useState(false);
+    const [showMagicModal, setShowMagicModal] = useState(false);
+    const [magicPrompt, setMagicPrompt] = useState('');
+    const [isMagicCreating, setIsMagicCreating] = useState(false);
+
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
     const [newModel, setNewModel] = useState('');
@@ -61,6 +65,21 @@ export default function ProjectListPage() {
         navigate(`/project/${project.id}`);
     };
 
+    const handleMagicCreate = async () => {
+        if (!magicPrompt.trim()) return;
+        setIsMagicCreating(true);
+        try {
+            const res = await api.post('/projects/magic-create', { prompt: magicPrompt.trim() });
+            setShowMagicModal(false);
+            setMagicPrompt('');
+            navigate(`/project/${res.data.id}`);
+        } catch (e: any) {
+            alert(e.response?.data?.detail || 'Magic create failed');
+        } finally {
+            setIsMagicCreating(false);
+        }
+    };
+
     const handleDelete = async (id: number) => {
         if (confirm('Delete this project? This cannot be undone.')) {
             await deleteProject(id);
@@ -73,9 +92,14 @@ export default function ProjectListPage() {
                 title="SLM Platform"
                 subtitle={`${totalProjects} project${totalProjects !== 1 ? 's' : ''}`}
                 actions={
-                    <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-                        + New Project
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
+                            ✨ Magic Create
+                        </button>
+                        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+                            + New Project
+                        </button>
+                    </div>
                 }
             />
 
@@ -122,9 +146,14 @@ export default function ProjectListPage() {
                         title="No projects yet"
                         description="Create your first SLM project to start building, evaluating, and exporting domain-specific language models."
                         action={
-                            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-                                + Create First Project
-                            </button>
+                            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                                <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
+                                    ✨ Magic Create
+                                </button>
+                                <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+                                    + Create First Project
+                                </button>
+                            </div>
                         }
                     />
                 ) : (
@@ -220,6 +249,41 @@ export default function ProjectListPage() {
                             <button className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
                             <button className="btn btn-primary" onClick={handleCreate} disabled={!newName.trim()}>
                                 Create Project
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Magic Create Modal */}
+            {showMagicModal && (
+                <div className="modal-overlay" onClick={() => !isMagicCreating && setShowMagicModal(false)}>
+                    <div className="modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2 className="modal-title">✨ Magic Create</h2>
+                            <button className="btn btn-ghost" onClick={() => !isMagicCreating && setShowMagicModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body">
+                            <p style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                                Describe the dataset or SLM you want to build. Our AI Architect will automatically configure the pipeline, select the base model, and assign the right domain packs for you.
+                            </p>
+                            <div className="form-group">
+                                <label className="form-label">What do you want to build?</label>
+                                <textarea
+                                    className="input"
+                                    placeholder="e.g. I have 500 PDFs of legal contracts and I want a model that extracts the liabilities."
+                                    value={magicPrompt}
+                                    onChange={(e) => setMagicPrompt(e.target.value)}
+                                    rows={4}
+                                    disabled={isMagicCreating}
+                                    autoFocus
+                                />
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={() => setShowMagicModal(false)} disabled={isMagicCreating}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleMagicCreate} disabled={!magicPrompt.trim() || isMagicCreating}>
+                                {isMagicCreating ? '✨ Architecting...' : 'Magic Create'}
                             </button>
                         </div>
                     </div>

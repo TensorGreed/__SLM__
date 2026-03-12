@@ -21,10 +21,16 @@ from app.schemas.project import (
     ProjectStatsResponse,
     ProjectUpdate,
 )
+from pydantic import BaseModel
 from app.security import get_request_principal, upsert_project_membership
 from app.services.domain_pack_service import assign_project_domain_pack, get_domain_pack
 from app.services.domain_profile_service import assign_project_domain_profile, get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
+from app.services.nl2pipeline_service import magic_create_pipeline_recipe
+from app.services.pipeline_recipe_service import resolve_pipeline_recipe, apply_pipeline_recipe
+
+class MagicCreateRequest(BaseModel):
+    prompt: str
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -131,6 +137,67 @@ async def create_project(
         )
 
     return ProjectResponse.model_validate(project)
+
+
+@router.post("/magic-create", response_model=ProjectResponse, status_code=201)
+async def magic_create_project(
+    data: MagicCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a project and apply a recommended pipeline recipe based on a natural language prompt."""
+    try:
+        recommendation = await magic_create_pipeline_recipe(data.prompt)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    project_name = recommendation.get("project_name", "Magic Project")
+    
+    # Ensure name uniqueness
+    existing = await db.execute(select(Project).where(Project.name.like(f"{project_name}%")))
+    if existing.scalars().all():
+        project_name = f"{project_name} - {data.prompt[:10]}"
+
+    project_data = ProjectCreate(
+        name=project_name,
+        description=recommendation.get("project_description", f"Generated from prompt: {data.prompt}"),
+        base_model_name=recommendation.get("base_model_name", "meta-llama/Meta-Llama-3-8B-Instruct"),
+        domain_pack_id=recommendation.get("domain_pack_id", "general-pack-v1"),
+    )
+    
+    # Use existing create_project logic
+    project_response = await create_project(project_data, request, db)
+    project_id = project_response.id
+
+    # Apply the recommended recipe
+    recipe_id = recommendation.get("pipeline_recipe_id", "recipe.pipeline.sft_default")
+    
+    # Apply pipeline recipe overrides
+    recipe_request = {
+        "recipe_id": recipe_id,
+        "dataset_adapter": {
+            "adapter_id": recommendation.get("adapter_id", "default-canonical"),
+            "task_profile": recommendation.get("task_profile", "instruction_sft")
+        }
+    }
+    
+    # Need to save the adapter preference specifically, as apply_recipe handles that if provided in the recipe patch
+    # Actually wait, apply_pipeline_recipe expects a resolve output or we can set adapter via preferences.
+    # The simplest is to just set adapter preferences natively.
+    from app.services.data_adapter_service import save_adapter_preference
+    from app.schemas.dataset import AdapterPreferenceRequest
+    
+    await save_adapter_preference(
+        db, 
+        project_id, 
+        AdapterPreferenceRequest(
+            adapter_id=recommendation.get("adapter_id", "default-canonical"), 
+            task_profile=recommendation.get("task_profile", "instruction_sft"),
+            adapter_config={}
+        )
+    )
+
+    return project_response
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

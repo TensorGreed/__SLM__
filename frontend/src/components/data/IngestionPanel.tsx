@@ -4,6 +4,7 @@ import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { buildWsUrl } from '../../utils/ws';
+import EDADashboard from './EDADashboard';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -617,10 +618,10 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                     {Object.keys(adapterCatalog?.adapters || {})
                                         .filter((adapterKey) => adapterKey !== 'auto')
                                         .map((adapterKey) => (
-                                        <option key={adapterKey} value={adapterKey}>
-                                            {adapterKey}
-                                        </option>
-                                    ))}
+                                            <option key={adapterKey} value={adapterKey}>
+                                                {adapterKey}
+                                            </option>
+                                        ))}
                                 </select>
                             </div>
                         </div>
@@ -784,6 +785,10 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     </h3>
                     <TerminalConsole logs={importLogs} height="260px" />
                 </div>
+            )}
+
+            {documents.length > 0 && (
+                <EDADashboard projectId={projectId} />
             )}
 
             <div className="docs-section">
