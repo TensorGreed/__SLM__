@@ -4,6 +4,8 @@ import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import ExperimentCompare from './ExperimentCompare';
+import HardwareRecommenderModal from './HardwareRecommenderModal';
+import type { RecommendationResult } from './HardwareRecommenderModal';
 import { buildWsUrl } from '../../utils/ws';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import './TrainingPanel.css';
@@ -589,6 +591,7 @@ export default function TrainingPanel({
   const [observabilityRecentCount, setObservabilityRecentCount] = useState(0);
   const [observabilityError, setObservabilityError] = useState('');
   const [observabilityLoading, setObservabilityLoading] = useState(false);
+  const [showHardwareModal, setShowHardwareModal] = useState(false);
 
   const statusColor = (status: string) =>
     status === 'completed'
@@ -1160,7 +1163,7 @@ export default function TrainingPanel({
           recommendation_count: recommendationModelIds.length,
           recommendation_model_ids: recommendationModelIds,
         })
-        .catch(() => {});
+        .catch(() => { });
     } catch (err: any) {
       setWizardResult(null);
       if (!options?.silent) {
@@ -1212,7 +1215,7 @@ export default function TrainingPanel({
           ? Number(item.match_score)
           : undefined,
       })
-      .catch(() => {});
+      .catch(() => { });
   };
 
   const persistPreferredPlanProfile = async (profile: string) => {
@@ -1733,6 +1736,22 @@ export default function TrainingPanel({
     }
   };
 
+  const handleApplyHardwareRecommendation = (rec: RecommendationResult) => {
+    setBaseModel(rec.base_model);
+    setUseLora(true);
+    setLoraR(rec.lora_rank);
+    setLoraAlpha(rec.lora_rank * 2);
+    setBatchSize(rec.training_batch_size);
+    setTouchedConfig((prev) => ({
+      ...prev,
+      use_lora: true,
+      lora_r: true,
+      lora_alpha: true,
+      batch_size: true,
+    }));
+    setShowHardwareModal(false);
+  };
+
   const viewDashboard = (exp: Experiment) => {
     setActiveExperiment(exp);
     setMetrics([]);
@@ -2114,6 +2133,14 @@ export default function TrainingPanel({
                 >
                   {recipeResolveLoading ? 'Applying...' : 'Apply Recipe'}
                 </button>
+                <div className="form-action-divider" style={{ borderLeft: '1px solid var(--border-color)', margin: '0 var(--space-sm)' }} />
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowHardwareModal(true)}
+                  title="Optimize settings for target hardware"
+                >
+                  ✨ Hardware Auto-Tuner
+                </button>
               </div>
               <div className="form-hint">
                 Recipe applies a domain-agnostic config patch, then runtime/profile defaults and preflight.
@@ -2220,9 +2247,8 @@ export default function TrainingPanel({
                 )}
                 {preflightPreview && (
                   <div
-                    className={`training-preflight-panel ${
-                      preflightPreview.ok ? 'training-preflight-panel--ok' : 'training-preflight-panel--error'
-                    }`}
+                    className={`training-preflight-panel ${preflightPreview.ok ? 'training-preflight-panel--ok' : 'training-preflight-panel--error'
+                      }`}
                   >
                     <div className="training-preflight-panel__title-row">
                       <strong>Capability Preflight</strong>
@@ -2286,9 +2312,8 @@ export default function TrainingPanel({
                         return (
                           <div
                             key={`training-plan-${suggestion.profile}`}
-                            className={`training-plan-card ${
-                              suggestion.preflight?.ok ? 'training-plan-card--ok' : 'training-plan-card--error'
-                            } ${isRecommended ? 'training-plan-card--recommended' : ''}`}
+                            className={`training-plan-card ${suggestion.preflight?.ok ? 'training-plan-card--ok' : 'training-plan-card--error'
+                              } ${isRecommended ? 'training-plan-card--recommended' : ''}`}
                           >
                             <div className="training-plan-card__head">
                               <strong>{suggestion.title || suggestion.profile}</strong>
@@ -2696,582 +2721,582 @@ export default function TrainingPanel({
                       <label className="form-label">Base Model</label>
                       <input className="input" value={baseModel} onChange={(e) => setBaseModel(e.target.value)} />
                     </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Training Mode</label>
-                    <select
-                      className="input"
-                      value={trainingMode}
-                      onChange={(e) => {
-                        const nextMode = e.target.value;
-                        setTrainingMode(nextMode);
-                        setTouchedConfig((prev) => ({ ...prev, training_mode: true }));
-                        if (nextMode === 'dpo' || nextMode === 'orpo') {
-                          setTaskType('causal_lm');
-                          setTouchedConfig((prev) => ({ ...prev, task_type: true }));
-                        }
-                      }}
-                    >
-                      <option value="sft">SFT</option>
-                      <option value="domain_pretrain">Domain Pretrain</option>
-                      <option value="dpo">DPO</option>
-                      <option value="orpo">ORPO</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Runtime</label>
-                    <select
-                      className="input"
-                      value={trainingRuntimeId}
-                      onChange={(e) => {
-                        setTrainingRuntimeId(e.target.value);
-                        setTouchedConfig((prev) => ({ ...prev, training_runtime_id: true }));
-                      }}
-                    >
-                      <option value="auto">
-                        Auto
-                        {runtimeCatalog?.default_runtime_id ? ` (${runtimeCatalog.default_runtime_id})` : ''}
-                      </option>
-                      {(runtimeCatalog?.runtimes || []).map((runtime) => (
-                        <option key={runtime.runtime_id} value={runtime.runtime_id}>
-                          {runtime.label}
-                          {runtime.execution_backend ? ` [${runtime.execution_backend}]` : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {runtimeCatalogError && (
-                      <div className="form-hint form-hint-warning">
-                        {runtimeCatalogError}
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Training Mode</label>
+                        <select
+                          className="input"
+                          value={trainingMode}
+                          onChange={(e) => {
+                            const nextMode = e.target.value;
+                            setTrainingMode(nextMode);
+                            setTouchedConfig((prev) => ({ ...prev, training_mode: true }));
+                            if (nextMode === 'dpo' || nextMode === 'orpo') {
+                              setTaskType('causal_lm');
+                              setTouchedConfig((prev) => ({ ...prev, task_type: true }));
+                            }
+                          }}
+                        >
+                          <option value="sft">SFT</option>
+                          <option value="domain_pretrain">Domain Pretrain</option>
+                          <option value="dpo">DPO</option>
+                          <option value="orpo">ORPO</option>
+                        </select>
                       </div>
-                    )}
-                  </div>
-                </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Task Type</label>
-                    <select
-                      className="input"
-                      value={taskType}
-                      onChange={(e) => {
-                        setTaskType(e.target.value);
-                        setTouchedConfig((prev) => ({ ...prev, task_type: true }));
-                      }}
-                      disabled={isAlignmentMode}
-                    >
-                      <option value="causal_lm">Causal LM</option>
-                      <option value="seq2seq">Seq2Seq</option>
-                      <option value="classification">Classification</option>
-                    </select>
-                    {isAlignmentMode && (
-                      <div className="form-hint">
-                        DPO/ORPO currently run on causal LM preference pairs.
+                      <div className="form-group">
+                        <label className="form-label">Runtime</label>
+                        <select
+                          className="input"
+                          value={trainingRuntimeId}
+                          onChange={(e) => {
+                            setTrainingRuntimeId(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, training_runtime_id: true }));
+                          }}
+                        >
+                          <option value="auto">
+                            Auto
+                            {runtimeCatalog?.default_runtime_id ? ` (${runtimeCatalog.default_runtime_id})` : ''}
+                          </option>
+                          {(runtimeCatalog?.runtimes || []).map((runtime) => (
+                            <option key={runtime.runtime_id} value={runtime.runtime_id}>
+                              {runtime.label}
+                              {runtime.execution_backend ? ` [${runtime.execution_backend}]` : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {runtimeCatalogError && (
+                          <div className="form-hint form-hint-warning">
+                            {runtimeCatalogError}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Task Type</label>
+                        <select
+                          className="input"
+                          value={taskType}
+                          onChange={(e) => {
+                            setTaskType(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, task_type: true }));
+                          }}
+                          disabled={isAlignmentMode}
+                        >
+                          <option value="causal_lm">Causal LM</option>
+                          <option value="seq2seq">Seq2Seq</option>
+                          <option value="classification">Classification</option>
+                        </select>
+                        {isAlignmentMode && (
+                          <div className="form-hint">
+                            DPO/ORPO currently run on causal LM preference pairs.
+                          </div>
+                        )}
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Trainer Backend</label>
+                        <select
+                          className="input"
+                          value={trainerBackend}
+                          onChange={(e) => {
+                            setTrainerBackend(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, trainer_backend: true }));
+                          }}
+                        >
+                          <option value="auto">Auto (HF Trainer)</option>
+                          <option value="hf_trainer">HF Trainer</option>
+                          <option value="trl_sft">TRL SFTTrainer</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Chat Template</label>
+                      <select
+                        className="input"
+                        value={chatTemplate}
+                        onChange={(e) => {
+                          setChatTemplate(e.target.value);
+                          setTouchedConfig((prev) => ({ ...prev, chat_template: true }));
+                        }}
+                      >
+                        <option value="llama3">Llama-3</option>
+                        <option value="chatml">ChatML</option>
+                        <option value="zephyr">Zephyr</option>
+                        <option value="phi3">Phi-3</option>
+                      </select>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Epochs</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={epochs}
+                          onChange={(e) => {
+                            setEpochs(Number(e.target.value) || 1);
+                            setTouchedConfig((prev) => ({ ...prev, num_epochs: true }));
+                          }}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Batch Size</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={batchSize}
+                          onChange={(e) => {
+                            setBatchSize(Number(e.target.value) || 1);
+                            setTouchedConfig((prev) => ({ ...prev, batch_size: true }));
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Learning Rate</label>
+                        <input
+                          className="input"
+                          value={lr}
+                          onChange={(e) => {
+                            setLr(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, learning_rate: true }));
+                          }}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Optimizer</label>
+                        <select
+                          className="input"
+                          value={optimizer}
+                          onChange={(e) => {
+                            setOptimizer(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, optimizer: true }));
+                          }}
+                        >
+                          <option value="paged_adamw_8bit">Paged AdamW (8-bit)</option>
+                          <option value="adamw_torch">AdamW</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Grad Accum Steps</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          value={gradientAccumulationSteps}
+                          onChange={(e) => {
+                            setGradientAccumulationSteps(Math.max(1, Number(e.target.value) || 1));
+                            setTouchedConfig((prev) => ({ ...prev, gradient_accumulation_steps: true }));
+                          }}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Max Seq Length</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={128}
+                          value={maxSeqLength}
+                          onChange={(e) => {
+                            setMaxSeqLength(Math.max(128, Number(e.target.value) || 128));
+                            setTouchedConfig((prev) => ({ ...prev, max_seq_length: true }));
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="training-grid-2">
+                      <div className="form-group">
+                        <label className="form-label">Save Steps</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          value={saveSteps}
+                          onChange={(e) => {
+                            setSaveSteps(Math.max(1, Number(e.target.value) || 1));
+                            setTouchedConfig((prev) => ({ ...prev, save_steps: true }));
+                          }}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Eval Steps</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          value={evalSteps}
+                          onChange={(e) => {
+                            setEvalSteps(Math.max(1, Number(e.target.value) || 1));
+                            setTouchedConfig((prev) => ({ ...prev, eval_steps: true }));
+                          }}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Trainer Backend</label>
-                    <select
-                      className="input"
-                      value={trainerBackend}
-                      onChange={(e) => {
-                        setTrainerBackend(e.target.value);
-                        setTouchedConfig((prev) => ({ ...prev, trainer_backend: true }));
-                      }}
-                    >
-                      <option value="auto">Auto (HF Trainer)</option>
-                      <option value="hf_trainer">HF Trainer</option>
-                      <option value="trl_sft">TRL SFTTrainer</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Chat Template</label>
-                  <select
-                    className="input"
-                    value={chatTemplate}
-                    onChange={(e) => {
-                      setChatTemplate(e.target.value);
-                      setTouchedConfig((prev) => ({ ...prev, chat_template: true }));
-                    }}
-                  >
-                    <option value="llama3">Llama-3</option>
-                    <option value="chatml">ChatML</option>
-                    <option value="zephyr">Zephyr</option>
-                    <option value="phi3">Phi-3</option>
-                  </select>
-                </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Epochs</label>
-                    <input
-                      className="input"
-                      type="number"
-                      value={epochs}
-                      onChange={(e) => {
-                        setEpochs(Number(e.target.value) || 1);
-                        setTouchedConfig((prev) => ({ ...prev, num_epochs: true }));
-                      }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Batch Size</label>
-                    <input
-                      className="input"
-                      type="number"
-                      value={batchSize}
-                      onChange={(e) => {
-                        setBatchSize(Number(e.target.value) || 1);
-                        setTouchedConfig((prev) => ({ ...prev, batch_size: true }));
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Learning Rate</label>
-                    <input
-                      className="input"
-                      value={lr}
-                      onChange={(e) => {
-                        setLr(e.target.value);
-                        setTouchedConfig((prev) => ({ ...prev, learning_rate: true }));
-                      }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Optimizer</label>
-                    <select
-                      className="input"
-                      value={optimizer}
-                      onChange={(e) => {
-                        setOptimizer(e.target.value);
-                        setTouchedConfig((prev) => ({ ...prev, optimizer: true }));
-                      }}
-                    >
-                      <option value="paged_adamw_8bit">Paged AdamW (8-bit)</option>
-                      <option value="adamw_torch">AdamW</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Grad Accum Steps</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={1}
-                      value={gradientAccumulationSteps}
-                      onChange={(e) => {
-                        setGradientAccumulationSteps(Math.max(1, Number(e.target.value) || 1));
-                        setTouchedConfig((prev) => ({ ...prev, gradient_accumulation_steps: true }));
-                      }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Max Seq Length</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={128}
-                      value={maxSeqLength}
-                      onChange={(e) => {
-                        setMaxSeqLength(Math.max(128, Number(e.target.value) || 128));
-                        setTouchedConfig((prev) => ({ ...prev, max_seq_length: true }));
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Save Steps</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={1}
-                      value={saveSteps}
-                      onChange={(e) => {
-                        setSaveSteps(Math.max(1, Number(e.target.value) || 1));
-                        setTouchedConfig((prev) => ({ ...prev, save_steps: true }));
-                      }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Eval Steps</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={1}
-                      value={evalSteps}
-                      onChange={(e) => {
-                        setEvalSteps(Math.max(1, Number(e.target.value) || 1));
-                        setTouchedConfig((prev) => ({ ...prev, eval_steps: true }));
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
 
                   <div>
                     <h4 className="training-config-section-title">Advanced & PEFT</h4>
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={useLora}
-                    onChange={(e) => {
-                      setUseLora(e.target.checked);
-                      setTouchedConfig((prev) => ({ ...prev, use_lora: true }));
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Enable LoRA</label>
-                </div>
-                {useLora && (
-                  <div className="training-lora-box">
-                    <div className="training-grid-2">
-                      <div className="form-group">
-                        <label className="form-label">Rank (r)</label>
-                        <input
-                          className="input"
-                          type="number"
-                          value={loraR}
-                          onChange={(e) => {
-                            setLoraR(Number(e.target.value) || 1);
-                            setTouchedConfig((prev) => ({ ...prev, lora_r: true }));
-                          }}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Alpha</label>
-                        <input
-                          className="input"
-                          type="number"
-                          value={loraAlpha}
-                          onChange={(e) => {
-                            setLoraAlpha(Number(e.target.value) || 1);
-                            setTouchedConfig((prev) => ({ ...prev, lora_alpha: true }));
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Target Modules (comma-separated)</label>
-                      <input
-                        className="input"
-                        value={targetModules}
-                        onChange={(e) => {
-                          setTargetModules(e.target.value);
-                          setTouchedConfig((prev) => ({ ...prev, target_modules: true }));
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={gradientCheckpointing}
-                    onChange={(e) => {
-                      setGradientCheckpointing(e.target.checked);
-                      setTouchedConfig((prev) => ({ ...prev, gradient_checkpointing: true }));
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Use Gradient Checkpointing</label>
-                </div>
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={sequencePacking}
-                    onChange={(e) => {
-                      setSequencePacking(e.target.checked);
-                      setTouchedConfig((prev) => ({ ...prev, sequence_packing: true }));
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Enable Sequence Packing</label>
-                </div>
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={flashAttention}
-                    onChange={(e) => {
-                      setFlashAttention(e.target.checked);
-                      setTouchedConfig((prev) => ({ ...prev, flash_attention: true }));
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Enable Flash Attention</label>
-                </div>
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={bf16}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setBf16(checked);
-                      setTouchedConfig((prev) => ({ ...prev, bf16: true }));
-                      if (checked && fp16) {
-                        setFp16(false);
-                        setTouchedConfig((prev) => ({ ...prev, fp16: true }));
-                      }
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Use BF16</label>
-                </div>
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={fp16}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setFp16(checked);
-                      setTouchedConfig((prev) => ({ ...prev, fp16: true }));
-                      if (checked && bf16) {
-                        setBf16(false);
-                        setTouchedConfig((prev) => ({ ...prev, bf16: true }));
-                      }
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Use FP16</label>
-                </div>
-                <div className="form-group training-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={autoOomRetry}
-                    onChange={(e) => {
-                      setAutoOomRetry(e.target.checked);
-                      setTouchedConfig((prev) => ({ ...prev, auto_oom_retry: true }));
-                    }}
-                  />
-                  <label className="form-label form-label-inline-tight">Auto OOM Retry Planner</label>
-                </div>
-                <div className="training-grid-2">
-                  <div className="form-group">
-                    <label className="form-label">Max OOM Retries</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={0}
-                      max={5}
-                      value={maxOomRetries}
-                      onChange={(e) => {
-                        const v = Math.min(5, Math.max(0, Number(e.target.value) || 0));
-                        setMaxOomRetries(v);
-                        setTouchedConfig((prev) => ({ ...prev, max_oom_retries: true }));
-                      }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">OOM Seq Shrink</label>
-                    <input
-                      className="input"
-                      value={oomRetrySeqShrink}
-                      onChange={(e) => {
-                        setOomRetrySeqShrink(e.target.value);
-                        setTouchedConfig((prev) => ({ ...prev, oom_retry_seq_shrink: true }));
-                      }}
-                      placeholder="0.75"
-                    />
-                  </div>
-                </div>
-                {isAlignmentMode && (
-                  <div className="training-lora-box">
-                    <h5 className="training-config-section-title" style={{ marginTop: 0 }}>
-                      Alignment Dataset Controls
-                    </h5>
                     <div className="form-group training-toggle-row">
                       <input
                         type="checkbox"
-                        checked={alignmentAutoFilter}
+                        checked={useLora}
                         onChange={(e) => {
-                          setAlignmentAutoFilter(e.target.checked);
-                          setTouchedConfig((prev) => ({ ...prev, alignment_auto_filter: true }));
+                          setUseLora(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, use_lora: true }));
                         }}
                       />
-                      <label className="form-label form-label-inline-tight">Auto filter preference pairs before run</label>
+                      <label className="form-label form-label-inline-tight">Enable LoRA</label>
                     </div>
-                    <div className="training-grid-2">
-                      <div className="form-group">
-                        <label className="form-label">Alignment Beta</label>
-                        <input
-                          className="input"
-                          value={alignmentBeta}
-                          onChange={(e) => {
-                            setAlignmentBeta(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, alignment_beta: true }));
-                          }}
-                          placeholder="0.1"
-                        />
+                    {useLora && (
+                      <div className="training-lora-box">
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Rank (r)</label>
+                            <input
+                              className="input"
+                              type="number"
+                              value={loraR}
+                              onChange={(e) => {
+                                setLoraR(Number(e.target.value) || 1);
+                                setTouchedConfig((prev) => ({ ...prev, lora_r: true }));
+                              }}
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Alpha</label>
+                            <input
+                              className="input"
+                              type="number"
+                              value={loraAlpha}
+                              onChange={(e) => {
+                                setLoraAlpha(Number(e.target.value) || 1);
+                                setTouchedConfig((prev) => ({ ...prev, lora_alpha: true }));
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Target Modules (comma-separated)</label>
+                          <input
+                            className="input"
+                            value={targetModules}
+                            onChange={(e) => {
+                              setTargetModules(e.target.value);
+                              setTouchedConfig((prev) => ({ ...prev, target_modules: true }));
+                            }}
+                          />
+                        </div>
                       </div>
-                      <div className="form-group">
-                        <label className="form-label">Alignment Quality Threshold</label>
-                        <input
-                          className="input"
-                          value={alignmentQualityThreshold}
-                          onChange={(e) => {
-                            setAlignmentQualityThreshold(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, alignment_quality_threshold: true }));
-                          }}
-                          placeholder="3.0"
-                        />
-                      </div>
-                    </div>
-                    <div className="training-grid-2">
-                      <div className="form-group">
-                        <label className="form-label">Alignment Max Prompt Length</label>
-                        <input
-                          className="input"
-                          value={alignmentMaxPromptLength}
-                          onChange={(e) => {
-                            setAlignmentMaxPromptLength(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, alignment_max_prompt_length: true }));
-                          }}
-                          placeholder="1024"
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Alignment Max Length</label>
-                        <input
-                          className="input"
-                          value={alignmentMaxLength}
-                          onChange={(e) => {
-                            setAlignmentMaxLength(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, alignment_max_length: true }));
-                          }}
-                          placeholder="2048"
-                        />
-                      </div>
-                    </div>
-                    <div className="training-grid-2">
-                      <div className="form-group">
-                        <label className="form-label">Alignment Min Keep Ratio</label>
-                        <input
-                          className="input"
-                          value={alignmentMinKeepRatio}
-                          onChange={(e) => {
-                            setAlignmentMinKeepRatio(e.target.value);
-                            setTouchedConfig((prev) => ({ ...prev, alignment_min_keep_ratio: true }));
-                          }}
-                          placeholder="0.4"
-                        />
-                      </div>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Alignment Dataset Path (Optional)</label>
+                    )}
+                    <div className="form-group training-toggle-row">
                       <input
-                        className="input"
-                        value={alignmentDatasetPath}
+                        type="checkbox"
+                        checked={gradientCheckpointing}
                         onChange={(e) => {
-                          setAlignmentDatasetPath(e.target.value);
-                          setTouchedConfig((prev) => ({ ...prev, alignment_dataset_path: true }));
+                          setGradientCheckpointing(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, gradient_checkpointing: true }));
                         }}
-                        placeholder="prepared/alignment/train.filtered.jsonl"
                       />
-                      <div className="form-hint">
-                        Leave empty to use prepared train split. Path is project-relative under data/projects/&lt;id&gt;.
-                      </div>
+                      <label className="form-label form-label-inline-tight">Use Gradient Checkpointing</label>
                     </div>
                     <div className="form-group training-toggle-row">
                       <input
                         type="checkbox"
-                        checked={alignmentIncludePlaygroundFeedback}
+                        checked={sequencePacking}
                         onChange={(e) => {
-                          setAlignmentIncludePlaygroundFeedback(e.target.checked);
-                          setTouchedConfig((prev) => ({
-                            ...prev,
-                            alignment_include_playground_feedback: true,
-                          }));
+                          setSequencePacking(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, sequence_packing: true }));
                         }}
                       />
-                      <label className="form-label form-label-inline-tight">
-                        Merge playground downvote pairs into alignment train dataset
-                      </label>
+                      <label className="form-label form-label-inline-tight">Enable Sequence Packing</label>
+                    </div>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={flashAttention}
+                        onChange={(e) => {
+                          setFlashAttention(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, flash_attention: true }));
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">Enable Flash Attention</label>
+                    </div>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={bf16}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setBf16(checked);
+                          setTouchedConfig((prev) => ({ ...prev, bf16: true }));
+                          if (checked && fp16) {
+                            setFp16(false);
+                            setTouchedConfig((prev) => ({ ...prev, fp16: true }));
+                          }
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">Use BF16</label>
+                    </div>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={fp16}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setFp16(checked);
+                          setTouchedConfig((prev) => ({ ...prev, fp16: true }));
+                          if (checked && bf16) {
+                            setBf16(false);
+                            setTouchedConfig((prev) => ({ ...prev, bf16: true }));
+                          }
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">Use FP16</label>
+                    </div>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={autoOomRetry}
+                        onChange={(e) => {
+                          setAutoOomRetry(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, auto_oom_retry: true }));
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">Auto OOM Retry Planner</label>
                     </div>
                     <div className="training-grid-2">
                       <div className="form-group">
-                        <label className="form-label">Playground Feedback Max Pairs</label>
+                        <label className="form-label">Max OOM Retries</label>
                         <input
                           className="input"
-                          value={alignmentPlaygroundMaxPairs}
+                          type="number"
+                          min={0}
+                          max={5}
+                          value={maxOomRetries}
                           onChange={(e) => {
-                            setAlignmentPlaygroundMaxPairs(e.target.value);
-                            setTouchedConfig((prev) => ({
-                              ...prev,
-                              alignment_playground_max_pairs: true,
-                            }));
+                            const v = Math.min(5, Math.max(0, Number(e.target.value) || 0));
+                            setMaxOomRetries(v);
+                            setTouchedConfig((prev) => ({ ...prev, max_oom_retries: true }));
                           }}
-                          placeholder="5000"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">OOM Seq Shrink</label>
+                        <input
+                          className="input"
+                          value={oomRetrySeqShrink}
+                          onChange={(e) => {
+                            setOomRetrySeqShrink(e.target.value);
+                            setTouchedConfig((prev) => ({ ...prev, oom_retry_seq_shrink: true }));
+                          }}
+                          placeholder="0.75"
                         />
                       </div>
                     </div>
-                  </div>
-                )}
-                <div className="training-lora-box">
-                  <h5 className="training-config-section-title" style={{ marginTop: 0 }}>
-                    Observability Telemetry
-                  </h5>
-                  <div className="form-group training-toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={observabilityEnabled}
-                      onChange={(e) => {
-                        setObservabilityEnabled(e.target.checked);
-                        setTouchedConfig((prev) => ({ ...prev, observability_enabled: true }));
-                      }}
-                    />
-                    <label className="form-label form-label-inline-tight">Enable gradient/attention telemetry emission</label>
-                  </div>
-                  <div className="form-group training-toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={observabilityProbeAttention}
-                      onChange={(e) => {
-                        setObservabilityProbeAttention(e.target.checked);
-                        setTouchedConfig((prev) => ({ ...prev, observability_probe_attention: true }));
-                      }}
-                    />
-                    <label className="form-label form-label-inline-tight">Run attention probe on logging steps</label>
-                  </div>
-                  <div className="training-grid-2">
-                    <div className="form-group">
-                      <label className="form-label">Observability Log Steps</label>
-                      <input
-                        className="input"
-                        type="number"
-                        min={1}
-                        value={observabilityLogSteps}
-                        onChange={(e) => {
-                          setObservabilityLogSteps(Math.max(1, Number(e.target.value) || 1));
-                          setTouchedConfig((prev) => ({ ...prev, observability_log_steps: true }));
-                        }}
-                      />
+                    {isAlignmentMode && (
+                      <div className="training-lora-box">
+                        <h5 className="training-config-section-title" style={{ marginTop: 0 }}>
+                          Alignment Dataset Controls
+                        </h5>
+                        <div className="form-group training-toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={alignmentAutoFilter}
+                            onChange={(e) => {
+                              setAlignmentAutoFilter(e.target.checked);
+                              setTouchedConfig((prev) => ({ ...prev, alignment_auto_filter: true }));
+                            }}
+                          />
+                          <label className="form-label form-label-inline-tight">Auto filter preference pairs before run</label>
+                        </div>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Alignment Beta</label>
+                            <input
+                              className="input"
+                              value={alignmentBeta}
+                              onChange={(e) => {
+                                setAlignmentBeta(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, alignment_beta: true }));
+                              }}
+                              placeholder="0.1"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Alignment Quality Threshold</label>
+                            <input
+                              className="input"
+                              value={alignmentQualityThreshold}
+                              onChange={(e) => {
+                                setAlignmentQualityThreshold(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, alignment_quality_threshold: true }));
+                              }}
+                              placeholder="3.0"
+                            />
+                          </div>
+                        </div>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Alignment Max Prompt Length</label>
+                            <input
+                              className="input"
+                              value={alignmentMaxPromptLength}
+                              onChange={(e) => {
+                                setAlignmentMaxPromptLength(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, alignment_max_prompt_length: true }));
+                              }}
+                              placeholder="1024"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Alignment Max Length</label>
+                            <input
+                              className="input"
+                              value={alignmentMaxLength}
+                              onChange={(e) => {
+                                setAlignmentMaxLength(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, alignment_max_length: true }));
+                              }}
+                              placeholder="2048"
+                            />
+                          </div>
+                        </div>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Alignment Min Keep Ratio</label>
+                            <input
+                              className="input"
+                              value={alignmentMinKeepRatio}
+                              onChange={(e) => {
+                                setAlignmentMinKeepRatio(e.target.value);
+                                setTouchedConfig((prev) => ({ ...prev, alignment_min_keep_ratio: true }));
+                              }}
+                              placeholder="0.4"
+                            />
+                          </div>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Alignment Dataset Path (Optional)</label>
+                          <input
+                            className="input"
+                            value={alignmentDatasetPath}
+                            onChange={(e) => {
+                              setAlignmentDatasetPath(e.target.value);
+                              setTouchedConfig((prev) => ({ ...prev, alignment_dataset_path: true }));
+                            }}
+                            placeholder="prepared/alignment/train.filtered.jsonl"
+                          />
+                          <div className="form-hint">
+                            Leave empty to use prepared train split. Path is project-relative under data/projects/&lt;id&gt;.
+                          </div>
+                        </div>
+                        <div className="form-group training-toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={alignmentIncludePlaygroundFeedback}
+                            onChange={(e) => {
+                              setAlignmentIncludePlaygroundFeedback(e.target.checked);
+                              setTouchedConfig((prev) => ({
+                                ...prev,
+                                alignment_include_playground_feedback: true,
+                              }));
+                            }}
+                          />
+                          <label className="form-label form-label-inline-tight">
+                            Merge playground downvote pairs into alignment train dataset
+                          </label>
+                        </div>
+                        <div className="training-grid-2">
+                          <div className="form-group">
+                            <label className="form-label">Playground Feedback Max Pairs</label>
+                            <input
+                              className="input"
+                              value={alignmentPlaygroundMaxPairs}
+                              onChange={(e) => {
+                                setAlignmentPlaygroundMaxPairs(e.target.value);
+                                setTouchedConfig((prev) => ({
+                                  ...prev,
+                                  alignment_playground_max_pairs: true,
+                                }));
+                              }}
+                              placeholder="5000"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="training-lora-box">
+                      <h5 className="training-config-section-title" style={{ marginTop: 0 }}>
+                        Observability Telemetry
+                      </h5>
+                      <div className="form-group training-toggle-row">
+                        <input
+                          type="checkbox"
+                          checked={observabilityEnabled}
+                          onChange={(e) => {
+                            setObservabilityEnabled(e.target.checked);
+                            setTouchedConfig((prev) => ({ ...prev, observability_enabled: true }));
+                          }}
+                        />
+                        <label className="form-label form-label-inline-tight">Enable gradient/attention telemetry emission</label>
+                      </div>
+                      <div className="form-group training-toggle-row">
+                        <input
+                          type="checkbox"
+                          checked={observabilityProbeAttention}
+                          onChange={(e) => {
+                            setObservabilityProbeAttention(e.target.checked);
+                            setTouchedConfig((prev) => ({ ...prev, observability_probe_attention: true }));
+                          }}
+                        />
+                        <label className="form-label form-label-inline-tight">Run attention probe on logging steps</label>
+                      </div>
+                      <div className="training-grid-2">
+                        <div className="form-group">
+                          <label className="form-label">Observability Log Steps</label>
+                          <input
+                            className="input"
+                            type="number"
+                            min={1}
+                            value={observabilityLogSteps}
+                            onChange={(e) => {
+                              setObservabilityLogSteps(Math.max(1, Number(e.target.value) || 1));
+                              setTouchedConfig((prev) => ({ ...prev, observability_log_steps: true }));
+                            }}
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Max Gradient Layers</label>
+                          <input
+                            className="input"
+                            type="number"
+                            min={1}
+                            value={observabilityMaxLayers}
+                            onChange={(e) => {
+                              setObservabilityMaxLayers(Math.max(1, Number(e.target.value) || 1));
+                              setTouchedConfig((prev) => ({ ...prev, observability_max_layers: true }));
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="training-grid-2">
+                        <div className="form-group">
+                          <label className="form-label">Attention Top-K Tokens</label>
+                          <input
+                            className="input"
+                            type="number"
+                            min={1}
+                            value={observabilityProbeTopK}
+                            onChange={(e) => {
+                              setObservabilityProbeTopK(Math.max(1, Number(e.target.value) || 1));
+                              setTouchedConfig((prev) => ({ ...prev, observability_probe_top_k: true }));
+                            }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label">Max Gradient Layers</label>
-                      <input
-                        className="input"
-                        type="number"
-                        min={1}
-                        value={observabilityMaxLayers}
-                        onChange={(e) => {
-                          setObservabilityMaxLayers(Math.max(1, Number(e.target.value) || 1));
-                          setTouchedConfig((prev) => ({ ...prev, observability_max_layers: true }));
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="training-grid-2">
-                    <div className="form-group">
-                      <label className="form-label">Attention Top-K Tokens</label>
-                      <input
-                        className="input"
-                        type="number"
-                        min={1}
-                        value={observabilityProbeTopK}
-                        onChange={(e) => {
-                          setObservabilityProbeTopK(Math.max(1, Number(e.target.value) || 1));
-                          setTouchedConfig((prev) => ({ ...prev, observability_probe_top_k: true }));
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
                   </div>
                 </div>
               </div>
@@ -3429,6 +3454,13 @@ export default function TrainingPanel({
           isComplete={experiments.some((e) => e.status === 'completed')}
           hint="Start and complete an experiment to proceed"
           onNext={onNextStep}
+        />
+      )}
+
+      {showHardwareModal && (
+        <HardwareRecommenderModal
+          onClose={() => setShowHardwareModal(false)}
+          onApply={handleApplyHardwareRecommendation}
         />
       )}
     </div>

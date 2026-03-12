@@ -12,7 +12,13 @@ interface CompressionResult {
     status?: string;
     report_path?: string;
     task_id?: string;
-    [key: string]: unknown;
+    model_size_mb?: number;
+    benchmark?: {
+        tokens_per_second?: number;
+        vram_usage_gb?: number;
+        [key: string]: any;
+    };
+    [key: string]: any;
 }
 
 const BIT_OPTIONS_BY_FORMAT: Record<string, number[]> = {
@@ -320,9 +326,35 @@ export default function CompressionPanel({ projectId, onNextStep }: CompressionP
             {result && (
                 <div className="card">
                     <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Result</h3>
-                    <pre style={{ background: 'var(--bg-tertiary)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', overflow: 'auto', color: 'var(--text-secondary)' }}>
-                        {JSON.stringify(result, null, 2)}
-                    </pre>
+
+                    {result.benchmark && typeof result.benchmark === 'object' && (
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                            gap: 'var(--space-md)',
+                            marginBottom: 'var(--space-lg)'
+                        }}>
+                            <div style={{ background: 'var(--bg-secondary)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)', borderLeft: '4px solid var(--primary-color)' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 4 }}>Inference Speed</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{result.benchmark.tokens_per_second || 0} <small style={{ fontSize: '0.8rem', fontWeight: 400 }}>tokens/sec</small></div>
+                            </div>
+                            <div style={{ background: 'var(--bg-secondary)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)', borderLeft: '4px solid var(--success-color)' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 4 }}>Memory Footprint</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{result.benchmark.vram_usage_gb || 0} <small style={{ fontSize: '0.8rem', fontWeight: 400 }}>GB RAM</small></div>
+                            </div>
+                            <div style={{ background: 'var(--bg-secondary)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)', borderLeft: '4px solid var(--warning-color)' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: 4 }}>Model Size</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{result.model_size_mb || 0} <small style={{ fontSize: '0.8rem', fontWeight: 400 }}>MB</small></div>
+                            </div>
+                        </div>
+                    )}
+
+                    <details>
+                        <summary style={{ cursor: 'pointer', color: 'var(--primary-color)', fontSize: '0.85rem' }}>View RAW JSON details</summary>
+                        <pre style={{ background: 'var(--bg-tertiary)', padding: 'var(--space-md)', borderRadius: 'var(--radius-md)', fontSize: 'var(--font-size-sm)', overflow: 'auto', color: 'var(--text-secondary)', marginTop: 'var(--space-sm)' }}>
+                            {JSON.stringify(result, null, 2)}
+                        </pre>
+                    </details>
                 </div>
             )}
 
