@@ -1643,8 +1643,13 @@ async def create(
         response_payload["resolved_training_config"] = dict(config_payload)
         response_payload["profile_defaults_applied"] = sorted(set(profile_defaults_applied))
         return ExperimentResponse.model_validate(response_payload)
+    except HTTPException:
+        raise
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        detail = str(e)
+        if detail.startswith("Project ") and detail.endswith(" not found"):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.post("/experiments/effective-config")

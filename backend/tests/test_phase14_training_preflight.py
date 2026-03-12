@@ -74,6 +74,37 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 201, resp.text)
         return int(resp.json()["id"])
 
+    def test_create_rejects_unresolved_model_architecture(self):
+        project_id = self._create_project("phase14-preflight-unsupported-model")
+        with patch(
+            "app.services.training_preflight_service.introspect_hf_model",
+            return_value={
+                "model_id": "acme/unknown-arch",
+                "resolved": False,
+                "source": "none",
+                "model_type": None,
+                "architecture": "unknown",
+                "context_length": None,
+                "license": None,
+                "warnings": [],
+            },
+        ):
+            resp = self.client.post(
+                f"/api/projects/{project_id}/training/experiments",
+                json={
+                    "name": "phase14-invalid-model-exp",
+                    "config": {
+                        "base_model": "acme/unknown-arch",
+                        "task_type": "causal_lm",
+                        "trainer_backend": "auto",
+                    },
+                },
+            )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = str(resp.json().get("detail") or "")
+        self.assertIn("Base model validation failed", detail)
+        self.assertIn("unsupported or unresolved architecture", detail)
+
     def test_preflight_endpoint_blocks_seq2seq_on_causal_model(self):
         project_id = self._create_project("phase14-preflight-1")
         self._create_prepared_split(project_id)

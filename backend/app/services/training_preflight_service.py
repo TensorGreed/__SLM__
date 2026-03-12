@@ -102,6 +102,13 @@ _DEFAULT_MODEL_CAPABILITY: dict[str, Any] = {
     "max_seq_length_hint": None,
 }
 
+_SUPPORTED_MODEL_ARCHITECTURES: tuple[str, ...] = (
+    "causal_lm",
+    "seq2seq",
+    "classification",
+    "encoder",
+)
+
 _PLAN_PROFILE_META: dict[str, dict[str, str]] = {
     "safe": {
         "title": "Safe",
@@ -182,7 +189,13 @@ def _infer_model_capability(base_model: str) -> dict[str, Any]:
     )
     architecture = str(introspection.get("architecture") or "unknown").strip().lower()
     if architecture not in {"causal_lm", "seq2seq", "classification"}:
-        return dict(_DEFAULT_MODEL_CAPABILITY)
+        fallback = dict(_DEFAULT_MODEL_CAPABILITY)
+        family_hint = str(introspection.get("model_type") or "").strip().lower()
+        if family_hint:
+            fallback["family"] = family_hint
+        fallback["max_seq_length_hint"] = introspection.get("context_length")
+        fallback["introspection"] = introspection
+        return fallback
 
     if architecture == "causal_lm":
         supported_task_types = ["causal_lm", "classification"]
@@ -206,6 +219,56 @@ def _infer_model_capability(base_model: str) -> dict[str, Any]:
         "recommended_chat_templates": recommended_chat_templates,
         "max_seq_length_hint": introspection.get("context_length"),
         "introspection": introspection,
+    }
+
+
+def evaluate_training_base_model_compatibility(
+    *,
+    base_model: str | None,
+) -> dict[str, Any]:
+    """Validate that base model architecture is supported by current training stack."""
+    model_id = str(base_model or "").strip()
+    errors: list[str] = []
+    warnings: list[str] = []
+    hints: list[str] = []
+
+    if not model_id:
+        errors.append("base_model is required for training preflight.")
+        return {
+            "ok": False,
+            "errors": errors,
+            "warnings": warnings,
+            "hints": hints,
+            "capability": dict(_DEFAULT_MODEL_CAPABILITY),
+        }
+
+    capability = _infer_model_capability(model_id)
+    architecture = str(capability.get("architecture") or "unknown").strip().lower()
+    introspection = dict(capability.get("introspection") or {})
+    supported_architectures = sorted(set(_SUPPORTED_MODEL_ARCHITECTURES))
+
+    if architecture not in _SUPPORTED_MODEL_ARCHITECTURES:
+        errors.append(
+            (
+                f"base_model '{model_id}' has unsupported or unresolved architecture '{architecture}'. "
+                f"Supported architectures: {', '.join(supported_architectures)}."
+            )
+        )
+        source = str(introspection.get("source") or "none").strip().lower() or "none"
+        if source == "none":
+            hints.append(
+                "Model metadata could not be resolved. Verify Hugging Face model id or local path to config.json."
+            )
+        hints.append(
+            "Use Training > Config > Introspect Model to verify architecture/context before launching."
+        )
+
+    return {
+        "ok": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "hints": hints,
+        "capability": capability,
     }
 
 
@@ -269,10 +332,21 @@ def run_training_preflight(
     hints: list[str] = []
 
     model_id = str(resolved_config.get("base_model") or base_model or "").strip()
-    if not model_id:
-        errors.append("base_model is required for training preflight.")
+    model_compat = evaluate_training_base_model_compatibility(base_model=model_id)
+    capability = dict(model_compat.get("capability") or _DEFAULT_MODEL_CAPABILITY)
+    for item in model_compat.get("errors", []):
+        token = str(item).strip()
+        if token and token not in errors:
+            errors.append(token)
+    for item in model_compat.get("warnings", []):
+        token = str(item).strip()
+        if token and token not in warnings:
+            warnings.append(token)
+    for item in model_compat.get("hints", []):
+        token = str(item).strip()
+        if token and token not in hints:
+            hints.append(token)
 
-    capability = _infer_model_capability(model_id)
     architecture = str(capability.get("architecture") or "unknown")
 
     task_type = _normalize_task_type(resolved_config.get("task_type", "causal_lm"), warnings)
@@ -657,6 +731,12 @@ def run_training_preflight(
             "supported_trainer_backends": supported_backends,
             "recommended_chat_templates": recommended_templates,
             "introspection": capability.get("introspection"),
+            "compatibility_gate": {
+                "ok": bool(model_compat.get("ok", False)),
+                "errors": list(model_compat.get("errors", [])),
+                "hints": list(model_compat.get("hints", [])),
+                "supported_architectures": sorted(set(_SUPPORTED_MODEL_ARCHITECTURES)),
+            },
         },
         "task_type": task_type,
         "training_mode": training_mode,

@@ -19,7 +19,10 @@ from app.models.experiment import (
     TrainingMode,
 )
 from app.models.project import Project
-from app.services.training_preflight_service import run_training_preflight
+from app.services.training_preflight_service import (
+    evaluate_training_base_model_compatibility,
+    run_training_preflight,
+)
 from app.services.alignment_dataset_service import (
     compose_alignment_training_dataset,
     filter_preference_dataset_by_quality,
@@ -97,6 +100,20 @@ async def create_experiment(
     project = await db.execute(select(Project).where(Project.id == project_id))
     if not project.scalar_one_or_none():
         raise ValueError(f"Project {project_id} not found")
+
+    base_model_validation = evaluate_training_base_model_compatibility(base_model=base_model)
+    if not bool(base_model_validation.get("ok", False)):
+        validation_errors = [
+            str(item).strip()
+            for item in list(base_model_validation.get("errors") or [])
+            if str(item).strip()
+        ]
+        if not validation_errors:
+            validation_errors = ["base model compatibility check failed"]
+        preview = "; ".join(validation_errors[:3])
+        if len(validation_errors) > 3:
+            preview = f"{preview}; (+{len(validation_errors) - 3} more)"
+        raise ValueError(f"Base model validation failed: {preview}")
 
     exp = Experiment(
         project_id=project_id,
