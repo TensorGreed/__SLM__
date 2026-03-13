@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -256,6 +257,254 @@ class Phase26Roadmap2Tests(unittest.TestCase):
             payload = resp.json()
             self.assertEqual(str(payload.get("status")), "simulated")
             self.assertEqual(str(payload.get("merge_method")), method)
+
+    def test_item4b_cloud_burst_managed_job_lifecycle(self):
+        project_id = self._create_project("phase26-item4b")
+        create_exp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "cloud-burst-exp",
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                },
+            },
+        )
+        self.assertEqual(create_exp.status_code, 201, create_exp.text)
+        experiment_id = int(create_exp.json().get("id"))
+
+        submit_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/submit",
+            json={
+                "provider_id": "runpod",
+                "gpu_sku": "a10g.24gb",
+                "duration_hours": 1.0,
+                "experiment_id": experiment_id,
+                "spot": True,
+                "auto_artifact_sync": False,
+                "artifact_sync_policy": "smart",
+            },
+        )
+        self.assertEqual(submit_resp.status_code, 200, submit_resp.text)
+        submitted = submit_resp.json()
+        run_id = str(submitted.get("run_id") or "")
+        self.assertTrue(run_id, submitted)
+
+        list_resp = self.client.get(f"/api/projects/{project_id}/training/cloud-burst/jobs")
+        self.assertEqual(list_resp.status_code, 200, list_resp.text)
+        listed_runs = list_resp.json().get("runs", [])
+        self.assertTrue(
+            any(str(item.get("run_id")) == run_id for item in listed_runs if isinstance(item, dict)),
+            listed_runs,
+        )
+
+        final_status = ""
+        for _ in range(80):
+            status_resp = self.client.get(
+                f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}?logs_tail=80"
+            )
+            self.assertEqual(status_resp.status_code, 200, status_resp.text)
+            status_payload = status_resp.json()
+            final_status = str(status_payload.get("status") or "").strip().lower()
+            if final_status in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.1)
+        self.assertEqual(final_status, "completed")
+
+        logs_resp = self.client.get(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}/logs?tail=60"
+        )
+        self.assertEqual(logs_resp.status_code, 200, logs_resp.text)
+        logs_payload = logs_resp.json()
+        self.assertGreater(len(list(logs_payload.get("logs") or [])), 0)
+
+        sync_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}/sync-artifacts",
+            json={
+                "policy": "smart",
+                "dry_run": False,
+                "max_files": 2000,
+            },
+        )
+        self.assertEqual(sync_resp.status_code, 200, sync_resp.text)
+        sync_payload = sync_resp.json()
+        sync_summary = dict(sync_payload.get("sync") or {})
+        self.assertGreaterEqual(int(sync_summary.get("copied_count") or 0), 1, sync_summary)
+
+        submit_cancel = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/submit",
+            json={
+                "provider_id": "runpod",
+                "gpu_sku": "a10g.24gb",
+                "duration_hours": 1.0,
+                "spot": True,
+            },
+        )
+        self.assertEqual(submit_cancel.status_code, 200, submit_cancel.text)
+        cancel_run_id = str(submit_cancel.json().get("run_id") or "")
+        self.assertTrue(cancel_run_id)
+
+        cancel_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/{cancel_run_id}/cancel"
+        )
+        self.assertEqual(cancel_resp.status_code, 200, cancel_resp.text)
+
+        cancel_final = ""
+        for _ in range(40):
+            status_resp = self.client.get(
+                f"/api/projects/{project_id}/training/cloud-burst/jobs/{cancel_run_id}"
+            )
+            self.assertEqual(status_resp.status_code, 200, status_resp.text)
+            status_payload = status_resp.json()
+            cancel_final = str(status_payload.get("status") or "").strip().lower()
+            if cancel_final in {"cancelled", "completed", "failed"}:
+                break
+            time.sleep(0.1)
+        self.assertIn(cancel_final, {"cancelled", "completed"})
+
+    def test_item4c_cloud_burst_idempotency_and_live_mode_guardrails(self):
+        project_id = self._create_project("phase26-item4c")
+
+        submit_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/submit",
+            json={
+                "provider_id": "runpod",
+                "gpu_sku": "a10g.24gb",
+                "duration_hours": 1.0,
+                "execution_mode": "simulate",
+                "idempotency_key": "phase26-item4c-unique-key",
+            },
+        )
+        self.assertEqual(submit_resp.status_code, 200, submit_resp.text)
+        first_payload = submit_resp.json()
+        first_run_id = str(first_payload.get("run_id") or "").strip()
+        self.assertTrue(first_run_id)
+        self.assertEqual(str(first_payload.get("execution_mode_effective") or ""), "simulate")
+
+        replay_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/submit",
+            json={
+                "provider_id": "runpod",
+                "gpu_sku": "a10g.24gb",
+                "duration_hours": 2.0,
+                "execution_mode": "simulate",
+                "idempotency_key": "phase26-item4c-unique-key",
+            },
+        )
+        self.assertEqual(replay_resp.status_code, 200, replay_resp.text)
+        replay_payload = replay_resp.json()
+        replay_run_id = str(replay_payload.get("run_id") or "").strip()
+        self.assertEqual(replay_run_id, first_run_id)
+        self.assertTrue(bool(replay_payload.get("idempotent_replay")))
+
+        live_required_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/submit",
+            json={
+                "provider_id": "runpod",
+                "gpu_sku": "a10g.24gb",
+                "duration_hours": 1.0,
+                "execution_mode": "live",
+                "allow_fallback_to_simulation": False,
+            },
+        )
+        self.assertEqual(live_required_resp.status_code, 400, live_required_resp.text)
+        self.assertIn("requires provider credentials", live_required_resp.text.lower())
+
+    def test_item4d_cloud_burst_metrics_bridge_and_incremental_sync(self):
+        project_id = self._create_project("phase26-item4d")
+        create_exp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "cloud-burst-sync-exp",
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                },
+            },
+        )
+        self.assertEqual(create_exp.status_code, 201, create_exp.text)
+        exp_payload = create_exp.json()
+        experiment_id = int(exp_payload.get("id"))
+        output_dir = Path(str(exp_payload.get("output_dir") or ""))
+        self.assertTrue(output_dir.exists(), output_dir)
+        (output_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+        (output_dir / "training_report.json").write_text(
+            json.dumps({"score": 0.81}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (output_dir / "checkpoints" / "step-10.safetensors").write_text(
+            "weights-v1",
+            encoding="utf-8",
+        )
+
+        submit_resp = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/submit",
+            json={
+                "provider_id": "runpod",
+                "gpu_sku": "a10g.24gb",
+                "duration_hours": 1.0,
+                "experiment_id": experiment_id,
+                "auto_artifact_sync": False,
+                "execution_mode": "simulate",
+            },
+        )
+        self.assertEqual(submit_resp.status_code, 200, submit_resp.text)
+        run_id = str(submit_resp.json().get("run_id") or "").strip()
+        self.assertTrue(run_id)
+
+        metrics_count = 0
+        for _ in range(40):
+            status_resp = self.client.get(
+                f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}?logs_tail=100"
+            )
+            self.assertEqual(status_resp.status_code, 200, status_resp.text)
+            status_payload = status_resp.json()
+            metrics_count = int(status_payload.get("metrics_tail_count") or 0)
+            if metrics_count > 0:
+                break
+            time.sleep(0.1)
+        self.assertGreater(metrics_count, 0)
+
+        first_sync = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}/sync-artifacts",
+            json={
+                "policy": "smart",
+                "dry_run": False,
+                "max_files": 100,
+            },
+        )
+        self.assertEqual(first_sync.status_code, 200, first_sync.text)
+        first_summary = dict(first_sync.json().get("sync") or {})
+        self.assertGreaterEqual(int(first_summary.get("copied_count") or 0), 1, first_summary)
+        manifest_path = Path(str(first_summary.get("manifest_path") or ""))
+        self.assertTrue(manifest_path.exists(), manifest_path)
+
+        second_sync = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}/sync-artifacts",
+            json={
+                "policy": "smart",
+                "dry_run": False,
+                "max_files": 100,
+            },
+        )
+        self.assertEqual(second_sync.status_code, 200, second_sync.text)
+        second_summary = dict(second_sync.json().get("sync") or {})
+        self.assertEqual(int(second_summary.get("copied_count") or 0), 0, second_summary)
+        self.assertGreaterEqual(int(second_summary.get("unchanged_count") or 0), 1, second_summary)
+
+        (output_dir / "training_report.json").write_text(
+            json.dumps({"score": 0.92}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        third_sync = self.client.post(
+            f"/api/projects/{project_id}/training/cloud-burst/jobs/{run_id}/sync-artifacts",
+            json={
+                "policy": "smart",
+                "dry_run": False,
+                "max_files": 100,
+            },
+        )
+        self.assertEqual(third_sync.status_code, 200, third_sync.text)
+        third_summary = dict(third_sync.json().get("sync") or {})
+        self.assertGreaterEqual(int(third_summary.get("copied_count") or 0), 1, third_summary)
 
 
 if __name__ == "__main__":

@@ -360,6 +360,9 @@ interface CloudBurstProvider {
   display_name?: string;
   description?: string;
   supports_spot?: boolean;
+  supports_live_execution?: boolean;
+  supports_managed_cancel?: boolean;
+  supports_live_logs?: boolean;
   regions?: string[];
 }
 
@@ -408,6 +411,92 @@ interface CloudBurstLaunchPlanResponse {
   };
   request_template?: Record<string, unknown>;
   record_path?: string;
+}
+
+interface CloudBurstRunArtifacts {
+  sync_enabled?: boolean;
+  source_dir?: string | null;
+  target_dir?: string | null;
+  policy?: string;
+  include_globs?: string[];
+  exclude_globs?: string[];
+  last_sync_at?: string | null;
+  last_sync_summary?: {
+    status?: string;
+    copied_count?: number;
+    unchanged_count?: number;
+    would_copy_count?: number;
+    deleted_count?: number;
+    file_count?: number;
+    candidate_count?: number;
+    remaining_count?: number;
+    limited?: boolean;
+    cursor?: string | null;
+    next_cursor?: string | null;
+    manifest_path?: string;
+    manifest_updated?: boolean;
+    total_bytes?: number;
+    reason?: string;
+    sampled_files?: string[];
+    sampled_unchanged_files?: string[];
+    errors?: string[];
+  } | null;
+}
+
+interface CloudBurstMetricPoint {
+  step?: number;
+  epoch?: number;
+  train_loss?: number | null;
+  eval_loss?: number | null;
+  learning_rate?: number | null;
+  throughput_tps?: number | null;
+  at?: string | null;
+}
+
+interface CloudBurstLogBridgeSummary {
+  last_ingested_at?: string;
+  last_ingested_count?: number;
+  seen_hash_count?: number;
+}
+
+interface CloudBurstRunStatusResponse {
+  project_id: number;
+  run_id: string;
+  launch_id?: string;
+  idempotency_key?: string | null;
+  idempotent_replay?: boolean;
+  provider_id?: string;
+  provider_job_id?: string | null;
+  provider_status_raw?: string;
+  provider_uptime_seconds?: number | null;
+  provider_last_status_at?: string | null;
+  provider_poll_count?: number;
+  gpu_sku?: string;
+  experiment_id?: number | null;
+  status?: string;
+  status_reason?: string;
+  execution_mode_requested?: string;
+  execution_mode_effective?: string;
+  execution_mode_fallback_reason?: string | null;
+  can_cancel?: boolean;
+  cancel_requested?: boolean;
+  created_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  logs_tail?: string[];
+  logs_tail_count?: number;
+  metrics_tail?: CloudBurstMetricPoint[];
+  metrics_tail_count?: number;
+  log_bridge?: CloudBurstLogBridgeSummary | null;
+  artifacts?: CloudBurstRunArtifacts | null;
+  record_path?: string;
+}
+
+interface CloudBurstRunListResponse {
+  project_id: number;
+  count?: number;
+  limit?: number;
+  runs?: CloudBurstRunStatusResponse[];
 }
 
 const METRIC_PREFIX = 'SLM_METRIC ';
@@ -759,12 +848,24 @@ export default function TrainingPanel({
   const [cloudBurstImage, setCloudBurstImage] = useState('');
   const [cloudBurstStartupScript, setCloudBurstStartupScript] = useState('');
   const [cloudBurstExperimentId, setCloudBurstExperimentId] = useState('');
+  const [cloudBurstExecutionMode, setCloudBurstExecutionMode] = useState('auto');
+  const [cloudBurstAllowFallbackToSimulation, setCloudBurstAllowFallbackToSimulation] = useState(true);
+  const [cloudBurstIdempotencyKey, setCloudBurstIdempotencyKey] = useState('');
+  const [cloudBurstSyncCursor, setCloudBurstSyncCursor] = useState('');
   const [cloudBurstLoadingCatalog, setCloudBurstLoadingCatalog] = useState(false);
   const [cloudBurstLoadingQuote, setCloudBurstLoadingQuote] = useState(false);
   const [cloudBurstLoadingPlan, setCloudBurstLoadingPlan] = useState(false);
   const [cloudBurstError, setCloudBurstError] = useState('');
+  const [cloudBurstInfo, setCloudBurstInfo] = useState('');
   const [cloudBurstQuote, setCloudBurstQuote] = useState<CloudBurstQuoteResponse | null>(null);
   const [cloudBurstPlan, setCloudBurstPlan] = useState<CloudBurstLaunchPlanResponse | null>(null);
+  const [cloudBurstRuns, setCloudBurstRuns] = useState<CloudBurstRunStatusResponse[]>([]);
+  const [cloudBurstActiveRunId, setCloudBurstActiveRunId] = useState('');
+  const [cloudBurstActiveRun, setCloudBurstActiveRun] = useState<CloudBurstRunStatusResponse | null>(null);
+  const [cloudBurstLoadingRuns, setCloudBurstLoadingRuns] = useState(false);
+  const [cloudBurstSubmittingJob, setCloudBurstSubmittingJob] = useState(false);
+  const [cloudBurstCancellingJob, setCloudBurstCancellingJob] = useState(false);
+  const [cloudBurstSyncingArtifacts, setCloudBurstSyncingArtifacts] = useState(false);
   const [cloudBurstPrefillStage, setCloudBurstPrefillStage] = useState('');
   const [observabilitySummary, setObservabilitySummary] = useState<TrainingObservabilitySummary | null>(null);
   const [observabilityRecentCount, setObservabilityRecentCount] = useState(0);
@@ -859,6 +960,61 @@ export default function TrainingPanel({
   const selectedRuntimeModalitiesDeclared = parseBool(
     selectedRuntimeSpec?.declares_supported_modalities,
   );
+  const cloudBurstActiveStatus = String(cloudBurstActiveRun?.status || '').trim().toLowerCase();
+  const cloudBurstActiveIsTerminal = ['completed', 'failed', 'cancelled'].includes(cloudBurstActiveStatus);
+  const cloudBurstMetrics = useMemo(() => {
+    const rows = Array.isArray(cloudBurstActiveRun?.metrics_tail)
+      ? cloudBurstActiveRun.metrics_tail
+      : [];
+    const parsed = rows.map((row) => {
+      const item = asRecord(row);
+      const step = Number(item.step);
+      const epoch = Number(item.epoch);
+      const trainLoss = Number(item.train_loss);
+      const evalLoss = Number(item.eval_loss);
+      const learningRate = Number(item.learning_rate);
+      const throughputTps = Number(item.throughput_tps);
+      return {
+        step: Number.isFinite(step) ? step : undefined,
+        epoch: Number.isFinite(epoch) ? epoch : undefined,
+        train_loss: Number.isFinite(trainLoss) ? trainLoss : null,
+        eval_loss: Number.isFinite(evalLoss) ? evalLoss : null,
+        learning_rate: Number.isFinite(learningRate) ? learningRate : null,
+        throughput_tps: Number.isFinite(throughputTps) ? throughputTps : null,
+        at: typeof item.at === 'string' ? item.at : null,
+      } as CloudBurstMetricPoint;
+    });
+    return parsed;
+  }, [cloudBurstActiveRun?.metrics_tail]);
+  const cloudBurstLatestMetric = cloudBurstMetrics.length > 0
+    ? cloudBurstMetrics[cloudBurstMetrics.length - 1]
+    : null;
+  const cloudBurstMetricSeries = useMemo(() => {
+    const buildSeries = (field: 'train_loss' | 'eval_loss') => {
+      const points = cloudBurstMetrics
+        .map((item, idx) => ({ idx, value: Number(item[field]) }))
+        .filter((item) => Number.isFinite(item.value));
+      if (points.length < 2) {
+        return '';
+      }
+      const values = points.map((item) => item.value);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = max - min;
+      return points
+        .map((item, localIndex) => {
+          const x = points.length <= 1 ? 0 : (localIndex / (points.length - 1)) * 100;
+          const normalized = span <= 0 ? 0.5 : (item.value - min) / span;
+          const y = 100 - (normalized * 100);
+          return `${x.toFixed(2)},${y.toFixed(2)}`;
+        })
+        .join(' ');
+    };
+    return {
+      train: buildSeries('train_loss'),
+      eval: buildSeries('eval_loss'),
+    };
+  }, [cloudBurstMetrics]);
 
   const preflightContractDetails = useMemo(() => {
     const capabilitySummary = asRecord(preflightPreview?.capability_summary);
@@ -1557,6 +1713,174 @@ export default function TrainingPanel({
     }
   };
 
+  const loadCloudBurstJobs = async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setCloudBurstLoadingRuns(true);
+    }
+    try {
+      const res = await api.get<CloudBurstRunListResponse>(
+        `/projects/${projectId}/training/cloud-burst/jobs?limit=12`,
+      );
+      const rows = Array.isArray(res.data?.runs) ? res.data.runs : [];
+      setCloudBurstRuns(rows);
+      if (!cloudBurstActiveRunId && rows.length > 0) {
+        const firstRunId = String(rows[0]?.run_id || '').trim();
+        setCloudBurstActiveRunId(firstRunId);
+      }
+      setCloudBurstError('');
+    } catch (err: any) {
+      if (!options?.silent) {
+        setCloudBurstError(err?.response?.data?.detail || 'Failed to load cloud burst jobs');
+      }
+    } finally {
+      if (!options?.silent) {
+        setCloudBurstLoadingRuns(false);
+      }
+    }
+  };
+
+  const loadCloudBurstJobStatus = async (
+    runId: string,
+    options?: { silent?: boolean; logsTail?: number },
+  ) => {
+    const trimmedRunId = String(runId || '').trim();
+    if (!trimmedRunId) {
+      setCloudBurstActiveRun(null);
+      setCloudBurstSyncCursor('');
+      return;
+    }
+    if (!options?.silent) {
+      setCloudBurstLoadingRuns(true);
+    }
+    try {
+      const logsTail = Math.max(20, Math.min(1000, Number(options?.logsTail || 200)));
+      const res = await api.get<CloudBurstRunStatusResponse>(
+        `/projects/${projectId}/training/cloud-burst/jobs/${trimmedRunId}?logs_tail=${logsTail}`,
+      );
+      const run = res.data || null;
+      setCloudBurstActiveRun(run);
+      setCloudBurstActiveRunId(trimmedRunId);
+      const nextCursor = String(run?.artifacts?.last_sync_summary?.next_cursor || '').trim();
+      setCloudBurstSyncCursor(nextCursor);
+      setCloudBurstError('');
+    } catch (err: any) {
+      if (!options?.silent) {
+        setCloudBurstError(err?.response?.data?.detail || 'Failed to load cloud burst job status');
+      }
+    } finally {
+      if (!options?.silent) {
+        setCloudBurstLoadingRuns(false);
+      }
+    }
+  };
+
+  const submitCloudBurstManagedJob = async () => {
+    if (!cloudBurstProviderId || !cloudBurstGpuSku) {
+      setCloudBurstError('Select provider and GPU SKU before submitting a managed job.');
+      return;
+    }
+    setCloudBurstSubmittingJob(true);
+    setCloudBurstError('');
+    setCloudBurstInfo('');
+    try {
+      const durationValue = Number.parseFloat(cloudBurstDurationHours);
+      const parsedExperimentId = Number.parseInt(cloudBurstExperimentId, 10);
+      const res = await api.post<CloudBurstRunStatusResponse>(
+        `/projects/${projectId}/training/cloud-burst/jobs/submit`,
+        {
+          provider_id: cloudBurstProviderId,
+          gpu_sku: cloudBurstGpuSku,
+          duration_hours: Number.isFinite(durationValue) ? durationValue : 2.0,
+          experiment_id: Number.isFinite(parsedExperimentId) && parsedExperimentId > 0
+            ? parsedExperimentId
+            : undefined,
+          region: cloudBurstRegion.trim() || undefined,
+          image: cloudBurstImage.trim(),
+          startup_script: cloudBurstStartupScript.trim(),
+          spot: cloudBurstSpot,
+          auto_artifact_sync: true,
+          artifact_sync_policy: 'smart',
+          execution_mode: cloudBurstExecutionMode,
+          allow_fallback_to_simulation: cloudBurstAllowFallbackToSimulation,
+          idempotency_key: cloudBurstIdempotencyKey.trim() || undefined,
+        },
+      );
+      const run = res.data || null;
+      setCloudBurstActiveRun(run);
+      setCloudBurstActiveRunId(String(run?.run_id || '').trim());
+      setCloudBurstSyncCursor('');
+      if (run?.idempotent_replay) {
+        setCloudBurstInfo('Idempotency replay returned an existing managed run.');
+      } else if (
+        String(run?.execution_mode_requested || '') !== String(run?.execution_mode_effective || '')
+        && String(run?.execution_mode_fallback_reason || '').trim()
+      ) {
+        setCloudBurstInfo(String(run?.execution_mode_fallback_reason || '').trim());
+      }
+      await loadCloudBurstJobs({ silent: true });
+    } catch (err: any) {
+      setCloudBurstError(err?.response?.data?.detail || 'Failed to submit managed cloud burst job');
+    } finally {
+      setCloudBurstSubmittingJob(false);
+    }
+  };
+
+  const cancelCloudBurstManagedJob = async (runId: string) => {
+    const trimmedRunId = String(runId || '').trim();
+    if (!trimmedRunId) {
+      return;
+    }
+    setCloudBurstCancellingJob(true);
+    setCloudBurstError('');
+    setCloudBurstInfo('');
+    try {
+      const res = await api.post<CloudBurstRunStatusResponse>(
+        `/projects/${projectId}/training/cloud-burst/jobs/${trimmedRunId}/cancel`,
+      );
+      setCloudBurstActiveRun(res.data || null);
+      await loadCloudBurstJobs({ silent: true });
+    } catch (err: any) {
+      setCloudBurstError(err?.response?.data?.detail || 'Failed to cancel cloud burst job');
+    } finally {
+      setCloudBurstCancellingJob(false);
+    }
+  };
+
+  const syncCloudBurstManagedArtifacts = async (runId: string) => {
+    const trimmedRunId = String(runId || '').trim();
+    if (!trimmedRunId) {
+      return;
+    }
+    setCloudBurstSyncingArtifacts(true);
+    setCloudBurstError('');
+    setCloudBurstInfo('');
+    try {
+      const res = await api.post<CloudBurstRunStatusResponse>(
+        `/projects/${projectId}/training/cloud-burst/jobs/${trimmedRunId}/sync-artifacts`,
+        {
+          policy: 'smart',
+          dry_run: false,
+          max_files: 2000,
+          cursor: cloudBurstSyncCursor.trim() || undefined,
+        },
+      );
+      setCloudBurstActiveRun(res.data || null);
+      const syncSummary = asRecord(asRecord(res.data).sync);
+      const nextCursor = String(syncSummary.next_cursor || '').trim();
+      setCloudBurstSyncCursor(nextCursor);
+      if (nextCursor) {
+        setCloudBurstInfo(
+          `Partial sync complete. Continue syncing with next cursor (${nextCursor.slice(0, 24)}...).`,
+        );
+      }
+      await loadCloudBurstJobs({ silent: true });
+    } catch (err: any) {
+      setCloudBurstError(err?.response?.data?.detail || 'Failed to sync cloud burst artifacts');
+    } finally {
+      setCloudBurstSyncingArtifacts(false);
+    }
+  };
+
   const applySelectedRecipe = async () => {
     if (!selectedRecipeId) {
       setRecipeResolveError('Select a recipe first.');
@@ -2086,12 +2410,24 @@ export default function TrainingPanel({
     setCloudBurstImage('');
     setCloudBurstStartupScript('');
     setCloudBurstExperimentId('');
+    setCloudBurstExecutionMode('auto');
+    setCloudBurstAllowFallbackToSimulation(true);
+    setCloudBurstIdempotencyKey('');
+    setCloudBurstSyncCursor('');
     setCloudBurstLoadingCatalog(false);
     setCloudBurstLoadingQuote(false);
     setCloudBurstLoadingPlan(false);
     setCloudBurstError('');
+    setCloudBurstInfo('');
     setCloudBurstQuote(null);
     setCloudBurstPlan(null);
+    setCloudBurstRuns([]);
+    setCloudBurstActiveRunId('');
+    setCloudBurstActiveRun(null);
+    setCloudBurstLoadingRuns(false);
+    setCloudBurstSubmittingJob(false);
+    setCloudBurstCancellingJob(false);
+    setCloudBurstSyncingArtifacts(false);
     setCloudBurstPrefillStage('');
     setObservabilitySummary(null);
     setObservabilityRecentCount(0);
@@ -2101,6 +2437,7 @@ export default function TrainingPanel({
     void loadTrainingRuntimes();
     void loadTrainingRecipes();
     void loadCloudBurstCatalog();
+    void loadCloudBurstJobs({ silent: true });
     void loadModelBenchmarkHistory({ silent: true });
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2144,6 +2481,17 @@ export default function TrainingPanel({
       if (Number.isFinite(experimentValue) && experimentValue > 0) {
         setCloudBurstExperimentId(String(Math.round(experimentValue)));
       }
+      const executionModeToken = String(cfg.execution_mode || '').trim().toLowerCase();
+      if (executionModeToken === 'auto' || executionModeToken === 'live' || executionModeToken === 'simulate') {
+        setCloudBurstExecutionMode(executionModeToken);
+      }
+      if (typeof cfg.allow_fallback_to_simulation === 'boolean') {
+        setCloudBurstAllowFallbackToSimulation(cfg.allow_fallback_to_simulation);
+      }
+      const idempotencyToken = String(cfg.idempotency_key || '').trim();
+      if (idempotencyToken) {
+        setCloudBurstIdempotencyKey(idempotencyToken);
+      }
       setCloudBurstPrefillStage(prefill.stage);
     };
     void applyCloudBurstPrefill();
@@ -2151,6 +2499,28 @@ export default function TrainingPanel({
       cancelled = true;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    const runId = String(cloudBurstActiveRunId || '').trim();
+    if (!runId) {
+      return;
+    }
+    void loadCloudBurstJobStatus(runId, { silent: true, logsTail: 240 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloudBurstActiveRunId, projectId]);
+
+  useEffect(() => {
+    const runId = String(cloudBurstActiveRunId || '').trim();
+    if (!runId || cloudBurstActiveIsTerminal || !cloudBurstActiveStatus) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      void loadCloudBurstJobStatus(runId, { silent: true, logsTail: 240 });
+      void loadCloudBurstJobs({ silent: true });
+    }, 4000);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloudBurstActiveRunId, cloudBurstActiveStatus, cloudBurstActiveIsTerminal, projectId]);
 
   useEffect(() => {
     if (workspaceView !== 'setup') {
@@ -3693,6 +4063,50 @@ export default function TrainingPanel({
                     </button>
                   </div>
                 </div>
+                {selectedCloudProvider && (
+                  <div className="form-hint">
+                    Provider capabilities:
+                    {' '}
+                    live execution {selectedCloudProvider.supports_live_execution ? 'yes' : 'no'}
+                    {' • '}
+                    managed cancel {selectedCloudProvider.supports_managed_cancel ? 'yes' : 'no'}
+                    {' • '}
+                    live logs {selectedCloudProvider.supports_live_logs ? 'yes' : 'no'}
+                  </div>
+                )}
+                <div className="training-grid-2">
+                  <div className="form-group">
+                    <label className="form-label">Execution Mode</label>
+                    <select
+                      className="input"
+                      value={cloudBurstExecutionMode}
+                      onChange={(e) => setCloudBurstExecutionMode(e.target.value)}
+                    >
+                      <option value="auto">Auto (prefer live when available)</option>
+                      <option value="live">Live provider job</option>
+                      <option value="simulate">Simulated managed run</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Idempotency Key (optional)</label>
+                    <input
+                      className="input"
+                      value={cloudBurstIdempotencyKey}
+                      onChange={(e) => setCloudBurstIdempotencyKey(e.target.value)}
+                      placeholder="same key => same run response"
+                    />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label form-label-inline">
+                    <input
+                      type="checkbox"
+                      checked={cloudBurstAllowFallbackToSimulation}
+                      onChange={(e) => setCloudBurstAllowFallbackToSimulation(e.target.checked)}
+                    />
+                    Allow fallback to simulation when live submit is unavailable
+                  </label>
+                </div>
                 <div className="training-grid-2">
                   <div className="form-group">
                     <label className="form-label">Storage (GB)</label>
@@ -3778,10 +4192,29 @@ export default function TrainingPanel({
                   >
                     {cloudBurstLoadingPlan ? 'Planning...' : 'Build Launch Plan'}
                   </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => void submitCloudBurstManagedJob()}
+                    disabled={cloudBurstSubmittingJob}
+                  >
+                    {cloudBurstSubmittingJob ? 'Submitting...' : 'Submit Managed Job'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => void loadCloudBurstJobs()}
+                    disabled={cloudBurstLoadingRuns}
+                  >
+                    {cloudBurstLoadingRuns ? 'Refreshing...' : 'Refresh Jobs'}
+                  </button>
                 </div>
                 {cloudBurstError && (
                   <div className="training-alert training-alert--error">
                     {cloudBurstError}
+                  </div>
+                )}
+                {cloudBurstInfo && (
+                  <div className="training-alert training-alert--warning">
+                    {cloudBurstInfo}
                   </div>
                 )}
                 {cloudBurstQuote && (
@@ -3843,6 +4276,189 @@ export default function TrainingPanel({
                         </pre>
                       </div>
                     </div>
+                  </div>
+                )}
+                {cloudBurstRuns.length > 0 && (
+                  <div className="resolved-defaults-panel">
+                    <div className="resolved-defaults-panel__title">Managed Cloud Burst Jobs</div>
+                    {cloudBurstRuns.slice(0, 8).map((run, idx) => {
+                      const runId = String(run.run_id || '').trim();
+                      const runStatus = String(run.status || 'unknown').trim().toLowerCase();
+                      const selected = runId && runId === cloudBurstActiveRunId;
+                      return (
+                        <div key={`cloud-burst-run-${runId || idx}`} className="resolved-defaults-panel__kv">
+                          <span>
+                            {runId || 'unknown'} • {String(run.provider_id || '-')} • {String(run.gpu_sku || '-')}
+                            {run.execution_mode_effective ? ` • ${run.execution_mode_effective}` : ''}
+                            {run.experiment_id ? ` • exp ${run.experiment_id}` : ''}
+                          </span>
+                          <strong>
+                            {runStatus}
+                            {' '}
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => void loadCloudBurstJobStatus(runId)}
+                              disabled={!runId}
+                            >
+                              {selected ? 'Viewing' : 'Inspect'}
+                            </button>
+                          </strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {cloudBurstActiveRun && (
+                  <div className="resolved-defaults-panel">
+                    <div className="resolved-defaults-panel__title">Managed Job Status</div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Run ID</span>
+                      <strong>{cloudBurstActiveRun.run_id || '-'}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Execution</span>
+                      <strong>
+                        {String(cloudBurstActiveRun.execution_mode_effective || 'unknown')}
+                        {cloudBurstActiveRun.execution_mode_requested
+                          ? ` (requested ${cloudBurstActiveRun.execution_mode_requested})`
+                          : ''}
+                      </strong>
+                    </div>
+                    {cloudBurstActiveRun.execution_mode_fallback_reason && (
+                      <div className="training-alert training-alert--warning training-alert--tight">
+                        {cloudBurstActiveRun.execution_mode_fallback_reason}
+                      </div>
+                    )}
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Status</span>
+                      <strong>
+                        {String(cloudBurstActiveRun.status || 'unknown')}
+                        {cloudBurstActiveRun.cancel_requested ? ' (cancel requested)' : ''}
+                      </strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Status Reason</span>
+                      <strong>{String(cloudBurstActiveRun.status_reason || '-')}</strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Provider Job</span>
+                      <strong>
+                        {String(cloudBurstActiveRun.provider_id || '-')}
+                        {cloudBurstActiveRun.provider_job_id ? ` • ${cloudBurstActiveRun.provider_job_id}` : ''}
+                      </strong>
+                    </div>
+                    <div className="resolved-defaults-panel__kv">
+                      <span>Provider Status</span>
+                      <strong>{String(cloudBurstActiveRun.provider_status_raw || '-')}</strong>
+                    </div>
+                    {!!cloudBurstActiveRun.idempotent_replay && (
+                      <div className="training-alert training-alert--warning training-alert--tight">
+                        This run was returned via idempotency replay.
+                      </div>
+                    )}
+                    <div className="form-inline-actions">
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => void loadCloudBurstJobStatus(String(cloudBurstActiveRun.run_id || ''))}
+                        disabled={cloudBurstLoadingRuns}
+                      >
+                        {cloudBurstLoadingRuns ? 'Refreshing...' : 'Refresh Status'}
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => void syncCloudBurstManagedArtifacts(String(cloudBurstActiveRun.run_id || ''))}
+                        disabled={cloudBurstSyncingArtifacts}
+                      >
+                        {cloudBurstSyncingArtifacts
+                          ? 'Syncing...'
+                          : cloudBurstSyncCursor
+                            ? 'Sync Next Batch'
+                            : 'Sync Artifacts'}
+                      </button>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => void cancelCloudBurstManagedJob(String(cloudBurstActiveRun.run_id || ''))}
+                        disabled={cloudBurstCancellingJob || cloudBurstActiveRun.can_cancel === false}
+                      >
+                        {cloudBurstCancellingJob ? 'Cancelling...' : 'Cancel Job'}
+                      </button>
+                    </div>
+                    {cloudBurstActiveRun.artifacts?.last_sync_summary && (
+                      <div className="training-alert training-alert--warning training-alert--tight">
+                        Last sync: {String(cloudBurstActiveRun.artifacts?.last_sync_summary?.status || 'unknown')}
+                        {' • '}
+                        {Number(cloudBurstActiveRun.artifacts?.last_sync_summary?.copied_count || 0)}
+                        {' / '}
+                        {Number(cloudBurstActiveRun.artifacts?.last_sync_summary?.file_count || 0)}
+                        {' files'}
+                        {' • unchanged '}
+                        {Number(cloudBurstActiveRun.artifacts?.last_sync_summary?.unchanged_count || 0)}
+                        {' • remaining '}
+                        {Number(cloudBurstActiveRun.artifacts?.last_sync_summary?.remaining_count || 0)}
+                        {Array.isArray(cloudBurstActiveRun.artifacts?.last_sync_summary?.errors)
+                          && cloudBurstActiveRun.artifacts?.last_sync_summary?.errors?.length
+                          ? ` • errors: ${cloudBurstActiveRun.artifacts?.last_sync_summary?.errors?.slice(0, 2).join(' | ')}`
+                          : ''}
+                      </div>
+                    )}
+                    {String(cloudBurstActiveRun.artifacts?.last_sync_summary?.next_cursor || '').trim() && (
+                      <div className="form-hint">
+                        Next sync cursor available. Continue sync to fetch remaining artifacts.
+                      </div>
+                    )}
+                    {cloudBurstMetrics.length > 0 && (
+                      <div className="cloud-burst-metrics">
+                        <div className="resolved-defaults-panel__subtitle">Live Metrics</div>
+                        <div className="cloud-burst-metrics__kv">
+                          <span>
+                            step {Number.isFinite(Number(cloudBurstLatestMetric?.step))
+                              ? Number(cloudBurstLatestMetric?.step)
+                              : '-'}
+                          </span>
+                          <span>
+                            train {Number.isFinite(Number(cloudBurstLatestMetric?.train_loss))
+                              ? Number(cloudBurstLatestMetric?.train_loss).toFixed(4)
+                              : '-'}
+                          </span>
+                          <span>
+                            eval {Number.isFinite(Number(cloudBurstLatestMetric?.eval_loss))
+                              ? Number(cloudBurstLatestMetric?.eval_loss).toFixed(4)
+                              : '-'}
+                          </span>
+                        </div>
+                        <svg
+                          className="cloud-burst-metrics__chart"
+                          viewBox="0 0 100 100"
+                          preserveAspectRatio="none"
+                          role="img"
+                          aria-label="Cloud burst loss metrics trend"
+                        >
+                          <rect x="0" y="0" width="100" height="100" className="cloud-burst-metrics__bg" />
+                          {cloudBurstMetricSeries.train && (
+                            <polyline
+                              fill="none"
+                              points={cloudBurstMetricSeries.train}
+                              className="cloud-burst-metrics__line cloud-burst-metrics__line--train"
+                            />
+                          )}
+                          {cloudBurstMetricSeries.eval && (
+                            <polyline
+                              fill="none"
+                              points={cloudBurstMetricSeries.eval}
+                              className="cloud-burst-metrics__line cloud-burst-metrics__line--eval"
+                            />
+                          )}
+                        </svg>
+                      </div>
+                    )}
+                    {Array.isArray(cloudBurstActiveRun.logs_tail) && cloudBurstActiveRun.logs_tail.length > 0 && (
+                      <div>
+                        <div className="resolved-defaults-panel__subtitle">Job Logs (tail)</div>
+                        <pre className="resolved-defaults-panel__json">
+                          {cloudBurstActiveRun.logs_tail.join('\n')}
+                        </pre>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

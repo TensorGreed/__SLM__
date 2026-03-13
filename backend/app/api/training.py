@@ -102,8 +102,14 @@ from app.services.training_runtime_service import (
 from app.services.capability_contract_service import build_training_capability_contract
 from app.services.cloud_burst_service import (
     build_cloud_burst_launch_plan,
+    cancel_cloud_burst_job,
     estimate_cloud_burst_quote,
+    get_cloud_burst_job_logs,
+    get_cloud_burst_job_status,
     list_cloud_burst_catalog,
+    list_cloud_burst_jobs,
+    submit_cloud_burst_job,
+    sync_cloud_burst_job_artifacts,
 )
 from app.services.vibe_check_service import (
     capture_vibe_check_snapshot,
@@ -324,6 +330,33 @@ class CloudBurstLaunchPlanRequest(BaseModel):
     spot: bool = True
 
 
+class CloudBurstJobSubmitRequest(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    gpu_sku: str = Field(..., min_length=1, max_length=64)
+    duration_hours: float = Field(default=2.0, ge=0.25, le=72.0)
+    experiment_id: int | None = Field(default=None, ge=1)
+    region: str | None = Field(default=None, max_length=64)
+    image: str = Field(default="", max_length=512)
+    startup_script: str = Field(default="", max_length=8000)
+    spot: bool = True
+    auto_artifact_sync: bool = True
+    artifact_sync_policy: str = Field(default="smart", pattern="^(smart|all)$")
+    artifact_include_globs: list[str] = Field(default_factory=list, max_length=64)
+    artifact_exclude_globs: list[str] = Field(default_factory=list, max_length=64)
+    execution_mode: str = Field(default="auto", pattern="^(auto|live|simulate)$")
+    allow_fallback_to_simulation: bool = True
+    idempotency_key: str | None = Field(default=None, max_length=256)
+
+
+class CloudBurstArtifactSyncRequest(BaseModel):
+    policy: str = Field(default="smart", pattern="^(smart|all)$")
+    include_globs: list[str] = Field(default_factory=list, max_length=64)
+    exclude_globs: list[str] = Field(default_factory=list, max_length=64)
+    dry_run: bool = False
+    max_files: int = Field(default=2000, ge=1, le=10000)
+    cursor: str | None = Field(default=None, max_length=4096)
+
+
 def _sse_json(payload: dict) -> str:
     serialized = json.dumps(payload, ensure_ascii=True)
     return f"data: {serialized}\n\n"
@@ -439,6 +472,131 @@ async def get_cloud_burst_launch_plan(
     except ValueError as e:
         raise HTTPException(400, str(e))
     return plan
+
+
+@router.post("/cloud-burst/jobs/submit")
+async def submit_managed_cloud_burst_job(
+    project_id: int,
+    req: CloudBurstJobSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit a managed cloud burst job and start lifecycle tracking."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return await submit_cloud_burst_job(
+            db,
+            project_id=project_id,
+            provider_id=req.provider_id,
+            gpu_sku=req.gpu_sku,
+            duration_hours=req.duration_hours,
+            experiment_id=req.experiment_id,
+            region=req.region,
+            image=req.image,
+            startup_script=req.startup_script,
+            spot=req.spot,
+            auto_artifact_sync=req.auto_artifact_sync,
+            artifact_sync_policy=req.artifact_sync_policy,
+            artifact_include_globs=req.artifact_include_globs,
+            artifact_exclude_globs=req.artifact_exclude_globs,
+            execution_mode=req.execution_mode,
+            allow_fallback_to_simulation=req.allow_fallback_to_simulation,
+            idempotency_key=req.idempotency_key,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/cloud-burst/jobs")
+async def list_managed_cloud_burst_jobs(
+    project_id: int,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """List managed cloud burst jobs for a project."""
+    await _get_project_or_404(db, project_id)
+    return list_cloud_burst_jobs(project_id=project_id, limit=limit)
+
+
+@router.get("/cloud-burst/jobs/{run_id}")
+async def get_managed_cloud_burst_job_status(
+    project_id: int,
+    run_id: str,
+    logs_tail: int = 200,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get one managed cloud burst job status + logs tail."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return get_cloud_burst_job_status(
+            project_id=project_id,
+            run_id=run_id,
+            logs_tail=logs_tail,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/cloud-burst/jobs/{run_id}/logs")
+async def get_managed_cloud_burst_job_logs(
+    project_id: int,
+    run_id: str,
+    tail: int = 200,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read managed cloud burst job logs."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return get_cloud_burst_job_logs(
+            project_id=project_id,
+            run_id=run_id,
+            tail=tail,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/cloud-burst/jobs/{run_id}/cancel")
+async def cancel_managed_cloud_burst_job(
+    project_id: int,
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Request cancellation for a managed cloud burst job."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return await cancel_cloud_burst_job(project_id=project_id, run_id=run_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.post("/cloud-burst/jobs/{run_id}/sync-artifacts")
+async def sync_managed_cloud_burst_job_artifacts(
+    project_id: int,
+    run_id: str,
+    req: CloudBurstArtifactSyncRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync artifacts for a managed cloud burst job into project storage."""
+    await _get_project_or_404(db, project_id)
+    payload = req or CloudBurstArtifactSyncRequest()
+    try:
+        return sync_cloud_burst_job_artifacts(
+            project_id=project_id,
+            run_id=run_id,
+            policy=payload.policy,
+            include_globs=payload.include_globs,
+            exclude_globs=payload.exclude_globs,
+            dry_run=payload.dry_run,
+            max_files=payload.max_files,
+            cursor=payload.cursor,
+            fail_if_missing_source=True,
+            reason="manual_api",
+        )
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail:
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
 
 
 @router.get("/recipes")

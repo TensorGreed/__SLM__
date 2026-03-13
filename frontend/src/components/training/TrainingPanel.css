@@ -76,6 +76,49 @@
     overflow-x: auto;
 }
 
+.cloud-burst-metrics {
+    margin-top: 10px;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-radius: var(--radius-sm);
+    background: rgba(15, 23, 42, 0.55);
+    padding: 10px;
+}
+
+.cloud-burst-metrics__kv {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.cloud-burst-metrics__chart {
+    width: 100%;
+    height: 130px;
+    display: block;
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-sm);
+    background: rgba(2, 6, 23, 0.85);
+}
+
+.cloud-burst-metrics__bg {
+    fill: rgba(15, 23, 42, 0.6);
+}
+
+.cloud-burst-metrics__line {
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+.cloud-burst-metrics__line--train {
+    stroke: #22c55e;
+}
+
+.cloud-burst-metrics__line--eval {
+    stroke: #f59e0b;
+}
+
 .training-preflight-panel {
     margin-bottom: var(--space-md);
     border-radius: var(--radius-md);

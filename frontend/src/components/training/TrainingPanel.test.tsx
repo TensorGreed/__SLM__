@@ -44,6 +44,64 @@ describe('TrainingPanel model wizard', () => {
       if (url.includes('/training/recipes')) {
         return { data: { project_id: 1, recipes: [] } };
       }
+      if (url.includes('/training/cloud-burst/catalog')) {
+        return {
+          data: {
+            project_id: 1,
+            providers: [
+              {
+                provider_id: 'runpod',
+                display_name: 'RunPod',
+                supports_live_execution: true,
+                supports_managed_cancel: true,
+                supports_live_logs: true,
+                supports_spot: true,
+                regions: ['US', 'EU'],
+              },
+            ],
+            gpu_skus: [
+              { gpu_sku: 'a10g.24gb', display_name: 'A10G 24GB', vram_gb: 24 },
+            ],
+          },
+        };
+      }
+      if (url.includes('/training/cloud-burst/jobs?')) {
+        return {
+          data: {
+            project_id: 1,
+            count: 0,
+            runs: [],
+          },
+        };
+      }
+      if (url.includes('/training/cloud-burst/jobs/cbr-run-123')) {
+        return {
+          data: {
+            project_id: 1,
+            run_id: 'cbr-run-123',
+            provider_id: 'runpod',
+            provider_job_id: 'pod-abc',
+            provider_status_raw: 'RUNNING',
+            status: 'running',
+            status_reason: 'Provider status=RUNNING.',
+            execution_mode_requested: 'live',
+            execution_mode_effective: 'live',
+            logs_tail: ['[2026-03-13T01:00:00Z] runpod: heartbeat'],
+            metrics_tail: [
+              { step: 1, train_loss: 0.9, eval_loss: 0.95 },
+              { step: 2, train_loss: 0.75, eval_loss: 0.81 },
+            ],
+            can_cancel: true,
+            artifacts: {
+              last_sync_summary: {
+                status: 'copied',
+                copied_count: 2,
+                file_count: 2,
+              },
+            },
+          },
+        };
+      }
       if (url.includes('/training/experiments')) {
         return { data: [] };
       }
@@ -247,6 +305,34 @@ describe('TrainingPanel model wizard', () => {
       }
       if (url.includes('/training/experiments/effective-config')) {
         return { data: { resolved_training_config: {} } };
+      }
+      if (url.includes('/training/cloud-burst/jobs/submit')) {
+        return {
+          data: {
+            project_id: 1,
+            run_id: 'cbr-run-123',
+            provider_id: 'runpod',
+            provider_job_id: 'pod-abc',
+            provider_status_raw: 'RUNNING',
+            status: 'running',
+            status_reason: 'Managed cloud burst job is running.',
+            execution_mode_requested: 'live',
+            execution_mode_effective: 'live',
+            logs_tail: ['[2026-03-13T01:00:00Z] runpod: boot complete'],
+            metrics_tail: [
+              { step: 1, train_loss: 0.9, eval_loss: 0.95 },
+              { step: 2, train_loss: 0.75, eval_loss: 0.81 },
+            ],
+            can_cancel: true,
+            artifacts: {
+              last_sync_summary: {
+                status: 'copied',
+                copied_count: 2,
+                file_count: 2,
+              },
+            },
+          },
+        };
       }
       return { data: {} };
     });
@@ -515,5 +601,47 @@ describe('TrainingPanel model wizard', () => {
     expect(await screen.findByText('Model Gate: Blocked')).toBeInTheDocument();
     expect(await screen.findByText(/acme\/unknown-arch • unknown • source none/i)).toBeInTheDocument();
     expect(await screen.findByText(/Supported: causal_lm, seq2seq, classification, encoder/i)).toBeInTheDocument();
+  });
+
+  it('submits cloud burst managed job with execution controls and renders live metrics', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    expect(await screen.findByText(/Provider capabilities:/i)).toBeInTheDocument();
+
+    const executionModeSelect = screen
+      .getByText('Execution Mode')
+      .closest('.form-group')
+      ?.querySelector('select');
+    expect(executionModeSelect).toBeTruthy();
+    await user.selectOptions(executionModeSelect as HTMLSelectElement, 'live');
+    await user.click(screen.getByText(/Allow fallback to simulation when live submit is unavailable/i));
+    const idempotencyInput = screen
+      .getByText('Idempotency Key (optional)')
+      .closest('.form-group')
+      ?.querySelector('input');
+    expect(idempotencyInput).toBeTruthy();
+    await user.type(idempotencyInput as HTMLInputElement, 'cloud-burst-key-1');
+    await user.click(screen.getByRole('button', { name: 'Submit Managed Job' }));
+
+    await waitFor(() => {
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/projects/1/training/cloud-burst/jobs/submit',
+        expect.objectContaining({
+          execution_mode: 'live',
+          allow_fallback_to_simulation: false,
+          idempotency_key: 'cloud-burst-key-1',
+        }),
+      );
+    });
+    expect(await screen.findByText('Live Metrics')).toBeInTheDocument();
+    expect(screen.getByLabelText('Cloud burst loss metrics trend')).toBeInTheDocument();
   });
 });
