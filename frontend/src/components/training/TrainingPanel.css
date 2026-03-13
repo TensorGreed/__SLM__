@@ -147,6 +147,13 @@
     margin-bottom: 2px;
 }
 
+.training-preflight-contract-card__title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
 .training-preflight-contract-card__row {
     display: flex;
     justify-content: space-between;
@@ -170,6 +177,12 @@
     background: rgba(239, 68, 68, 0.12);
     border: 1px solid rgba(239, 68, 68, 0.25);
     color: var(--color-error);
+}
+
+.training-preflight-contract-card__notice--warning {
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    color: #f59e0b;
 }
 
 .training-preflight-contract-card__notice--hint {

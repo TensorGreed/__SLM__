@@ -63,6 +63,13 @@ class TrainingConfig(BaseModel):
         lt=1.0,
         description="Per-retry max_seq_length shrink factor.",
     )
+    multimodal_require_media: bool = Field(
+        False,
+        description=(
+            "Strict multimodal loading mode: require resolved local media assets and disable text-only "
+            "fallback markers for sampled vision/audio rows."
+        ),
+    )
 
     # Alignment (DPO/ORPO)
     alignment_auto_filter: bool = Field(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+from pathlib import Path
 from typing import Any
 
 from app.config import settings
@@ -108,6 +110,50 @@ _SUPPORTED_MODEL_ARCHITECTURES: tuple[str, ...] = (
     "classification",
     "encoder",
 )
+
+_ARCHITECTURE_MODALITY_SUPPORT: dict[str, set[str]] = {
+    "causal_lm": {"text", "vision_language", "audio_text", "multimodal"},
+    "seq2seq": {"text", "vision_language", "audio_text"},
+    "classification": {"text"},
+    "encoder": {"text"},
+}
+
+_MEDIA_IMAGE_FIELD_CANDIDATES: tuple[str, ...] = (
+    "image_path",
+    "image",
+    "image_url",
+    "image_file",
+    "path",
+)
+_MEDIA_AUDIO_FIELD_CANDIDATES: tuple[str, ...] = (
+    "audio_path",
+    "audio",
+    "audio_url",
+    "audio_file",
+    "path",
+)
+_MEDIA_IMAGE_EXTENSIONS: set[str] = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".avif",
+}
+_MEDIA_AUDIO_EXTENSIONS: set[str] = {
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".opus",
+    ".webm",
+    ".aiff",
+}
 
 _PLAN_PROFILE_META: dict[str, dict[str, str]] = {
     "safe": {
@@ -304,6 +350,68 @@ def _resolve_backend(requested_backend: str) -> str:
     return requested_backend
 
 
+def _evaluate_model_dataset_modality_compatibility(
+    *,
+    architecture: str | None,
+    adapter_modality: str | None,
+) -> dict[str, Any]:
+    model_arch = str(architecture or "unknown").strip().lower()
+    modality = str(adapter_modality or "text").strip().lower() or "text"
+    errors: list[str] = []
+    warnings: list[str] = []
+    hints: list[str] = []
+
+    supported_modalities = set(_ARCHITECTURE_MODALITY_SUPPORT.get(model_arch) or {"text"})
+    if modality not in {"text", "vision_language", "audio_text", "multimodal"}:
+        modality = "text"
+
+    if modality not in supported_modalities:
+        errors.append(
+            (
+                f"base_model architecture '{model_arch}' supports modalities "
+                f"{', '.join(sorted(supported_modalities))}, but adapter resolves modality '{modality}'."
+            )
+        )
+        hints.append(
+            "Choose a text adapter/task profile for this model architecture, or switch to a multimodal-capable base model."
+        )
+
+    if model_arch == "causal_lm" and modality in {"vision_language", "audio_text", "multimodal"}:
+        warnings.append(
+            (
+                f"Adapter modality '{modality}' selected with causal_lm architecture. "
+                "Verify the base model exposes multimodal forward inputs (pixel_values/input_features/input_values); "
+                "otherwise runtime may fall back to text-only markers."
+            )
+        )
+        hints.append(
+            "Prefer explicitly multimodal checkpoints when training on image/audio rows."
+        )
+
+    if model_arch == "seq2seq" and modality == "multimodal":
+        warnings.append(
+            (
+                "seq2seq multimodal beta currently expects single-modality batches "
+                "(vision_language or audio_text). Mixed image+audio rows may use fallback handling."
+            )
+        )
+        hints.append(
+            "Split mixed-modality datasets into single-modality runs for more predictable behavior."
+        )
+
+    return {
+        "ok": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "hints": hints,
+        "summary": {
+            "architecture": model_arch,
+            "adapter_modality": modality,
+            "supported_modalities": sorted(supported_modalities),
+        },
+    }
+
+
 def _dependency_status_snapshot() -> dict[str, bool]:
     return {
         "torch": _module_available("torch"),
@@ -313,6 +421,225 @@ def _dependency_status_snapshot() -> dict[str, bool]:
         "trl": _module_available("trl"),
         "peft": _module_available("peft"),
         "bitsandbytes": _module_available("bitsandbytes"),
+    }
+
+
+def _pick_media_ref(row: dict[str, Any], fields: tuple[str, ...]) -> str:
+    for field in fields:
+        value = row.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _sample_jsonl_rows(path: Path, *, sample_size: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if len(rows) >= max(1, int(sample_size)):
+                break
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
+    return rows
+
+
+def _is_remote_media_ref(value: str) -> bool:
+    token = str(value or "").strip().lower()
+    return token.startswith(("http://", "https://", "s3://", "gs://"))
+
+
+def _resolve_local_media_ref(
+    value: str,
+    *,
+    search_roots: list[Path],
+) -> Path | None:
+    token = str(value or "").strip()
+    if not token or _is_remote_media_ref(token):
+        return None
+
+    candidate = Path(token).expanduser()
+    if candidate.is_absolute():
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            return None
+        return resolved if resolved.exists() else None
+
+    for root in search_roots:
+        try:
+            resolved = (root / candidate).expanduser().resolve()
+        except Exception:
+            continue
+        if resolved.exists():
+            return resolved
+    return None
+
+
+def _analyze_multimodal_media_contract(
+    *,
+    train_file: Path,
+    adapter_modality: str | None,
+    require_media: bool = False,
+    sample_size: int = 400,
+) -> dict[str, Any]:
+    strict_require_media = bool(require_media)
+    expected_modality = str(adapter_modality or "text").strip().lower() or "text"
+    if expected_modality not in {"text", "vision_language", "audio_text", "multimodal"}:
+        expected_modality = "text"
+
+    rows = _sample_jsonl_rows(train_file, sample_size=max(40, min(5000, int(sample_size or 400))))
+    sampled_rows = len(rows)
+    media_rows = 0
+    image_rows = 0
+    audio_rows = 0
+    multimodal_rows = 0
+    resolved_local_images = 0
+    resolved_local_audios = 0
+    missing_local_images = 0
+    missing_local_audios = 0
+    remote_image_refs = 0
+    remote_audio_refs = 0
+    errors: list[str] = []
+    warnings: list[str] = []
+    hints: list[str] = []
+
+    search_roots = [
+        train_file.parent,
+        train_file.parent.parent,
+        settings.DATA_DIR,
+    ]
+
+    for row in rows:
+        image_ref = _pick_media_ref(row, _MEDIA_IMAGE_FIELD_CANDIDATES)
+        audio_ref = _pick_media_ref(row, _MEDIA_AUDIO_FIELD_CANDIDATES)
+        if image_ref and audio_ref and image_ref == audio_ref:
+            suffix = Path(image_ref).suffix.strip().lower()
+            if suffix in _MEDIA_AUDIO_EXTENSIONS:
+                image_ref = ""
+            elif suffix in _MEDIA_IMAGE_EXTENSIONS:
+                audio_ref = ""
+            else:
+                audio_ref = ""
+
+        has_image = bool(image_ref)
+        has_audio = bool(audio_ref)
+        if has_image or has_audio:
+            media_rows += 1
+        if has_image:
+            image_rows += 1
+            if _is_remote_media_ref(image_ref):
+                remote_image_refs += 1
+            elif _resolve_local_media_ref(image_ref, search_roots=search_roots) is not None:
+                resolved_local_images += 1
+            else:
+                missing_local_images += 1
+        if has_audio:
+            audio_rows += 1
+            if _is_remote_media_ref(audio_ref):
+                remote_audio_refs += 1
+            elif _resolve_local_media_ref(audio_ref, search_roots=search_roots) is not None:
+                resolved_local_audios += 1
+            else:
+                missing_local_audios += 1
+        if has_image and has_audio:
+            multimodal_rows += 1
+
+    if expected_modality in {"vision_language", "multimodal"} and image_rows <= 0:
+        errors.append(
+            (
+                f"Adapter modality '{expected_modality}' expects image references, "
+                "but sampled train rows contain no image_path/image fields."
+            )
+        )
+        hints.append("Re-run Dataset Prep with a vision adapter or ensure image_path is present in mapped rows.")
+    if expected_modality in {"audio_text", "multimodal"} and audio_rows <= 0:
+        errors.append(
+            (
+                f"Adapter modality '{expected_modality}' expects audio references, "
+                "but sampled train rows contain no audio_path/audio fields."
+            )
+        )
+        hints.append("Re-run Dataset Prep with an audio adapter or ensure audio_path is present in mapped rows.")
+
+    total_local_media_refs = (image_rows - remote_image_refs) + (audio_rows - remote_audio_refs)
+    total_missing_local_refs = missing_local_images + missing_local_audios
+    missing_ratio = (
+        float(total_missing_local_refs / total_local_media_refs)
+        if total_local_media_refs > 0
+        else 0.0
+    )
+    missing_error_threshold = max(3, int(total_local_media_refs * 0.35))
+    if total_missing_local_refs > 0:
+        message = (
+            f"Missing local media assets for {total_missing_local_refs}/{max(1, total_local_media_refs)} "
+            "sampled local media references; multimodal batches may fall back to text-only markers."
+        )
+        if strict_require_media or total_missing_local_refs >= missing_error_threshold:
+            errors.append(message)
+        else:
+            warnings.append(message)
+        hints.append(
+            "Place media files under the prepared dataset directory (or provide absolute paths) before training."
+        )
+
+    total_remote_refs = remote_image_refs + remote_audio_refs
+    if total_remote_refs > 0:
+        bucket = errors if strict_require_media else warnings
+        bucket.append(
+            (
+                f"Detected {total_remote_refs} remote media URL reference(s) in sampled rows. "
+                "Current multimodal runtime resolves local files only and will use text-only fallback for remote assets."
+            )
+        )
+        hints.append(
+            "Download remote media to local paths inside prepared data, then rerun preflight."
+        )
+
+    if image_rows > 0 and audio_rows > 0:
+        mixed_message = (
+            "Sampled dataset includes both image and audio references; mixed-modality batches may use beta fallback handling."
+        )
+        if strict_require_media:
+            errors.append(
+                (
+                    "Sampled dataset includes both image and audio references, but multimodal_require_media=true "
+                    "expects no text-fallback path for mixed-modality batches."
+                )
+            )
+        else:
+            warnings.append(mixed_message)
+        hints.append(
+            "Prefer separate single-modality runs (vision-only or audio-only) for predictable training behavior."
+        )
+
+    return {
+        "ok": len(errors) == 0,
+        "require_media": strict_require_media,
+        "expected_modality": expected_modality,
+        "sampled_rows": sampled_rows,
+        "media_rows": media_rows,
+        "image_rows": image_rows,
+        "audio_rows": audio_rows,
+        "multimodal_rows": multimodal_rows,
+        "resolved_local_images": resolved_local_images,
+        "resolved_local_audios": resolved_local_audios,
+        "missing_local_images": missing_local_images,
+        "missing_local_audios": missing_local_audios,
+        "remote_image_refs": remote_image_refs,
+        "remote_audio_refs": remote_audio_refs,
+        "missing_local_ratio": round(missing_ratio, 6),
+        "errors": errors,
+        "warnings": warnings,
+        "hints": hints,
     }
 
 
@@ -356,6 +683,10 @@ def run_training_preflight(
     )
     trainer_backend_effective = _resolve_backend(trainer_backend_requested)
     training_mode = _normalize_training_mode(resolved_config.get("training_mode"))
+    multimodal_require_media = _coerce_bool(
+        resolved_config.get("multimodal_require_media"),
+        False,
+    )
 
     supported_task_types = list(capability.get("supported_task_types", []))
     if supported_task_types and task_type not in supported_task_types:
@@ -589,6 +920,7 @@ def run_training_preflight(
     train_exists = train_file.exists()
     val_exists = val_file.exists()
     dataset_contract: dict[str, Any] | None = None
+    media_contract: dict[str, Any] | None = None
     alignment_contract: dict[str, Any] | None = None
     alignment_quality: dict[str, Any] | None = None
     if not train_exists:
@@ -698,6 +1030,43 @@ def run_training_preflight(
         project_id=project_id,
         config=resolved_config,
     )
+    if train_exists:
+        media_contract = _analyze_multimodal_media_contract(
+            train_file=train_file,
+            adapter_modality=adapter_context.get("adapter_modality"),
+            require_media=multimodal_require_media,
+            sample_size=400,
+        )
+        for item in media_contract.get("errors", []):
+            text = str(item).strip()
+            if text and text not in errors:
+                errors.append(text)
+        for item in media_contract.get("warnings", []):
+            text = str(item).strip()
+            if text and text not in warnings:
+                warnings.append(text)
+        for item in media_contract.get("hints", []):
+            text = str(item).strip()
+            if text and text not in hints:
+                hints.append(text)
+
+    model_modality_contract = _evaluate_model_dataset_modality_compatibility(
+        architecture=architecture,
+        adapter_modality=adapter_context.get("adapter_modality"),
+    )
+    for item in model_modality_contract.get("errors", []):
+        text = str(item).strip()
+        if text and text not in errors:
+            errors.append(text)
+    for item in model_modality_contract.get("warnings", []):
+        text = str(item).strip()
+        if text and text not in warnings:
+            warnings.append(text)
+    for item in model_modality_contract.get("hints", []):
+        text = str(item).strip()
+        if text and text not in hints:
+            hints.append(text)
+
     capability_contract = evaluate_training_capability_contract(
         task_type=task_type,
         training_mode=training_mode,
@@ -778,8 +1147,16 @@ def run_training_preflight(
             "val_file_exists": val_exists,
             "adapter_context": adapter_context,
             "contract": dataset_contract or {},
+            "media_contract": media_contract or {},
             "alignment_contract": alignment_contract or {},
             "alignment_quality": alignment_quality or {},
+        },
+        "model_modality_contract": {
+            **dict(model_modality_contract.get("summary") or {}),
+            "ok": bool(model_modality_contract.get("ok", False)),
+            "errors": [str(item) for item in list(model_modality_contract.get("errors") or []) if str(item).strip()],
+            "warnings": [str(item) for item in list(model_modality_contract.get("warnings") or []) if str(item).strip()],
+            "hints": [str(item) for item in list(model_modality_contract.get("hints") or []) if str(item).strip()],
         },
         "capability_contract": capability_contract.get("summary", {}),
         "command_template_present": bool(settings.TRAINING_EXTERNAL_CMD.strip()),
@@ -824,9 +1201,15 @@ def _apply_common_autofixes(
 ) -> None:
     dependencies = dict(capability_summary.get("dependencies") or {})
     runtime_env = dict(capability_summary.get("runtime_environment") or {})
+    runtime_summary = dict(capability_summary.get("runtime") or {})
+    capability_contract = dict(capability_summary.get("capability_contract") or {})
+    dataset_summary = dict(capability_summary.get("dataset") or {})
+    media_contract = dict(dataset_summary.get("media_contract") or {})
+    adapter_context = dict(dataset_summary.get("adapter_context") or {})
 
     task_type = str(cfg.get("task_type", "causal_lm")).strip().lower()
     trainer_backend = str(cfg.get("trainer_backend", "auto")).strip().lower()
+    training_mode = _normalize_training_mode(cfg.get("training_mode"))
 
     if trainer_backend == "trl_sft" and task_type != "causal_lm":
         _set_planned_field(
@@ -912,6 +1295,106 @@ def _apply_common_autofixes(
                 field="flash_attention",
                 to_value=False,
                 reason="CUDA unavailable",
+            )
+
+    multimodal_require_media = _coerce_bool(cfg.get("multimodal_require_media"), False)
+    if multimodal_require_media:
+        adapter_modality = str(
+            capability_contract.get("adapter_modality")
+            or adapter_context.get("adapter_modality")
+            or "text"
+        ).strip().lower()
+        if adapter_modality not in {"text", "vision_language", "audio_text", "multimodal"}:
+            adapter_modality = "text"
+
+        runtime_modalities_raw = capability_contract.get("runtime_supported_modalities")
+        if not isinstance(runtime_modalities_raw, (list, tuple, set)):
+            runtime_modalities_raw = runtime_summary.get("supported_modalities")
+
+        runtime_supported_modalities: set[str] = set()
+        if isinstance(runtime_modalities_raw, (list, tuple, set)):
+            for item in runtime_modalities_raw:
+                token = str(item or "").strip().lower().replace("-", "_").replace(" ", "_")
+                if token == "multi_modal":
+                    token = "multimodal"
+                elif token in {"vision", "image", "image_text"}:
+                    token = "vision_language"
+                elif token == "audio":
+                    token = "audio_text"
+                if token in {"text", "vision_language", "audio_text", "multimodal"}:
+                    runtime_supported_modalities.add(token)
+        if not runtime_supported_modalities:
+            runtime_supported_modalities = {"text"}
+
+        runtime_modalities_declared = _coerce_bool(
+            capability_contract.get("runtime_modalities_declared"),
+            _coerce_bool(runtime_summary.get("modalities_declared"), False),
+        )
+
+        missing_local_refs = (
+            _coerce_int(media_contract.get("missing_local_images"), 0, minimum=0)
+            + _coerce_int(media_contract.get("missing_local_audios"), 0, minimum=0)
+        )
+        remote_media_refs = (
+            _coerce_int(media_contract.get("remote_image_refs"), 0, minimum=0)
+            + _coerce_int(media_contract.get("remote_audio_refs"), 0, minimum=0)
+        )
+        mixed_modality_rows = _coerce_int(media_contract.get("multimodal_rows"), 0, minimum=0)
+
+        if training_mode in {"dpo", "orpo"}:
+            _set_planned_field(
+                cfg,
+                changes,
+                field="multimodal_require_media",
+                to_value=False,
+                reason="multimodal strict media mode supports sft/domain_pretrain only",
+            )
+        elif mixed_modality_rows > 0:
+            _set_planned_field(
+                cfg,
+                changes,
+                field="multimodal_require_media",
+                to_value=False,
+                reason="strict media mode does not support sampled mixed image+audio rows",
+            )
+        elif missing_local_refs > 0:
+            _set_planned_field(
+                cfg,
+                changes,
+                field="multimodal_require_media",
+                to_value=False,
+                reason="strict media mode requires all sampled local media assets to resolve",
+            )
+        elif remote_media_refs > 0:
+            _set_planned_field(
+                cfg,
+                changes,
+                field="multimodal_require_media",
+                to_value=False,
+                reason="strict media mode requires local media files (remote URLs detected)",
+            )
+        elif (
+            adapter_modality != "text"
+            and runtime_modalities_declared
+            and adapter_modality not in runtime_supported_modalities
+        ):
+            _set_planned_field(
+                cfg,
+                changes,
+                field="multimodal_require_media",
+                to_value=False,
+                reason="runtime modality contract does not include adapter modality for strict media mode",
+            )
+        elif (
+            adapter_modality != "text"
+            and not runtime_modalities_declared
+        ):
+            _set_planned_field(
+                cfg,
+                changes,
+                field="multimodal_require_media",
+                to_value=False,
+                reason="runtime does not declare supported_modalities for strict media mode",
             )
 
 

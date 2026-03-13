@@ -107,6 +107,20 @@ def _coerce_float(value: Any, default: float, minimum: float | None = None) -> f
     return parsed
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(default)
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         return float(value) if value is not None else None
@@ -120,6 +134,87 @@ def _pick_first_text(row: dict[str, Any], keys: list[str]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+_IMAGE_FIELD_CANDIDATES = ["image_path", "image", "image_url", "image_file", "path"]
+_AUDIO_FIELD_CANDIDATES = ["audio_path", "audio", "audio_url", "audio_file", "path"]
+_IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".avif",
+}
+_AUDIO_EXTENSIONS = {
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".opus",
+    ".webm",
+    ".aiff",
+}
+
+
+def _extract_multimodal_paths(row: dict[str, Any]) -> tuple[str, str]:
+    image_path = _pick_first_text(row, _IMAGE_FIELD_CANDIDATES)
+    audio_path = _pick_first_text(row, _AUDIO_FIELD_CANDIDATES)
+    if image_path and audio_path and image_path == audio_path:
+        # Disambiguate shared "path" aliases using extension hints when possible.
+        suffix = Path(image_path).suffix.strip().lower()
+        if suffix in _AUDIO_EXTENSIONS:
+            image_path = ""
+        elif suffix in _IMAGE_EXTENSIONS:
+            audio_path = ""
+        else:
+            # Avoid ambiguous shared aliases resolving both modalities to one token.
+            audio_path = ""
+    return image_path, audio_path
+
+
+def _infer_input_modality(
+    *,
+    text: str,
+    image_path: str,
+    audio_path: str,
+) -> str:
+    if image_path and audio_path:
+        return "multimodal"
+    if image_path:
+        return "vision_language"
+    if audio_path:
+        return "audio_text"
+    token = str(text or "").strip().lower()
+    has_image_marker = "<image:" in token
+    has_audio_marker = "<audio:" in token
+    if has_image_marker and has_audio_marker:
+        return "multimodal"
+    if has_image_marker:
+        return "vision_language"
+    if has_audio_marker:
+        return "audio_text"
+    return "text"
+
+
+def _attach_multimodal_fields(row: dict[str, Any], mapped: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(mapped or {})
+    image_path, audio_path = _extract_multimodal_paths(row)
+    if image_path:
+        payload["image_path"] = image_path
+    if audio_path:
+        payload["audio_path"] = audio_path
+    payload["input_modality"] = _infer_input_modality(
+        text=str(payload.get("text") or ""),
+        image_path=image_path,
+        audio_path=audio_path,
+    )
+    return payload
 
 
 PREFERENCE_PROMPT_KEYS = [
@@ -234,14 +329,20 @@ def _adapt_record_to_text(
         source = _pick_first_text(row, list(contract.get("input_fields", [])))
         target = _pick_first_text(row, list(contract.get("target_fields", [])))
         if source and target:
-            return {
+            return _attach_multimodal_fields(row, {
                 "text": _qa_to_chat_text(source, target, chat_template),
                 "source_text": source,
                 "target_text": target,
-            }
+            })
         if source:
-            return {"text": source, "source_text": source, "target_text": ""}
-        return {"text": "", "source_text": "", "target_text": ""}
+            return _attach_multimodal_fields(
+                row,
+                {"text": source, "source_text": source, "target_text": ""},
+            )
+        return _attach_multimodal_fields(
+            row,
+            {"text": "", "source_text": "", "target_text": ""},
+        )
 
     if task_type == "classification":
         source = _pick_first_text(row, list(contract.get("input_fields", [])))
@@ -257,18 +358,27 @@ def _adapt_record_to_text(
                 label_raw = str(value)
                 break
         if source and label_raw:
-            return {
+            return _attach_multimodal_fields(row, {
                 "text": f"Text: {source}\nLabel: {label_raw}",
                 "source_text": source,
                 "target_text": label_raw,
-            }
+            })
         if source:
-            return {"text": source, "source_text": source, "target_text": ""}
-        return {"text": "", "source_text": "", "target_text": ""}
+            return _attach_multimodal_fields(
+                row,
+                {"text": source, "source_text": source, "target_text": ""},
+            )
+        return _attach_multimodal_fields(
+            row,
+            {"text": "", "source_text": "", "target_text": ""},
+        )
 
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
-        return {"text": direct_text, "source_text": direct_text, "target_text": ""}
+        return _attach_multimodal_fields(
+            row,
+            {"text": direct_text, "source_text": direct_text, "target_text": ""},
+        )
 
     question = _pick_first_text(row, ["question", "prompt", "instruction"])
     answer = _pick_first_text(
@@ -286,19 +396,28 @@ def _adapt_record_to_text(
     )
     if question and answer:
         rendered = _qa_to_chat_text(question, answer, chat_template)
-        return {"text": rendered, "source_text": question, "target_text": answer}
+        return _attach_multimodal_fields(
+            row,
+            {"text": rendered, "source_text": question, "target_text": answer},
+        )
 
     if question:
         optional_input = _pick_first_text(row, ["input"])
         if optional_input:
-            return {
-                "text": f"Instruction: {question}\nInput: {optional_input}",
+            return _attach_multimodal_fields(row, {
+                "text": _qa_to_chat_text(question, optional_input, chat_template),
                 "source_text": question,
                 "target_text": optional_input,
-            }
-        return {"text": question, "source_text": question, "target_text": ""}
+            })
+        return _attach_multimodal_fields(
+            row,
+            {"text": question, "source_text": question, "target_text": ""},
+        )
 
-    return {"text": "", "source_text": "", "target_text": ""}
+    return _attach_multimodal_fields(
+        row,
+        {"text": "", "source_text": "", "target_text": ""},
+    )
 
 
 def _row_has_text(value: Any) -> bool:
@@ -312,6 +431,83 @@ def _is_valid_adapted_row(row: dict[str, Any], task_type: str) -> bool:
     if task in {"seq2seq", "classification"}:
         return _row_has_text(row.get("source_text")) and _row_has_text(row.get("target_text"))
     return _row_has_text(row.get("text"))
+
+
+def _summarize_adapted_modalities(
+    rows,
+    *,
+    sample_limit: int = 512,
+) -> dict[str, Any]:
+    counts: dict[str, int] = {
+        "text": 0,
+        "vision_language": 0,
+        "audio_text": 0,
+        "multimodal": 0,
+    }
+    total = 0
+    if rows is None:
+        return {"total": 0, "counts": counts, "dominant": "text"}
+
+    try:
+        row_count = int(len(rows))
+    except Exception:
+        row_count = 0
+    if row_count <= 0:
+        return {"total": 0, "counts": counts, "dominant": "text"}
+
+    max_items = max(1, min(row_count, int(sample_limit)))
+    for idx in range(max_items):
+        try:
+            item = rows[idx]
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        image_path = str(item.get("image_path") or "").strip()
+        audio_path = str(item.get("audio_path") or "").strip()
+        modality = str(item.get("input_modality") or "").strip().lower() or _infer_input_modality(
+            text=str(item.get("text") or ""),
+            image_path=image_path,
+            audio_path=audio_path,
+        )
+        if modality not in counts:
+            modality = "text"
+        counts[modality] += 1
+        total += 1
+
+    if total == 0:
+        return {"total": 0, "counts": counts, "dominant": "text"}
+
+    dominant = max(counts.items(), key=lambda item: item[1])[0]
+    return {"total": total, "counts": counts, "dominant": dominant}
+
+
+def _resolve_media_path(
+    value: str,
+    *,
+    search_roots: list[Path],
+) -> Path | None:
+    token = str(value or "").strip()
+    if not token:
+        return None
+    lowered = token.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return None
+    candidate = Path(token).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve() if candidate.exists() else None
+    for root in search_roots:
+        try:
+            resolved = (root / candidate).expanduser().resolve()
+        except Exception:
+            continue
+        if resolved.exists():
+            return resolved
+    try:
+        resolved = candidate.resolve()
+    except Exception:
+        return None
+    return resolved if resolved.exists() else None
 
 
 def _extract_label_space(
@@ -663,6 +859,47 @@ def _collect_runtime_environment(torch_mod, use_cuda: bool, warnings: list[str])
     return runtime_env
 
 
+def _load_training_runtime_dependencies() -> dict[str, Any]:
+    try:
+        import torch
+        import transformers as hf_transformers
+        from datasets import load_dataset
+        from transformers import (
+            AutoModelForCausalLM,
+            AutoModelForSeq2SeqLM,
+            AutoModelForSequenceClassification,
+            AutoTokenizer,
+            DataCollatorForLanguageModeling,
+            DataCollatorForSeq2Seq,
+            DataCollatorWithPadding,
+            Trainer,
+            TrainerCallback,
+            TrainingArguments,
+            set_seed,
+        )
+    except ImportError as e:
+        raise RuntimeError(
+            "Missing training dependencies. Install torch, datasets, transformers, and accelerate."
+        ) from e
+
+    return {
+        "torch": torch,
+        "transformers_module": hf_transformers,
+        "load_dataset": load_dataset,
+        "AutoModelForCausalLM": AutoModelForCausalLM,
+        "AutoModelForSeq2SeqLM": AutoModelForSeq2SeqLM,
+        "AutoModelForSequenceClassification": AutoModelForSequenceClassification,
+        "AutoTokenizer": AutoTokenizer,
+        "DataCollatorForLanguageModeling": DataCollatorForLanguageModeling,
+        "DataCollatorForSeq2Seq": DataCollatorForSeq2Seq,
+        "DataCollatorWithPadding": DataCollatorWithPadding,
+        "Trainer": Trainer,
+        "TrainerCallback": TrainerCallback,
+        "TrainingArguments": TrainingArguments,
+        "set_seed": set_seed,
+    }
+
+
 def _run_training_attempt(
     args: argparse.Namespace,
     *,
@@ -693,19 +930,19 @@ def _run_training_attempt(
     lr_scheduler = str(config.get("lr_scheduler", "cosine"))
     optimizer = str(config.get("optimizer", "adamw_torch"))
     seed = _coerce_int(config.get("seed"), args.seed, minimum=0)
-    use_lora = bool(config.get("use_lora", False))
+    use_lora = _coerce_bool(config.get("use_lora"), False)
     lora_r = _coerce_int(config.get("lora_r"), 16, minimum=1)
     lora_alpha = _coerce_int(config.get("lora_alpha"), 32, minimum=1)
     lora_dropout = _coerce_float(config.get("lora_dropout"), 0.05, minimum=0.0)
     target_modules = config.get("target_modules", ["q_proj", "v_proj"])
-    gradient_checkpointing = bool(config.get("gradient_checkpointing", True))
-    want_flash_attention = bool(config.get("flash_attention", True))
-    want_fp16 = bool(config.get("fp16", False))
-    want_bf16 = bool(config.get("bf16", True))
-    sequence_packing = bool(config.get("sequence_packing", True))
+    gradient_checkpointing = _coerce_bool(config.get("gradient_checkpointing"), True)
+    want_flash_attention = _coerce_bool(config.get("flash_attention"), True)
+    want_fp16 = _coerce_bool(config.get("fp16"), False)
+    want_bf16 = _coerce_bool(config.get("bf16"), True)
+    sequence_packing = _coerce_bool(config.get("sequence_packing"), True)
     max_train_samples = args.max_train_samples
     max_eval_samples = args.max_eval_samples
-    distillation_enabled = bool(config.get("distillation_enabled", False))
+    distillation_enabled = _coerce_bool(config.get("distillation_enabled"), False)
     distillation_teacher_model = str(config.get("distillation_teacher_model") or "").strip()
     distillation_alpha = float(config.get("distillation_alpha", 0.6))
     distillation_temperature = _coerce_float(
@@ -721,36 +958,30 @@ def _run_training_attempt(
     distillation_hidden_state_loss = str(
         config.get("distillation_hidden_state_loss", "mse")
     ).strip().lower() or "mse"
-    observability_enabled = bool(config.get("observability_enabled", True))
+    observability_enabled = _coerce_bool(config.get("observability_enabled"), True)
     observability_log_steps = _coerce_int(config.get("observability_log_steps"), 50, minimum=5)
     observability_max_layers = _coerce_int(config.get("observability_max_layers"), 12, minimum=1)
-    observability_probe_attention = bool(config.get("observability_probe_attention", True))
+    observability_probe_attention = _coerce_bool(config.get("observability_probe_attention"), True)
     observability_probe_top_k = _coerce_int(config.get("observability_probe_top_k"), 6, minimum=1)
     observability_probe_prompt = str(
         config.get("observability_probe_prompt") or "Summarize domain policy facts accurately."
     ).strip() or "Summarize domain policy facts accurately."
 
-    try:
-        import torch
-        import transformers as hf_transformers
-        from datasets import load_dataset
-        from transformers import (
-            AutoModelForCausalLM,
-            AutoModelForSeq2SeqLM,
-            AutoModelForSequenceClassification,
-            AutoTokenizer,
-            DataCollatorForLanguageModeling,
-            DataCollatorForSeq2Seq,
-            DataCollatorWithPadding,
-            Trainer,
-            TrainerCallback,
-            TrainingArguments,
-            set_seed,
-        )
-    except ImportError as e:
-        raise RuntimeError(
-            "Missing training dependencies. Install torch, datasets, transformers, and accelerate."
-        ) from e
+    deps = _load_training_runtime_dependencies()
+    torch = deps["torch"]
+    hf_transformers = deps["transformers_module"]
+    load_dataset = deps["load_dataset"]
+    AutoModelForCausalLM = deps["AutoModelForCausalLM"]
+    AutoModelForSeq2SeqLM = deps["AutoModelForSeq2SeqLM"]
+    AutoModelForSequenceClassification = deps["AutoModelForSequenceClassification"]
+    AutoTokenizer = deps["AutoTokenizer"]
+    DataCollatorForLanguageModeling = deps["DataCollatorForLanguageModeling"]
+    DataCollatorForSeq2Seq = deps["DataCollatorForSeq2Seq"]
+    DataCollatorWithPadding = deps["DataCollatorWithPadding"]
+    Trainer = deps["Trainer"]
+    TrainerCallback = deps["TrainerCallback"]
+    TrainingArguments = deps["TrainingArguments"]
+    set_seed = deps["set_seed"]
 
     warnings: list[str] = []
     if training_mode not in {"sft", "domain_pretrain", "dpo", "orpo"}:
@@ -857,12 +1088,105 @@ def _run_training_attempt(
             if len(eval_text) == 0:
                 eval_text = None
 
+    train_modality_summary = _summarize_adapted_modalities(train_text)
+    eval_modality_summary = _summarize_adapted_modalities(eval_text)
+    train_modality_counts = dict(train_modality_summary.get("counts") or {})
+    eval_modality_counts = dict(eval_modality_summary.get("counts") or {})
+    train_modality_dominant = str(train_modality_summary.get("dominant") or "text")
+    has_multimodal_rows = any(
+        int(train_modality_counts.get(key) or 0) > 0
+        for key in ("vision_language", "audio_text", "multimodal")
+    )
+    multimodal_native_beta = _coerce_bool(config.get("multimodal_native_beta"), True)
+    multimodal_media_loading = _coerce_bool(config.get("multimodal_media_loading"), True)
+    multimodal_require_media = _coerce_bool(config.get("multimodal_require_media"), False)
+    use_multimodal_collator = bool(
+        has_multimodal_rows
+        and multimodal_native_beta
+        and training_mode not in {"dpo", "orpo"}
+        and normalized_task_type in {"causal_lm", "seq2seq"}
+    )
+    if has_multimodal_rows and multimodal_require_media:
+        if training_mode in {"dpo", "orpo"}:
+            raise ValueError(
+                (
+                    "multimodal_require_media=true is incompatible with training_mode "
+                    f"{training_mode}; use SFT/domain_pretrain for multimodal batches."
+                )
+            )
+        if normalized_task_type not in {"causal_lm", "seq2seq"}:
+            raise ValueError(
+                (
+                    "multimodal_require_media=true currently supports multimodal rows "
+                    "for task_type causal_lm/seq2seq only."
+                )
+            )
+        if not multimodal_native_beta:
+            raise ValueError(
+                "multimodal_require_media=true requires multimodal_native_beta=true."
+            )
+        if not multimodal_media_loading:
+            raise ValueError(
+                "multimodal_require_media=true requires multimodal_media_loading=true."
+            )
+        if not use_multimodal_collator:
+            raise ValueError(
+                "multimodal_require_media=true requires multimodal collator runtime support."
+            )
+    if has_multimodal_rows and not multimodal_native_beta:
+        warnings.append(
+            "Detected multimodal rows, but multimodal_native_beta=false; using text-marker fallback path."
+        )
+
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         if tokenizer.eos_token:
             tokenizer.pad_token = tokenizer.eos_token
         else:
             tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
+
+    processor = None
+    processor_tokenizer = tokenizer
+    if use_multimodal_collator:
+        auto_processor_cls = getattr(hf_transformers, "AutoProcessor", None)
+        if auto_processor_cls is None:
+            if multimodal_require_media:
+                raise ValueError(
+                    (
+                        "multimodal_require_media=true requires transformers AutoProcessor, "
+                        "but runtime does not expose AutoProcessor."
+                    )
+                )
+            warnings.append(
+                "transformers runtime does not expose AutoProcessor; using tokenizer-only multimodal fallback."
+            )
+        else:
+            try:
+                processor = auto_processor_cls.from_pretrained(args.base_model, trust_remote_code=True)
+                processor_candidate = getattr(processor, "tokenizer", None)
+                if processor_candidate is not None:
+                    processor_tokenizer = processor_candidate
+                elif hasattr(processor, "pad_token_id"):
+                    processor_tokenizer = processor
+            except Exception as processor_error:  # noqa: BLE001
+                if multimodal_require_media:
+                    raise ValueError(
+                        (
+                            "multimodal_require_media=true requires loading AutoProcessor for multimodal batches. "
+                            f"Details: {processor_error}"
+                        )
+                    ) from processor_error
+                warnings.append(
+                    f"AutoProcessor load failed for multimodal beta path; using tokenizer fallback. Details: {processor_error}"
+                )
+                processor = None
+                processor_tokenizer = tokenizer
+    if getattr(processor_tokenizer, "pad_token", None) is None:
+        eos_token = getattr(processor_tokenizer, "eos_token", None)
+        if eos_token:
+            processor_tokenizer.pad_token = eos_token
+        elif hasattr(processor_tokenizer, "add_special_tokens"):
+            processor_tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
     model_kwargs: dict[str, Any] = {"trust_remote_code": True}
     label_space: list[str] = []
@@ -882,6 +1206,17 @@ def _run_training_attempt(
     runtime_environment["observability_max_layers"] = int(observability_max_layers)
     runtime_environment["observability_probe_attention"] = bool(observability_probe_attention)
     runtime_environment["observability_probe_top_k"] = int(observability_probe_top_k)
+    runtime_environment["train_modality"] = train_modality_dominant
+    runtime_environment["train_modality_counts"] = train_modality_counts
+    runtime_environment["eval_modality_counts"] = eval_modality_counts
+    runtime_environment["multimodal_native_beta"] = bool(multimodal_native_beta)
+    runtime_environment["multimodal_media_loading"] = bool(multimodal_media_loading)
+    runtime_environment["multimodal_require_media"] = bool(multimodal_require_media)
+    runtime_environment["multimodal_processor_loaded"] = bool(processor is not None)
+    runtime_environment["multimodal_processor_class"] = (
+        processor.__class__.__name__ if processor is not None else None
+    )
+    runtime_environment["multimodal_adapter_collator"] = bool(use_multimodal_collator)
     if distillation_enabled:
         runtime_environment["distillation_teacher_model"] = distillation_teacher_model
         runtime_environment["distillation_alpha"] = round(distillation_alpha, 4)
@@ -909,6 +1244,51 @@ def _run_training_attempt(
         model_loader = AutoModelForSeq2SeqLM
     elif normalized_task_type == "classification":
         model_loader = AutoModelForSequenceClassification
+    if use_multimodal_collator and multimodal_require_media:
+        mixed_rows = int(train_modality_counts.get("multimodal") or 0)
+        vision_rows = int(train_modality_counts.get("vision_language") or 0)
+        audio_rows = int(train_modality_counts.get("audio_text") or 0)
+        if mixed_rows > 0:
+            raise ValueError(
+                (
+                    "multimodal_require_media=true does not currently support rows containing both "
+                    "image and audio references in one example."
+                )
+            )
+        if vision_rows > 0 and audio_rows > 0:
+            raise ValueError(
+                (
+                    "multimodal_require_media=true does not support datasets containing both "
+                    "vision_language and audio_text rows in one run."
+                )
+            )
+    if use_multimodal_collator and normalized_task_type == "seq2seq":
+        vision_rows = int(train_modality_counts.get("vision_language") or 0)
+        audio_rows = int(train_modality_counts.get("audio_text") or 0)
+        mixed_rows = int(train_modality_counts.get("multimodal") or 0)
+        if mixed_rows > 0 or (vision_rows > 0 and audio_rows > 0):
+            if multimodal_require_media:
+                raise ValueError(
+                    (
+                        "multimodal_require_media=true does not support mixed modality seq2seq "
+                        "datasets in the current beta runtime."
+                    )
+                )
+            warnings.append(
+                "Mixed modality dataset detected for seq2seq beta runtime; using AutoModelForSeq2SeqLM fallback."
+            )
+        elif vision_rows > 0:
+            vision_loader = getattr(hf_transformers, "AutoModelForVision2Seq", None)
+            if vision_loader is not None:
+                model_loader = vision_loader
+                runtime_environment["multimodal_model_loader"] = "AutoModelForVision2Seq"
+        elif audio_rows > 0:
+            audio_loader = getattr(hf_transformers, "AutoModelForSpeechSeq2Seq", None)
+            if audio_loader is not None:
+                model_loader = audio_loader
+                runtime_environment["multimodal_model_loader"] = "AutoModelForSpeechSeq2Seq"
+    if "multimodal_model_loader" not in runtime_environment:
+        runtime_environment["multimodal_model_loader"] = getattr(model_loader, "__name__", str(model_loader))
 
     def _load_model_with_dtype_fallback(
         load_kwargs: dict[str, Any],
@@ -1054,7 +1434,7 @@ def _run_training_attempt(
         "seed": seed,
         "data_seed": seed,
         "dataloader_num_workers": 0,
-        "remove_unused_columns": resolved_backend == "hf_trainer",
+        "remove_unused_columns": bool(resolved_backend == "hf_trainer" and not use_multimodal_collator),
         "fp16": use_fp16,
         "bf16": use_bf16,
     }
@@ -1565,12 +1945,400 @@ def _run_training_attempt(
             trainer_kwargs["hidden_state_weight"] = distillation_hidden_state_weight
             trainer_kwargs["hidden_state_loss_type"] = distillation_hidden_state_loss
 
-        if normalized_task_type == "seq2seq":
+        if use_multimodal_collator and normalized_task_type in {"causal_lm", "seq2seq"}:
+            media_roots = [
+                train_file.parent,
+                train_file.parent.parent,
+                Path(args.data_dir).expanduser().resolve(),
+            ]
+            collator_stats: dict[str, int] = {
+                "total_batches": 0,
+                "text_only_batches": 0,
+                "vision_batches": 0,
+                "audio_batches": 0,
+                "mixed_batches": 0,
+                "media_fallback_batches": 0,
+            }
+            model_forward_params = set(inspect.signature(model.forward).parameters)
+            accepts_pixel_values = "pixel_values" in model_forward_params
+            accepts_input_features = "input_features" in model_forward_params
+            accepts_input_values = "input_values" in model_forward_params
+            runtime_environment["multimodal_model_forward_keys"] = sorted(
+                [
+                    key
+                    for key in ("pixel_values", "input_features", "input_values")
+                    if key in model_forward_params
+                ]
+            )
+            if multimodal_require_media:
+                vision_rows = int(train_modality_counts.get("vision_language") or 0)
+                audio_rows = int(train_modality_counts.get("audio_text") or 0)
+                if vision_rows > 0 and not accepts_pixel_values:
+                    raise ValueError(
+                        (
+                            "multimodal_require_media=true requires model.forward to accept "
+                            "'pixel_values' for vision_language rows."
+                        )
+                    )
+                if audio_rows > 0 and not (accepts_input_features or accepts_input_values):
+                    raise ValueError(
+                        (
+                            "multimodal_require_media=true requires model.forward to accept "
+                            "'input_features' or 'input_values' for audio_text rows."
+                        )
+                    )
+
+            class AdapterAwareMultimodalCollator:
+                def __init__(self) -> None:
+                    self._warned_image_error = False
+                    self._warned_audio_error = False
+                    self._warned_mixed_batch = False
+
+                def _warn_or_fail(self, message: str, *, warned_attr: str | None = None) -> None:
+                    if multimodal_require_media:
+                        raise ValueError(message)
+                    if warned_attr:
+                        if bool(getattr(self, warned_attr, False)):
+                            return
+                        setattr(self, warned_attr, True)
+                    warnings.append(message)
+
+                def _encode_text_batch(
+                    self,
+                    texts: list[str],
+                    targets: list[str],
+                ) -> dict[str, Any]:
+                    if normalized_task_type == "seq2seq":
+                        try:
+                            return processor_tokenizer(
+                                texts,
+                                text_target=targets,
+                                truncation=True,
+                                max_length=max_seq_length,
+                                max_target_length=max_seq_length,
+                                padding=True,
+                                return_tensors="pt",
+                            )
+                        except TypeError:
+                            model_inputs = processor_tokenizer(
+                                texts,
+                                truncation=True,
+                                max_length=max_seq_length,
+                                padding=True,
+                                return_tensors="pt",
+                            )
+                            if hasattr(processor_tokenizer, "as_target_tokenizer"):
+                                with processor_tokenizer.as_target_tokenizer():
+                                    labels = processor_tokenizer(
+                                        targets,
+                                        truncation=True,
+                                        max_length=max_seq_length,
+                                        padding=True,
+                                        return_tensors="pt",
+                                    )
+                            else:
+                                labels = processor_tokenizer(
+                                    targets,
+                                    truncation=True,
+                                    max_length=max_seq_length,
+                                    padding=True,
+                                    return_tensors="pt",
+                                )
+                            model_inputs["labels"] = labels["input_ids"]
+                            return model_inputs
+
+                    encoded = processor_tokenizer(
+                        texts,
+                        truncation=True,
+                        max_length=max_seq_length,
+                        padding=True,
+                        return_tensors="pt",
+                    )
+                    labels = encoded["input_ids"].clone()
+                    pad_id = getattr(processor_tokenizer, "pad_token_id", None)
+                    if isinstance(pad_id, int):
+                        labels[labels == pad_id] = -100
+                    encoded["labels"] = labels
+                    return encoded
+
+                def _load_images(self, rows: list[dict[str, Any]]) -> list[Any] | None:
+                    if processor is None:
+                        if multimodal_require_media:
+                            raise ValueError(
+                                "multimodal_require_media=true requires AutoProcessor for vision batches."
+                            )
+                        return None
+                    if not accepts_pixel_values:
+                        if multimodal_require_media:
+                            raise ValueError(
+                                "multimodal_require_media=true requires model.forward to accept 'pixel_values' for vision batches."
+                            )
+                        return None
+                    if not multimodal_media_loading:
+                        if multimodal_require_media:
+                            raise ValueError(
+                                "multimodal_require_media=true requires multimodal_media_loading=true for vision batches."
+                            )
+                        return None
+                    images: list[Any] = []
+                    for row in rows:
+                        token = str(row.get("image_path") or "").strip()
+                        media_path = _resolve_media_path(token, search_roots=media_roots)
+                        if media_path is None:
+                            if multimodal_require_media:
+                                raise ValueError(
+                                    (
+                                        "multimodal_require_media=true but image asset is unresolved: "
+                                        f"'{token or '<empty>'}'."
+                                    )
+                                )
+                            return None
+                        try:
+                            from PIL import Image
+                        except Exception:
+                            self._warn_or_fail(
+                                "Pillow missing; vision media loading disabled for multimodal batches.",
+                                warned_attr="_warned_image_error",
+                            )
+                            return None
+                        try:
+                            with Image.open(str(media_path)) as img:
+                                images.append(img.convert("RGB"))
+                        except Exception as image_error:  # noqa: BLE001
+                            self._warn_or_fail(
+                                (
+                                    "Image media loading failed; using text-only fallback. "
+                                    f"Details: {image_error}"
+                                ),
+                                warned_attr="_warned_image_error",
+                            )
+                            return None
+                    return images if images else None
+
+                def _load_audios(self, rows: list[dict[str, Any]]) -> tuple[list[Any], int] | tuple[None, None]:
+                    if processor is None:
+                        if multimodal_require_media:
+                            raise ValueError(
+                                "multimodal_require_media=true requires AutoProcessor for audio batches."
+                            )
+                        return None, None
+                    if not multimodal_media_loading:
+                        if multimodal_require_media:
+                            raise ValueError(
+                                "multimodal_require_media=true requires multimodal_media_loading=true for audio batches."
+                            )
+                        return None, None
+                    if not accepts_input_features and not accepts_input_values:
+                        if multimodal_require_media:
+                            raise ValueError(
+                                (
+                                    "multimodal_require_media=true requires model.forward to accept "
+                                    "'input_features' or 'input_values' for audio batches."
+                                )
+                            )
+                        return None, None
+                    audios: list[Any] = []
+                    sample_rate: int | None = None
+                    for row in rows:
+                        token = str(row.get("audio_path") or "").strip()
+                        media_path = _resolve_media_path(token, search_roots=media_roots)
+                        if media_path is None:
+                            if multimodal_require_media:
+                                raise ValueError(
+                                    (
+                                        "multimodal_require_media=true but audio asset is unresolved: "
+                                        f"'{token or '<empty>'}'."
+                                    )
+                                )
+                            return None, None
+                        waveform = None
+                        current_sr = None
+                        try:
+                            import soundfile as sf
+
+                            waveform, current_sr = sf.read(str(media_path), dtype="float32")
+                            if getattr(waveform, "ndim", 1) > 1:
+                                waveform = waveform.mean(axis=1)
+                        except Exception:
+                            try:
+                                import torchaudio
+
+                                tensor, current_sr = torchaudio.load(str(media_path))
+                                if int(getattr(tensor, "ndim", 1)) > 1:
+                                    tensor = tensor.mean(dim=0)
+                                waveform = tensor.detach().cpu().numpy()
+                            except Exception as audio_error:  # noqa: BLE001
+                                self._warn_or_fail(
+                                    (
+                                        "Audio media loading failed; using text-only fallback. "
+                                        f"Details: {audio_error}"
+                                    ),
+                                    warned_attr="_warned_audio_error",
+                                )
+                                return None, None
+                        if waveform is None or current_sr is None:
+                            if multimodal_require_media:
+                                raise ValueError(
+                                    "multimodal_require_media=true but audio decoder returned empty waveform/sample rate."
+                                )
+                            return None, None
+                        sr_int = int(current_sr)
+                        if sample_rate is None:
+                            sample_rate = sr_int
+                        if sr_int != sample_rate:
+                            self._warn_or_fail(
+                                "Audio samples use mixed sampling rates; using text-only fallback for multimodal batches.",
+                                warned_attr="_warned_audio_error",
+                            )
+                            return None, None
+                        audios.append(waveform)
+                    return (audios, int(sample_rate)) if audios and sample_rate is not None else (None, None)
+
+                def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
+                    rows = [dict(item) for item in list(features or [])]
+                    collator_stats["total_batches"] += 1
+                    texts: list[str] = []
+                    targets: list[str] = []
+                    has_image = False
+                    has_audio = False
+                    for row in rows:
+                        text = str(row.get("text") or row.get("source_text") or "").strip()
+                        target = str(row.get("target_text") or "").strip()
+                        texts.append(text)
+                        targets.append(target)
+                        has_image = has_image or bool(str(row.get("image_path") or "").strip())
+                        has_audio = has_audio or bool(str(row.get("audio_path") or "").strip())
+
+                    if has_image and has_audio:
+                        collator_stats["mixed_batches"] += 1
+                        self._warn_or_fail(
+                            "Mixed image+audio batch detected; using text-marker fallback for this batch.",
+                            warned_attr="_warned_mixed_batch",
+                        )
+                    elif has_image:
+                        collator_stats["vision_batches"] += 1
+                    elif has_audio:
+                        collator_stats["audio_batches"] += 1
+                    else:
+                        collator_stats["text_only_batches"] += 1
+
+                    batch = self._encode_text_batch(texts, targets)
+                    if processor is None:
+                        if multimodal_require_media and (has_image or has_audio):
+                            raise ValueError(
+                                (
+                                    "multimodal_require_media=true but processor is unavailable for "
+                                    "media rows in current batch."
+                                )
+                            )
+                        return batch
+
+                    if has_image and not has_audio:
+                        loaded_images = self._load_images(rows)
+                        if loaded_images:
+                            try:
+                                media_batch = processor(images=loaded_images, return_tensors="pt")
+                            except Exception as media_error:  # noqa: BLE001
+                                if multimodal_require_media:
+                                    raise ValueError(
+                                        (
+                                            "multimodal_require_media=true failed while building image processor "
+                                            f"batch. Details: {media_error}"
+                                        )
+                                    ) from media_error
+                                collator_stats["media_fallback_batches"] += 1
+                                return batch
+                            pixel_values = media_batch.get("pixel_values")
+                            if pixel_values is not None and accepts_pixel_values:
+                                batch["pixel_values"] = pixel_values
+                            else:
+                                if multimodal_require_media:
+                                    raise ValueError(
+                                        (
+                                            "multimodal_require_media=true requires processor output "
+                                            "to include pixel_values for image rows."
+                                        )
+                                    )
+                                collator_stats["media_fallback_batches"] += 1
+                        else:
+                            if multimodal_require_media:
+                                raise ValueError(
+                                    "multimodal_require_media=true could not load images for current batch."
+                                )
+                            collator_stats["media_fallback_batches"] += 1
+                    elif has_audio and not has_image:
+                        loaded_audios, sampling_rate = self._load_audios(rows)
+                        if loaded_audios and sampling_rate:
+                            media_batch = None
+                            for audio_key in ("audios", "audio", "raw_speech", "speech"):
+                                try:
+                                    media_batch = processor(
+                                        **{audio_key: loaded_audios},
+                                        sampling_rate=int(sampling_rate),
+                                        return_tensors="pt",
+                                        padding=True,
+                                    )
+                                    break
+                                except TypeError:
+                                    media_batch = None
+                                    continue
+                            if isinstance(media_batch, dict):
+                                if accepts_input_features and media_batch.get("input_features") is not None:
+                                    batch["input_features"] = media_batch["input_features"]
+                                elif accepts_input_values and media_batch.get("input_values") is not None:
+                                    batch["input_values"] = media_batch["input_values"]
+                                else:
+                                    if multimodal_require_media:
+                                        raise ValueError(
+                                            (
+                                                "multimodal_require_media=true requires processor output "
+                                                "to include input_features/input_values for audio rows."
+                                            )
+                                        )
+                                    collator_stats["media_fallback_batches"] += 1
+                            else:
+                                if multimodal_require_media:
+                                    raise ValueError(
+                                        (
+                                            "multimodal_require_media=true failed to build audio processor batch "
+                                            "for current rows."
+                                        )
+                                    )
+                                collator_stats["media_fallback_batches"] += 1
+                        else:
+                            if multimodal_require_media:
+                                raise ValueError(
+                                    "multimodal_require_media=true could not load audios for current batch."
+                                )
+                            collator_stats["media_fallback_batches"] += 1
+                    return batch
+
+            trainer_kwargs["train_dataset"] = train_text
+            trainer_kwargs["eval_dataset"] = eval_text if has_eval_records else None
+            trainer_kwargs["data_collator"] = AdapterAwareMultimodalCollator()
+            runtime_environment["multimodal_collator_strategy"] = "adapter_aware_dynamic"
+            runtime_environment["multimodal_collator_stats"] = collator_stats
+            runtime_environment["multimodal_accepts_pixel_values"] = bool(accepts_pixel_values)
+            runtime_environment["multimodal_accepts_input_features"] = bool(accepts_input_features)
+            runtime_environment["multimodal_accepts_input_values"] = bool(accepts_input_values)
+            _emit_runtime_event(
+                "multimodal_runtime",
+                {
+                    "enabled": True,
+                    "train_modality_counts": train_modality_counts,
+                    "eval_modality_counts": eval_modality_counts,
+                    "processor_loaded": bool(processor is not None),
+                    "media_loading": bool(multimodal_media_loading),
+                    "require_media": bool(multimodal_require_media),
+                    "model_loader": runtime_environment.get("multimodal_model_loader"),
+                },
+            )
+        elif normalized_task_type == "seq2seq":
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
                 sources = [str(x) for x in rows["source_text"]]
                 targets = [str(x) for x in rows["target_text"]]
                 try:
-                    return tokenizer(
+                    return processor_tokenizer(
                         sources,
                         text_target=targets,
                         truncation=True,
@@ -1579,22 +2347,22 @@ def _run_training_attempt(
                         padding=False,
                     )
                 except TypeError:
-                    model_inputs = tokenizer(
+                    model_inputs = processor_tokenizer(
                         sources,
                         truncation=True,
                         max_length=max_seq_length,
                         padding=False,
                     )
-                    if hasattr(tokenizer, "as_target_tokenizer"):
-                        with tokenizer.as_target_tokenizer():
-                            labels = tokenizer(
+                    if hasattr(processor_tokenizer, "as_target_tokenizer"):
+                        with processor_tokenizer.as_target_tokenizer():
+                            labels = processor_tokenizer(
                                 targets,
                                 truncation=True,
                                 max_length=max_seq_length,
                                 padding=False,
                             )
                     else:
-                        labels = tokenizer(
+                        labels = processor_tokenizer(
                             targets,
                             truncation=True,
                             max_length=max_seq_length,
@@ -1611,7 +2379,7 @@ def _run_training_attempt(
             )
             trainer_kwargs["train_dataset"] = tokenized_train
             trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
-            trainer_kwargs["data_collator"] = DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model)
+            trainer_kwargs["data_collator"] = DataCollatorForSeq2Seq(tokenizer=processor_tokenizer, model=model)
         elif normalized_task_type == "classification":
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
                 sources = [str(x) for x in rows["source_text"]]
@@ -1621,7 +2389,7 @@ def _run_training_attempt(
                     if key not in label_to_id:
                         raise ValueError(f"Unknown classification label encountered: '{key}'")
                     labels.append(label_to_id[key])
-                tokenized = tokenizer(
+                tokenized = processor_tokenizer(
                     sources,
                     truncation=True,
                     max_length=max_seq_length,
@@ -1639,7 +2407,7 @@ def _run_training_attempt(
 
             trainer_kwargs["train_dataset"] = tokenized_train
             trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
-            trainer_kwargs["data_collator"] = DataCollatorWithPadding(tokenizer=tokenizer)
+            trainer_kwargs["data_collator"] = DataCollatorWithPadding(tokenizer=processor_tokenizer)
 
             if has_eval_records:
                 import numpy as np
@@ -1670,7 +2438,7 @@ def _run_training_attempt(
                 trainer_kwargs["compute_metrics"] = compute_metrics
         else:
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
-                return tokenizer(
+                return processor_tokenizer(
                     rows["text"],
                     truncation=True,
                     max_length=max_seq_length,
@@ -1685,7 +2453,7 @@ def _run_training_attempt(
             )
             trainer_kwargs["train_dataset"] = tokenized_train
             trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
-            trainer_kwargs["data_collator"] = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+            trainer_kwargs["data_collator"] = DataCollatorForLanguageModeling(tokenizer=processor_tokenizer, mlm=False)
 
         if distillation_enabled:
             trainer = trainer_cls(**trainer_kwargs)

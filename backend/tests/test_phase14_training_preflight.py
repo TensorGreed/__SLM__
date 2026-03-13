@@ -20,12 +20,15 @@ os.environ["ALLOW_SIMULATED_TRAINING"] = "true"
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
 class Phase14TrainingPreflightTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_data_dir = settings.DATA_DIR
+        settings.DATA_DIR = TEST_DATA_DIR.resolve()
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():
@@ -41,6 +44,7 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        settings.DATA_DIR = cls._prev_data_dir
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():
@@ -228,6 +232,57 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         self.assertEqual(int(safe_cfg.get("batch_size", 0)), 1)
         self.assertLessEqual(int(safe_cfg.get("max_seq_length", 99999)), 1024)
         self.assertFalse(bool(safe_cfg.get("fp16", False)) and bool(safe_cfg.get("bf16", False)))
+
+    def test_preflight_plan_autofix_relaxes_strict_multimodal_media_for_remote_assets(self):
+        project_id = self._create_project("phase14-preflight-5")
+        prepared_dir = TEST_DATA_DIR / "projects" / str(project_id) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        (prepared_dir / "train.jsonl").write_text(
+            (
+                '{"question":"what is shown?","answer":"A stop sign.","image_path":"https://example.com/stop.png"}\n'
+            ),
+            encoding="utf-8",
+        )
+        (prepared_dir / "val.jsonl").write_text(
+            (
+                '{"question":"what is shown?","answer":"A stop sign.","image_path":"https://example.com/stop.png"}\n'
+            ),
+            encoding="utf-8",
+        )
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/preflight/plan",
+            json={
+                "config": {
+                    "base_model": "microsoft/phi-2",
+                    "task_type": "causal_lm",
+                    "trainer_backend": "hf_trainer",
+                    "adapter_id": "vision-language-pair",
+                    "multimodal_require_media": True,
+                }
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        plan = payload.get("plan", {})
+        suggestions = [item for item in list(plan.get("suggestions") or []) if isinstance(item, dict)]
+        self.assertGreaterEqual(len(suggestions), 1)
+
+        for suggestion in suggestions:
+            cfg = dict(suggestion.get("config") or {})
+            self.assertFalse(bool(cfg.get("multimodal_require_media", False)), cfg)
+
+        strict_changes = [
+            change
+            for suggestion in suggestions
+            for change in list(suggestion.get("changes") or [])
+            if isinstance(change, dict) and str(change.get("field") or "") == "multimodal_require_media"
+        ]
+        self.assertGreaterEqual(len(strict_changes), 1, suggestions)
+        self.assertTrue(
+            any("local media files" in str(item.get("reason") or "") for item in strict_changes),
+            strict_changes,
+        )
 
     def test_training_preferences_default_is_balanced(self):
         project_id = self._create_project("phase14-training-prefs-1")

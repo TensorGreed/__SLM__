@@ -545,6 +545,14 @@ function parseBool(value: unknown): boolean | null {
   return null;
 }
 
+function parseNonNegativeInt(value: unknown): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return 0;
+  }
+  return Math.max(0, Math.trunc(num));
+}
+
 type ConfigFieldKey =
   | 'training_mode'
   | 'training_runtime_id'
@@ -571,6 +579,7 @@ type ConfigFieldKey =
   | 'max_oom_retries'
   | 'oom_retry_seq_shrink'
   | 'gradient_checkpointing'
+  | 'multimodal_require_media'
   | 'alignment_auto_filter'
   | 'alignment_quality_threshold'
   | 'alignment_beta'
@@ -637,6 +646,7 @@ export default function TrainingPanel({
   const [maxOomRetries, setMaxOomRetries] = useState(2);
   const [oomRetrySeqShrink, setOomRetrySeqShrink] = useState('0.75');
   const [gradientCheckpointing, setGradientCheckpointing] = useState(true);
+  const [multimodalRequireMedia, setMultimodalRequireMedia] = useState(false);
   const [alignmentAutoFilter, setAlignmentAutoFilter] = useState(false);
   const [alignmentQualityThreshold, setAlignmentQualityThreshold] = useState('3.0');
   const [alignmentBeta, setAlignmentBeta] = useState('0.1');
@@ -678,6 +688,7 @@ export default function TrainingPanel({
     max_oom_retries: false,
     oom_retry_seq_shrink: false,
     gradient_checkpointing: false,
+    multimodal_require_media: false,
     alignment_auto_filter: false,
     alignment_quality_threshold: false,
     alignment_beta: false,
@@ -853,9 +864,11 @@ export default function TrainingPanel({
     const capabilitySummary = asRecord(preflightPreview?.capability_summary);
     const capabilityContract = asRecord(capabilitySummary.capability_contract);
     const dataset = asRecord(capabilitySummary.dataset);
+    const mediaContract = asRecord(dataset.media_contract);
     const adapterContext = asRecord(dataset.adapter_context);
     const runtimeSummary = asRecord(capabilitySummary.runtime);
     const modelSummary = asRecord(capabilitySummary.model);
+    const modelModalityContract = asRecord(capabilitySummary.model_modality_contract);
     const modelCompatibilityGate = asRecord(modelSummary.compatibility_gate);
     const modelIntrospection = asRecord(modelSummary.introspection);
 
@@ -867,6 +880,33 @@ export default function TrainingPanel({
     const modelGateErrors = asStringList(modelCompatibilityGate.errors);
     const modelGateHints = asStringList(modelCompatibilityGate.hints);
     const modelSupportedArchitectures = asStringList(modelCompatibilityGate.supported_architectures);
+    const modelModalityErrors = asStringList(modelModalityContract.errors);
+    const modelModalityWarnings = asStringList(modelModalityContract.warnings);
+    const modelModalityHints = asStringList(modelModalityContract.hints);
+    const modelModalitySupportedModalities = asStringList(modelModalityContract.supported_modalities);
+    const modelModalityOk = parseBool(modelModalityContract.ok);
+    const mediaContractErrors = asStringList(mediaContract.errors);
+    const mediaContractWarnings = asStringList(mediaContract.warnings);
+    const mediaContractHints = asStringList(mediaContract.hints);
+    const mediaContractOk = parseBool(mediaContract.ok);
+
+    let modelModalityStatus: 'pass' | 'blocked' | 'warning' | 'unknown' = 'unknown';
+    if (modelModalityOk === false || modelModalityErrors.length > 0) {
+      modelModalityStatus = 'blocked';
+    } else if (modelModalityWarnings.length > 0) {
+      modelModalityStatus = 'warning';
+    } else if (modelModalityOk === true) {
+      modelModalityStatus = 'pass';
+    }
+
+    let mediaContractStatus: 'pass' | 'blocked' | 'warning' | 'unknown' = 'unknown';
+    if (mediaContractOk === false || mediaContractErrors.length > 0) {
+      mediaContractStatus = 'blocked';
+    } else if (mediaContractWarnings.length > 0) {
+      mediaContractStatus = 'warning';
+    } else if (mediaContractOk === true) {
+      mediaContractStatus = 'pass';
+    }
 
     return {
       taskType: String(capabilityContract.task_type || capabilitySummary.task_type || 'unknown'),
@@ -905,6 +945,39 @@ export default function TrainingPanel({
       modelGateHints,
       modelSupportedArchitectures,
       modelIntrospectionSource: String(modelIntrospection.source || 'none'),
+      modelModalityArchitecture: String(
+        modelModalityContract.architecture || modelSummary.architecture || 'unknown',
+      ),
+      modelModalityAdapterModality: String(
+        modelModalityContract.adapter_modality ||
+        capabilityContract.adapter_modality ||
+        adapterContext.adapter_modality ||
+        'unknown',
+      ),
+      modelModalitySupportedModalities:
+        modelModalitySupportedModalities.length > 0 ? modelModalitySupportedModalities : ['text'],
+      modelModalityOk,
+      modelModalityErrors,
+      modelModalityWarnings,
+      modelModalityHints,
+      modelModalityStatus,
+      mediaContractExpectedModality: String(
+        mediaContract.expected_modality || adapterContext.adapter_modality || 'text',
+      ),
+      mediaContractSampledRows: parseNonNegativeInt(mediaContract.sampled_rows),
+      mediaContractMediaRows: parseNonNegativeInt(mediaContract.media_rows),
+      mediaContractImageRows: parseNonNegativeInt(mediaContract.image_rows),
+      mediaContractAudioRows: parseNonNegativeInt(mediaContract.audio_rows),
+      mediaContractMixedRows: parseNonNegativeInt(mediaContract.multimodal_rows),
+      mediaContractMissingLocalImages: parseNonNegativeInt(mediaContract.missing_local_images),
+      mediaContractMissingLocalAudios: parseNonNegativeInt(mediaContract.missing_local_audios),
+      mediaContractRemoteImageRefs: parseNonNegativeInt(mediaContract.remote_image_refs),
+      mediaContractRemoteAudioRefs: parseNonNegativeInt(mediaContract.remote_audio_refs),
+      mediaContractRequireMedia: parseBool(mediaContract.require_media),
+      mediaContractErrors,
+      mediaContractWarnings,
+      mediaContractHints,
+      mediaContractStatus,
       rawCapabilitySummary: capabilitySummary,
     };
   }, [preflightPreview]);
@@ -1071,6 +1144,7 @@ export default function TrainingPanel({
       config.oom_retry_seq_shrink = retryShrink;
     }
     if (includeField('gradient_checkpointing')) config.gradient_checkpointing = gradientCheckpointing;
+    if (includeField('multimodal_require_media')) config.multimodal_require_media = multimodalRequireMedia;
     if (includeField('alignment_auto_filter')) config.alignment_auto_filter = alignmentAutoFilter;
     if (includeField('alignment_quality_threshold') && Number.isFinite(alignmentThreshold)) {
       config.alignment_quality_threshold = alignmentThreshold;
@@ -1165,6 +1239,7 @@ export default function TrainingPanel({
     setMaxOomRetries(Math.max(0, Math.min(5, parseNumber(config.max_oom_retries, maxOomRetries))));
     setOomRetrySeqShrink(String(config.oom_retry_seq_shrink ?? oomRetrySeqShrink));
     setGradientCheckpointing(parseBoolean(config.gradient_checkpointing, gradientCheckpointing));
+    setMultimodalRequireMedia(parseBoolean(config.multimodal_require_media, multimodalRequireMedia));
     setAlignmentAutoFilter(parseBoolean(config.alignment_auto_filter, alignmentAutoFilter));
     setAlignmentQualityThreshold(String(config.alignment_quality_threshold ?? alignmentQualityThreshold));
     setAlignmentBeta(String(config.alignment_beta ?? alignmentBeta));
@@ -1926,6 +2001,7 @@ export default function TrainingPanel({
     setObservabilityMaxLayers(12);
     setObservabilityProbeAttention(true);
     setObservabilityProbeTopK(6);
+    setMultimodalRequireMedia(false);
     setUseProfileDefaults(true);
     setTouchedConfig({
       training_mode: false,
@@ -1953,6 +2029,7 @@ export default function TrainingPanel({
       max_oom_retries: false,
       oom_retry_seq_shrink: false,
       gradient_checkpointing: false,
+      multimodal_require_media: false,
       alignment_auto_filter: false,
       alignment_quality_threshold: false,
       alignment_beta: false,
@@ -2351,6 +2428,7 @@ export default function TrainingPanel({
         max_oom_retries: false,
         oom_retry_seq_shrink: false,
         gradient_checkpointing: false,
+        multimodal_require_media: false,
         alignment_auto_filter: false,
         alignment_quality_threshold: false,
         alignment_beta: false,
@@ -3323,6 +3401,146 @@ export default function TrainingPanel({
                             </div>
                           )}
                         </div>
+                        <div className="training-preflight-contract-card">
+                          <div className="training-preflight-contract-card__title-row">
+                            <div className="training-preflight-contract-card__title">Model + Dataset Modality</div>
+                            <span
+                              className={`badge ${preflightContractDetails.modelModalityStatus === 'blocked'
+                                ? 'badge-error'
+                                : preflightContractDetails.modelModalityStatus === 'warning'
+                                  ? 'badge-warning'
+                                  : preflightContractDetails.modelModalityStatus === 'pass'
+                                    ? 'badge-success'
+                                    : 'badge-info'
+                                }`}
+                            >
+                              {preflightContractDetails.modelModalityStatus === 'blocked'
+                                ? 'BLOCKED'
+                                : preflightContractDetails.modelModalityStatus === 'warning'
+                                  ? 'WARNING'
+                                  : preflightContractDetails.modelModalityStatus === 'pass'
+                                    ? 'PASS'
+                                    : 'UNKNOWN'}
+                            </span>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Architecture</span>
+                            <strong>{preflightContractDetails.modelModalityArchitecture}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Adapter Modality</span>
+                            <strong>{preflightContractDetails.modelModalityAdapterModality}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Supported Modalities</span>
+                            <strong>{preflightContractDetails.modelModalitySupportedModalities.join(', ')}</strong>
+                          </div>
+                          {preflightContractDetails.modelModalityErrors.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--error">
+                              {preflightContractDetails.modelModalityErrors.join(' | ')}
+                            </div>
+                          )}
+                          {preflightContractDetails.modelModalityWarnings.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--warning">
+                              {preflightContractDetails.modelModalityWarnings.join(' | ')}
+                            </div>
+                          )}
+                          {preflightContractDetails.modelModalityHints.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--hint">
+                              {preflightContractDetails.modelModalityHints.join(' | ')}
+                            </div>
+                          )}
+                        </div>
+                        <div className="training-preflight-contract-card">
+                          <div className="training-preflight-contract-card__title-row">
+                            <div className="training-preflight-contract-card__title">Media Asset Contract</div>
+                            <span
+                              className={`badge ${preflightContractDetails.mediaContractStatus === 'blocked'
+                                ? 'badge-error'
+                                : preflightContractDetails.mediaContractStatus === 'warning'
+                                  ? 'badge-warning'
+                                  : preflightContractDetails.mediaContractStatus === 'pass'
+                                    ? 'badge-success'
+                                    : 'badge-info'
+                                }`}
+                            >
+                              {preflightContractDetails.mediaContractStatus === 'blocked'
+                                ? 'BLOCKED'
+                                : preflightContractDetails.mediaContractStatus === 'warning'
+                                  ? 'WARNING'
+                                  : preflightContractDetails.mediaContractStatus === 'pass'
+                                    ? 'PASS'
+                                    : 'UNKNOWN'}
+                            </span>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Expected Modality</span>
+                            <strong>{preflightContractDetails.mediaContractExpectedModality}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Strict Require Media</span>
+                            <strong>
+                              {preflightContractDetails.mediaContractRequireMedia === true
+                                ? 'enabled'
+                                : preflightContractDetails.mediaContractRequireMedia === false
+                                  ? 'disabled'
+                                  : 'unknown'}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Media Rows</span>
+                            <strong>
+                              {preflightContractDetails.mediaContractMediaRows}
+                              {' / '}
+                              {preflightContractDetails.mediaContractSampledRows}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Image / Audio Rows</span>
+                            <strong>
+                              {preflightContractDetails.mediaContractImageRows}
+                              {' / '}
+                              {preflightContractDetails.mediaContractAudioRows}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Mixed Rows</span>
+                            <strong>{preflightContractDetails.mediaContractMixedRows}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Missing Local Refs</span>
+                            <strong>
+                              {preflightContractDetails.mediaContractMissingLocalImages}
+                              {' image, '}
+                              {preflightContractDetails.mediaContractMissingLocalAudios}
+                              {' audio'}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Remote URL Refs</span>
+                            <strong>
+                              {preflightContractDetails.mediaContractRemoteImageRefs}
+                              {' image, '}
+                              {preflightContractDetails.mediaContractRemoteAudioRefs}
+                              {' audio'}
+                            </strong>
+                          </div>
+                          {preflightContractDetails.mediaContractErrors.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--error">
+                              {preflightContractDetails.mediaContractErrors.join(' | ')}
+                            </div>
+                          )}
+                          {preflightContractDetails.mediaContractWarnings.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--warning">
+                              {preflightContractDetails.mediaContractWarnings.join(' | ')}
+                            </div>
+                          )}
+                          {preflightContractDetails.mediaContractHints.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--hint">
+                              {preflightContractDetails.mediaContractHints.join(' | ')}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <details className="training-preflight-panel__details">
                         <summary>Raw capability summary JSON</summary>
@@ -4251,6 +4469,22 @@ export default function TrainingPanel({
                         }}
                       />
                       <label className="form-label form-label-inline-tight">Enable Sequence Packing</label>
+                    </div>
+                    <div className="form-group training-toggle-row">
+                      <input
+                        type="checkbox"
+                        aria-label="Require local media assets for multimodal batches"
+                        checked={multimodalRequireMedia}
+                        onChange={(e) => {
+                          setMultimodalRequireMedia(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, multimodal_require_media: true }));
+                        }}
+                      />
+                      <label className="form-label form-label-inline-tight">Require Local Media Assets (Strict Multimodal)</label>
+                    </div>
+                    <div className="form-hint">
+                      Blocks text-fallback for image/audio rows and fails on missing/remote media refs.
+                      Preflight Plan can auto-relax this flag when strict mode would block launch.
                     </div>
                     <div className="form-group training-toggle-row">
                       <input
