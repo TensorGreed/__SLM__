@@ -266,6 +266,84 @@ class Phase8ExportAndHeldoutEvalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.details["dataset"]["dataset_type"], DatasetType.TEST.value)
             self.assertEqual(result.details["inference"]["samples"], 2)
 
+    async def test_run_heldout_evaluation_supports_multimodal_rows(self):
+        dataset_dir = self.tmp_root / "prepared"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        heldout_file = dataset_dir / "multimodal_test.jsonl"
+        rows = [
+            {"image_path": "assets/cat.png", "caption": "A cat sitting on a chair."},
+            {"audio_path": "assets/hello.wav", "transcript": "hello world"},
+        ]
+        with open(heldout_file, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+
+        model_dir = self.tmp_root / "experiments" / "105" / "model"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "config.json").write_text('{"model_type": "llama"}', encoding="utf-8")
+
+        captured_pairs: dict[str, list[dict]] = {"rows": []}
+
+        def _mock_local_inference(_model_ref, pairs, _max_new_tokens, _temperature):
+            captured_pairs["rows"] = [dict(item) for item in pairs]
+            predictions = [
+                {
+                    "prompt": str(item.get("prompt") or ""),
+                    "reference": str(item.get("reference") or ""),
+                    "prediction": str(item.get("reference") or ""),
+                    "latency_ms": 5.0,
+                }
+                for item in pairs
+            ]
+            runtime = {
+                "engine": "transformers",
+                "device": "cpu",
+                "average_latency_ms": 5.0,
+                "token_throughput_tps": 100.0,
+            }
+            return predictions, runtime
+
+        async with self.session_factory() as db:
+            project, exp = await self._seed_project_and_experiment(db, output_dir=model_dir.parent)
+            dataset = Dataset(
+                project_id=project.id,
+                name="Heldout Multimodal Test",
+                dataset_type=DatasetType.TEST,
+                file_path=str(heldout_file),
+                record_count=2,
+            )
+            db.add(dataset)
+            await db.flush()
+
+            with patch(
+                "app.services.evaluation_service._run_local_inference",
+                side_effect=_mock_local_inference,
+            ):
+                result = await run_heldout_evaluation(
+                    db=db,
+                    project_id=project.id,
+                    experiment_id=exp.id,
+                    dataset_name="test",
+                    eval_type="exact_match",
+                    max_samples=2,
+                    max_new_tokens=32,
+                )
+                await db.commit()
+
+            pairs = list(captured_pairs.get("rows") or [])
+            self.assertEqual(len(pairs), 2)
+            self.assertTrue(str(pairs[0].get("prompt") or "").startswith("<image:assets/cat.png>"))
+            self.assertTrue(str(pairs[1].get("prompt") or "").startswith("<audio:assets/hello.wav>"))
+            self.assertEqual(str(pairs[0].get("input_modality") or ""), "vision_language")
+            self.assertEqual(str(pairs[1].get("input_modality") or ""), "audio_text")
+
+            modality_breakdown = dict(result.metrics.get("modality_breakdown") or {})
+            self.assertEqual(int(modality_breakdown.get("vision_language") or 0), 1)
+            self.assertEqual(int(modality_breakdown.get("audio_text") or 0), 1)
+            self.assertEqual(result.details["dataset"]["modality_breakdown"], modality_breakdown)
+            self.assertIn("vision_language", list(result.details["dataset"].get("modalities_observed") or []))
+            self.assertIn("audio_text", list(result.details["dataset"].get("modalities_observed") or []))
+
 
 if __name__ == "__main__":
     unittest.main()

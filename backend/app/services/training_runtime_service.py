@@ -422,13 +422,13 @@ def _ensure_plugins_loaded() -> None:
             label="External Command via Celery",
             description=(
                 "Dispatches training command template to Celery worker and streams telemetry "
-                "from worker logs."
+                "from worker logs. Includes beta multimodal marker-token path for vision/audio adapters."
             ),
             execution_backend="celery",
             validate=_validate_builtin_external_celery,
             start=_start_builtin_external_celery,
             required_dependencies=["torch", "transformers", "datasets", "accelerate"],
-            supported_modalities=["text"],
+            supported_modalities=["text", "vision_language", "audio_text", "multimodal"],
             supports_task_tracking=True,
             supports_cancellation=True,
             is_builtin=True,

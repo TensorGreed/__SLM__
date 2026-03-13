@@ -296,15 +296,27 @@ def _load_eval_rows(file_path: Path) -> list[dict]:
 
 
 def _extract_prompt_and_reference(row: dict) -> tuple[str, str]:
-    prompt = str(row.get("prompt") or row.get("question") or row.get("instruction") or "").strip()
+    prompt = str(
+        row.get("prompt")
+        or row.get("question")
+        or row.get("instruction")
+        or row.get("input")
+        or row.get("source_text")
+        or ""
+    ).strip()
     reference = str(
         row.get("reference")
         or row.get("answer")
         or row.get("completion")
         or row.get("output")
         or row.get("response")
+        or row.get("target_text")
+        or row.get("caption")
+        or row.get("transcript")
         or ""
     ).strip()
+    image_path = str(row.get("image_path") or row.get("image") or row.get("image_url") or "").strip()
+    audio_path = str(row.get("audio_path") or row.get("audio") or row.get("audio_url") or "").strip()
 
     if not prompt or not reference:
         canonical = canonicalize_record(row)
@@ -314,7 +326,45 @@ def _extract_prompt_and_reference(row: dict) -> tuple[str, str]:
             if not reference:
                 reference = str(canonical.get("answer") or "").strip()
 
+    if not prompt:
+        source_text = str(row.get("source_text") or "").strip()
+        if image_path:
+            prompt = f"<image:{image_path}>"
+            if source_text and source_text.lower() != f"image:{image_path}".lower():
+                prompt = f"{prompt} {source_text}".strip()
+        elif audio_path:
+            prompt = f"<audio:{audio_path}>"
+            if source_text and source_text.lower() != f"audio:{audio_path}".lower():
+                prompt = f"{prompt} {source_text}".strip()
+
+    if not reference:
+        reference = str(
+            row.get("target_text")
+            or row.get("caption")
+            or row.get("transcript")
+            or ""
+        ).strip()
+
     return prompt, reference
+
+
+def _infer_row_modality(row: dict, prompt: str) -> str:
+    image_path = str(row.get("image_path") or row.get("image") or row.get("image_url") or "").strip()
+    audio_path = str(row.get("audio_path") or row.get("audio") or row.get("audio_url") or "").strip()
+    if image_path and audio_path:
+        return "multimodal"
+    if image_path:
+        return "vision_language"
+    if audio_path:
+        return "audio_text"
+    prompt_token = str(prompt or "").strip().lower()
+    if "<image:" in prompt_token and "<audio:" in prompt_token:
+        return "multimodal"
+    if "<image:" in prompt_token:
+        return "vision_language"
+    if "<audio:" in prompt_token:
+        return "audio_text"
+    return "text"
 
 
 def _load_heldout_pairs(dataset_path: Path, max_samples: int) -> list[dict]:
@@ -325,11 +375,17 @@ def _load_heldout_pairs(dataset_path: Path, max_samples: int) -> list[dict]:
         prompt, reference = _extract_prompt_and_reference(row)
         if not prompt or not reference:
             continue
+        image_path = str(row.get("image_path") or row.get("image") or row.get("image_url") or "").strip()
+        audio_path = str(row.get("audio_path") or row.get("audio") or row.get("audio_url") or "").strip()
+        modality = _infer_row_modality(row, prompt)
         pairs.append(
             {
                 "prompt": prompt,
                 "reference": reference,
                 "_row_index": idx,
+                "input_modality": modality,
+                "image_path": image_path or None,
+                "audio_path": audio_path or None,
             }
         )
         if len(pairs) >= sample_cap:
@@ -553,6 +609,16 @@ async def run_heldout_evaluation(
         max(1, max_new_tokens),
         max(0.0, float(temperature)),
     )
+    modality_counts: dict[str, int] = {}
+    for idx, pair in enumerate(pairs):
+        modality = str(pair.get("input_modality") or "text")
+        modality_counts[modality] = modality_counts.get(modality, 0) + 1
+        if idx < len(predictions) and isinstance(predictions[idx], dict):
+            predictions[idx]["input_modality"] = modality
+            if pair.get("image_path"):
+                predictions[idx]["image_path"] = pair.get("image_path")
+            if pair.get("audio_path"):
+                predictions[idx]["audio_path"] = pair.get("audio_path")
 
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":
@@ -577,6 +643,7 @@ async def run_heldout_evaluation(
     metrics = dict(result.metrics or {})
     metrics["evaluated_samples"] = len(predictions)
     metrics["inference"] = runtime
+    metrics["modality_breakdown"] = modality_counts
     result.metrics = metrics
 
     details = dict(result.details or {})
@@ -585,6 +652,8 @@ async def run_heldout_evaluation(
         "name": dataset.name,
         "dataset_type": dataset.dataset_type.value,
         "file_path": str(dataset_path),
+        "modalities_observed": sorted(modality_counts.keys()),
+        "modality_breakdown": modality_counts,
     }
     details["inference"] = {
         "model_path": model_ref,
@@ -598,6 +667,7 @@ async def run_heldout_evaluation(
             "reference": p.get("reference", "")[:160],
             "prediction": p.get("prediction", "")[:160],
             "latency_ms": p.get("latency_ms"),
+            "input_modality": p.get("input_modality"),
         }
         for p in predictions[:5]
     ]

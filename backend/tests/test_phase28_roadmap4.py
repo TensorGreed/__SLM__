@@ -197,6 +197,19 @@ class Phase28Roadmap4Tests(unittest.TestCase):
         self.assertIn("vision-language-pair", adapter_ids)
         self.assertIn("audio-transcript", adapter_ids)
 
+        runtime_resp = self.client.get(f"/api/projects/{project_id}/training/runtimes")
+        self.assertEqual(runtime_resp.status_code, 200, runtime_resp.text)
+        runtimes = [item for item in runtime_resp.json().get("runtimes", []) if isinstance(item, dict)]
+        external_runtime = next(
+            (item for item in runtimes if str(item.get("runtime_id") or "") == "builtin.external_celery"),
+            None,
+        )
+        self.assertIsNotNone(external_runtime)
+        supported_modalities = set(str(item) for item in list((external_runtime or {}).get("supported_modalities") or []))
+        self.assertIn("vision_language", supported_modalities)
+        self.assertIn("audio_text", supported_modalities)
+        self.assertIn("multimodal", supported_modalities)
+
     def test_phase2_model_benchmark_sweep_matrix(self):
         project_id = self._create_project("phase28-benchmark")
         resp = self.client.post(

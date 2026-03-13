@@ -17,6 +17,7 @@ from app.services.data_adapter_service import resolve_data_adapter_contract
 from app.services.training_runtime_service import (
     TrainingRuntimeStartResult,
     clear_runtime_plugins,
+    get_runtime_spec,
     list_runtime_catalog,
     register_training_runtime_plugin,
 )
@@ -42,7 +43,10 @@ class Phase29CapabilityContractTests(unittest.TestCase):
         self.assertIn("hf_trainer", payload.get("supported_trainer_backends", []))
         runtime_map = dict(payload.get("runtime_modality_support") or {})
         self.assertIn("builtin.external_celery", runtime_map)
-        self.assertEqual(runtime_map.get("builtin.external_celery"), ["text"])
+        self.assertEqual(
+            runtime_map.get("builtin.external_celery"),
+            ["audio_text", "multimodal", "text", "vision_language"],
+        )
         declared_map = dict(payload.get("runtime_modality_declared") or {})
         self.assertTrue(bool(declared_map.get("builtin.external_celery")))
 
@@ -67,7 +71,7 @@ class Phase29CapabilityContractTests(unittest.TestCase):
         self.assertEqual(context.get("adapter_modality"), "vision_language")
         self.assertTrue(bool(context.get("prepared_manifest_found")))
 
-    def test_evaluate_capability_blocks_text_only_runtime_for_vision_adapter(self):
+    def test_evaluate_capability_allows_builtin_external_runtime_for_vision_adapter(self):
         contract = resolve_data_adapter_contract("vision-language-pair")
         report = evaluate_training_capability_contract(
             task_type="seq2seq",
@@ -79,11 +83,50 @@ class Phase29CapabilityContractTests(unittest.TestCase):
             adapter_contract=contract,
             adapter_task_profile="instruction_sft",
         )
-        self.assertFalse(bool(report.get("ok")))
-        errors = [str(item) for item in list(report.get("errors") or [])]
-        self.assertTrue(any("supports modalities" in item for item in errors))
+        self.assertTrue(bool(report.get("ok")))
+        runtime_spec = get_runtime_spec("builtin.external_celery")
+        self.assertIn("vision_language", list(runtime_spec.supported_modalities))
         summary = dict(report.get("summary") or {})
         self.assertEqual(summary.get("adapter_modality"), "vision_language")
+
+    def test_evaluate_capability_blocks_text_only_runtime_for_vision_adapter(self):
+        clear_runtime_plugins()
+        try:
+            async def _start(_ctx):
+                return TrainingRuntimeStartResult(message="ok")
+
+            register_training_runtime_plugin(
+                runtime_id="custom.text_only",
+                label="Text Only Runtime",
+                description="Custom runtime supporting text only.",
+                execution_backend="external",
+                validate=lambda: [],
+                start=_start,
+                required_dependencies=[],
+                supported_modalities=["text"],
+                supports_task_tracking=False,
+                supports_cancellation=True,
+                is_builtin=False,
+                source_module="tests.phase29",
+            )
+
+            contract = resolve_data_adapter_contract("vision-language-pair")
+            report = evaluate_training_capability_contract(
+                task_type="seq2seq",
+                training_mode="sft",
+                trainer_backend_requested="hf_trainer",
+                runtime_id="custom.text_only",
+                runtime_backend="external",
+                adapter_id="vision-language-pair",
+                adapter_contract=contract,
+                adapter_task_profile="instruction_sft",
+            )
+            self.assertFalse(bool(report.get("ok")))
+            errors = [str(item) for item in list(report.get("errors") or [])]
+            self.assertTrue(any("supports modalities" in item for item in errors))
+        finally:
+            clear_runtime_plugins()
+            list_runtime_catalog()
 
     def test_custom_runtime_declared_modalities_enforced(self):
         clear_runtime_plugins()

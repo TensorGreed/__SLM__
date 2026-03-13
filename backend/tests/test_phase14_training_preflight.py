@@ -285,7 +285,7 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         self.assertTrue(bool(payload.get("default_runtime_id")))
         self.assertEqual(
             runtime_by_id.get("builtin.external_celery", {}).get("supported_modalities"),
-            ["text"],
+            ["text", "vision_language", "audio_text", "multimodal"],
         )
         self.assertTrue(
             bool(
