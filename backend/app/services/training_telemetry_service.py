@@ -13,12 +13,16 @@ from app.config import settings
 
 
 EVENT_TYPE_MODEL_WIZARD = "training.model_selection_wizard"
+EVENT_TYPE_MODEL_BENCHMARK = "training.model_benchmark_sweep"
 EVENT_TYPE_OBSERVABILITY = "training.observability"
 MAX_TOP_MODELS = 20
 MAX_TOP_CONTEXTS = 12
 MIN_ADAPTIVE_APPLY_EVENTS = 3
 MIN_CONTEXT_APPLY_EVENTS = 2
 MAX_ADAPTIVE_MODEL_BOOST = 1.25
+MAX_BENCHMARK_MODEL_BOOST = 0.85
+MIN_BENCHMARK_RUNS_FOR_BIAS = 2
+MAX_BENCHMARK_HISTORY_ITEMS = 200
 MAX_OBSERVABILITY_LAYER_ITEMS = 128
 MAX_OBSERVABILITY_ATTENTION_ITEMS = 128
 MAX_OBSERVABILITY_NOTES = 2000
@@ -34,6 +38,7 @@ _TARGET_DEVICE_ALIASES: dict[str, str] = {
     "cloud": "server",
     "server": "server",
 }
+_APPLY_SOURCES: tuple[str, ...] = ("recommendation", "benchmark", "consensus")
 
 
 def _utcnow_iso() -> str:
@@ -95,6 +100,13 @@ def _normalize_task_profile(value: Any) -> str | None:
     return token
 
 
+def _normalize_apply_source(value: Any) -> str | None:
+    token = _coerce_text(value).lower()
+    if not token:
+        return None
+    return token if token in _APPLY_SOURCES else None
+
+
 def _event_matches_context(
     event: dict[str, Any],
     *,
@@ -120,6 +132,10 @@ def _telemetry_dir(project_id: int) -> Path:
 
 def _model_wizard_path(project_id: int) -> Path:
     return _telemetry_dir(project_id) / "training_model_wizard_events.jsonl"
+
+
+def _model_benchmark_path(project_id: int) -> Path:
+    return _telemetry_dir(project_id) / "training_model_benchmark_runs.jsonl"
 
 
 def _iter_events(path: Path) -> list[dict[str, Any]]:
@@ -153,11 +169,14 @@ def summarize_model_wizard_events(project_id: int) -> dict[str, Any]:
     selected_models = Counter()
     context_apply_events = Counter()
     context_model_counts: dict[tuple[str, str], Counter[str]] = {}
+    apply_events_by_source: Counter[str] = Counter()
 
     for event in events:
         action = _normalize_action(event.get("action"))
         if action == "apply":
             apply_events += 1
+            apply_source = _normalize_apply_source(event.get("apply_source")) or "unspecified"
+            apply_events_by_source[apply_source] += 1
             model_id = _coerce_text(event.get("selected_model_id"))
             if model_id:
                 selected_models[model_id] += 1
@@ -212,6 +231,12 @@ def summarize_model_wizard_events(project_id: int) -> dict[str, Any]:
         "auto_recommend_events": auto_recommend_events,
         "manual_recommend_events": manual_recommend_events,
         "apply_conversion_rate": apply_conversion_rate,
+        "apply_events_by_source": {
+            "recommendation": int(apply_events_by_source.get("recommendation", 0)),
+            "benchmark": int(apply_events_by_source.get("benchmark", 0)),
+            "consensus": int(apply_events_by_source.get("consensus", 0)),
+            "unspecified": int(apply_events_by_source.get("unspecified", 0)),
+        },
         "top_selected_models": top_selected_models,
         "top_selected_models_by_context": top_selected_models_by_context,
         "last_event_at": last_timestamp,
@@ -239,10 +264,13 @@ def build_model_acceptance_bias(
     events = _iter_events(path)
     global_apply_counts: Counter[str] = Counter()
     context_apply_counts: Counter[str] = Counter()
+    apply_events_by_source: Counter[str] = Counter()
 
     for event in events:
         if _normalize_action(event.get("action")) != "apply":
             continue
+        apply_source = _normalize_apply_source(event.get("apply_source")) or "unspecified"
+        apply_events_by_source[apply_source] += 1
         model_id = _coerce_text(event.get("selected_model_id"))
         if not model_id:
             continue
@@ -264,6 +292,12 @@ def build_model_acceptance_bias(
             "task_profile": resolved_task_profile,
             "global_apply_events": global_apply_total,
             "context_apply_events": context_apply_total,
+            "apply_events_by_source": {
+                "recommendation": int(apply_events_by_source.get("recommendation", 0)),
+                "benchmark": int(apply_events_by_source.get("benchmark", 0)),
+                "consensus": int(apply_events_by_source.get("consensus", 0)),
+                "unspecified": int(apply_events_by_source.get("unspecified", 0)),
+            },
             "bias_by_model": {},
             "path": str(path),
         }
@@ -294,6 +328,12 @@ def build_model_acceptance_bias(
         "task_profile": resolved_task_profile,
         "global_apply_events": global_apply_total,
         "context_apply_events": context_apply_total,
+        "apply_events_by_source": {
+            "recommendation": int(apply_events_by_source.get("recommendation", 0)),
+            "benchmark": int(apply_events_by_source.get("benchmark", 0)),
+            "consensus": int(apply_events_by_source.get("consensus", 0)),
+            "unspecified": int(apply_events_by_source.get("unspecified", 0)),
+        },
         "bias_by_model": bias_by_model,
         "path": str(path),
     }
@@ -313,6 +353,7 @@ def record_model_wizard_event(
     available_vram_gb = _safe_float(data.get("available_vram_gb"))
     selected_score = _safe_float(data.get("selected_score"))
     top_k = _safe_int(data.get("top_k"))
+    apply_source = _normalize_apply_source(data.get("apply_source")) if action == "apply" else None
 
     if recommendation_count is not None:
         recommendation_count = max(0, min(recommendation_count, 20))
@@ -328,6 +369,7 @@ def record_model_wizard_event(
         "project_id": int(project_id),
         "source": source,
         "action": action,
+        "apply_source": apply_source,
         "auto_run": bool(data.get("auto_run")) if action == "recommend" else None,
         "target_device": _coerce_text(data.get("target_device")) or None,
         "primary_language": _coerce_text(data.get("primary_language")) or None,
@@ -348,6 +390,232 @@ def record_model_wizard_event(
     return {
         "event": event,
         "summary": summarize_model_wizard_events(project_id),
+        "path": str(path),
+    }
+
+
+def _normalize_benchmark_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        model_id = _coerce_text(item.get("model_id"))
+        if not model_id:
+            continue
+        row = {
+            "rank": max(1, min(_safe_int(item.get("rank")) or (len(rows) + 1), 20)),
+            "model_id": model_id,
+            "estimated_quality_score": _safe_float(item.get("estimated_quality_score")),
+            "estimated_accuracy_percent": _safe_float(item.get("estimated_accuracy_percent")),
+            "estimated_latency_ms": _safe_float(item.get("estimated_latency_ms")),
+            "estimated_throughput_tps": _safe_float(item.get("estimated_throughput_tps")),
+            "fits_available_vram": bool(item.get("fits_available_vram"))
+            if item.get("fits_available_vram") is not None
+            else None,
+            "benchmark_mode": _coerce_text(item.get("benchmark_mode")) or None,
+        }
+        rows.append(row)
+        if len(rows) >= 10:
+            break
+    return rows
+
+
+def summarize_model_benchmark_runs(project_id: int) -> dict[str, Any]:
+    path = _model_benchmark_path(project_id)
+    events = _iter_events(path)
+
+    completed_events = 0
+    failed_events = 0
+    last_timestamp: str | None = None
+    top_winners = Counter()
+    mode_counts = Counter()
+
+    for event in events:
+        status = _coerce_text(event.get("status")).lower() or "completed"
+        if status == "completed":
+            completed_events += 1
+        else:
+            failed_events += 1
+        mode = _coerce_text(event.get("benchmark_mode")).lower() or "unknown"
+        mode_counts[mode] += 1
+        matrix = _normalize_benchmark_rows(event.get("matrix"))
+        if matrix:
+            winner = str(matrix[0].get("model_id") or "").strip()
+            if winner:
+                top_winners[winner] += 1
+        timestamp = _coerce_text(event.get("timestamp"))
+        if timestamp:
+            last_timestamp = timestamp
+
+    return {
+        "project_id": int(project_id),
+        "event_count": len(events),
+        "completed_events": int(completed_events),
+        "failed_events": int(failed_events),
+        "top_winners": [
+            {"model_id": model_id, "count": int(count)}
+            for model_id, count in top_winners.most_common(10)
+        ],
+        "benchmark_modes": [
+            {"mode": mode, "count": int(count)}
+            for mode, count in mode_counts.most_common(10)
+        ],
+        "last_event_at": last_timestamp,
+        "path": str(path),
+    }
+
+
+def list_model_benchmark_runs(
+    project_id: int,
+    *,
+    limit: int = 20,
+) -> dict[str, Any]:
+    path = _model_benchmark_path(project_id)
+    events = _iter_events(path)
+    capped_limit = max(1, min(int(limit or 20), MAX_BENCHMARK_HISTORY_ITEMS))
+    selected = list(reversed(events[-capped_limit:]))
+    return {
+        "project_id": int(project_id),
+        "count": len(selected),
+        "runs": selected,
+        "summary": summarize_model_benchmark_runs(project_id),
+        "path": str(path),
+    }
+
+
+def build_model_benchmark_bias(
+    project_id: int,
+    *,
+    target_device: str | None = None,
+    task_profile: str | None = None,
+) -> dict[str, Any]:
+    """Build adaptive boosts from persisted benchmark outcomes."""
+    resolved_device = _normalize_target_device(target_device)
+    resolved_task_profile = _normalize_task_profile(task_profile)
+    context_label_parts: list[str] = []
+    if resolved_device:
+        context_label_parts.append(f"device={resolved_device}")
+    if resolved_task_profile:
+        context_label_parts.append(f"task={resolved_task_profile}")
+    context_label = ", ".join(context_label_parts) if context_label_parts else "global"
+
+    path = _model_benchmark_path(project_id)
+    events = _iter_events(path)
+    context_events: list[dict[str, Any]] = []
+    for event in events:
+        if _coerce_text(event.get("status")).lower() not in {"", "completed"}:
+            continue
+        if not _event_matches_context(
+            event,
+            target_device=resolved_device,
+            task_profile=resolved_task_profile,
+        ):
+            continue
+        matrix = _normalize_benchmark_rows(event.get("matrix"))
+        if not matrix:
+            continue
+        context_events.append({"event": event, "matrix": matrix})
+
+    run_count = len(context_events)
+    if run_count < MIN_BENCHMARK_RUNS_FOR_BIAS:
+        return {
+            "enabled": False,
+            "context_label": context_label,
+            "target_device": resolved_device,
+            "task_profile": resolved_task_profile,
+            "run_count": run_count,
+            "bias_by_model": {},
+            "path": str(path),
+        }
+
+    weighted_scores: Counter[str] = Counter()
+    for item in context_events:
+        matrix = list(item.get("matrix") or [])
+        for idx, row in enumerate(matrix[:3]):
+            model_id = _coerce_text(row.get("model_id"))
+            if not model_id:
+                continue
+            quality = _safe_float(row.get("estimated_quality_score"))
+            latency_ms = _safe_float(row.get("estimated_latency_ms"))
+            quality_term = max(0.05, min(1.0, float(quality or 0.55)))
+            speed_term = 1.0
+            if latency_ms is not None and latency_ms > 0:
+                speed_term = max(0.05, min(1.0, 120.0 / float(latency_ms)))
+            rank_weight = 1.0 if idx == 0 else (0.6 if idx == 1 else 0.35)
+            weighted_scores[model_id] += rank_weight * ((quality_term * 0.75) + (speed_term * 0.25))
+
+    total_score = float(sum(weighted_scores.values()))
+    bias_by_model: dict[str, float] = {}
+    if total_score > 0:
+        for model_id, score in weighted_scores.items():
+            share = float(score) / total_score
+            bias = min(MAX_BENCHMARK_MODEL_BOOST, max(0.0, share * 1.35))
+            if bias >= 0.03:
+                bias_by_model[model_id] = round(bias, 4)
+
+    return {
+        "enabled": bool(bias_by_model),
+        "context_label": context_label,
+        "target_device": resolved_device,
+        "task_profile": resolved_task_profile,
+        "run_count": run_count,
+        "bias_by_model": bias_by_model,
+        "path": str(path),
+    }
+
+
+def record_model_benchmark_run(
+    project_id: int,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist a benchmark sweep run for history + adaptive ranking."""
+    data = dict(payload or {})
+    request_payload = dict(data.get("request") or {})
+    matrix = _normalize_benchmark_rows(data.get("matrix"))
+    model_count = _safe_int(data.get("model_count"))
+    if model_count is None:
+        model_count = len(matrix)
+    model_count = max(0, min(int(model_count), 10))
+
+    event = {
+        "event_id": uuid4().hex,
+        "event_type": EVENT_TYPE_MODEL_BENCHMARK,
+        "timestamp": _utcnow_iso(),
+        "project_id": int(project_id),
+        "run_id": _coerce_text(data.get("run_id")) or uuid4().hex[:12],
+        "status": _coerce_text(data.get("status")).lower() or "completed",
+        "benchmark_mode": _coerce_text(data.get("benchmark_mode")).lower() or "real_sampled",
+        "request": {
+            "target_device": _coerce_text(request_payload.get("target_device")) or None,
+            "primary_language": _coerce_text(request_payload.get("primary_language")) or None,
+            "available_vram_gb": _safe_float(request_payload.get("available_vram_gb")),
+            "task_profile": _coerce_text(request_payload.get("task_profile")) or None,
+            "model_ids": _normalize_model_ids(request_payload.get("model_ids")),
+            "max_models": _safe_int(request_payload.get("max_models")),
+            "sample_size": _safe_int(request_payload.get("sample_size")),
+        },
+        "target_device": _coerce_text(request_payload.get("target_device")) or None,
+        "task_profile": _coerce_text(request_payload.get("task_profile")) or None,
+        "model_count": model_count,
+        "benchmark_window_minutes": _safe_float(data.get("benchmark_window_minutes")),
+        "sampled_row_count": _safe_int(data.get("sampled_row_count")),
+        "sampled_avg_tokens": _safe_float(data.get("sampled_avg_tokens")),
+        "sampled_total_tokens": _safe_int(data.get("sampled_total_tokens")),
+        "tradeoff_summary": dict(data.get("tradeoff_summary") or {}),
+        "warnings": [str(item) for item in list(data.get("warnings") or [])][:20],
+        "matrix": matrix,
+    }
+
+    path = _model_benchmark_path(project_id)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+
+    return {
+        "event": event,
+        "summary": summarize_model_benchmark_runs(project_id),
         "path": str(path),
     }
 

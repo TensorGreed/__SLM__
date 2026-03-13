@@ -251,6 +251,7 @@ interface ModelWizardRecommendation {
   caveats?: string[];
   match_reasons?: string[];
   match_score?: number;
+  adaptive_bias?: number;
   suggested_defaults?: {
     task_type?: string;
     chat_template?: string;
@@ -280,6 +281,54 @@ interface ModelWizardResponse {
     context_apply_events?: number;
     boosted_model_count?: number;
   };
+}
+
+interface ModelBenchmarkRow {
+  rank?: number;
+  model_id?: string;
+  params_b?: number;
+  estimated_min_vram_gb?: number;
+  estimated_quality_score?: number;
+  estimated_accuracy_percent?: number;
+  estimated_latency_ms?: number;
+  estimated_throughput_tps?: number;
+  fits_available_vram?: boolean | null;
+  benchmark_mode?: string;
+}
+
+interface ModelBenchmarkTradeoffSummary {
+  best_quality_model_id?: string;
+  best_speed_model_id?: string;
+  best_balance_model_id?: string;
+}
+
+interface ModelBenchmarkSweepResponse {
+  project_id: number;
+  run_id?: string;
+  benchmark_mode?: string;
+  model_count?: number;
+  sampled_row_count?: number;
+  sampled_avg_tokens?: number;
+  sampled_total_tokens?: number;
+  benchmark_window_minutes?: number;
+  matrix?: ModelBenchmarkRow[];
+  tradeoff_summary?: ModelBenchmarkTradeoffSummary;
+  warnings?: string[];
+}
+
+interface ModelBenchmarkHistoryRun {
+  run_id?: string;
+  timestamp?: string;
+  benchmark_mode?: string;
+  sampled_row_count?: number;
+  sampled_avg_tokens?: number;
+  tradeoff_summary?: ModelBenchmarkTradeoffSummary;
+  matrix?: ModelBenchmarkRow[];
+}
+
+interface ModelBenchmarkHistoryResponse {
+  count?: number;
+  runs?: ModelBenchmarkHistoryRun[];
 }
 
 interface ModelIntrospectionMemoryProfile {
@@ -539,6 +588,7 @@ type ConfigFieldKey =
 
 type TrainingWorkspaceView = 'overview' | 'setup' | 'runs';
 type TrainingSetupTab = 'basics' | 'config' | 'power' | 'review';
+type ModelSelectionApplySource = 'recommendation' | 'benchmark' | 'consensus';
 
 export default function TrainingPanel({
   projectId,
@@ -678,6 +728,11 @@ export default function TrainingPanel({
   const [wizardLoading, setWizardLoading] = useState(false);
   const [wizardError, setWizardError] = useState('');
   const [wizardResult, setWizardResult] = useState<ModelWizardResponse | null>(null);
+  const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+  const [benchmarkError, setBenchmarkError] = useState('');
+  const [benchmarkResult, setBenchmarkResult] = useState<ModelBenchmarkSweepResponse | null>(null);
+  const [benchmarkHistory, setBenchmarkHistory] = useState<ModelBenchmarkHistoryRun[]>([]);
+  const [reviewSelectionActionNote, setReviewSelectionActionNote] = useState('');
   const [baseModelIntrospection, setBaseModelIntrospection] = useState<ModelIntrospectionSummary | null>(null);
   const [baseModelIntrospectionLoading, setBaseModelIntrospectionLoading] = useState(false);
   const [baseModelIntrospectionError, setBaseModelIntrospectionError] = useState('');
@@ -800,12 +855,18 @@ export default function TrainingPanel({
     const dataset = asRecord(capabilitySummary.dataset);
     const adapterContext = asRecord(dataset.adapter_context);
     const runtimeSummary = asRecord(capabilitySummary.runtime);
+    const modelSummary = asRecord(capabilitySummary.model);
+    const modelCompatibilityGate = asRecord(modelSummary.compatibility_gate);
+    const modelIntrospection = asRecord(modelSummary.introspection);
 
     const runtimeSupportedModalities = asStringList(
       capabilityContract.runtime_supported_modalities ?? runtimeSummary.supported_modalities,
     );
     const adapterDeclaredProfiles = asStringList(capabilityContract.adapter_declared_task_profiles);
     const adapterPreferredTasks = asStringList(capabilityContract.adapter_preferred_training_tasks);
+    const modelGateErrors = asStringList(modelCompatibilityGate.errors);
+    const modelGateHints = asStringList(modelCompatibilityGate.hints);
+    const modelSupportedArchitectures = asStringList(modelCompatibilityGate.supported_architectures);
 
     return {
       taskType: String(capabilityContract.task_type || capabilitySummary.task_type || 'unknown'),
@@ -836,9 +897,134 @@ export default function TrainingPanel({
       ),
       adapterDeclaredProfiles,
       adapterPreferredTasks,
+      modelId: String(modelSummary.id || 'unknown'),
+      modelFamily: String(modelSummary.family || 'unknown'),
+      modelArchitecture: String(modelSummary.architecture || 'unknown'),
+      modelGateOk: parseBool(modelCompatibilityGate.ok),
+      modelGateErrors,
+      modelGateHints,
+      modelSupportedArchitectures,
+      modelIntrospectionSource: String(modelIntrospection.source || 'none'),
       rawCapabilitySummary: capabilitySummary,
     };
   }, [preflightPreview]);
+
+  const essentialsModelGateSummary = useMemo(() => {
+    const gateOk = preflightContractDetails.modelGateOk;
+    const statusLabel = gateOk === true ? 'Pass' : gateOk === false ? 'Blocked' : 'Unknown';
+    const statusClass = gateOk === true ? 'ok' : gateOk === false ? 'blocked' : 'unknown';
+    const topIssue =
+      preflightContractDetails.modelGateErrors[0] ||
+      preflightContractDetails.modelGateHints[0] ||
+      '';
+    return {
+      statusLabel,
+      statusClass,
+      modelId: preflightContractDetails.modelId,
+      architecture: preflightContractDetails.modelArchitecture,
+      source: preflightContractDetails.modelIntrospectionSource,
+      topIssue,
+      supportedArchitectures: preflightContractDetails.modelSupportedArchitectures.join(', '),
+    };
+  }, [preflightContractDetails]);
+
+  const modelSelectionSummary = useMemo(() => {
+    const recommendationRows = Array.isArray(wizardResult?.recommendations)
+      ? wizardResult.recommendations
+      : [];
+    const recommendationWinner = recommendationRows[0] || null;
+    const recommendationWinnerId = String(recommendationWinner?.model_id || '').trim();
+    const recommendationWinnerScore = Number.isFinite(Number(recommendationWinner?.match_score))
+      ? Number(recommendationWinner?.match_score)
+      : null;
+    const recommendationWinnerAdaptiveBias = Number.isFinite(Number(recommendationWinner?.adaptive_bias))
+      ? Number(recommendationWinner?.adaptive_bias)
+      : null;
+    const recommendationWinnerReason = Array.isArray(recommendationWinner?.match_reasons)
+      ? String(recommendationWinner?.match_reasons?.[0] || '').trim()
+      : '';
+
+    const currentBenchmarkRows = Array.isArray(benchmarkResult?.matrix)
+      ? benchmarkResult.matrix
+      : [];
+    let benchmarkWinnerId = String(
+      benchmarkResult?.tradeoff_summary?.best_balance_model_id
+      || currentBenchmarkRows[0]?.model_id
+      || '',
+    ).trim();
+    let benchmarkWinnerSource = benchmarkResult?.run_id
+      ? `latest run (${benchmarkResult.run_id})`
+      : '';
+    let benchmarkWinnerMode = String(benchmarkResult?.benchmark_mode || '').trim();
+    let benchmarkWinnerRow = currentBenchmarkRows
+      .find((row) => String(row?.model_id || '').trim() === benchmarkWinnerId)
+      || currentBenchmarkRows[0]
+      || null;
+
+    if (!benchmarkWinnerId) {
+      const historyRun = benchmarkHistory[0] || null;
+      const historyRows = Array.isArray(historyRun?.matrix) ? historyRun.matrix : [];
+      benchmarkWinnerId = String(
+        historyRun?.tradeoff_summary?.best_balance_model_id
+        || historyRows[0]?.model_id
+        || '',
+      ).trim();
+      benchmarkWinnerSource = historyRun?.run_id
+        ? `history (${historyRun.run_id})`
+        : historyRun
+          ? 'history'
+          : '';
+      benchmarkWinnerMode = String(historyRun?.benchmark_mode || '').trim();
+      benchmarkWinnerRow = historyRows
+        .find((row) => String(row?.model_id || '').trim() === benchmarkWinnerId)
+        || historyRows[0]
+        || null;
+    }
+
+    const sameWinner = Boolean(
+      recommendationWinnerId
+      && benchmarkWinnerId
+      && recommendationWinnerId === benchmarkWinnerId,
+    );
+    const activeModelId = String(baseModel || '').trim();
+    const activeModelLabel = !activeModelId
+      ? 'none'
+      : activeModelId === recommendationWinnerId && activeModelId === benchmarkWinnerId
+        ? 'matches recommendation + benchmark'
+        : activeModelId === recommendationWinnerId
+          ? 'matches recommendation'
+          : activeModelId === benchmarkWinnerId
+            ? 'matches benchmark'
+            : 'custom/manual';
+
+    return {
+      hasAny: Boolean(recommendationWinnerId || benchmarkWinnerId),
+      recommendationWinnerId,
+      recommendationWinnerScore,
+      recommendationWinnerAdaptiveBias,
+      recommendationWinnerReason,
+      benchmarkWinnerId,
+      benchmarkWinnerSource,
+      benchmarkWinnerMode,
+      benchmarkWinnerAccuracy: Number.isFinite(Number(benchmarkWinnerRow?.estimated_accuracy_percent))
+        ? Number(benchmarkWinnerRow?.estimated_accuracy_percent)
+        : null,
+      benchmarkWinnerLatencyMs: Number.isFinite(Number(benchmarkWinnerRow?.estimated_latency_ms))
+        ? Number(benchmarkWinnerRow?.estimated_latency_ms)
+        : null,
+      benchmarkWinnerThroughputTps: Number.isFinite(Number(benchmarkWinnerRow?.estimated_throughput_tps))
+        ? Number(benchmarkWinnerRow?.estimated_throughput_tps)
+        : null,
+      sameWinner,
+      winnerAlignmentLabel: sameWinner
+        ? 'Winners align: recommendation and benchmark agree.'
+        : recommendationWinnerId && benchmarkWinnerId
+          ? 'Recommendation and benchmark differ; verify trade-off before launch.'
+          : 'Run recommendation + benchmark to compare winners.',
+      activeModelId,
+      activeModelLabel,
+    };
+  }, [wizardResult, benchmarkResult, benchmarkHistory, baseModel]);
 
   const buildTrainingConfigPayload = (): Record<string, unknown> => {
     const learningRate = Number.parseFloat(lr);
@@ -1426,25 +1612,88 @@ export default function TrainingPanel({
     }
   };
 
-  const applyModelWizardRecommendation = (item: ModelWizardRecommendation, rankIndex: number) => {
-    const defaults = item.suggested_defaults || {};
+  const loadModelBenchmarkHistory = async (options?: { silent?: boolean }) => {
+    try {
+      const res = await api.get<ModelBenchmarkHistoryResponse>(
+        `/projects/${projectId}/training/model-selection/benchmark-sweep/history?limit=6`,
+      );
+      const rows = Array.isArray(res.data?.runs) ? res.data.runs : [];
+      setBenchmarkHistory(rows);
+    } catch (err: any) {
+      if (!options?.silent) {
+        setBenchmarkError(err?.response?.data?.detail || 'Failed to load benchmark history');
+      }
+    }
+  };
+
+  const runModelBenchmarkSweep = async () => {
+    setBenchmarkLoading(true);
+    setBenchmarkError('');
+    try {
+      const vramValue = Number.parseFloat(wizardVramGb);
+      const recommendedModelIds = (Array.isArray(wizardResult?.recommendations)
+        ? wizardResult.recommendations
+        : []
+      )
+        .map((item) => String(item?.model_id || '').trim())
+        .filter(Boolean);
+      const payload = {
+        target_device: wizardTargetDevice,
+        primary_language: wizardPrimaryLanguage,
+        available_vram_gb: Number.isFinite(vramValue) && vramValue > 0 ? vramValue : undefined,
+        task_profile: wizardTaskProfile !== 'auto' ? wizardTaskProfile : undefined,
+        model_ids: recommendedModelIds,
+        max_models: Math.max(1, Math.min(3, recommendedModelIds.length || 3)),
+        sample_size: 96,
+        persist_run: true,
+      };
+      const res = await api.post<ModelBenchmarkSweepResponse>(
+        `/projects/${projectId}/training/model-selection/benchmark-sweep`,
+        payload,
+      );
+      setBenchmarkResult(res.data || null);
+      await loadModelBenchmarkHistory({ silent: true });
+    } catch (err: any) {
+      setBenchmarkResult(null);
+      setBenchmarkError(err?.response?.data?.detail || 'Failed to run benchmark sweep');
+    } finally {
+      setBenchmarkLoading(false);
+    }
+  };
+
+  const applyModelSelectionChoice = ({
+    modelId,
+    rankIndex,
+    selectedScore,
+    defaults,
+    applySource,
+  }: {
+    modelId: string;
+    rankIndex: number;
+    selectedScore?: number;
+    defaults?: ModelWizardRecommendation['suggested_defaults'];
+    applySource?: ModelSelectionApplySource;
+  }) => {
+    const trimmedModelId = String(modelId || '').trim();
+    if (!trimmedModelId) return;
     const nextConfig: Record<string, unknown> = {
-      base_model: item.model_id,
+      base_model: trimmedModelId,
     };
-    if (typeof defaults.task_type === 'string' && defaults.task_type.trim()) {
-      nextConfig.task_type = defaults.task_type;
+    const resolvedDefaults = defaults || {};
+    if (typeof resolvedDefaults.task_type === 'string' && resolvedDefaults.task_type.trim()) {
+      nextConfig.task_type = resolvedDefaults.task_type;
     }
-    if (typeof defaults.chat_template === 'string' && defaults.chat_template.trim()) {
-      nextConfig.chat_template = defaults.chat_template;
+    if (typeof resolvedDefaults.chat_template === 'string' && resolvedDefaults.chat_template.trim()) {
+      nextConfig.chat_template = resolvedDefaults.chat_template;
     }
-    if (typeof defaults.use_lora === 'boolean') {
-      nextConfig.use_lora = defaults.use_lora;
+    if (typeof resolvedDefaults.use_lora === 'boolean') {
+      nextConfig.use_lora = resolvedDefaults.use_lora;
     }
-    if (typeof defaults.batch_size === 'number' && Number.isFinite(defaults.batch_size)) {
-      nextConfig.batch_size = Math.max(1, defaults.batch_size);
+    if (typeof resolvedDefaults.batch_size === 'number' && Number.isFinite(resolvedDefaults.batch_size)) {
+      nextConfig.batch_size = Math.max(1, resolvedDefaults.batch_size);
     }
-    if (typeof defaults.max_seq_length === 'number' && Number.isFinite(defaults.max_seq_length)) {
-      nextConfig.max_seq_length = Math.max(128, defaults.max_seq_length);
+    if (typeof resolvedDefaults.max_seq_length === 'number' && Number.isFinite(resolvedDefaults.max_seq_length)) {
+      nextConfig.max_seq_length = Math.max(128, resolvedDefaults.max_seq_length);
     }
     applySuggestedConfig(nextConfig);
     const vramValue = Number.parseFloat(wizardVramGb);
@@ -1453,6 +1702,7 @@ export default function TrainingPanel({
       .post(`/projects/${projectId}/training/model-selection/telemetry`, {
         action: 'apply',
         source: 'training_setup_wizard',
+        apply_source: applySource || 'recommendation',
         target_device: wizardTargetDevice,
         primary_language: wizardPrimaryLanguage,
         available_vram_gb: Number.isFinite(vramValue) && vramValue > 0 ? vramValue : undefined,
@@ -1461,14 +1711,122 @@ export default function TrainingPanel({
         recommendation_model_ids: rows
           .map((row) => String(row?.model_id || '').trim())
           .filter(Boolean),
-        selected_model_id: item.model_id,
+        selected_model_id: trimmedModelId,
         selected_rank: Math.max(1, rankIndex + 1),
-        selected_score: Number.isFinite(Number(item.match_score))
-          ? Number(item.match_score)
+        selected_score: Number.isFinite(Number(selectedScore))
+          ? Number(selectedScore)
           : undefined,
       })
       .catch(() => { });
-    void introspectBaseModel({ modelId: item.model_id, silent: true });
+    void introspectBaseModel({ modelId: trimmedModelId, silent: true });
+  };
+
+  const applyModelWizardRecommendation = (item: ModelWizardRecommendation, rankIndex: number) => {
+    applyModelSelectionChoice({
+      modelId: item.model_id,
+      rankIndex,
+      selectedScore: Number(item.match_score),
+      defaults: item.suggested_defaults,
+      applySource: 'recommendation',
+    });
+  };
+
+  const applyBenchmarkWinner = () => {
+    const matrix = Array.isArray(benchmarkResult?.matrix) ? benchmarkResult.matrix : [];
+    if (matrix.length === 0) {
+      setBenchmarkError('No benchmark winner available yet. Run benchmark sweep first.');
+      return;
+    }
+    const winnerId = String(
+      benchmarkResult?.tradeoff_summary?.best_balance_model_id
+      || matrix[0]?.model_id
+      || '',
+    ).trim();
+    if (!winnerId) {
+      setBenchmarkError('Benchmark winner is unavailable in the current benchmark result.');
+      return;
+    }
+    const winnerIndex = matrix.findIndex((item) => String(item?.model_id || '').trim() === winnerId);
+    const winnerRow = winnerIndex >= 0 ? matrix[winnerIndex] : matrix[0];
+    const wizardRow = (Array.isArray(wizardResult?.recommendations) ? wizardResult.recommendations : [])
+      .find((item) => String(item?.model_id || '').trim() === winnerId);
+
+    applyModelSelectionChoice({
+      modelId: winnerId,
+      rankIndex: winnerIndex >= 0 ? winnerIndex : 0,
+      selectedScore: Number(winnerRow?.estimated_quality_score),
+      defaults: wizardRow?.suggested_defaults,
+      applySource: 'benchmark',
+    });
+  };
+
+  const applyReviewConsensusWinner = () => {
+    const recommendationWinnerId = String(modelSelectionSummary.recommendationWinnerId || '').trim();
+    const benchmarkWinnerId = String(modelSelectionSummary.benchmarkWinnerId || '').trim();
+
+    let selectedModelId = '';
+    let selectedWinnerLabel: 'consensus' | 'benchmark' | 'recommendation' = 'recommendation';
+
+    if (recommendationWinnerId && benchmarkWinnerId && recommendationWinnerId === benchmarkWinnerId) {
+      selectedModelId = recommendationWinnerId;
+      selectedWinnerLabel = 'consensus';
+    } else if (benchmarkWinnerId) {
+      selectedModelId = benchmarkWinnerId;
+      selectedWinnerLabel = 'benchmark';
+    } else if (recommendationWinnerId) {
+      selectedModelId = recommendationWinnerId;
+      selectedWinnerLabel = 'recommendation';
+    }
+
+    if (!selectedModelId) {
+      setReviewSelectionActionNote('No model winner available yet. Run recommendation or benchmark first.');
+      return;
+    }
+
+    const recommendationRows = Array.isArray(wizardResult?.recommendations)
+      ? wizardResult.recommendations
+      : [];
+    const currentBenchmarkRows = Array.isArray(benchmarkResult?.matrix) ? benchmarkResult.matrix : [];
+    const historyBenchmarkRows = Array.isArray(benchmarkHistory[0]?.matrix) ? benchmarkHistory[0].matrix || [] : [];
+    const recommendationIndex = recommendationRows
+      .findIndex((item) => String(item?.model_id || '').trim() === selectedModelId);
+    const currentBenchmarkIndex = currentBenchmarkRows
+      .findIndex((item) => String(item?.model_id || '').trim() === selectedModelId);
+    const historyBenchmarkIndex = historyBenchmarkRows
+      .findIndex((item) => String(item?.model_id || '').trim() === selectedModelId);
+
+    const recommendationRow = recommendationIndex >= 0 ? recommendationRows[recommendationIndex] : null;
+    const benchmarkRow = currentBenchmarkIndex >= 0
+      ? currentBenchmarkRows[currentBenchmarkIndex]
+      : historyBenchmarkIndex >= 0
+        ? historyBenchmarkRows[historyBenchmarkIndex]
+        : currentBenchmarkRows[0] || historyBenchmarkRows[0] || null;
+    const benchmarkRankIndex = currentBenchmarkIndex >= 0
+      ? currentBenchmarkIndex
+      : historyBenchmarkIndex >= 0
+        ? historyBenchmarkIndex
+        : 0;
+    const selectedRankIndex = recommendationIndex >= 0 ? recommendationIndex : benchmarkRankIndex;
+    const recommendationScore = Number(recommendationRow?.match_score);
+    const benchmarkScore = Number(benchmarkRow?.estimated_quality_score);
+    const selectedScore = Number.isFinite(recommendationScore)
+      ? recommendationScore
+      : Number.isFinite(benchmarkScore)
+        ? benchmarkScore
+        : undefined;
+
+    applyModelSelectionChoice({
+      modelId: selectedModelId,
+      rankIndex: selectedRankIndex,
+      selectedScore,
+      defaults: recommendationRow?.suggested_defaults,
+      applySource: selectedWinnerLabel,
+    });
+
+    setBenchmarkError('');
+    setReviewSelectionActionNote(
+      `Applied ${selectedWinnerLabel} winner (${selectedModelId}) to base model.`,
+    );
   };
 
   const persistPreferredPlanProfile = async (profile: string) => {
@@ -1631,6 +1989,11 @@ export default function TrainingPanel({
     setWizardLoading(false);
     setWizardError('');
     setWizardResult(null);
+    setBenchmarkLoading(false);
+    setBenchmarkError('');
+    setBenchmarkResult(null);
+    setBenchmarkHistory([]);
+    setReviewSelectionActionNote('');
     setBaseModelIntrospection(null);
     setBaseModelIntrospectionLoading(false);
     setBaseModelIntrospectionError('');
@@ -1661,6 +2024,7 @@ export default function TrainingPanel({
     void loadTrainingRuntimes();
     void loadTrainingRecipes();
     void loadCloudBurstCatalog();
+    void loadModelBenchmarkHistory({ silent: true });
     refreshExperiments().catch((err) => console.error('Failed to load experiments', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, forceCreateVisible, hideCreateControls, hideExperimentList]);
@@ -1734,6 +2098,10 @@ export default function TrainingPanel({
       setBaseModelIntrospectionError('');
     }
   }, [baseModel, baseModelIntrospection?.model_id]);
+
+  useEffect(() => {
+    setReviewSelectionActionNote('');
+  }, [modelSelectionSummary.recommendationWinnerId, modelSelectionSummary.benchmarkWinnerId]);
 
   useEffect(() => {
     if (workspaceView !== 'setup' || !createFormVisible) {
@@ -2586,6 +2954,20 @@ export default function TrainingPanel({
                           : `${preflightPreview.errors.length} blocking issue(s)`}
                       </span>
                     )}
+                    {preflightPreview && (
+                      <div className={`training-essentials-model-gate training-essentials-model-gate--${essentialsModelGateSummary.statusClass}`}>
+                        <strong>Model Gate: {essentialsModelGateSummary.statusLabel}</strong>
+                        <span>
+                          {essentialsModelGateSummary.modelId} • {essentialsModelGateSummary.architecture} • source {essentialsModelGateSummary.source}
+                        </span>
+                        {essentialsModelGateSummary.topIssue && (
+                          <span>{essentialsModelGateSummary.topIssue}</span>
+                        )}
+                        {essentialsModelGateSummary.supportedArchitectures && (
+                          <span>Supported: {essentialsModelGateSummary.supportedArchitectures}</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -2726,6 +3108,86 @@ export default function TrainingPanel({
                         </ul>
                       </div>
                     )}
+                    {modelSelectionSummary.hasAny && (
+                      <div className="training-preflight-panel__section">
+                        <div className="training-preflight-panel__section-title">Model Selection Snapshot</div>
+                        <div className="training-preflight-contract-grid">
+                          <div className="training-preflight-contract-card">
+                            <div className="training-preflight-contract-card__title">Recommendation Winner</div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Model</span>
+                              <strong>{modelSelectionSummary.recommendationWinnerId || 'not available'}</strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Match Score</span>
+                              <strong>
+                                {Number.isFinite(Number(modelSelectionSummary.recommendationWinnerScore))
+                                  ? Number(modelSelectionSummary.recommendationWinnerScore).toFixed(2)
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Adaptive Bias</span>
+                              <strong>
+                                {Number.isFinite(Number(modelSelectionSummary.recommendationWinnerAdaptiveBias))
+                                  ? Number(modelSelectionSummary.recommendationWinnerAdaptiveBias).toFixed(2)
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Top Reason</span>
+                              <strong>{modelSelectionSummary.recommendationWinnerReason || 'n/a'}</strong>
+                            </div>
+                          </div>
+                          <div className="training-preflight-contract-card">
+                            <div className="training-preflight-contract-card__title">Benchmark Winner</div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Model</span>
+                              <strong>{modelSelectionSummary.benchmarkWinnerId || 'not available'}</strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Quality</span>
+                              <strong>
+                                {Number.isFinite(Number(modelSelectionSummary.benchmarkWinnerAccuracy))
+                                  ? `${Number(modelSelectionSummary.benchmarkWinnerAccuracy).toFixed(1)}%`
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Latency</span>
+                              <strong>
+                                {Number.isFinite(Number(modelSelectionSummary.benchmarkWinnerLatencyMs))
+                                  ? `${Number(modelSelectionSummary.benchmarkWinnerLatencyMs).toFixed(1)} ms`
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Throughput</span>
+                              <strong>
+                                {Number.isFinite(Number(modelSelectionSummary.benchmarkWinnerThroughputTps))
+                                  ? `${Number(modelSelectionSummary.benchmarkWinnerThroughputTps).toFixed(1)} t/s`
+                                  : 'n/a'}
+                              </strong>
+                            </div>
+                            <div className="training-preflight-contract-card__row">
+                              <span>Source</span>
+                              <strong>
+                                {modelSelectionSummary.benchmarkWinnerMode || 'real_sampled'}
+                                {modelSelectionSummary.benchmarkWinnerSource
+                                  ? ` • ${modelSelectionSummary.benchmarkWinnerSource}`
+                                  : ''}
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--hint">
+                          {modelSelectionSummary.winnerAlignmentLabel}
+                          {modelSelectionSummary.activeModelId
+                            ? ` Active model (${modelSelectionSummary.activeModelId}) ${modelSelectionSummary.activeModelLabel}.`
+                            : ''}
+                        </div>
+                      </div>
+                    )}
                     <div className="training-preflight-panel__section">
                       <div className="training-preflight-panel__section-title">Capability Contract Diagnostics</div>
                       <div className="training-preflight-contract-grid">
@@ -2813,6 +3275,53 @@ export default function TrainingPanel({
                                 : 'n/a'}
                             </strong>
                           </div>
+                        </div>
+                        <div className="training-preflight-contract-card">
+                          <div className="training-preflight-contract-card__title">Model Compatibility</div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Model</span>
+                            <strong>{preflightContractDetails.modelId}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Family</span>
+                            <strong>{preflightContractDetails.modelFamily}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Architecture</span>
+                            <strong>{preflightContractDetails.modelArchitecture}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Gate Status</span>
+                            <strong>
+                              {preflightContractDetails.modelGateOk === true
+                                ? 'Pass'
+                                : preflightContractDetails.modelGateOk === false
+                                  ? 'Blocked'
+                                  : 'Unknown'}
+                            </strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Metadata Source</span>
+                            <strong>{preflightContractDetails.modelIntrospectionSource}</strong>
+                          </div>
+                          <div className="training-preflight-contract-card__row">
+                            <span>Supported Architectures</span>
+                            <strong>
+                              {preflightContractDetails.modelSupportedArchitectures.length > 0
+                                ? preflightContractDetails.modelSupportedArchitectures.join(', ')
+                                : 'n/a'}
+                            </strong>
+                          </div>
+                          {preflightContractDetails.modelGateErrors.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--error">
+                              {preflightContractDetails.modelGateErrors.join(' | ')}
+                            </div>
+                          )}
+                          {preflightContractDetails.modelGateHints.length > 0 && (
+                            <div className="training-preflight-contract-card__notice training-preflight-contract-card__notice--hint">
+                              {preflightContractDetails.modelGateHints.join(' | ')}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <details className="training-preflight-panel__details">
@@ -3204,6 +3713,13 @@ export default function TrainingPanel({
                         >
                           {wizardLoading ? 'Finding Models...' : 'Recommend Models'}
                         </button>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => void runModelBenchmarkSweep()}
+                          disabled={wizardLoading || benchmarkLoading}
+                        >
+                          {benchmarkLoading ? 'Running Benchmark...' : 'Run Benchmark Sweep'}
+                        </button>
                         <span className="training-model-wizard__hint">
                           Uses lightweight heuristics from model size, VRAM fit, and task goal.
                         </span>
@@ -3222,6 +3738,72 @@ export default function TrainingPanel({
                         <div className="training-model-wizard__warnings">
                           Adaptive ranking active ({wizardResult.adaptive_ranking.context_label || 'global'}): boosted{' '}
                           {wizardResult.adaptive_ranking.boosted_model_count || 0} model(s) from prior applies.
+                        </div>
+                      )}
+                      {benchmarkError && (
+                        <div className="training-alert training-alert--warning training-alert--tight">
+                          {benchmarkError}
+                        </div>
+                      )}
+                      {Array.isArray(benchmarkResult?.warnings) && benchmarkResult.warnings.length > 0 && (
+                        <div className="training-model-wizard__warnings">
+                          {benchmarkResult.warnings.join(' | ')}
+                        </div>
+                      )}
+                      {Array.isArray(benchmarkResult?.matrix) && benchmarkResult.matrix.length > 0 && (
+                        <div className="training-model-benchmark">
+                          <div className="training-model-benchmark__head">
+                            <strong>Benchmark Sweep ({benchmarkResult.benchmark_mode || 'real_sampled'})</strong>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={applyBenchmarkWinner}
+                            >
+                              Apply Benchmark Winner
+                            </button>
+                          </div>
+                          <div className="training-model-benchmark__meta">
+                            Run {benchmarkResult.run_id || 'n/a'} • Sampled {benchmarkResult.sampled_row_count || 0} rows • Avg{' '}
+                            {Number.isFinite(Number(benchmarkResult.sampled_avg_tokens))
+                              ? `${Number(benchmarkResult.sampled_avg_tokens).toFixed(1)} tokens`
+                              : 'n/a'}
+                          </div>
+                          <div className="training-model-benchmark__summary">
+                            <span>Best quality: {benchmarkResult.tradeoff_summary?.best_quality_model_id || 'n/a'}</span>
+                            <span>Best speed: {benchmarkResult.tradeoff_summary?.best_speed_model_id || 'n/a'}</span>
+                            <span>Best balance: {benchmarkResult.tradeoff_summary?.best_balance_model_id || 'n/a'}</span>
+                          </div>
+                          <div className="training-model-benchmark__rows">
+                            {benchmarkResult.matrix.map((row, index) => (
+                              <div className="training-model-benchmark__row" key={`${benchmarkResult.run_id || 'run'}-${row.model_id || index}`}>
+                                <div className="training-model-benchmark__row-head">
+                                  <strong>#{row.rank || index + 1} {row.model_id || 'unknown'}</strong>
+                                  <span>{row.benchmark_mode || 'sampled_heuristic'}</span>
+                                </div>
+                                <div className="training-model-benchmark__row-metrics">
+                                  <span>Quality {Number.isFinite(Number(row.estimated_accuracy_percent)) ? `${Number(row.estimated_accuracy_percent).toFixed(1)}%` : 'n/a'}</span>
+                                  <span>Latency {Number.isFinite(Number(row.estimated_latency_ms)) ? `${Number(row.estimated_latency_ms).toFixed(1)} ms` : 'n/a'}</span>
+                                  <span>Throughput {Number.isFinite(Number(row.estimated_throughput_tps)) ? `${Number(row.estimated_throughput_tps).toFixed(1)} t/s` : 'n/a'}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {benchmarkHistory.length > 0 && (
+                        <div className="training-model-benchmark__history">
+                          <strong>Recent Benchmark Runs</strong>
+                          {benchmarkHistory.slice(0, 3).map((run, idx) => (
+                            <div className="training-model-benchmark__history-row" key={`${run.run_id || 'history'}-${idx}`}>
+                              <span>{run.run_id || 'run'}</span>
+                              <span>{run.benchmark_mode || 'real_sampled'}</span>
+                              <span>
+                                Winner:{' '}
+                                {run.tradeoff_summary?.best_balance_model_id
+                                  || run.matrix?.[0]?.model_id
+                                  || 'n/a'}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       )}
                       {Array.isArray(wizardResult?.recommendations) && wizardResult.recommendations.length > 0 && (
@@ -3982,6 +4564,38 @@ export default function TrainingPanel({
                     <strong>{epochs} epochs · batch {batchSize} · lr {lr}</strong>
                   </div>
                 </div>
+                {modelSelectionSummary.hasAny && (
+                  <div className="training-review-selection-panel">
+                    <div className="training-review-selection-panel__head">
+                      <strong>Preflight Model Selection Snapshot</strong>
+                      <span>{modelSelectionSummary.winnerAlignmentLabel}</span>
+                    </div>
+                    <div className="training-review-selection-grid">
+                      <div className="training-review-item">
+                        <span>Recommendation Winner</span>
+                        <strong>{modelSelectionSummary.recommendationWinnerId || 'not available'}</strong>
+                      </div>
+                      <div className="training-review-item">
+                        <span>Benchmark Winner</span>
+                        <strong>{modelSelectionSummary.benchmarkWinnerId || 'not available'}</strong>
+                      </div>
+                    </div>
+                    <div className="training-review-selection-panel__actions">
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={applyReviewConsensusWinner}
+                        disabled={!modelSelectionSummary.recommendationWinnerId && !modelSelectionSummary.benchmarkWinnerId}
+                      >
+                        Use Consensus Winner
+                      </button>
+                      {reviewSelectionActionNote && (
+                        <span className="training-review-selection-panel__note">
+                          {reviewSelectionActionNote}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {!isSetupAdvancedMode && (
                   <div className="training-essentials-tools">
                     <button
@@ -3997,6 +4611,20 @@ export default function TrainingPanel({
                           ? 'Preflight passed'
                           : `${preflightPreview.errors.length} blocking issue(s)`}
                       </span>
+                    )}
+                    {preflightPreview && (
+                      <div className={`training-essentials-model-gate training-essentials-model-gate--${essentialsModelGateSummary.statusClass}`}>
+                        <strong>Model Gate: {essentialsModelGateSummary.statusLabel}</strong>
+                        <span>
+                          {essentialsModelGateSummary.modelId} • {essentialsModelGateSummary.architecture} • source {essentialsModelGateSummary.source}
+                        </span>
+                        {essentialsModelGateSummary.topIssue && (
+                          <span>{essentialsModelGateSummary.topIssue}</span>
+                        )}
+                        {essentialsModelGateSummary.supportedArchitectures && (
+                          <span>Supported: {essentialsModelGateSummary.supportedArchitectures}</span>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}

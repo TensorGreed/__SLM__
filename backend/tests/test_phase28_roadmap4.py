@@ -206,14 +206,36 @@ class Phase28Roadmap4Tests(unittest.TestCase):
                 "primary_language": "english",
                 "available_vram_gb": 12,
                 "max_models": 3,
+                "sample_size": 40,
             },
         )
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
         matrix = payload.get("matrix", [])
         self.assertEqual(len(matrix), 3)
+        self.assertTrue(str(payload.get("run_id") or "").strip())
+        self.assertIn(
+            str(payload.get("benchmark_mode") or ""),
+            {
+                "real_sampled_heuristic",
+                "real_sampled_tokenizer",
+                "real_sampled_tokenizer_mixed",
+            },
+        )
+        self.assertGreaterEqual(int(payload.get("sampled_row_count") or 0), 1)
+        self.assertIn("sampled_avg_tokens", payload)
         self.assertIn("estimated_accuracy_percent", matrix[0])
         self.assertIn("estimated_latency_ms", matrix[0])
+
+        history_resp = self.client.get(
+            f"/api/projects/{project_id}/training/model-selection/benchmark-sweep/history",
+        )
+        self.assertEqual(history_resp.status_code, 200, history_resp.text)
+        history_payload = history_resp.json()
+        self.assertGreaterEqual(int(history_payload.get("count") or 0), 1)
+        runs = [item for item in history_payload.get("runs", []) if isinstance(item, dict)]
+        self.assertGreaterEqual(len(runs), 1)
+        self.assertEqual(str(runs[0].get("run_id") or ""), str(payload.get("run_id") or ""))
 
     def test_phase4_rag_compare_side_by_side(self):
         project_id = self._create_project("phase28-rag")

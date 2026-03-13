@@ -381,10 +381,10 @@ def recommend_training_base_models(
             score += adaptive_bias
             if adaptive_bias_label:
                 reasons.append(
-                    f"project acceptance trend boost (+{adaptive_bias:.2f}; {adaptive_bias_label})"
+                    f"project adaptive trend boost (+{adaptive_bias:.2f}; {adaptive_bias_label})"
                 )
             else:
-                reasons.append(f"project acceptance trend boost (+{adaptive_bias:.2f})")
+                reasons.append(f"project adaptive trend boost (+{adaptive_bias:.2f})")
         min_vram_gb = float(model.get("estimated_min_vram_gb") or 0.0)
         if resolved_vram is not None and resolved_vram >= min_vram_gb:
             fits_vram_count += 1

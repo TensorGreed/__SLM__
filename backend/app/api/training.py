@@ -55,9 +55,13 @@ from app.services.model_selection_service import (
 from app.services.model_benchmark_service import benchmark_model_sweep
 from app.services.training_telemetry_service import (
     build_model_acceptance_bias,
+    build_model_benchmark_bias,
+    list_model_benchmark_runs,
     list_observability_events,
+    record_model_benchmark_run,
     record_model_wizard_event,
     record_observability_event,
+    summarize_model_benchmark_runs,
     summarize_observability_events,
     summarize_model_wizard_events,
 )
@@ -161,6 +165,11 @@ class ModelSelectionIntrospectRequest(BaseModel):
 class ModelSelectionTelemetryRequest(BaseModel):
     action: str = Field(default="recommend", pattern="^(recommend|apply)$")
     source: str = Field(default="training_setup_wizard", min_length=1, max_length=64)
+    apply_source: str | None = Field(
+        default=None,
+        pattern="^(recommendation|benchmark|consensus)$",
+        description="Decision pathway for apply events.",
+    )
     auto_run: bool | None = None
     target_device: str | None = Field(default=None, max_length=32)
     primary_language: str | None = Field(default=None, max_length=32)
@@ -181,6 +190,9 @@ class ModelBenchmarkSweepRequest(BaseModel):
     task_profile: str | None = Field(default=None, max_length=64)
     model_ids: list[str] = Field(default_factory=list)
     max_models: int = Field(default=3, ge=1, le=5)
+    sample_size: int = Field(default=96, ge=10, le=500)
+    allow_network_tokenizer: bool = False
+    persist_run: bool = True
 
 
 class ObservabilityTelemetryRequest(BaseModel):
@@ -508,29 +520,75 @@ async def recommend_training_models(
     if project_result.scalar_one_or_none() is None:
         raise HTTPException(404, f"Project {project_id} not found")
 
-    adaptive_bias = build_model_acceptance_bias(
+    acceptance_bias = build_model_acceptance_bias(
         project_id,
         target_device=req.target_device,
         task_profile=req.task_profile,
     )
+    benchmark_bias = build_model_benchmark_bias(
+        project_id,
+        target_device=req.target_device,
+        task_profile=req.task_profile,
+    )
+    combined_bias: dict[str, float] = {}
+    for source_bias in (
+        dict(acceptance_bias.get("bias_by_model") or {}),
+        dict(benchmark_bias.get("bias_by_model") or {}),
+    ):
+        for model_id, raw_value in source_bias.items():
+            token = str(model_id or "").strip()
+            if not token:
+                continue
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            combined_bias[token] = round(min(1.5, combined_bias.get(token, 0.0) + max(0.0, value)), 4)
+
+    adaptive_label_parts: list[str] = []
+    if combined_bias and acceptance_bias.get("enabled"):
+        adaptive_label_parts.append(
+            f"acceptance:{str(acceptance_bias.get('context_label') or 'global')}"
+        )
+    if combined_bias and benchmark_bias.get("enabled"):
+        adaptive_label_parts.append(
+            f"benchmark:{str(benchmark_bias.get('context_label') or 'global')}"
+        )
+    adaptive_label = " + ".join(adaptive_label_parts) if adaptive_label_parts else ""
     payload = recommend_training_base_models(
         target_device=req.target_device,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
         task_profile=req.task_profile,
         top_k=req.top_k,
-        adaptive_model_bias=adaptive_bias.get("bias_by_model"),
-        adaptive_bias_label=str(adaptive_bias.get("context_label") or ""),
+        adaptive_model_bias=combined_bias,
+        adaptive_bias_label=adaptive_label,
     )
     return {
         "project_id": project_id,
         **payload,
         "adaptive_ranking": {
-            "enabled": bool(adaptive_bias.get("enabled")),
-            "context_label": adaptive_bias.get("context_label"),
-            "global_apply_events": adaptive_bias.get("global_apply_events"),
-            "context_apply_events": adaptive_bias.get("context_apply_events"),
-            "boosted_model_count": len(dict(adaptive_bias.get("bias_by_model") or {})),
+            "enabled": bool(combined_bias),
+            "context_label": (
+                str(acceptance_bias.get("context_label") or benchmark_bias.get("context_label") or "global")
+            ),
+            "global_apply_events": acceptance_bias.get("global_apply_events"),
+            "context_apply_events": acceptance_bias.get("context_apply_events"),
+            "benchmark_run_count": benchmark_bias.get("run_count"),
+            "boosted_model_count": len(combined_bias),
+            "acceptance": {
+                "enabled": bool(acceptance_bias.get("enabled")),
+                "context_label": acceptance_bias.get("context_label"),
+                "global_apply_events": acceptance_bias.get("global_apply_events"),
+                "context_apply_events": acceptance_bias.get("context_apply_events"),
+                "boosted_model_count": len(dict(acceptance_bias.get("bias_by_model") or {})),
+            },
+            "benchmark": {
+                "enabled": bool(benchmark_bias.get("enabled")),
+                "context_label": benchmark_bias.get("context_label"),
+                "run_count": benchmark_bias.get("run_count"),
+                "boosted_model_count": len(dict(benchmark_bias.get("bias_by_model") or {})),
+            },
         },
     }
 
@@ -566,11 +624,11 @@ async def model_selection_benchmark_sweep(
     req: ModelBenchmarkSweepRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Run a fast benchmark matrix simulation across top base-model candidates."""
+    """Run a short sampled benchmark sweep across top base-model candidates."""
     project_result = await db.execute(select(Project.id).where(Project.id == project_id))
     if project_result.scalar_one_or_none() is None:
         raise HTTPException(404, f"Project {project_id} not found")
-    return benchmark_model_sweep(
+    benchmark = benchmark_model_sweep(
         project_id=project_id,
         target_device=req.target_device,
         primary_language=req.primary_language,
@@ -578,7 +636,49 @@ async def model_selection_benchmark_sweep(
         task_profile=req.task_profile,
         model_ids=list(req.model_ids or []),
         max_models=req.max_models,
+        sample_size=req.sample_size,
+        allow_network_tokenizer=bool(req.allow_network_tokenizer),
     )
+    if not bool(req.persist_run):
+        return benchmark
+
+    persisted = record_model_benchmark_run(
+        project_id,
+        payload=benchmark,
+    )
+    return {
+        **benchmark,
+        "persisted": {
+            "event_id": str(dict(persisted.get("event") or {}).get("event_id") or ""),
+            "path": persisted.get("path"),
+            "summary": persisted.get("summary"),
+        },
+    }
+
+
+@router.get("/model-selection/benchmark-sweep/history")
+async def model_selection_benchmark_sweep_history(
+    project_id: int,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return persisted benchmark sweep runs for model ranking diagnostics."""
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return list_model_benchmark_runs(project_id, limit=limit)
+
+
+@router.get("/model-selection/benchmark-sweep/summary")
+async def model_selection_benchmark_sweep_summary(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return aggregate benchmark sweep metrics for the project."""
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    return summarize_model_benchmark_runs(project_id)
 
 
 @router.post("/model-selection/telemetry")

@@ -20,6 +20,7 @@ os.environ["ALLOW_SIMULATED_TRAINING"] = "true"
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.training_telemetry_service import record_model_benchmark_run
 
 
 class Phase21ModelSelectionWizardTests(unittest.TestCase):
@@ -194,6 +195,7 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
             json={
                 "action": "apply",
                 "source": "training_setup_wizard",
+                "apply_source": "recommendation",
                 "selected_model_id": "microsoft/phi-2",
                 "selected_rank": 2,
                 "selected_score": 0.84,
@@ -201,9 +203,22 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
         )
         self.assertEqual(apply_event.status_code, 200, apply_event.text)
         apply_payload = apply_event.json()
+        self.assertEqual(
+            str(apply_payload.get("event", {}).get("apply_source") or ""),
+            "recommendation",
+        )
         self.assertEqual(apply_payload.get("summary", {}).get("recommend_events"), 1)
         self.assertEqual(apply_payload.get("summary", {}).get("apply_events"), 1)
         self.assertEqual(apply_payload.get("summary", {}).get("apply_conversion_rate"), 1.0)
+        self.assertEqual(
+            int(
+                apply_payload.get("summary", {})
+                .get("apply_events_by_source", {})
+                .get("recommendation")
+                or 0
+            ),
+            1,
+        )
 
         summary = self.client.get(f"/api/projects/{project_id}/training/model-selection/telemetry")
         self.assertEqual(summary.status_code, 200, summary.text)
@@ -211,6 +226,10 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
         self.assertEqual(summary_payload.get("event_count"), 2)
         self.assertEqual(summary_payload.get("auto_recommend_events"), 1)
         self.assertTrue(bool(summary_payload.get("top_selected_models")))
+        self.assertEqual(
+            int(summary_payload.get("apply_events_by_source", {}).get("recommendation") or 0),
+            1,
+        )
         self.assertTrue(bool(summary_payload.get("path")))
 
     def test_model_recommendation_applies_adaptive_bias_from_telemetry(self):
@@ -245,6 +264,7 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
                 json={
                     "action": "apply",
                     "source": "training_setup_wizard",
+                    "apply_source": "recommendation",
                     "target_device": "laptop",
                     "task_profile": "chat_sft",
                     "selected_model_id": "microsoft/Phi-3-mini-4k-instruct",
@@ -269,6 +289,174 @@ class Phase21ModelSelectionWizardTests(unittest.TestCase):
         adaptive_meta = adapted_payload.get("adaptive_ranking", {})
         self.assertTrue(bool(adaptive_meta.get("enabled")))
         self.assertGreaterEqual(int(adaptive_meta.get("context_apply_events") or 0), 4)
+
+        adapted_rows = [item for item in adapted_payload.get("recommendations", []) if isinstance(item, dict)]
+        phi_row = next(
+            (item for item in adapted_rows if item.get("model_id") == "microsoft/Phi-3-mini-4k-instruct"),
+            None,
+        )
+        self.assertIsNotNone(phi_row)
+        self.assertGreater(float(phi_row.get("adaptive_bias", 0.0)), 0.0)
+        self.assertGreater(float(phi_row.get("match_score", 0.0)), baseline_score)
+
+    def test_model_wizard_telemetry_tracks_apply_decision_pathways(self):
+        project_id = self._create_project("phase21-model-wizard-apply-source-1")
+
+        apply_payloads = [
+            {
+                "action": "apply",
+                "source": "training_setup_wizard",
+                "apply_source": "recommendation",
+                "selected_model_id": "microsoft/phi-2",
+                "selected_rank": 1,
+            },
+            {
+                "action": "apply",
+                "source": "training_setup_wizard",
+                "apply_source": "benchmark",
+                "selected_model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                "selected_rank": 1,
+            },
+            {
+                "action": "apply",
+                "source": "training_setup_wizard",
+                "apply_source": "consensus",
+                "selected_model_id": "meta-llama/Llama-3.2-1B-Instruct",
+                "selected_rank": 1,
+            },
+            {
+                "action": "apply",
+                "source": "training_setup_wizard",
+                "selected_model_id": "google/gemma-2-2b-it",
+                "selected_rank": 1,
+            },
+        ]
+        for item in apply_payloads:
+            resp = self.client.post(
+                f"/api/projects/{project_id}/training/model-selection/telemetry",
+                json=item,
+            )
+            self.assertEqual(resp.status_code, 200, resp.text)
+
+        summary = self.client.get(f"/api/projects/{project_id}/training/model-selection/telemetry")
+        self.assertEqual(summary.status_code, 200, summary.text)
+        payload = summary.json()
+        self.assertEqual(
+            int(payload.get("apply_events_by_source", {}).get("recommendation") or 0),
+            1,
+        )
+        self.assertEqual(
+            int(payload.get("apply_events_by_source", {}).get("benchmark") or 0),
+            1,
+        )
+        self.assertEqual(
+            int(payload.get("apply_events_by_source", {}).get("consensus") or 0),
+            1,
+        )
+        self.assertEqual(
+            int(payload.get("apply_events_by_source", {}).get("unspecified") or 0),
+            1,
+        )
+
+    def test_model_recommendation_includes_benchmark_bias_signal(self):
+        project_id = self._create_project("phase21-model-wizard-benchmark-bias-1")
+
+        baseline = self.client.post(
+            f"/api/projects/{project_id}/training/model-selection/recommend",
+            json={
+                "target_device": "laptop",
+                "primary_language": "english",
+                "available_vram_gb": 12,
+                "task_profile": "chat_sft",
+                "top_k": 5,
+            },
+        )
+        self.assertEqual(baseline.status_code, 200, baseline.text)
+        baseline_rows = [item for item in baseline.json().get("recommendations", []) if isinstance(item, dict)]
+        baseline_score = float(
+            next(
+                (
+                    item.get("match_score")
+                    for item in baseline_rows
+                    if item.get("model_id") == "microsoft/Phi-3-mini-4k-instruct"
+                ),
+                0.0,
+            )
+        )
+
+        benchmark_matrix = [
+            {
+                "rank": 1,
+                "model_id": "microsoft/Phi-3-mini-4k-instruct",
+                "estimated_quality_score": 0.84,
+                "estimated_accuracy_percent": 84.0,
+                "estimated_latency_ms": 54.0,
+                "estimated_throughput_tps": 21.0,
+                "fits_available_vram": True,
+                "benchmark_mode": "real_tokenizer",
+            },
+            {
+                "rank": 2,
+                "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+                "estimated_quality_score": 0.76,
+                "estimated_accuracy_percent": 76.0,
+                "estimated_latency_ms": 44.0,
+                "estimated_throughput_tps": 24.0,
+                "fits_available_vram": True,
+                "benchmark_mode": "real_tokenizer",
+            },
+            {
+                "rank": 3,
+                "model_id": "google/gemma-2-2b-it",
+                "estimated_quality_score": 0.73,
+                "estimated_accuracy_percent": 73.0,
+                "estimated_latency_ms": 42.0,
+                "estimated_throughput_tps": 25.0,
+                "fits_available_vram": True,
+                "benchmark_mode": "real_tokenizer",
+            },
+        ]
+
+        for run_idx in range(2):
+            record_model_benchmark_run(
+                project_id,
+                payload={
+                    "run_id": f"phase21-bench-{run_idx}",
+                    "status": "completed",
+                    "benchmark_mode": "real_sampled_tokenizer",
+                    "request": {
+                        "target_device": "laptop",
+                        "primary_language": "english",
+                        "available_vram_gb": 12,
+                        "task_profile": "chat_sft",
+                        "max_models": 3,
+                        "sample_size": 32,
+                    },
+                    "matrix": benchmark_matrix,
+                    "model_count": 3,
+                    "sampled_row_count": 32,
+                    "sampled_avg_tokens": 74.0,
+                    "sampled_total_tokens": 2368,
+                    "benchmark_window_minutes": 5,
+                },
+            )
+
+        adapted = self.client.post(
+            f"/api/projects/{project_id}/training/model-selection/recommend",
+            json={
+                "target_device": "laptop",
+                "primary_language": "english",
+                "available_vram_gb": 12,
+                "task_profile": "chat_sft",
+                "top_k": 5,
+            },
+        )
+        self.assertEqual(adapted.status_code, 200, adapted.text)
+        adapted_payload = adapted.json()
+        adaptive_meta = adapted_payload.get("adaptive_ranking", {})
+        benchmark_meta = adaptive_meta.get("benchmark", {})
+        self.assertTrue(bool(benchmark_meta.get("enabled")))
+        self.assertGreaterEqual(int(benchmark_meta.get("run_count") or 0), 2)
 
         adapted_rows = [item for item in adapted_payload.get("recommendations", []) if isinstance(item, dict)]
         phi_row = next(

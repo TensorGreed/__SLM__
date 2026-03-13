@@ -23,6 +23,21 @@ describe('TrainingPanel model wizard', () => {
       if (url.includes('/training/preferences')) {
         return { data: { project_id: 1, preferred_plan_profile: 'balanced' } };
       }
+      if (url.includes('/training/model-selection/benchmark-sweep/history')) {
+        return {
+          data: {
+            count: 1,
+            runs: [
+              {
+                run_id: 'prev-run-1',
+                benchmark_mode: 'real_sampled_heuristic',
+                tradeoff_summary: { best_balance_model_id: 'acme/test-model' },
+                matrix: [{ model_id: 'acme/test-model' }],
+              },
+            ],
+          },
+        };
+      }
       if (url.includes('/training/runtimes')) {
         return { data: { project_id: 1, default_runtime_id: 'auto', runtimes: [] } };
       }
@@ -78,6 +93,92 @@ describe('TrainingPanel model wizard', () => {
           },
         };
       }
+      if (url.includes('/training/model-selection/benchmark-sweep')) {
+        return {
+          data: {
+            project_id: 1,
+            run_id: 'bench-run-1',
+            benchmark_mode: 'real_sampled_heuristic',
+            sampled_row_count: 24,
+            sampled_avg_tokens: 62.5,
+            tradeoff_summary: {
+              best_quality_model_id: 'acme/test-model',
+              best_speed_model_id: 'acme/test-model',
+              best_balance_model_id: 'acme/test-model',
+            },
+            matrix: [
+              {
+                rank: 1,
+                model_id: 'acme/test-model',
+                estimated_accuracy_percent: 88.2,
+                estimated_latency_ms: 43.5,
+                estimated_throughput_tps: 22.4,
+                estimated_quality_score: 0.882,
+                benchmark_mode: 'sampled_heuristic',
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes('/training/experiments/preflight')) {
+        return {
+          data: {
+            preflight: {
+              ok: false,
+              errors: ['base_model has unsupported or unresolved architecture'],
+              warnings: [],
+              hints: ['Use Training > Config > Introspect Model to verify architecture/context before launching.'],
+              capability_summary: {
+                task_type: 'causal_lm',
+                training_mode: 'sft',
+                trainer_backend_requested: 'auto',
+                runtime_backend: 'local',
+                runtime: {
+                  resolved_runtime_id: 'auto',
+                  supported_modalities: ['text'],
+                  modalities_declared: false,
+                },
+                dataset: {
+                  adapter_context: {
+                    adapter_id: 'default-canonical',
+                    adapter_source: 'prepared_manifest',
+                    task_profile: 'instruction_sft',
+                    task_profile_source: 'prepared_manifest',
+                    adapter_modality: 'text',
+                  },
+                },
+                capability_contract: {
+                  task_type: 'causal_lm',
+                  training_mode: 'sft',
+                  trainer_backend_requested: 'auto',
+                  runtime_id: 'auto',
+                  runtime_backend: 'local',
+                  runtime_known: true,
+                  runtime_supported_modalities: ['text'],
+                  runtime_modalities_declared: false,
+                  adapter_id: 'default-canonical',
+                  adapter_task_profile: 'instruction_sft',
+                  adapter_modality: 'text',
+                },
+                model: {
+                  id: 'acme/unknown-arch',
+                  family: 'unknown',
+                  architecture: 'unknown',
+                  introspection: {
+                    source: 'none',
+                  },
+                  compatibility_gate: {
+                    ok: false,
+                    errors: ['unsupported or unresolved architecture'],
+                    hints: ['Use Training > Config > Introspect Model'],
+                    supported_architectures: ['causal_lm', 'seq2seq', 'classification', 'encoder'],
+                  },
+                },
+              },
+            },
+          },
+        };
+      }
       if (url.includes('/training/experiments/effective-config')) {
         return { data: { resolved_training_config: {} } };
       }
@@ -108,6 +209,44 @@ describe('TrainingPanel model wizard', () => {
       '/projects/1/training/model-selection/telemetry',
       expect.objectContaining({
         action: 'apply',
+        apply_source: 'recommendation',
+        selected_model_id: 'acme/test-model',
+      }),
+    );
+  });
+
+  it('runs benchmark sweep and applies benchmark winner', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    await user.click(screen.getByRole('button', { name: 'Run Benchmark Sweep' }));
+    expect(await screen.findByRole('button', { name: 'Apply Benchmark Winner' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Apply Benchmark Winner' }));
+    await user.click(screen.getByRole('tab', { name: /Config/i }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
+    });
+
+    expect(apiMock.post).toHaveBeenCalledWith(
+      '/projects/1/training/model-selection/benchmark-sweep',
+      expect.objectContaining({
+        target_device: 'laptop',
+      }),
+    );
+    expect(apiMock.post).toHaveBeenCalledWith(
+      '/projects/1/training/model-selection/telemetry',
+      expect.objectContaining({
+        action: 'apply',
+        apply_source: 'benchmark',
         selected_model_id: 'acme/test-model',
       }),
     );
@@ -134,5 +273,100 @@ describe('TrainingPanel model wizard', () => {
         model_id: 'microsoft/phi-2',
       }),
     );
+  });
+
+  it('surfaces model compatibility gate diagnostics in preflight panel', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
+
+    expect(await screen.findByText('Model Compatibility')).toBeInTheDocument();
+    expect(await screen.findByText('Blocked')).toBeInTheDocument();
+    expect(await screen.findByText('unsupported or unresolved architecture')).toBeInTheDocument();
+    expect(await screen.findByText('causal_lm, seq2seq, classification, encoder')).toBeInTheDocument();
+  });
+
+  it('shows recommendation vs benchmark snapshot in preflight and review', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Run Capability Preflight' }));
+
+    expect(await screen.findByText('Model Selection Snapshot')).toBeInTheDocument();
+    expect(await screen.findByText('Recommendation Winner')).toBeInTheDocument();
+    expect(await screen.findByText('Benchmark Winner')).toBeInTheDocument();
+    expect(await screen.findByText(/Winners align/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /Review/i }));
+    expect(await screen.findByText('Preflight Model Selection Snapshot')).toBeInTheDocument();
+    expect(await screen.findByText('Recommendation Winner')).toBeInTheDocument();
+    expect(await screen.findByText('Benchmark Winner')).toBeInTheDocument();
+  });
+
+  it('applies consensus winner from review snapshot action', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /Power Tools/i }));
+    expect(await screen.findByText('acme/test-model')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Review/i }));
+
+    expect(await screen.findByRole('button', { name: 'Use Consensus Winner' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Use Consensus Winner' }));
+    expect(await screen.findByText('Applied consensus winner (acme/test-model) to base model.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /Config/i }));
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('acme/test-model')).toBeInTheDocument();
+    });
+
+    expect(apiMock.post).toHaveBeenCalledWith(
+      '/projects/1/training/model-selection/telemetry',
+      expect.objectContaining({
+        action: 'apply',
+        apply_source: 'consensus',
+        selected_model_id: 'acme/test-model',
+      }),
+    );
+  });
+
+  it('shows compact model gate summary in essentials quick preflight', async () => {
+    const user = userEvent.setup();
+    render(
+      <TrainingPanel
+        projectId={1}
+        forceCreateVisible
+        hideExperimentList
+        setupMode="essentials"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Run Quick Preflight' }));
+
+    expect(await screen.findByText('Model Gate: Blocked')).toBeInTheDocument();
+    expect(await screen.findByText(/acme\/unknown-arch • unknown • source none/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Supported: causal_lm, seq2seq, classification, encoder/i)).toBeInTheDocument();
   });
 });
