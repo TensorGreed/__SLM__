@@ -9,7 +9,7 @@ const STEPS = [
     { num: 2, icon: '🧹', title: 'Clean & Chunk', desc: 'Deduplicate, redact PII, score quality, chunk text' },
     { num: 3, icon: '🏆', title: 'Gold Dataset', desc: 'Write expert Q&A pairs for evaluation (test set)' },
     { num: 4, icon: '🧪', title: 'Synthetic Gen', desc: 'Teacher model converts your text into training pairs' },
-    { num: 5, icon: '🔬', title: 'Train SLM', desc: 'Fine-tune with LoRA / SFT on your GPU' },
+    { num: 5, icon: '🔬', title: 'Train Model', desc: 'Fine-tune with LoRA / SFT on your GPU' },
     { num: 6, icon: '📊', title: 'Evaluate', desc: 'Grade against Gold Set + run LLM-as-a-Judge' },
     { num: 7, icon: '📦', title: 'Compress', desc: 'Quantize to 4-bit / 8-bit for deployment' },
     { num: 8, icon: '🚀', title: 'Export', desc: 'Package as GGUF, ONNX, or HuggingFace format' },
@@ -20,7 +20,7 @@ export default function GettingStartedWizard({ onStart }: GettingStartedWizardPr
         <div className="wizard-overlay animate-fade-in">
             <div className="wizard-card">
                 <div className="wizard-header">
-                    <h2 className="wizard-title">🚀 Welcome to your SLM Pipeline</h2>
+                    <h2 className="wizard-title">🚀 Welcome to your BrewSLM pipeline</h2>
                     <p className="wizard-subtitle">Follow these 8 steps to go from raw data to a deployed small language model.</p>
                 </div>
                 <div className="wizard-steps">

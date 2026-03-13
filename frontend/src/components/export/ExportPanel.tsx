@@ -427,7 +427,7 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 {
                     host: '127.0.0.1',
                     port: 8080,
-                    smoke_test_prompt: 'Hello from local SLM',
+                    smoke_test_prompt: 'Hello from BrewSLM',
                 },
             );
             setServePlan(res.data || null);
@@ -514,7 +514,7 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 {
                     host: '127.0.0.1',
                     port: 8080,
-                    smoke_test_prompt: 'Hello from local SLM',
+                    smoke_test_prompt: 'Hello from BrewSLM',
                 },
             );
             setServePlan(res.data || null);
@@ -538,7 +538,7 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                 template_id: templateId,
                 host: String(servePlan.host || '127.0.0.1'),
                 port: Number(servePlan.port || 8080),
-                smoke_test_prompt: 'Hello from local SLM',
+                smoke_test_prompt: 'Hello from BrewSLM',
             };
             let res;
             if (servePlan.source === 'registry' && servePlan.model_id) {

@@ -100,7 +100,7 @@ export default function ProjectListPage() {
     return (
         <div className="main-content project-list-main">
             <TopBar
-                title="SLM Platform"
+                title="BrewSLM"
                 subtitle={`${totalProjects} project${totalProjects !== 1 ? 's' : ''}`}
                 actions={
                     <div className="project-list-top-actions">
@@ -145,7 +145,7 @@ export default function ProjectListPage() {
                     <EmptyState
                         icon="◈"
                         title="No projects yet"
-                        description="Create your first SLM project to start building, evaluating, and exporting domain-specific language models."
+                        description="Create your first BrewSLM project to start building, evaluating, and exporting domain-specific small language models."
                         action={
                             <div className="project-list-empty-actions">
                                 <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
@@ -176,7 +176,7 @@ export default function ProjectListPage() {
                 <div className="modal-overlay" onClick={() => setShowModal(false)}>
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
-                            <h2 className="modal-title">New SLM Project</h2>
+                            <h2 className="modal-title">New BrewSLM Project</h2>
                             <button className="btn btn-ghost" onClick={() => setShowModal(false)}>✕</button>
                         </div>
                         <div className="modal-body">
@@ -263,7 +263,7 @@ export default function ProjectListPage() {
                         </div>
                         <div className="modal-body">
                             <p className="project-list-magic-copy">
-                                Describe the dataset or SLM you want to build. Our AI Architect will automatically configure the pipeline, select the base model, and assign the right domain packs for you.
+                                Describe the dataset or model you want to build. BrewSLM AI Architect will configure the pipeline, pick a base model, and assign the right domain packs for you.
                             </p>
                             <div className="form-group">
                                 <label className="form-label">What do you want to build?</label>

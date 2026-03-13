@@ -558,6 +558,27 @@ Remote import request notes:
 - Remote import request supports `adapter_id`, optional `task_profile`, and `adapter_config`; default fallback is `default-canonical`.
 - Ingestion UI includes an **Adapter Mapping** block for optional `adapter_config` JSON overrides during remote imports.
 
+## BrewSLM CLI
+
+You can run a lightweight CLI for core project workflows:
+
+- Wrapper script: `./brewslm`
+- Python entrypoint: `backend/scripts/brewslm.py`
+
+Examples:
+
+```bash
+./brewslm ingest --project 1 --source hf --id nguha/legalbench --split train --wait
+./brewslm preflight --project 1 --task causal_lm
+./brewslm train --project 1 --autopilot --one-click --intent "Build a legal Q&A assistant"
+./brewslm export --project 1 --format huggingface --target vllm
+```
+
+Auth:
+
+- Set `BREWSLM_TOKEN` (or pass `--token ...`) when API auth is enabled.
+- Optional: set `BREWSLM_API_BASE` if your API is not at `http://127.0.0.1:8000/api`.
+
 ## Production-Oriented Capabilities
 
 - Strict runtime modes (no silent fallbacks unless explicitly enabled)

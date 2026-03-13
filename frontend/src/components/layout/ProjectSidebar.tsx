@@ -166,9 +166,9 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                 <button
                     className="rail-logo"
                     onClick={() => navigate('/')}
-                    title="Back to projects"
+                    title="Back to BrewSLM projects"
                 >
-                    SLM
+                    BS
                 </button>
                 <div className="project-sidebar-rail-nav">
                     {railItems.map((item) => (

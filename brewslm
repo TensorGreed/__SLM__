@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PY="$ROOT_DIR/backend/.venv/bin/python"
+
+if [[ -x "$VENV_PY" ]]; then
+  exec "$VENV_PY" "$ROOT_DIR/backend/scripts/brewslm.py" "$@"
+fi
+
+exec python3 "$ROOT_DIR/backend/scripts/brewslm.py" "$@"

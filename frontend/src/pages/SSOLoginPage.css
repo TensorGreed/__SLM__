@@ -28,6 +28,13 @@
     box-shadow: 0 8px 24px rgba(37, 99, 235, 0.26);
 }
 
+.auth-logo-mark {
+    color: #ffffff;
+    font-size: 0.86rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+
 .auth-title {
     font-size: 1.7rem;
     font-weight: 700;

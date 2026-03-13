@@ -31,11 +31,18 @@
 }
 
 .logo-icon {
-    font-size: 1.5rem;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.55rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
     background: var(--accent-gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25);
 }
 
 .logo-text {

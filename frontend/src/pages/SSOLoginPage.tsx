@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Activity } from 'lucide-react';
 import api from '../api/client';
 import './SSOLoginPage.css';
 
@@ -50,13 +49,13 @@ export default function SSOLoginPage() {
         <div className="auth-page">
             <div className="card auth-card">
                 <div className="auth-logo">
-                    <Activity color="white" size={24} />
+                    <span className="auth-logo-mark">BS</span>
                 </div>
                 <h1 className="auth-title">
-                    SLM Studio
+                    BrewSLM
                 </h1>
                 <p className="auth-subtitle">
-                    Enterprise authentication required
+                    Secure sign-in to your BrewSLM workspace
                 </p>
 
                 {authConfig?.sso_enabled ? (

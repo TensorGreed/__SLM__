@@ -21,8 +21,8 @@ export default function Sidebar({ projectName, onNavigateHome }: SidebarProps) {
         <aside className="sidebar">
             <div className="sidebar-header" onClick={onNavigateHome} role="button" tabIndex={0}>
                 <div className="sidebar-logo">
-                    <span className="logo-icon">◈</span>
-                    <span className="logo-text">SLM Platform</span>
+                    <span className="logo-icon">BS</span>
+                    <span className="logo-text">BrewSLM</span>
                 </div>
             </div>
 

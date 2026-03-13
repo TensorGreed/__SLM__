@@ -49,7 +49,7 @@ class ExportDeploymentValidateRequest(BaseModel):
 class ExportServePlanRequest(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
-    smoke_test_prompt: str = "Hello from SLM!"
+    smoke_test_prompt: str = "Hello from BrewSLM!"
     target_ids: list[str] | None = None
 
 

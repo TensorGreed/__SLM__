@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrewSLM.com | Build Small Language Models End-to-End</title>
+    <meta
+      name="description"
+      content="BrewSLM helps teams prepare data, fine-tune small language models, benchmark, deploy, and iterate from one modern workflow."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-noise"></div>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="BrewSLM Home">
+        <span class="brand-mark">BS</span>
+        <span class="brand-text">BrewSLM.com</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a class="btn btn-outline" href="#quickstart">Quickstart</a>
+    </header>
+
+    <main id="top">
+      <section class="hero section">
+        <div class="pipeline-shell reveal">
+          <div class="pipeline-head">
+            <p class="eyebrow">First-Class Training Pipeline</p>
+            <h2>BrewSLM pipeline: raw data to shipped SLM</h2>
+          </div>
+          <ol class="pipeline-track" aria-label="BrewSLM training pipeline">
+            <li class="pipeline-node">
+              <span>01</span>
+              <strong>Ingest</strong>
+              <small>HF / Kaggle / URL / local</small>
+            </li>
+            <li class="pipeline-node">
+              <span>02</span>
+              <strong>Adapter Map</strong>
+              <small>schema to canonical records</small>
+            </li>
+            <li class="pipeline-node">
+              <span>03</span>
+              <strong>Contract Check</strong>
+              <small>task/data compatibility</small>
+            </li>
+            <li class="pipeline-node">
+              <span>04</span>
+              <strong>Model Select v2</strong>
+              <small>introspection + memory fit</small>
+            </li>
+            <li class="pipeline-node">
+              <span>05</span>
+              <strong>Preflight</strong>
+              <small>runtime/dependency guardrails</small>
+            </li>
+            <li class="pipeline-node">
+              <span>06</span>
+              <strong>Train + Benchmark</strong>
+              <small>local or cloud burst</small>
+            </li>
+            <li class="pipeline-node">
+              <span>07</span>
+              <strong>Export + Serve</strong>
+              <small>artifact sync + deployment</small>
+            </li>
+          </ol>
+          <!-- <div class="pipeline-panels">
+            <div class="terminal-block">
+              <p>$ brewslm ingest --source hf --id nguha/legalbench --split train</p>
+              <p>$ brewslm preflight --project 17 --task causal_lm</p>
+              <p>$ brewslm train --autopilot --one-click</p>
+              <p>$ brewslm export --format huggingface --target vllm</p>
+            </div>
+            <div class="config-block">
+              <p><span class="k">adapter_id</span>: default-canonical</p>
+              <p><span class="k">task_profile</span>: structured_extraction</p>
+              <p><span class="k">runtime_id</span>: builtin.simulate</p>
+              <p><span class="k">capability_contract</span>: pass</p>
+              <p><span class="k">oom_retry</span>: enabled</p>
+              <p><span class="k">artifact_sync_policy</span>: smart</p>
+            </div>
+          </div> -->
+        </div>
+
+        <div class="hero-copy">
+          <p class="eyebrow reveal">Built for Engineers</p>
+          <h1 class="reveal">
+            Make SLM development look like a stable software pipeline, not a notebook maze.
+          </h1>
+          <p class="hero-sub reveal">
+            BrewSLM is a full stack for data contracts, capability checks, benchmark-driven model
+            selection, multimodal runtime paths, and managed cloud burst jobs. You can stay in
+            guided mode or drop into advanced controls at any stage.
+          </p>
+          <div class="hero-actions reveal">
+            <a class="btn btn-solid" href="#quickstart">Run Quickstart</a>
+            <a class="btn btn-ghost" href="#workflow">Inspect Workflow</a>
+          </div>
+          <ul class="hero-points reveal">
+            <li>Reproducible steps, explicit contracts, fewer silent failures</li>
+            <li>Works with unstructured, tabular, and instruction-style data</li>
+            <li>One-click path for speed, deep controls for specialists</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Core Product</p>
+          <h2>Everything needed to ship practical SLM systems</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card reveal">
+            <h3>Universal Data Ingestion</h3>
+            <p>
+              Bring local files, Hugging Face, Kaggle, or URL sources. Normalize with adapters,
+              map fields safely, and validate shape contracts before training.
+            </p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Preflight + Capability Contracts</h3>
+            <p>
+              Catch incompatibilities early across model architecture, task type, runtime modality,
+              dependencies, and dataset fit.
+            </p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Model Selection v2</h3>
+            <p>
+              Combine curated defaults with model introspection metadata and benchmark context to
+              make safer base-model picks.
+            </p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Real Benchmark Mode</h3>
+            <p>
+              Run short benchmark jobs on sampled project data, persist results, and feed ranking
+              decisions back into recommendations.
+            </p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Multimodal Runtime Path</h3>
+            <p>
+              Text-first by default, with beta pathways for vision-language and audio-text training
+              plus strict media preflight checks.
+            </p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Cloud Burst Jobs</h3>
+            <p>
+              Managed lifecycle for remote training: submit, status, cancel, logs, and artifact sync
+              to keep workflows consistent across local and cloud.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="workflow" class="section workflow">
+        <div class="section-head reveal">
+          <p class="eyebrow">Product Flow</p>
+          <h2>From plain intent to exportable model in five steps</h2>
+        </div>
+        <div class="timeline">
+          <div class="timeline-item reveal">
+            <span>01</span>
+            <div>
+              <h3>Describe goal in plain language</h3>
+              <p>BrewSLM interprets intent, suggests rewrites, and builds a safe starter plan.</p>
+            </div>
+          </div>
+          <div class="timeline-item reveal">
+            <span>02</span>
+            <div>
+              <h3>Connect and normalize data</h3>
+              <p>Adapters map diverse schemas into training-ready records with quality checks.</p>
+            </div>
+          </div>
+          <div class="timeline-item reveal">
+            <span>03</span>
+            <div>
+              <h3>Run preflight and benchmark</h3>
+              <p>Validate capability contracts and compare candidate models on your sample.</p>
+            </div>
+          </div>
+          <div class="timeline-item reveal">
+            <span>04</span>
+            <div>
+              <h3>Launch training locally or cloud burst</h3>
+              <p>Track logs, checkpoints, and metrics in one consistent control surface.</p>
+            </div>
+          </div>
+          <div class="timeline-item reveal">
+            <span>05</span>
+            <div>
+              <h3>Export and serve</h3>
+              <p>Package artifacts for deployment paths and iterate quickly with grounded feedback.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="section faq">
+        <div class="section-head reveal">
+          <p class="eyebrow">FAQ</p>
+          <h2>Questions teams ask before adopting BrewSLM</h2>
+        </div>
+        <div class="faq-grid">
+          <details class="faq-item reveal">
+            <summary>Is BrewSLM only for text datasets?</summary>
+            <p>
+              No. Text is the default path, but multimodal adapters and runtime checks support
+              vision-language and audio-text workflows.
+            </p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Can beginners use this without deep ML expertise?</summary>
+            <p>
+              Yes. The Wizard maps plain intent to safe presets, guardrails block risky launches,
+              and one-click runs handle most setup complexity.
+            </p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Do I lose control if I use autopilot?</summary>
+            <p>
+              Not at all. You can inspect the generated config JSON, override any setting, and move
+              to advanced panels at any step.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section id="quickstart" class="section cta reveal">
+        <div class="cta-copy">
+          <p class="eyebrow">Quickstart</p>
+          <h2>Get a full pipeline run locally in minutes</h2>
+          <p>
+            Use this baseline sequence to spin up backend, frontend, and worker, then launch your
+            first training run through the Wizard or Advanced panel.
+          </p>
+          <div class="terminal-block">
+            <p>$ git clone &lt;your-repo&gt; __SLM__</p>
+            <p>$ cd __SLM__ &amp;&amp; docker-compose up -d</p>
+            <p>$ cd backend &amp;&amp; .venv/bin/celery -A app.worker worker -l info</p>
+            <p>$ cd frontend &amp;&amp; npm run dev</p>
+          </div>
+        </div>
+        <div class="cta-form">
+          <label>Engineering Notes</label>
+          <p class="form-note">Default flow emphasizes safety over raw speed.</p>
+          <p class="form-note">Use `config_name` for multi-config HF datasets.</p>
+          <p class="form-note">Use preflight before long jobs or cloud burst runs.</p>
+          <a class="btn btn-solid" href="#top">Run BrewSLM Pipeline</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>© <span id="year"></span> BrewSLM.com</p>
+      <p>Product site for the __SLM__ platform</p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
