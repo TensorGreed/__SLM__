@@ -106,7 +106,7 @@ async def upsert_project_secret(
             ProjectSecret.project_id == project_id,
             ProjectSecret.provider == provider_norm,
             ProjectSecret.key_name == key_norm,
-        )
+        ).order_by(ProjectSecret.updated_at.desc(), ProjectSecret.id.desc()).limit(1)
     )
     secret_obj = result.scalar_one_or_none()
     encrypted = _encrypt_secret(raw_value)
@@ -156,10 +156,11 @@ async def delete_project_secret(
             ProjectSecret.key_name == key_norm,
         )
     )
-    secret_obj = result.scalar_one_or_none()
-    if not secret_obj:
+    secret_rows = list(result.scalars().all())
+    if not secret_rows:
         return False
-    await db.delete(secret_obj)
+    for secret_obj in secret_rows:
+        await db.delete(secret_obj)
     await db.flush()
     return True
 
@@ -178,7 +179,7 @@ async def get_project_secret_value(
             ProjectSecret.project_id == project_id,
             ProjectSecret.provider == provider_norm,
             ProjectSecret.key_name == key_norm,
-        )
+        ).order_by(ProjectSecret.updated_at.desc(), ProjectSecret.id.desc()).limit(1)
     )
     secret_obj = result.scalar_one_or_none()
     if not secret_obj:

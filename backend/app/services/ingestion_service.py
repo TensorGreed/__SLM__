@@ -75,9 +75,9 @@ async def get_or_create_raw_dataset(
         select(Dataset).where(
             Dataset.project_id == project_id,
             Dataset.dataset_type == DatasetType.RAW,
-        )
+        ).order_by(Dataset.updated_at.desc(), Dataset.id.desc()).limit(1)
     )
-    dataset = result.scalar_one_or_none()
+    dataset = result.scalars().first()
     if dataset:
         return dataset
 
@@ -500,12 +500,90 @@ async def ingest_remote_dataset(
                     break
             return
 
+        if ext == ".tsv":
+            reader = csv.DictReader(raw_text.splitlines(), delimiter="\t")
+            for row in reader:
+                raw_samples.append(dict(row))
+                if len(raw_samples) >= target_count:
+                    break
+            return
+
         for i, line in enumerate(raw_text.splitlines()):
             if i >= remaining:
                 break
             line = line.strip()
             if line:
                 raw_samples.append({"content": line})
+
+    async def _collect_hf_rows_from_repo_files() -> int:
+        from huggingface_hub import HfApi, hf_hub_download
+
+        token = hf_token or None
+        api = HfApi(token=token)
+        repo_files = list(api.list_repo_files(identifier, repo_type="dataset"))
+        await _progress(f"[hf] repo file fallback discovered {len(repo_files)} files")
+
+        allowed_exts = {".jsonl", ".json", ".csv", ".tsv", ".txt"}
+        candidate_files = [
+            item
+            for item in repo_files
+            if Path(str(item)).suffix.lower() in allowed_exts
+        ]
+        if config_name:
+            config_token = f"/{str(config_name).strip().strip('/')}/"
+            candidate_files = [
+                item for item in candidate_files
+                if config_token in f"/{item}/"
+            ]
+        if not candidate_files:
+            raise ValueError("No parseable data files found in dataset repository")
+
+        split_token = str(split or "").strip().lower()
+        split_aliases = {split_token} if split_token else set()
+        if split_token == "validation":
+            split_aliases.update({"val", "dev"})
+        if split_token == "test":
+            split_aliases.update({"eval", "evaluation"})
+
+        def _split_rank(path: str) -> int:
+            lowered = str(path).lower()
+            if not split_aliases:
+                return 1
+            for alias in split_aliases:
+                if not alias:
+                    continue
+                if (
+                    f"/{alias}." in lowered
+                    or f"_{alias}." in lowered
+                    or f"-{alias}." in lowered
+                    or f"/{alias}/" in lowered
+                    or lowered.endswith(f"{alias}.jsonl")
+                    or lowered.endswith(f"{alias}.json")
+                    or lowered.endswith(f"{alias}.csv")
+                    or lowered.endswith(f"{alias}.tsv")
+                    or lowered.endswith(f"{alias}.txt")
+                ):
+                    return 0
+            return 1
+
+        ordered_files = sorted(candidate_files, key=lambda item: (_split_rank(item), len(str(item))))
+        for idx, repo_file in enumerate(ordered_files, start=1):
+            if len(raw_samples) >= target_samples:
+                break
+            local_path = hf_hub_download(
+                repo_id=identifier,
+                filename=repo_file,
+                repo_type="dataset",
+                token=token,
+            )
+            ext = Path(repo_file).suffix.lower()
+            raw_text = Path(local_path).read_text(encoding="utf-8", errors="replace")
+            _append_records_from_text(raw_text, ext, target_samples)
+            if idx <= 3 or idx % 20 == 0:
+                await _progress(
+                    f"[hf] repo fallback parsed {idx}/{len(ordered_files)} files, rows={len(raw_samples)}"
+                )
+        return len(raw_samples)
 
     if source_type == "huggingface":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))
@@ -533,21 +611,40 @@ async def ingest_remote_dataset(
             source_mode = "live"
             await _progress(f"[hf] collected {len(raw_samples)} rows")
         except Exception as e:
-            if not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
+            load_error = str(e)
+            used_repo_fallback = False
+            if "Dataset scripts are no longer supported" in load_error:
+                await _progress(
+                    "[hf] load_dataset() rejected legacy dataset script; trying repository file fallback..."
+                )
+                try:
+                    parsed_rows = await _collect_hf_rows_from_repo_files()
+                    if parsed_rows > 0:
+                        source_mode = "live_hub_files"
+                        used_repo_fallback = True
+                        await _progress(f"[hf] repository file fallback collected {parsed_rows} rows")
+                except Exception as repo_fallback_error:
+                    await _progress(f"[hf] repository file fallback failed: {repo_fallback_error}")
+                    load_error = f"{load_error}; fallback_error={repo_fallback_error}"
+
+            if used_repo_fallback:
+                pass
+            elif not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
                 raise ValueError(
                     "HuggingFace import failed. Configure dependencies/network/auth and retry "
                     "(or set ALLOW_SIMULATED_INGESTION_FALLBACK=true for demo fallback). "
-                    f"Details: {e}"
+                    f"Details: {load_error}"
                 )
-            await _progress("[hf] live import failed; using simulated fallback rows")
-            for i in range(target_samples):
-                raw_samples.append({
-                    "instruction": f"Sample instruction #{i+1} from {identifier}",
-                    "input": f"Context for sample {i+1}",
-                    "output": f"Expected output for sample {i+1} from the {identifier} dataset.",
-                    "source": f"huggingface/{identifier}",
-                    "split": split,
-                })
+            else:
+                await _progress("[hf] live import failed; using simulated fallback rows")
+                for i in range(target_samples):
+                    raw_samples.append({
+                        "instruction": f"Sample instruction #{i+1} from {identifier}",
+                        "input": f"Context for sample {i+1}",
+                        "output": f"Expected output for sample {i+1} from the {identifier} dataset.",
+                        "source": f"huggingface/{identifier}",
+                        "split": split,
+                    })
 
     elif source_type == "kaggle":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))

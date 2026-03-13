@@ -99,6 +99,11 @@ from app.services.training_runtime_service import (
     reload_runtime_plugins_from_settings,
     runtime_plugin_status,
 )
+from app.services.newbie_autopilot_service import (
+    build_newbie_autopilot_intent_clarification,
+    evaluate_newbie_autopilot_dataset_readiness,
+    resolve_newbie_autopilot_intent,
+)
 from app.services.capability_contract_service import build_training_capability_contract
 from app.services.cloud_burst_service import (
     build_cloud_burst_launch_plan,
@@ -357,6 +362,20 @@ class CloudBurstArtifactSyncRequest(BaseModel):
     cursor: str | None = Field(default=None, max_length=4096)
 
 
+class NewbieAutopilotIntentRequest(BaseModel):
+    intent: str = Field(..., min_length=3, max_length=4000)
+    target_device: str = Field(default="laptop", pattern="^(mobile|laptop|server)$")
+    primary_language: str = Field(default="english", min_length=1, max_length=32)
+    available_vram_gb: float | None = Field(default=None, ge=0)
+
+
+class NewbieAutopilotOneClickRequest(NewbieAutopilotIntentRequest):
+    run_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
+    auto_apply_rewrite: bool = True
+    intent_rewrite: str | None = Field(default=None, min_length=3, max_length=4000)
+
+
 def _sse_json(payload: dict) -> str:
     serialized = json.dumps(payload, ensure_ascii=True)
     return f"data: {serialized}\n\n"
@@ -368,6 +387,100 @@ async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return project
+
+
+def _build_newbie_autopilot_plan(
+    *,
+    project_id: int,
+    req: NewbieAutopilotIntentRequest,
+) -> dict[str, object]:
+    plan = resolve_newbie_autopilot_intent(
+        intent=req.intent,
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+    )
+    task_profile = str(plan.get("task_profile") or "instruction_sft")
+    recommendation = recommend_training_base_models(
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+        task_profile=task_profile,
+        top_k=1,
+    )
+    top_recommendation = None
+    recommendation_rows = list(recommendation.get("recommendations") or [])
+    if recommendation_rows and isinstance(recommendation_rows[0], dict):
+        top_recommendation = dict(recommendation_rows[0])
+
+    safe_config = dict(plan.get("safe_training_config") or {})
+    if top_recommendation is not None:
+        model_id = str(top_recommendation.get("model_id") or "").strip()
+        if model_id:
+            safe_config["base_model"] = model_id
+        suggested_defaults = dict(top_recommendation.get("suggested_defaults") or {})
+        # Keep task_type from autopilot preset as authoritative unless it is missing.
+        if not str(safe_config.get("task_type") or "").strip():
+            suggested_task_type = str(suggested_defaults.get("task_type") or "").strip()
+            if suggested_task_type:
+                safe_config["task_type"] = suggested_task_type
+        for key in ("chat_template", "batch_size", "max_seq_length"):
+            if key in suggested_defaults and suggested_defaults[key] is not None:
+                safe_config[key] = suggested_defaults[key]
+
+    preflight = run_training_preflight(
+        project_id=project_id,
+        config=safe_config,
+        base_model=str(safe_config.get("base_model") or ""),
+    )
+    confidence_value = float(plan.get("confidence") or 0.0)
+    matched_keywords = [str(item) for item in list(plan.get("matched_keywords") or [])]
+    intent_clarification = build_newbie_autopilot_intent_clarification(
+        intent=req.intent,
+        confidence=confidence_value,
+        task_profile=task_profile,
+        matched_keywords=matched_keywords,
+    )
+    dataset_readiness = evaluate_newbie_autopilot_dataset_readiness(project_id=project_id, min_rows=20)
+    guardrail_blockers: list[str] = []
+    guardrail_warnings: list[str] = []
+    guardrail_blockers.extend([str(item) for item in list(dataset_readiness.get("blockers") or [])])
+    if not bool(preflight.get("ok", False)):
+        preflight_errors = [
+            str(item).strip()
+            for item in list(preflight.get("errors") or [])
+            if str(item).strip()
+        ]
+        if preflight_errors:
+            guardrail_blockers.append(f"Training preflight failed: {preflight_errors[0]}")
+    preflight_warnings = [
+        str(item).strip()
+        for item in list(preflight.get("warnings") or [])
+        if str(item).strip()
+    ]
+    guardrail_warnings.extend([str(item) for item in list(dataset_readiness.get("warnings") or [])])
+    guardrail_warnings.extend(preflight_warnings[:3])
+    if bool(intent_clarification.get("required", False)):
+        reason = str(intent_clarification.get("reason") or "").strip()
+        if reason:
+            guardrail_warnings.append(f"Intent clarification recommended: {reason}.")
+
+    can_one_click_run = len(guardrail_blockers) == 0
+    launch_guardrails = {
+        "can_one_click_run": can_one_click_run,
+        "blockers": guardrail_blockers,
+        "warnings": guardrail_warnings,
+    }
+    return {
+        "plan": plan,
+        "intent_clarification": intent_clarification,
+        "dataset_readiness": dataset_readiness,
+        "launch_guardrails": launch_guardrails,
+        "safe_training_config": safe_config,
+        "model_recommendation": top_recommendation,
+        "recommendation_context": recommendation.get("request"),
+        "preflight": preflight,
+    }
 
 
 @router.get("/runtimes")
@@ -411,6 +524,150 @@ async def get_training_capability_contract(
     return {
         "project_id": project_id,
         **build_training_capability_contract(),
+    }
+
+
+@router.post("/autopilot/intent-resolve")
+async def resolve_training_autopilot_intent(
+    project_id: int,
+    req: NewbieAutopilotIntentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Map plain-language user intent to a safe starter training preset."""
+    await _get_project_or_404(db, project_id)
+    try:
+        payload = _build_newbie_autopilot_plan(project_id=project_id, req=req)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "project_id": project_id,
+        **payload,
+    }
+
+
+@router.post("/autopilot/one-click-run")
+async def run_training_autopilot_one_click(
+    project_id: int,
+    req: NewbieAutopilotOneClickRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create and start a training experiment from plain-language intent in one click."""
+    await _get_project_or_404(db, project_id)
+
+    effective_intent = str(req.intent).strip()
+    effective_req = NewbieAutopilotIntentRequest(
+        intent=effective_intent,
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+    )
+    applied_intent_rewrite: dict[str, object] = {
+        "applied": False,
+        "original_intent": effective_intent,
+        "rewritten_intent": None,
+        "source": None,
+    }
+    try:
+        plan_payload = _build_newbie_autopilot_plan(project_id=project_id, req=effective_req)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    rewrite_intent = str(req.intent_rewrite or "").strip()
+    rewrite_source = "request.intent_rewrite"
+    if not rewrite_intent and bool(req.auto_apply_rewrite):
+        clarification = dict(plan_payload.get("intent_clarification") or {})
+        rewrite_rows = list(clarification.get("rewrite_suggestions") or [])
+        if rewrite_rows and isinstance(rewrite_rows[0], dict):
+            top = dict(rewrite_rows[0])
+            rewrite_intent = str(top.get("rewritten_intent") or "").strip()
+            rewrite_source = str(top.get("id") or "intent_clarification.rewrite_suggestions[0]")
+
+    if rewrite_intent and rewrite_intent.lower() != effective_intent.lower():
+        effective_intent = rewrite_intent
+        effective_req = NewbieAutopilotIntentRequest(
+            intent=effective_intent,
+            target_device=req.target_device,
+            primary_language=req.primary_language,
+            available_vram_gb=req.available_vram_gb,
+        )
+        try:
+            plan_payload = _build_newbie_autopilot_plan(project_id=project_id, req=effective_req)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        applied_intent_rewrite = {
+            "applied": True,
+            "original_intent": str(req.intent).strip(),
+            "rewritten_intent": effective_intent,
+            "source": rewrite_source,
+        }
+
+    launch_guardrails = dict(plan_payload.get("launch_guardrails") or {})
+    can_one_click_run = bool(launch_guardrails.get("can_one_click_run", False))
+    if not can_one_click_run:
+        blockers = [
+            str(item).strip()
+            for item in list(launch_guardrails.get("blockers") or [])
+            if str(item).strip()
+        ]
+        error_preview = blockers[0] if blockers else "Autopilot guardrails blocked this run."
+        return {
+            "project_id": project_id,
+            "experiment": None,
+            "started": False,
+            "start_result": None,
+            "start_error": f"Autopilot blocked one-click run: {error_preview}",
+            "applied_intent_rewrite": applied_intent_rewrite,
+            **plan_payload,
+        }
+
+    safe_config = dict(plan_payload.get("safe_training_config") or {})
+    base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
+    training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
+    if training_mode_token == TrainingMode.DPO.value:
+        training_mode = TrainingMode.DPO
+    elif training_mode_token == TrainingMode.ORPO.value:
+        training_mode = TrainingMode.ORPO
+    else:
+        training_mode = TrainingMode.SFT
+
+    plan = dict(plan_payload.get("plan") or {})
+    suggested_name = str(plan.get("run_name_suggestion") or "").strip()
+    run_name = str(req.run_name or "").strip() or suggested_name or "Autopilot Run"
+    description = str(req.description or "").strip() or (
+        f"Autopilot run from intent: {effective_intent[:120]}"
+    )
+
+    try:
+        exp = await create_experiment(
+            db,
+            project_id,
+            run_name,
+            base_model,
+            safe_config,
+            description,
+            training_mode,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    experiment_payload = ExperimentResponse.model_validate(exp).model_dump()
+    started = False
+    start_result: dict[str, object] | None = None
+    start_error = ""
+    try:
+        start_result = await start_training(db, project_id, exp.id)
+        started = True
+    except ValueError as e:
+        start_error = str(e)
+
+    return {
+        "project_id": project_id,
+        "experiment": experiment_payload,
+        "started": started,
+        "start_result": start_result,
+        "start_error": start_error or None,
+        "applied_intent_rewrite": applied_intent_rewrite,
+        **plan_payload,
     }
 
 

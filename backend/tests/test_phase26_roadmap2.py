@@ -506,6 +506,119 @@ class Phase26Roadmap2Tests(unittest.TestCase):
         third_summary = dict(third_sync.json().get("sync") or {})
         self.assertGreaterEqual(int(third_summary.get("copied_count") or 0), 1, third_summary)
 
+    def test_item6_newbie_autopilot_intent_and_one_click_run(self):
+        project_id = self._create_project("phase26-item6")
+        self._write_prepared_rows(
+            project_id,
+            rows=[
+                {
+                    "text": (
+                        "User: Summarize this support thread.\n"
+                        "Assistant: Here is a short summary and next actions."
+                    )
+                },
+                {
+                    "text": (
+                        "User: Extract contract liability clauses.\n"
+                        "Assistant: Liability clauses: indemnity, caps, exceptions."
+                    )
+                },
+            ],
+        )
+
+        resolve_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/intent-resolve",
+            json={
+                "intent": "I want a model that summarizes support tickets for my team.",
+                "target_device": "laptop",
+                "available_vram_gb": 8,
+            },
+        )
+        self.assertEqual(resolve_resp.status_code, 200, resolve_resp.text)
+        resolve_payload = resolve_resp.json()
+        plan = dict(resolve_payload.get("plan") or {})
+        safe_cfg = dict(resolve_payload.get("safe_training_config") or {})
+        self.assertTrue(str(plan.get("preset_id") or "").strip(), plan)
+        self.assertIn("base_model", safe_cfg)
+        self.assertIn("task_type", safe_cfg)
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "I need structured extraction for invoice fields.",
+                "target_device": "laptop",
+                "available_vram_gb": 8,
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        run_payload = run_resp.json()
+        experiment = dict(run_payload.get("experiment") or {})
+        experiment_id = int(experiment.get("id") or 0)
+        self.assertGreater(experiment_id, 0, run_payload)
+
+        started = bool(run_payload.get("started"))
+        if started:
+            terminal = ""
+            for _ in range(120):
+                status_resp = self.client.get(
+                    f"/api/projects/{project_id}/training/experiments/{experiment_id}/status"
+                )
+                self.assertEqual(status_resp.status_code, 200, status_resp.text)
+                status_payload = status_resp.json()
+                terminal = str(status_payload.get("status") or "").strip().lower()
+                if terminal in {"completed", "failed", "cancelled"}:
+                    break
+                time.sleep(0.1)
+            if terminal not in {"completed", "failed"}:
+                self.assertIn(terminal, {"running", "pending"})
+        else:
+            self.assertTrue(str(run_payload.get("start_error") or "").strip(), run_payload)
+
+    def test_item6b_newbie_autopilot_auto_applies_rewrite_suggestion(self):
+        project_id = self._create_project("phase26-item6b")
+        self._write_prepared_rows(
+            project_id,
+            rows=[
+                {
+                    "text": f"User: support request {idx}\nAssistant: concise response {idx}",
+                }
+                for idx in range(24)
+            ],
+        )
+
+        resolve_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/intent-resolve",
+            json={
+                "intent": "help",
+                "target_device": "laptop",
+                "available_vram_gb": 8,
+            },
+        )
+        self.assertEqual(resolve_resp.status_code, 200, resolve_resp.text)
+        resolve_payload = resolve_resp.json()
+        clarification = dict(resolve_payload.get("intent_clarification") or {})
+        self.assertTrue(bool(clarification.get("required")), clarification)
+        rewrite_rows = list(clarification.get("rewrite_suggestions") or [])
+        self.assertGreater(len(rewrite_rows), 0, clarification)
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "help",
+                "target_device": "laptop",
+                "available_vram_gb": 8,
+                "auto_apply_rewrite": True,
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        run_payload = run_resp.json()
+        applied = dict(run_payload.get("applied_intent_rewrite") or {})
+        self.assertTrue(bool(applied.get("applied")), run_payload)
+        original_intent = str(applied.get("original_intent") or "").strip().lower()
+        rewritten_intent = str(applied.get("rewritten_intent") or "").strip().lower()
+        self.assertTrue(rewritten_intent, applied)
+        self.assertNotEqual(original_intent, rewritten_intent, applied)
+
 
 if __name__ == "__main__":
     unittest.main()
