@@ -5,6 +5,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.export import Export, ExportFormat, ExportStatus
 from app.models.experiment import Experiment
+from app.schemas.export import OptimizationCandidate, OptimizationMetric, OptimizationResponse
+from app.services import target_profile_service
 from app.services.deployment_target_service import (
     build_deploy_target_plan,
     execute_deploy_target_plan,
@@ -261,6 +264,7 @@ async def run_export(
     export_id: int,
     eval_report: dict | None = None,
     safety_scorecard: dict | None = None,
+    benchmark_report: dict | None = None,
     deployment_targets: list[str] | None = None,
     run_smoke_tests: bool = True,
 ) -> Export:
@@ -338,6 +342,13 @@ async def run_export(
             with open(safety_path, "w", encoding="utf-8") as f:
                 json.dump(safety_scorecard, f, indent=2)
             artifacts.append(_artifact_manifest_entry(safety_path, run_dir))
+
+        # Save benchmark report
+        if benchmark_report:
+            benchmark_path = run_dir / "benchmark_report.json"
+            with open(benchmark_path, "w", encoding="utf-8") as f:
+                json.dump(benchmark_report, f, indent=2)
+            artifacts.append(_artifact_manifest_entry(benchmark_path, run_dir))
 
         # Generate Dockerfile template
         dockerfile_content = _generate_dockerfile(export.export_format)
@@ -946,3 +957,114 @@ async def health():
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)
 '''
+
+
+async def optimize_for_target(
+    db: AsyncSession, project_id: int, target_id: str
+) -> OptimizationResponse:
+    target = target_profile_service.get_target_by_id(target_id)
+    if not target:
+        raise ValueError(f"Target profile {target_id} not found")
+
+    # In a real implementation, we would look at available experiments for the project
+    # For now, let's generate some candidates based on the target's preferred formats.
+    candidates = []
+
+    # Try different combinations of formats and quantizations
+    formats = target.constraints.preferred_formats or ["huggingface"]
+    # If no preferred formats, default to common ones
+    if not formats:
+        formats = ["huggingface", "gguf"]
+
+    quantizations = ["none", "8bit", "4bit", "awq", "gptq"]
+
+    for fmt in formats:
+        for quant in quantizations:
+            # Skip some combinations that might not make sense
+            if fmt == "gguf" and quant == "none":
+                continue
+            if fmt == "tensorrt" and quant == "none":
+                continue
+
+            # Simulate metrics
+            metrics = _run_lightweight_benchmark(fmt, quant, target)
+
+            # Check if it violates quality gate (mock gate: 0.7)
+            if metrics.quality_score < 0.7:
+                continue
+
+            # Check if it fits in VRAM
+            if (
+                target.constraints.min_vram_gb
+                and metrics.memory_gb > target.constraints.min_vram_gb
+            ):
+                continue
+
+            reasons = []
+            candidates.append(
+                OptimizationCandidate(
+                    id=f"{fmt}-{quant}",
+                    name=f"{fmt.upper()} ({quant})",
+                    quantization=quant,
+                    runtime_template=fmt,
+                    metrics=metrics,
+                    reasons=reasons,
+                )
+            )
+
+    # Rank candidates (primarily by latency, then quality)
+    candidates.sort(key=lambda x: (x.metrics.latency_ms, -x.metrics.quality_score))
+
+    if candidates:
+        # The first one is the best recommendation
+        candidates[0].is_recommended = True
+        candidates[0].reasons.append("Best latency/quality tradeoff for this target")
+
+    return OptimizationResponse(
+        project_id=project_id, target_id=target_id, candidates=candidates
+    )
+
+
+def _run_lightweight_benchmark(
+    fmt: str, quant: str, target: Any
+) -> OptimizationMetric:
+    # Simulated benchmark logic (The "lightweight benchmark harness")
+    base_latency = 100.0
+    base_memory = 8.0
+    base_quality = 0.95
+
+    # Adjust based on quantization
+    if quant == "8bit":
+        latency_mult = 0.8
+        memory_mult = 0.55
+        quality_mult = 0.98
+    elif quant == "4bit":
+        latency_mult = 0.6
+        memory_mult = 0.35
+        quality_mult = 0.92
+    elif quant == "awq" or quant == "gptq":
+        latency_mult = 0.55
+        memory_mult = 0.35
+        quality_mult = 0.94
+    else:
+        latency_mult = 1.0
+        memory_mult = 1.0
+        quality_mult = 1.0
+
+    # Adjust based on format/runtime
+    if fmt == "tensorrt":
+        latency_mult *= 0.6
+    elif fmt == "gguf":
+        # Usually slower than raw gpu but better on cpu
+        if target.id == "mobile_cpu":
+            latency_mult *= 0.4
+        else:
+            latency_mult *= 1.2
+    elif fmt == "onnx":
+        latency_mult *= 0.85
+
+    return OptimizationMetric(
+        latency_ms=round(base_latency * latency_mult, 2),
+        memory_gb=round(base_memory * memory_mult, 2),
+        quality_score=round(base_quality * quality_mult, 3),
+    )

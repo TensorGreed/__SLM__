@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.export import ExportFormat
+from app.schemas.export import OptimizationRequest, OptimizationResponse
 from app.services.deployment_target_service import (
     default_deployment_targets_for_format,
     list_deployment_targets,
@@ -15,6 +16,7 @@ from app.services.export_service import (
     create_export,
     execute_export_deploy_plan,
     list_exports,
+    optimize_for_target,
     run_export,
     validate_export_deployment,
 )
@@ -37,6 +39,7 @@ class ExportCreateRequest(BaseModel):
 class ExportRunRequest(BaseModel):
     eval_report: dict | None = None
     safety_scorecard: dict | None = None
+    benchmark_report: dict | None = None
     deployment_targets: list[str] | None = None
     run_smoke_tests: bool = True
 
@@ -116,6 +119,7 @@ async def run(
             export_id,
             payload.eval_report,
             payload.safety_scorecard,
+            benchmark_report=payload.benchmark_report,
             deployment_targets=payload.deployment_targets,
             run_smoke_tests=bool(payload.run_smoke_tests),
         )
@@ -228,6 +232,19 @@ async def execute_deploy_plan(
         if "not found" in detail:
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+@router.post("/optimize", response_model=OptimizationResponse)
+async def optimize(
+    project_id: int,
+    req: OptimizationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Search for optimal quantization + runtime combinations for a target."""
+    try:
+        return await optimize_for_target(db, project_id, req.target_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.get("/list")

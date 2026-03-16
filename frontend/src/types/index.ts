@@ -573,3 +573,39 @@ export const PIPELINE_TABS = [
 ] as const;
 
 export type TabKey = typeof PIPELINE_TABS[number]['key'];
+
+export interface OptimizationMetric {
+    latency_ms: number;
+    memory_gb: number;
+    quality_score: number;
+}
+
+export interface OptimizationCandidate {
+    id: string;
+    name: string;
+    quantization: string;
+    runtime_template: string;
+    metrics: OptimizationMetric;
+    is_recommended: boolean;
+    reasons: string[];
+}
+
+export interface OptimizationResponse {
+    project_id: number;
+    target_id: string;
+    candidates: OptimizationCandidate[];
+}
+
+export interface DeploymentTargetConstraints {
+    min_vram_gb?: number;
+    max_latency_ms?: number;
+    min_quality_score?: number;
+    preferred_formats?: string[];
+}
+
+export interface DeploymentTarget {
+    id: string;
+    name: string;
+    constraints: DeploymentTargetConstraints;
+    description?: string;
+}

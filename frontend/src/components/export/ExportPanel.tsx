@@ -175,6 +175,28 @@ interface DeployExecuteResponse extends DeployPlanResponse {
     execution?: DeployExecutionDetails;
 }
 
+interface OptimizationMetric {
+    latency_ms: number;
+    memory_gb: number;
+    quality_score: number;
+}
+
+interface OptimizationCandidate {
+    id: string;
+    name: string;
+    quantization: string;
+    runtime_template: string;
+    metrics: OptimizationMetric;
+    is_recommended: boolean;
+    reasons: string[];
+}
+
+interface OptimizationResponse {
+    project_id: number;
+    target_id: string;
+    candidates: OptimizationCandidate[];
+}
+
 function toErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -227,6 +249,10 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [deployManagedApiUrl, setDeployManagedApiUrl] = useState('');
     const [deployManagedApiToken, setDeployManagedApiToken] = useState('');
 
+    const [optimizationResults, setOptimizationResults] = useState<OptimizationResponse | null>(null);
+    const [selectedOptimization, setSelectedOptimization] = useState<OptimizationCandidate | null>(null);
+    const [isOptimizing, setIsOptimizing] = useState(false);
+
     const refreshAll = async () => {
         setIsLoading(true);
         try {
@@ -260,6 +286,8 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setDeployHfToken('');
         setDeployManagedApiUrl('');
         setDeployManagedApiToken('');
+        setOptimizationResults(null);
+        setSelectedOptimization(null);
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -340,6 +368,12 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
             const runRes = await api.post<ExportRunResponse>(`/projects/${projectId}/export/${createRes.data.id}/run`, {
                 deployment_targets: selectedDeploymentTargets,
                 run_smoke_tests: runSmokeTests,
+                benchmark_report: selectedOptimization ? {
+                    target_id: optimizationResults?.target_id,
+                    candidate_id: selectedOptimization.id,
+                    metrics: selectedOptimization.metrics,
+                    reasons: selectedOptimization.reasons
+                } : null
             });
             const runPayload: ExportRecord = {
                 id: runRes.data.id,
@@ -502,6 +536,36 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         } finally {
             setIsExecutingDeployPlan(false);
         }
+    };
+
+    const handleOptimize = async () => {
+        if (selectedDeploymentTargets.length === 0) {
+            setErrorMessage('Please select at least one deployment target to optimize for.');
+            return;
+        }
+        setIsOptimizing(true);
+        setErrorMessage('');
+        setOptimizationResults(null);
+        try {
+            // Use the first selected target for optimization search
+            const targetId = selectedDeploymentTargets[0];
+            const res = await api.post<OptimizationResponse>(`/projects/${projectId}/export/optimize`, {
+                target_id: targetId,
+            });
+            setOptimizationResults(res.data);
+            setStatusMessage(`Optimization search completed for ${targetId}.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+        } finally {
+            setIsOptimizing(false);
+        }
+    };
+
+    const applyOptimization = (candidate: OptimizationCandidate) => {
+        setFormat(candidate.runtime_template);
+        setQuantization(candidate.quantization);
+        setSelectedOptimization(candidate);
+        setStatusMessage(`Applied ${candidate.name} settings.`);
     };
 
     const handleRegistryServePlan = async (modelId: number) => {
@@ -739,6 +803,71 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                         <span>Run local smoke tests for selected runner targets</span>
                     </label>
                 </div>
+
+                {optimizationResults && (
+                    <div className="optimization-results">
+                        <div className="export-target-panel-header">
+                            <div>
+                                <div className="export-target-panel-title">Optimization Tradeoff Cards</div>
+                                <div className="export-target-panel-subtitle">
+                                    Results for {optimizationResults.target_id}
+                                </div>
+                            </div>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setOptimizationResults(null)}
+                            >
+                                Clear
+                            </button>
+                        </div>
+                        <div className="optimization-candidates-grid">
+                            {optimizationResults.candidates.map((c) => (
+                                <div
+                                    key={c.id}
+                                    className={`optimization-card ${c.is_recommended ? 'recommended' : ''}`}
+                                >
+                                    {c.is_recommended && (
+                                        <div className="recommendation-badge">RECOMMENDED</div>
+                                    )}
+                                    <div className="serve-template-card__title">{c.name}</div>
+                                    <div className="optimization-metrics">
+                                        <div className="optimization-metric-item">
+                                            <span className="optimization-metric-label">Latency</span>
+                                            <span className="optimization-metric-value">{c.metrics.latency_ms}ms</span>
+                                        </div>
+                                        <div className="optimization-metric-item">
+                                            <span className="optimization-metric-label">Memory</span>
+                                            <span className="optimization-metric-value">{c.metrics.memory_gb}GB</span>
+                                        </div>
+                                        <div className="optimization-metric-item">
+                                            <span className="optimization-metric-label">Quality</span>
+                                            <span className="optimization-metric-value">
+                                                {(c.metrics.quality_score * 100).toFixed(1)}%
+                                            </span>
+                                        </div>
+                                    </div>
+                                    {c.reasons.length > 0 && (
+                                        <div className="optimization-reasons">
+                                            <ul>
+                                                {c.reasons.map((r, i) => (
+                                                    <li key={i}>{r}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ marginTop: 'auto' }}
+                                        onClick={() => applyOptimization(c)}
+                                    >
+                                        Apply Settings
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
                 <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
                     <label className="form-label">Deploy / SDK Plan Target</label>
                     <select className="input" value={deployTargetId} onChange={(e) => setDeployTargetId(e.target.value)}>
@@ -756,6 +885,13 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                         disabled={!selectedExp || isExporting || isLoading || isLoadingTargets}
                     >
                         {isExporting ? 'Exporting...' : 'Run Export'}
+                    </button>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={() => void handleOptimize()}
+                        disabled={!selectedExp || isOptimizing || selectedDeploymentTargets.length === 0}
+                    >
+                        {isOptimizing ? 'Optimizing...' : 'Optimize for Target'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => void handleRegisterModel()} disabled={!selectedExp || isLoading}>
                         Register Selected Model

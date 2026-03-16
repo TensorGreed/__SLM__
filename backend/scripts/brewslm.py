@@ -377,6 +377,34 @@ def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
     return 0 if status == "pass" else 1
 
 
+def run_optimize(args: argparse.Namespace, client: ApiClient) -> int:
+    payload = {
+        "target_id": _normalize_target(args.target),
+    }
+    result = client.request(
+        "POST",
+        f"/projects/{args.project_id}/export/optimize",
+        json_body=payload,
+    )
+
+    candidates = result.get("candidates", [])
+    if not candidates:
+        print("No optimization candidates found.")
+        return 1
+
+    print(f"Inference Optimization Results for Target: {result.get('target_id')}")
+    print(f"{'ID':<20} {'Name':<25} {'Latency (ms)':<15} {'Memory (GB)':<15} {'Quality':<10} {'Recommended'}")
+    print("-" * 100)
+    for c in candidates:
+        m = c.get("metrics", {})
+        rec = "★ YES" if c.get("is_recommended") else ""
+        print(
+            f"{c.get('id'):<20} {c.get('name'):<25} {m.get('latency_ms'):<15} {m.get('memory_gb'):<15} {m.get('quality_score'):<10} {rec}"
+        )
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
@@ -469,6 +497,19 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="Check project readiness (GPU/deps/secrets)")
     doctor_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
     doctor_parser.set_defaults(func=run_doctor)
+
+    optimize_parser = subparsers.add_parser(
+        "optimize", help="Search for optimal quantization + runtime combinations"
+    )
+    optimize_parser.add_argument(
+        "--project", "--project-id", dest="project_id", type=int, required=True
+    )
+    optimize_parser.add_argument(
+        "--target",
+        required=True,
+        help="Target deployment profile (e.g., mobile_cpu, edge_gpu)",
+    )
+    optimize_parser.set_defaults(func=run_optimize)
 
     return parser
 
