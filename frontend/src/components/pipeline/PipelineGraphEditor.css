@@ -392,10 +392,10 @@
 }
 
 .pipeline-editor-node-config-preset {
-    border: 1px solid rgba(56, 189, 248, 0.42);
+    border: 1px solid #9fc4ec;
     border-radius: 999px;
-    background: rgba(14, 116, 144, 0.2);
-    color: rgba(186, 230, 253, 0.98);
+    background: #eaf4ff;
+    color: #1f5f9d;
     padding: 4px 10px;
     font-size: 0.7rem;
     letter-spacing: 0.02em;
@@ -403,8 +403,9 @@
 }
 
 .pipeline-editor-node-config-preset:hover {
-    border-color: rgba(56, 189, 248, 0.7);
-    background: rgba(14, 116, 144, 0.34);
+    border-color: #77aadf;
+    background: #dcecff;
+    color: #194f85;
 }
 
 .pipeline-editor-inline-error {

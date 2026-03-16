@@ -199,11 +199,21 @@ async def list_documents(
     db: AsyncSession, project_id: int, status: DocumentStatus | None = None
 ) -> list[RawDocument]:
     """List all documents for a project, optionally filtered by status."""
-    dataset = await get_or_create_raw_dataset(db, project_id)
-    query = select(RawDocument).where(RawDocument.dataset_id == dataset.id)
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    query = (
+        select(RawDocument)
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type == DatasetType.RAW,
+        )
+    )
     if status:
         query = query.where(RawDocument.status == status)
-    query = query.order_by(RawDocument.ingested_at.desc())
+    query = query.order_by(RawDocument.ingested_at.desc(), RawDocument.id.desc())
     result = await db.execute(query)
     return list(result.scalars().all())
 

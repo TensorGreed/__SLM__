@@ -906,8 +906,8 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 </div>
             )}
 
-            {selectedExperimentId !== 'latest' && parseInt(selectedExperimentId) > 0 && (
-                <ScorecardPanel projectId={projectId} experimentId={parseInt(selectedExperimentId)} />
+            {selectedExp && (
+                <ScorecardPanel projectId={projectId} experimentId={selectedExp} />
             )}
 
             {latestInference && (

@@ -205,3 +205,13 @@
         align-items: flex-start;
     }
 }
+
+/* Light workspace overrides */
+.remote-import-adapter-box {
+    background: #f8fbff;
+    border-color: #d5e1f2;
+}
+
+.doc-row:hover {
+    background: #f7faff;
+}
