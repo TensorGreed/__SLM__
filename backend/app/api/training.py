@@ -284,6 +284,14 @@ class AlignmentRecipeResolveRequest(BaseModel):
     overrides: dict[str, object] = Field(default_factory=dict)
 
 
+class AlignmentRetrainFromFeedbackRequest(BaseModel):
+    recipe_id: str = Field(default="recipe.alignment.dpo.fast", min_length=1, max_length=128)
+    include_playground_pairs: bool = True
+    max_playground_pairs: int = Field(default=5000, ge=1, le=50000)
+    quality_threshold: float = Field(default=3.0, ge=1.0, le=5.0)
+    preferred_plan_profile: str = "balanced"
+
+
 class AlignmentContractValidateRequest(BaseModel):
     rows: list[dict[str, object]] = Field(default_factory=list, min_length=1)
     min_coverage: float = Field(default=0.85, ge=0.0, le=1.0)
@@ -2025,6 +2033,93 @@ async def alignment_preference_dataset_filter(
     except ValueError as e:
         raise HTTPException(400, str(e))
     return report
+
+
+@router.post("/alignment/retrain-from-feedback")
+async def alignment_retrain_from_feedback(
+    project_id: int,
+    req: AlignmentRetrainFromFeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    1. Materialize playground pairs.
+    2. Compose merged alignment dataset.
+    3. Filter by quality.
+    4. Create experiment with alignment recipe.
+    5. Start training.
+    """
+    project = await _get_project_or_404(db, project_id)
+
+    # 1. & 2. Materialize and Compose
+    try:
+        composed = compose_alignment_training_dataset(
+            project_id,
+            include_playground_pairs=req.include_playground_pairs,
+            max_playground_pairs=req.max_playground_pairs,
+        )
+    except ValueError as e:
+        raise HTTPException(400, f"Dataset composition failed: {e}")
+
+    effective_train_path = composed.get("effective_train_path")
+    if not effective_train_path:
+        raise HTTPException(400, "No training dataset available after composition.")
+
+    # 3. Filter by quality
+    try:
+        filtered = filter_preference_dataset_by_quality(
+            project_id,
+            quality_threshold=req.quality_threshold,
+            source_path=effective_train_path,
+        )
+    except ValueError as e:
+        raise HTTPException(400, f"Quality filtering failed: {e}")
+
+    final_train_path = filtered.get("target_path")
+
+    # 4. Resolve alignment recipe
+    try:
+        resolved = resolve_alignment_recipe(req.recipe_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    recipe_config = resolved["resolved_config"]
+    recipe_config["train_file"] = final_train_path
+    recipe_config["base_model"] = project.base_model_name or "microsoft/phi-2"
+
+    # 5. Create and Start Experiment
+    experiment_data = ExperimentCreate(
+        name=f"Retrain from Feedback - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
+        description=f"Auto-retrain run using {composed.get('playground_rows', 0)} playground feedback pairs.",
+        training_mode=TrainingMode(resolved["recipe"]["training_mode"]),
+        config=recipe_config,
+    )
+
+    experiment = await create_experiment(
+        db,
+        project_id=project_id,
+        experiment_data=experiment_data,
+    )
+
+    # Add metadata for audit trail
+    experiment.metadata_ = {
+        "source": "retrain_from_feedback",
+        "playground_rows": composed.get("playground_rows", 0),
+        "quality_threshold": req.quality_threshold,
+        "recipe_id": req.recipe_id,
+        "composition_report": composed,
+    }
+    await db.commit()
+
+    await start_training(db, project_id=project_id, experiment_id=experiment.id)
+
+    return {
+        "experiment_id": experiment.id,
+        "status": experiment.status,
+        "playground_rows_included": composed.get("playground_rows", 0),
+        "total_rows_after_filter": filtered.get("keep_count", 0),
+        "composition_report": composed,
+        "filter_report": filtered,
+    }
 
 
 @router.get("/alignment/active-learning")

@@ -81,6 +81,7 @@ interface AlignmentActiveLearningSummaryResponse {
   auto_pair_count?: number;
   negative_events_with_preferred_reply?: number;
   latest_rejected_at?: string | null;
+  auto_pairs_preview?: Array<{ prompt?: string; chosen?: string; rejected?: string }>;
 }
 
 interface AlignmentActiveLearningComposeResponse {
@@ -154,6 +155,41 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
   const [activeLearningSummary, setActiveLearningSummary] = useState<AlignmentActiveLearningSummaryResponse | null>(null);
   const [activeLearningComposeReport, setActiveLearningComposeReport] =
     useState<AlignmentActiveLearningComposeResponse | null>(null);
+  const [retrainLoading, setRetrainLoading] = useState(false);
+  const [retrainResult, setRetrainResult] = useState<any>(null);
+  const [comparison, setComparison] = useState<any>(null);
+
+  const fetchComparison = async () => {
+    try {
+      const expsRes = await api.get(`/projects/${projectId}/training/experiments`);
+      const experiments = expsRes.data.experiments || [];
+      if (experiments.length >= 2) {
+        const ids = experiments.slice(0, 2).map((e: any) => e.id).join(',');
+        const compRes = await api.get(`/projects/${projectId}/training/compare?experiment_ids=${ids}`);
+        setComparison(compRes.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch comparison', err);
+    }
+  };
+
+  const handleRetrainFromFeedback = async () => {
+    setRetrainLoading(true);
+    setError('');
+    try {
+      const response = await api.post(`/projects/${projectId}/training/alignment/retrain-from-feedback`, {
+        recipe_id: selectedRecipeId || 'recipe.alignment.dpo.fast',
+        quality_threshold: parseFloat(qualityThreshold) || 3.0,
+        include_playground_pairs: true,
+      });
+      setRetrainResult(response.data);
+      alert(`Retrain started! Experiment ID: ${response.data.experiment_id}`);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || 'Retrain failed');
+    } finally {
+      setRetrainLoading(false);
+    }
+  };
   const [activeLearningMaxPairs, setActiveLearningMaxPairs] = useState('5000');
   const [includePlaygroundPairsOnCompose, setIncludePlaygroundPairsOnCompose] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -210,7 +246,7 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
         if (rows.length > 0) {
           setSelectedRecipeId(rows[0].recipe_id);
         }
-        await Promise.all([loadDatasetSummary(), loadActiveLearningSummary(true)]);
+        await Promise.all([loadDatasetSummary(), loadActiveLearningSummary(true), fetchComparison()]);
       } catch (err: unknown) {
         const detail =
           typeof err === 'object' &&
@@ -560,6 +596,9 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
         <button className="btn btn-primary" onClick={() => void composeActiveLearningDataset()} disabled={loading}>
           Compose Train + Feedback
         </button>
+        <button className="btn btn-success" onClick={() => void handleRetrainFromFeedback()} disabled={loading || retrainLoading}>
+          {retrainLoading ? 'Starting Retrain...' : 'Use Feedback in Next Run'}
+        </button>
       </div>
 
       {error ? <div className="alignment-scaffold__error">{error}</div> : null}
@@ -588,8 +627,58 @@ export default function AlignmentScaffoldPanel({ projectId }: AlignmentScaffoldP
           <span>With Preferred Reply: {activeLearningSummary.negative_events_with_preferred_reply ?? 0}</span>
           <span>Rejected Path: {activeLearningSummary.rejected_path || 'n/a'}</span>
           <span>Pairs Path: {activeLearningSummary.auto_pairs_path || 'n/a'}</span>
+          
+          {activeLearningSummary.auto_pairs_preview && activeLearningSummary.auto_pairs_preview.length > 0 && (
+            <div className="alignment-scaffold__preview">
+              <h6>Feedback Pairs Preview</h6>
+              <div className="alignment-scaffold__table-container">
+                <table className="alignment-scaffold__table">
+                  <thead>
+                    <tr>
+                      <th>Prompt</th>
+                      <th>Chosen</th>
+                      <th>Rejected</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeLearningSummary.auto_pairs_preview.map((row, idx) => (
+                      <tr key={idx}>
+                        <td title={row.prompt}>{row.prompt?.slice(0, 50)}...</td>
+                        <td title={row.chosen}>{row.chosen?.slice(0, 50)}...</td>
+                        <td title={row.rejected}>{row.rejected?.slice(0, 50)}...</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
+
+      {comparison && comparison.experiments && (
+        <div className="alignment-scaffold__comparison">
+          <h5>Before/After Comparison (Last 2 Runs)</h5>
+          <div className="alignment-scaffold__comparison-grid">
+            {comparison.experiments.map((exp: any, idx: number) => (
+              <div key={exp.id} className="alignment-scaffold__comparison-card">
+                <div className="comparison-card__header">
+                  <strong>{idx === 0 ? 'Latest (After)' : 'Previous (Before)'}</strong>
+                  <span>{exp.name}</span>
+                </div>
+                <div className="comparison-card__body">
+                  <div>Status: {exp.status}</div>
+                  <div>Mode: {exp.training_mode}</div>
+                  <div>Final Loss: {exp.final_train_loss?.toFixed(4) || 'n/a'}</div>
+                  {exp.history && exp.history.length > 0 && (
+                    <div>Steps: {exp.history[exp.history.length - 1].step}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {contractReport ? (
         <div className="alignment-scaffold__summary">

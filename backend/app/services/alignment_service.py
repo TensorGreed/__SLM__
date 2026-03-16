@@ -92,11 +92,20 @@ def canonicalize_preference_row(row: dict[str, Any]) -> dict[str, Any]:
     prompt = _pick_text(row, _PROMPT_KEYS)
     chosen = _pick_text(row, _CHOSEN_KEYS)
     rejected = _pick_text(row, _REJECTED_KEYS)
-    return {
+    
+    # Preserve metadata for audit trail/provenance
+    canonical = {
         "prompt": prompt,
         "chosen": chosen,
         "rejected": rejected,
     }
+    
+    # Copy all other fields that aren't the primary ones
+    for k, v in row.items():
+        if k not in canonical and k not in _PROMPT_KEYS and k not in _CHOSEN_KEYS and k not in _REJECTED_KEYS:
+            canonical[k] = v
+            
+    return canonical
 
 
 def list_alignment_recipes(*, include_patch: bool = True) -> list[dict[str, Any]]:

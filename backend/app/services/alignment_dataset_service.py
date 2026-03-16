@@ -320,7 +320,7 @@ def _normalize_prompt_key(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
-def capture_playground_rejected_feedback(
+def capture_playground_feedback_event(
     project_id: int,
     *,
     event: dict[str, Any] | None = None,
@@ -331,11 +331,17 @@ def capture_playground_rejected_feedback(
         rating_value = int(rating)
     except (TypeError, ValueError):
         rating_value = None
-    if rating_value is None or rating_value >= 0:
+    
+    preferred_reply = _coerce_text(payload.get("preferred_reply") or payload.get("chosen"))
+    
+    # Capture if it's a downvote OR if there's an edited response
+    should_capture = (rating_value is not None and rating_value < 0) or bool(preferred_reply)
+    
+    if not should_capture:
         return {
             "project_id": int(project_id),
             "captured": False,
-            "reason": "rating_not_negative",
+            "reason": "no_downvote_or_edit",
             "rejected_path": str(_playground_rejected_path(project_id)),
         }
 
@@ -349,7 +355,6 @@ def capture_playground_rejected_feedback(
             "rejected_path": str(_playground_rejected_path(project_id)),
         }
 
-    preferred_reply = _coerce_text(payload.get("preferred_reply") or payload.get("chosen"))
     event_id = _coerce_text(payload.get("event_id"))
     timestamp = _coerce_text(payload.get("timestamp")) or datetime.now(timezone.utc).isoformat()
     rejected_path = _playground_rejected_path(project_id)
@@ -378,6 +383,7 @@ def capture_playground_rejected_feedback(
         "message_index": payload.get("message_index"),
         "tags": list(payload.get("tags") or []) if isinstance(payload.get("tags"), list) else [],
         "notes": _coerce_text(payload.get("notes")) or None,
+        "source": "playground_feedback"
     }
     _append_jsonl_row(rejected_path, row)
     summary = summarize_playground_active_learning(project_id)
@@ -416,7 +422,7 @@ def materialize_playground_preference_pairs(
         positive_reply_by_prompt[key] = reply
 
     unique_pairs: set[tuple[str, str, str]] = set()
-    output_pairs: list[dict[str, str]] = []
+    output_pairs: list[dict[str, Any]] = []
     pairs_limit = max(1, min(int(max_pairs or 5000), 50000))
     skipped_missing_chosen = 0
     for row in rejected_rows:
@@ -436,7 +442,17 @@ def materialize_playground_preference_pairs(
         if key in unique_pairs:
             continue
         unique_pairs.add(key)
-        output_pairs.append({"prompt": prompt, "chosen": chosen, "rejected": rejected})
+        
+        pair = {
+            "prompt": prompt,
+            "chosen": chosen,
+            "rejected": rejected,
+            "source": "playground_feedback",
+            "event_id": row.get("event_id"),
+            "original_session_id": row.get("session_id"),
+            "original_timestamp": row.get("timestamp"),
+        }
+        output_pairs.append(pair)
         if len(output_pairs) >= pairs_limit:
             break
 
@@ -468,6 +484,9 @@ def summarize_playground_active_learning(project_id: int) -> dict[str, Any]:
             latest_rejected_at = timestamp
 
     materialized = materialize_playground_preference_pairs(project_id)
+    auto_pairs_path = _playground_auto_pairs_path(project_id)
+    auto_pairs_preview = _load_jsonl_rows(auto_pairs_path, max_rows=50)
+    
     return {
         "project_id": int(project_id),
         "rejected_path": str(rejected_path),
@@ -476,6 +495,7 @@ def summarize_playground_active_learning(project_id: int) -> dict[str, Any]:
         "auto_pair_count": int(materialized.get("pair_count", 0)),
         "negative_events_with_preferred_reply": int(negative_events_with_preferred),
         "latest_rejected_at": latest_rejected_at,
+        "auto_pairs_preview": auto_pairs_preview,
     }
 
 

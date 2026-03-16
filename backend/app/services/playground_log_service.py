@@ -171,11 +171,12 @@ def record_playground_feedback(
         handle.write(json.dumps(event, ensure_ascii=True) + "\n")
 
     active_learning_capture = None
-    if rating is not None and rating < 0:
+    preferred_reply = _coerce_text(data.get("preferred_reply"))
+    if (rating is not None and rating < 0) or preferred_reply:
         try:
-            from app.services.alignment_dataset_service import capture_playground_rejected_feedback
+            from app.services.alignment_dataset_service import capture_playground_feedback_event
 
-            active_learning_capture = capture_playground_rejected_feedback(project_id, event=event)
+            active_learning_capture = capture_playground_feedback_event(project_id, event=event)
         except Exception as e:  # noqa: BLE001
             active_learning_capture = {
                 "project_id": int(project_id),
