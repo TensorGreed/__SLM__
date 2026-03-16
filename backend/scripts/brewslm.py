@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import sys
 import time
@@ -22,6 +23,30 @@ DEFAULT_TOKEN = os.environ.get("BREWSLM_TOKEN", "").strip()
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("BREWSLM_TIMEOUT_SECONDS", "60"))
 DEFAULT_INTENT = "Fine-tune a practical assistant on my imported dataset."
 TERMINAL_IMPORT_STATES = {"completed", "failed", "error", "cancelled"}
+
+_SCRIPT_PATH = Path(__file__).resolve()
+_SCRIPT_ROOT = _SCRIPT_PATH.parent
+_BACKEND_ROOT = _SCRIPT_ROOT.parent
+_REPO_ROOT = _BACKEND_ROOT.parent
+_QUICKSTART_BASE_ENV = "BREWSLM_QUICKSTART_DIR"
+
+_TEMPLATE_ALIASES = {
+    "general": "general",
+    "legal": "legal",
+    "support": "support",
+}
+
+_SAMPLE_DATASET_ALIASES = {
+    "general-chat-v1": "general-sample.csv",
+    "general-sample-v1": "general-sample.csv",
+    "general": "general-sample.csv",
+    "support-chat-v1": "support-sample.csv",
+    "support-sample-v1": "support-sample.csv",
+    "support": "support-sample.csv",
+    "legal-contract-v1": "legal-sample.csv",
+    "legal-sample-v1": "legal-sample.csv",
+    "legal": "legal-sample.csv",
+}
 
 SOURCE_ALIASES = {
     "hf": "huggingface",
@@ -54,7 +79,7 @@ class ApiClient:
         api_base_normalized = str(api_base or "").strip().rstrip("/")
         if not api_base_normalized:
             raise ValueError("api_base cannot be empty")
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
             headers["X-API-Key"] = token
@@ -82,6 +107,40 @@ class ApiClient:
         if response.status_code >= 400:
             detail = _extract_error_detail(response)
             raise RuntimeError(f"{method.upper()} {path} failed ({response.status_code}): {detail}")
+        if not response.content:
+            return {}
+        try:
+            return response.json()
+        except Exception:
+            return {"raw": response.text}
+
+    def upload_file(
+        self,
+        path: str,
+        *,
+        file_path: Path,
+        form_fields: dict[str, Any] | None = None,
+    ) -> Any:
+        payload = {
+            str(key): str(value)
+            for key, value in dict(form_fields or {}).items()
+            if value is not None
+        }
+        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        with open(file_path, "rb") as handle:
+            files = {"file": (file_path.name, handle, mime_type)}
+            try:
+                response = self._client.request(
+                    "POST",
+                    path,
+                    data=payload,
+                    files=files,
+                )
+            except httpx.RequestError as e:
+                raise RuntimeError(f"Request failed: {e}") from e
+        if response.status_code >= 400:
+            detail = _extract_error_detail(response)
+            raise RuntimeError(f"POST {path} failed ({response.status_code}): {detail}")
         if not response.content:
             return {}
         try:
@@ -134,6 +193,114 @@ def _load_json_object_file(path_value: str, *, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} file must contain a JSON object")
     return payload
+
+
+def _quickstart_base_candidates() -> list[Path]:
+    env_dir = str(os.environ.get(_QUICKSTART_BASE_ENV, "")).strip()
+    candidates: list[Path] = []
+    if env_dir:
+        candidates.append(Path(env_dir).expanduser())
+    candidates.extend(
+        [
+            _REPO_ROOT / "data" / "quickstart",
+            _BACKEND_ROOT / "data" / "quickstart",
+            Path.cwd() / "data" / "quickstart",
+        ]
+    )
+    # Preserve order and remove duplicates
+    resolved: list[Path] = []
+    seen: set[str] = set()
+    for item in candidates:
+        token = str(item.resolve() if item.exists() else item.expanduser())
+        if token in seen:
+            continue
+        seen.add(token)
+        resolved.append(item)
+    return resolved
+
+
+def _resolve_quickstart_templates_dir() -> Path:
+    for base in _quickstart_base_candidates():
+        candidate = base / "templates"
+        if candidate.exists():
+            return candidate
+    expected = _quickstart_base_candidates()[0] / "templates"
+    raise ValueError(
+        "Quickstart templates directory not found. "
+        f"Set {_QUICKSTART_BASE_ENV} or ensure {expected} exists."
+    )
+
+
+def _resolve_quickstart_datasets_dir() -> Path:
+    for base in _quickstart_base_candidates():
+        candidate = base / "datasets"
+        if candidate.exists():
+            return candidate
+    expected = _quickstart_base_candidates()[0] / "datasets"
+    raise ValueError(
+        "Quickstart datasets directory not found. "
+        f"Set {_QUICKSTART_BASE_ENV} or ensure {expected} exists."
+    )
+
+
+def _load_quickstart_template(template: str) -> tuple[str, dict[str, Any], Path]:
+    token = str(template or "").strip()
+    if not token:
+        raise ValueError("template cannot be empty")
+    normalized = token.lower().replace("_", "-").replace(" ", "-")
+    alias = _TEMPLATE_ALIASES.get(normalized)
+
+    if alias:
+        template_path = _resolve_quickstart_templates_dir() / f"{alias}.json"
+        if not template_path.exists():
+            raise ValueError(f"Quickstart template file not found: {template_path}")
+        payload = _load_json_object_file(str(template_path), label=f"template:{alias}")
+        return alias, payload, template_path
+
+    custom = Path(token).expanduser()
+    if not custom.is_absolute():
+        cwd_candidate = (Path.cwd() / custom).resolve()
+        repo_candidate = (_REPO_ROOT / custom).resolve()
+        custom = cwd_candidate if cwd_candidate.exists() else repo_candidate
+    if not custom.exists():
+        raise ValueError(
+            f"Unknown template '{template}'. Use one of {sorted(_TEMPLATE_ALIASES)} or provide a valid JSON path."
+        )
+    payload = _load_json_object_file(str(custom), label=f"template:{template}")
+    return custom.stem, payload, custom
+
+
+def _resolve_sample_dataset(sample: str) -> tuple[str, Path]:
+    token = str(sample or "").strip()
+    if not token:
+        raise ValueError("sample cannot be empty")
+    normalized = token.lower().replace("_", "-").replace(" ", "-")
+    file_name = _SAMPLE_DATASET_ALIASES.get(normalized)
+    if file_name is None:
+        supported = ", ".join(sorted(_SAMPLE_DATASET_ALIASES.keys()))
+        raise ValueError(f"Unknown sample '{sample}'. Supported samples: {supported}")
+    dataset_path = _resolve_quickstart_datasets_dir() / file_name
+    if not dataset_path.exists():
+        raise ValueError(f"Quickstart sample file not found: {dataset_path}")
+    return normalized, dataset_path
+
+
+def _resolve_local_input_file(path_value: str, *, label: str) -> Path:
+    token = str(path_value or "").strip()
+    if not token:
+        raise ValueError(f"{label} cannot be empty")
+    candidate = Path(token).expanduser()
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() / candidate).resolve()
+    if not candidate.exists():
+        fallback = (_REPO_ROOT / token).resolve()
+        if fallback.exists():
+            candidate = fallback
+    if not candidate.exists():
+        raise ValueError(f"{label} file not found: {candidate}")
+    if not candidate.is_file():
+        raise ValueError(f"{label} must be a file: {candidate}")
+    return candidate
 
 
 def _normalize_source(source: str) -> str:
@@ -406,7 +573,60 @@ def run_optimize(args: argparse.Namespace, client: ApiClient) -> int:
 
 
 def run_project(args: argparse.Namespace, client: ApiClient) -> int:
-    # Use 'id' or 'project_id' as provided by parser
+    if args.subcommand == "create":
+        template_payload: dict[str, Any] = {}
+        template_id = ""
+        template_path: Path | None = None
+        if not args.no_template:
+            template_id, template_payload, template_path = _load_quickstart_template(args.template)
+
+        gate_policy = {}
+        if isinstance(template_payload.get("gate_policy"), dict):
+            gate_policy.update(dict(template_payload.get("gate_policy") or {}))
+        if args.gate_policy:
+            gate_policy.update(_parse_json_object(args.gate_policy, label="gate-policy"))
+
+        budget_settings = {}
+        budget_candidate = template_payload.get("budget_settings")
+        if not isinstance(budget_candidate, dict):
+            budget_candidate = template_payload.get("budget")
+        if isinstance(budget_candidate, dict):
+            budget_settings.update(dict(budget_candidate))
+        if args.budget_settings:
+            budget_settings.update(_parse_json_object(args.budget_settings, label="budget-settings"))
+
+        payload: dict[str, Any] = {
+            "name": args.name,
+            "description": args.description or str(template_payload.get("description") or ""),
+            "base_model_name": args.base_model_name
+            or str(
+                template_payload.get("base_model_name")
+                or template_payload.get("base_model")
+                or ""
+            ),
+        }
+        if args.domain_pack_id is not None:
+            payload["domain_pack_id"] = int(args.domain_pack_id)
+        if args.domain_profile_id is not None:
+            payload["domain_profile_id"] = int(args.domain_profile_id)
+        if args.target_profile_id:
+            payload["target_profile_id"] = args.target_profile_id
+        if gate_policy:
+            payload["gate_policy"] = gate_policy
+        if budget_settings:
+            payload["budget_settings"] = budget_settings
+
+        created = client.request("POST", "/projects", json_body=payload)
+        output = {
+            "project": created,
+            "quickstart": {
+                "template_id": template_id or None,
+                "template_path": str(template_path) if template_path else None,
+            },
+        }
+        _print_json(output)
+        return 0
+
     pid = getattr(args, "project_id", None)
     if pid is None:
         print("Project ID required.")
@@ -429,8 +649,62 @@ def run_project(args: argparse.Namespace, client: ApiClient) -> int:
             budget["alert_threshold"] = args.threshold
         if args.auto_cancel is not None:
             budget["auto_cancel"] = args.auto_cancel.lower() == "true"
-        client.request("PATCH", f"/projects/{pid}", json_body={"budget_settings": budget})
+        client.request("PUT", f"/projects/{pid}", json_body={"budget_settings": budget})
         print(f"Updated budget settings for project {pid}")
+    return 0
+
+
+def run_dataset(args: argparse.Namespace, client: ApiClient) -> int:
+    if args.subcommand != "import":
+        raise ValueError(f"Unsupported dataset subcommand '{args.subcommand}'.")
+
+    sample_token = str(args.sample or "").strip()
+    file_token = str(args.file or "").strip()
+    if bool(sample_token) == bool(file_token):
+        raise ValueError("Provide exactly one of --sample or --file.")
+
+    sample_id = ""
+    source_label = str(args.source or "").strip()
+    input_path: Path
+    if sample_token:
+        sample_id, input_path = _resolve_sample_dataset(sample_token)
+        if not source_label:
+            source_label = f"quickstart:{sample_id}"
+    else:
+        input_path = _resolve_local_input_file(file_token, label="dataset")
+        if not source_label:
+            source_label = "upload"
+
+    uploaded = client.upload_file(
+        f"/projects/{args.project_id}/ingestion/upload",
+        file_path=input_path,
+        form_fields={
+            "source": source_label,
+            "sensitivity": args.sensitivity,
+            "license_info": args.license_info,
+        },
+    )
+
+    output: dict[str, Any] = {
+        "upload": uploaded,
+        "input_file": str(input_path),
+        "sample": sample_id or None,
+    }
+
+    if args.process:
+        document_id = int(uploaded.get("id") or 0)
+        if document_id <= 0:
+            raise RuntimeError("Upload response missing document id; cannot process document.")
+        processed = client.request(
+            "POST",
+            f"/projects/{args.project_id}/ingestion/documents/{document_id}/process",
+        )
+        output["process"] = processed
+        status = str(processed.get("status") or "").strip().lower()
+        _print_json(output)
+        return 0 if status in {"accepted", "completed", "done"} else 1
+
+    _print_json(output)
     return 0
 
 
@@ -457,12 +731,58 @@ def build_parser() -> argparse.ArgumentParser:
     p_budget = project_sub.add_parser("budget", help="Show project budget and spend")
     p_budget.add_argument("--id", "--project-id", dest="project_id", type=int, required=True)
 
+    p_create = project_sub.add_parser("create", help="Create a project (quickstart template supported)")
+    p_create.add_argument("--name", required=True, help="Project name")
+    p_create.add_argument(
+        "--template",
+        default="general",
+        help="Template alias (general, support, legal) or path to template JSON",
+    )
+    p_create.add_argument(
+        "--no-template",
+        action="store_true",
+        help="Skip template loading and use only explicit CLI fields.",
+    )
+    p_create.add_argument("--description", default="", help="Project description override")
+    p_create.add_argument("--base-model", dest="base_model_name", default="", help="Base model name override")
+    p_create.add_argument("--domain-pack-id", type=int, default=None)
+    p_create.add_argument("--domain-profile-id", type=int, default=None)
+    p_create.add_argument("--target-profile-id", default="", help="Target profile id (default from API)")
+    p_create.add_argument("--gate-policy", default="", help="Inline JSON object overriding gate policy")
+    p_create.add_argument(
+        "--budget-settings",
+        default="",
+        help="Inline JSON object overriding budget settings",
+    )
+
     p_budget_set = project_sub.add_parser("budget-set", help="Update project budget policy")
     p_budget_set.add_argument("--id", "--project-id", dest="project_id", type=int, required=True)
     p_budget_set.add_argument("--cap", type=float, help="Monthly cap (USD)")
     p_budget_set.add_argument("--threshold", type=float, help="Alert threshold (0.0-1.0)")
     p_budget_set.add_argument("--auto-cancel", choices=["true", "false"], help="Auto-cancel on cap")
     project_parser.set_defaults(func=run_project)
+
+    dataset_parser = subparsers.add_parser("dataset", help="Dataset upload/import helpers")
+    dataset_sub = dataset_parser.add_subparsers(dest="subcommand", required=True)
+    dataset_import = dataset_sub.add_parser("import", help="Upload a dataset file or quickstart sample")
+    dataset_import.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    dataset_import.add_argument(
+        "--sample",
+        default="",
+        help="Quickstart sample alias (general-chat-v1, support-chat-v1, legal-contract-v1)",
+    )
+    dataset_import.add_argument("--file", default="", help="Path to local dataset file")
+    dataset_import.add_argument("--source", default="", help="Source label for ingestion metadata")
+    dataset_import.add_argument("--sensitivity", default="internal")
+    dataset_import.add_argument("--license-info", default="")
+    dataset_import.add_argument(
+        "--no-process",
+        dest="process",
+        action="store_false",
+        help="Skip immediate document processing after upload",
+    )
+    dataset_import.set_defaults(process=True)
+    dataset_parser.set_defaults(func=run_dataset)
 
     ingest_parser = subparsers.add_parser("ingest", help="Import remote dataset (HF/Kaggle/URL)")
     ingest_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)

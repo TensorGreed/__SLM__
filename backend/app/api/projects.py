@@ -120,7 +120,7 @@ async def create_project(
                 resolved_domain_profile_id = default_profile.id
                 break
 
-    project = Project(
+    project_payload = dict(
         name=data.name,
         description=data.description,
         base_model_name=data.base_model_name,
@@ -128,6 +128,11 @@ async def create_project(
         domain_profile_id=resolved_domain_profile_id,
         target_profile_id=data.target_profile_id or "vllm_server",
     )
+    if isinstance(data.gate_policy, dict):
+        project_payload["gate_policy"] = dict(data.gate_policy)
+    if isinstance(data.budget_settings, dict):
+        project_payload["budget_settings"] = dict(data.budget_settings)
+    project = Project(**project_payload)
     db.add(project)
     await db.flush()
     await db.refresh(project)
@@ -387,10 +392,13 @@ async def project_deployment_gate_check(
     if not project:
         raise HTTPException(404, f"Project {project_id} not found")
 
-    policy = project.gate_policy or {}
-    must_pass = policy.get("must_pass", True)
-    min_score = policy.get("min_score", 0.0)
-    blocked_if_missing = policy.get("blocked_if_missing", True)
+    policy = project.gate_policy if isinstance(project.gate_policy, dict) else {}
+    must_pass = bool(policy.get("must_pass", False))
+    blocked_if_missing = bool(policy.get("blocked_if_missing", False))
+    try:
+        min_score = max(0.0, min(1.0, float(policy.get("min_score", 0.0))))
+    except (TypeError, ValueError):
+        min_score = 0.0
 
     is_blocked = False
     reasons = []
@@ -403,13 +411,30 @@ async def project_deployment_gate_check(
         is_blocked = True
         reasons.append(f"Missing required metrics: {', '.join(report.get('missing_required_metrics', []))}")
 
+    checks = [item for item in list(report.get("checks") or []) if isinstance(item, dict)]
+    scored = [bool(item.get("passed")) for item in checks if item.get("actual") is not None]
+    gate_score = None
+    if scored:
+        gate_score = round(sum(1 for ok in scored if ok) / float(len(scored)), 6)
+    if min_score > 0.0 and (gate_score is None or gate_score < min_score):
+        is_blocked = True
+        if gate_score is None:
+            reasons.append("Gate score unavailable because no comparable metrics were evaluated.")
+        else:
+            reasons.append(f"Gate score {gate_score:.3f} is below min_score {min_score:.3f}.")
+
     return {
         "project_id": project_id,
         "experiment_id": experiment.id,
         "passed": not is_blocked,
         "is_blocked": is_blocked,
         "reasons": reasons,
-        "policy": policy,
+        "policy": {
+            "must_pass": must_pass,
+            "min_score": min_score,
+            "blocked_if_missing": blocked_if_missing,
+        },
+        "gate_score": gate_score,
         "gate_report": report
     }
 

@@ -134,6 +134,33 @@ class Phase27Roadmap3Tests(unittest.TestCase):
         compose_payload = compose_resp.json()
         self.assertTrue(bool(compose_payload.get("written")))
         self.assertGreaterEqual(int(compose_payload.get("rows_written", 0)), 1)
+        merged_path = Path(str(compose_payload.get("target_path") or ""))
+        self.assertTrue(merged_path.exists(), merged_path)
+        merged_rows = [
+            json.loads(line)
+            for line in merged_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertTrue(merged_rows)
+        merged_pair = next(
+            (
+                row
+                for row in merged_rows
+                if str(row.get("prompt") or "") == "How should API keys be rotated?"
+            ),
+            None,
+        )
+        self.assertIsNotNone(merged_pair)
+        provenance_sources = [
+            str(item)
+            for item in list((merged_pair or {}).get("provenance_sources") or [])
+        ]
+        self.assertIn("playground_feedback", provenance_sources)
+        provenance_timestamps = [
+            str(item)
+            for item in list((merged_pair or {}).get("provenance_timestamps") or [])
+        ]
+        self.assertGreaterEqual(len(provenance_timestamps), 1)
 
         exp_resp = self.client.post(
             f"/api/projects/{project_id}/training/experiments",

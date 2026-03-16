@@ -87,7 +87,7 @@ def _load_jsonl_rows(path: Path, *, max_rows: int | None = None) -> list[dict[st
     return rows
 
 
-def _write_jsonl_rows(path: Path, rows: list[dict[str, str]]) -> None:
+def _write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for row in rows:
@@ -137,8 +137,8 @@ def _parse_rows_input(
 
 def _canonicalize_valid_rows(
     rows: list[dict[str, Any]],
-) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-    canonical_rows: list[dict[str, str]] = []
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    canonical_rows: list[dict[str, Any]] = []
     invalid_rows: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         canonical = canonicalize_preference_row(row)
@@ -170,7 +170,11 @@ def _canonicalize_valid_rows(
                 }
             )
             continue
-        canonical_rows.append({"prompt": prompt, "chosen": chosen, "rejected": rejected})
+        canonical_row = dict(canonical)
+        canonical_row["prompt"] = prompt
+        canonical_row["chosen"] = chosen
+        canonical_row["rejected"] = rejected
+        canonical_rows.append(canonical_row)
     return canonical_rows, invalid_rows
 
 
@@ -318,6 +322,112 @@ def _playground_feedback_log_path(project_id: int) -> Path:
 
 def _normalize_prompt_key(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
+
+
+def _collect_metadata_tokens(value: Any) -> list[str]:
+    tokens: list[str] = []
+    if value is None:
+        return tokens
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            tokens.extend(_collect_metadata_tokens(item))
+        return tokens
+    token = _coerce_text(value)
+    if token:
+        tokens.append(token)
+    return tokens
+
+
+def _dedupe_tokens(values: list[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = _coerce_text(value)
+        if not token:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        output.append(token)
+    return output
+
+
+def _merge_tags(existing: Any, incoming: Any) -> list[str]:
+    tags: list[str] = []
+    for candidate in [existing, incoming]:
+        if isinstance(candidate, list):
+            tags.extend(_collect_metadata_tokens(candidate))
+    return _dedupe_tokens(tags)
+
+
+def _is_empty_metadata_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def _merge_alignment_row_provenance(target: dict[str, Any], incoming: dict[str, Any]) -> None:
+    for key in incoming:
+        if key in {"prompt", "chosen", "rejected"}:
+            continue
+        if key not in target or _is_empty_metadata_value(target.get(key)):
+            target[key] = incoming.get(key)
+        elif key == "tags":
+            merged_tags = _merge_tags(target.get("tags"), incoming.get("tags"))
+            if merged_tags:
+                target["tags"] = merged_tags
+
+    source_tokens = _dedupe_tokens(
+        _collect_metadata_tokens(target.get("provenance_sources"))
+        + _collect_metadata_tokens(target.get("source"))
+        + _collect_metadata_tokens(incoming.get("provenance_sources"))
+        + _collect_metadata_tokens(incoming.get("source"))
+    )
+    if source_tokens:
+        target["provenance_sources"] = source_tokens
+        if not _coerce_text(target.get("source")):
+            target["source"] = source_tokens[0]
+
+    event_tokens = _dedupe_tokens(
+        _collect_metadata_tokens(target.get("provenance_event_ids"))
+        + _collect_metadata_tokens(target.get("event_id"))
+        + _collect_metadata_tokens(incoming.get("provenance_event_ids"))
+        + _collect_metadata_tokens(incoming.get("event_id"))
+    )
+    if event_tokens:
+        target["provenance_event_ids"] = event_tokens
+        if not _coerce_text(target.get("event_id")):
+            target["event_id"] = event_tokens[0]
+
+    session_tokens = _dedupe_tokens(
+        _collect_metadata_tokens(target.get("provenance_session_ids"))
+        + _collect_metadata_tokens(target.get("original_session_id"))
+        + _collect_metadata_tokens(target.get("session_id"))
+        + _collect_metadata_tokens(incoming.get("provenance_session_ids"))
+        + _collect_metadata_tokens(incoming.get("original_session_id"))
+        + _collect_metadata_tokens(incoming.get("session_id"))
+    )
+    if session_tokens:
+        target["provenance_session_ids"] = session_tokens
+        if not _coerce_text(target.get("original_session_id")):
+            target["original_session_id"] = session_tokens[0]
+
+    timestamp_tokens = _dedupe_tokens(
+        _collect_metadata_tokens(target.get("provenance_timestamps"))
+        + _collect_metadata_tokens(target.get("original_timestamp"))
+        + _collect_metadata_tokens(target.get("timestamp"))
+        + _collect_metadata_tokens(incoming.get("provenance_timestamps"))
+        + _collect_metadata_tokens(incoming.get("original_timestamp"))
+        + _collect_metadata_tokens(incoming.get("timestamp"))
+    )
+    if timestamp_tokens:
+        target["provenance_timestamps"] = timestamp_tokens
+        if not _coerce_text(target.get("original_timestamp")):
+            target["original_timestamp"] = timestamp_tokens[0]
 
 
 def capture_playground_feedback_event(
@@ -520,7 +630,7 @@ def compose_alignment_training_dataset(
         "pair_count": 0,
         "auto_pairs_path": str(_playground_auto_pairs_path(project_id)),
     }
-    playground_rows: list[dict[str, str]] = []
+    playground_rows: list[dict[str, Any]] = []
     if include_playground_pairs:
         playground_report = materialize_playground_preference_pairs(
             project_id,
@@ -544,9 +654,17 @@ def compose_alignment_training_dataset(
             "playground": playground_report,
         }
 
-    dedupe: set[tuple[str, str, str]] = set()
-    merged_rows: list[dict[str, str]] = []
-    for row in [*canonical_source_rows, *playground_rows]:
+    merged_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    source_candidates = [dict(row) for row in canonical_source_rows]
+    for row in source_candidates:
+        if not _coerce_text(row.get("source")):
+            row["source"] = "prepared_train"
+    playground_candidates = [dict(row) for row in playground_rows]
+    for row in playground_candidates:
+        if not _coerce_text(row.get("source")):
+            row["source"] = "playground_feedback"
+
+    for row in [*source_candidates, *playground_candidates]:
         key = (
             _coerce_text(row.get("prompt")),
             _coerce_text(row.get("chosen")),
@@ -554,10 +672,17 @@ def compose_alignment_training_dataset(
         )
         if not key[0] or not key[1] or not key[2]:
             continue
-        if key in dedupe:
-            continue
-        dedupe.add(key)
-        merged_rows.append({"prompt": key[0], "chosen": key[1], "rejected": key[2]})
+        normalized_row = dict(row)
+        normalized_row["prompt"] = key[0]
+        normalized_row["chosen"] = key[1]
+        normalized_row["rejected"] = key[2]
+        existing = merged_by_key.get(key)
+        if existing is None:
+            _merge_alignment_row_provenance(normalized_row, normalized_row)
+            merged_by_key[key] = normalized_row
+        else:
+            _merge_alignment_row_provenance(existing, normalized_row)
+    merged_rows = list(merged_by_key.values())
 
     if target_path:
         output_file = _resolve_project_path(project_id, target_path)

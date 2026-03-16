@@ -224,6 +224,36 @@ def _resolve_export_run_dir_from_export(export: Export) -> Path | None:
     return None
 
 
+def _normalize_gate_policy(payload: Any) -> dict[str, Any]:
+    policy = {
+        "must_pass": False,
+        "min_score": 0.0,
+        "blocked_if_missing": False,
+    }
+    if not isinstance(payload, dict):
+        return policy
+
+    if "must_pass" in payload:
+        policy["must_pass"] = bool(payload.get("must_pass"))
+    if "blocked_if_missing" in payload:
+        policy["blocked_if_missing"] = bool(payload.get("blocked_if_missing"))
+
+    try:
+        score = float(payload.get("min_score", 0.0))
+    except (TypeError, ValueError):
+        score = 0.0
+    policy["min_score"] = max(0.0, min(1.0, score))
+    return policy
+
+
+def _gate_score_from_report(report: dict[str, Any]) -> float | None:
+    checks = [item for item in list(report.get("checks") or []) if isinstance(item, dict)]
+    scored = [bool(item.get("passed")) for item in checks if item.get("actual") is not None]
+    if not scored:
+        return None
+    return round(sum(1 for ok in scored if ok) / float(len(scored)), 6)
+
+
 async def create_export(
     db: AsyncSession,
     project_id: int,
@@ -300,29 +330,44 @@ async def run_export(
     project = project_res.scalar_one_or_none()
     
     if project:
-        policy = project.gate_policy or {}
-        must_pass = policy.get("must_pass", True)
-        blocked_if_missing = policy.get("blocked_if_missing", True)
-        
-        if must_pass or blocked_if_missing:
+        policy = _normalize_gate_policy(project.gate_policy)
+        must_pass = bool(policy.get("must_pass"))
+        blocked_if_missing = bool(policy.get("blocked_if_missing"))
+        min_score = float(policy.get("min_score") or 0.0)
+
+        if must_pass or blocked_if_missing or min_score > 0.0:
             gate_report = await evaluate_experiment_auto_gates(
                 db,
                 project_id=project_id,
                 experiment_id=experiment.id,
             )
-            
+            gate_score = _gate_score_from_report(gate_report)
+            gate_report["aggregate_gate_score"] = gate_score
+
             is_blocked = False
-            reasons = []
+            reasons: list[str] = []
             if must_pass and not gate_report.get("passed"):
                 is_blocked = True
                 reasons.append("Mandatory quality gates failed.")
             if blocked_if_missing and gate_report.get("missing_required_metrics"):
                 is_blocked = True
                 reasons.append(f"Missing required metrics: {', '.join(gate_report.get('missing_required_metrics', []))}")
-                
+            if min_score > 0.0 and (gate_score is None or gate_score < min_score):
+                is_blocked = True
+                if gate_score is None:
+                    reasons.append("Gate score unavailable because no comparable metrics were evaluated.")
+                else:
+                    reasons.append(f"Gate score {gate_score:.3f} is below min_score {min_score:.3f}.")
+
             if is_blocked:
                 export.status = ExportStatus.FAILED
-                export.error_message = f"Export blocked by deployment gates: {'; '.join(reasons)}"
+                message = f"Export blocked by deployment gates: {'; '.join(reasons)}"
+                export.error_message = message
+                export.manifest = {
+                    "error": message,
+                    "gate_policy": policy,
+                    "gate_report": gate_report,
+                }
                 await db.flush()
                 return export
 

@@ -1,0 +1,4 @@
+instruction,response
+"Customer: 'My order has not arrived and tracking has not updated for 5 days.'","I am sorry for the delay. I can open a carrier trace now and share an update within 24 hours. If needed, we can also issue a replacement or refund."
+"Customer: 'How do I reset my password?'","Select 'Forgot password' on the sign-in page, enter your account email, and follow the reset link. If the email does not arrive, check spam or contact support."
+"Customer: 'I was charged twice for one subscription.'","Thanks for flagging this. I will review the billing records and reverse any duplicate charge. You will receive a confirmation once the adjustment is complete."

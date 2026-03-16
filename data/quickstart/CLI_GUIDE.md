@@ -24,7 +24,7 @@ brewslm dataset import --project-id 1 --sample "support-chat-v1"
 ## 4. Run Autopilot Training
 Launch a balanced training run on the cloud:
 ```bash
-brewslm training launch --project-id 1 --mode "balanced" --cloud "runpod"
+brewslm train --project-id 1 --autopilot --one-click --intent "Fine-tune a practical assistant on my imported dataset."
 ```
 
 ## 5. Optimize & Export
