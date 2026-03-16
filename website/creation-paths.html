@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrewSLM Creation Paths | CLI, Python SDK, Wizard UI</title>
+    <meta
+      name="description"
+      content="Compare BrewSLM creation paths with practical guidance for CLI, Python SDK, and Wizard UI teams."
+    />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html" aria-current="page">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">Creation Paths</p>
+        <h1>Pick the fastest interface path without losing model engineering control.</h1>
+        <p class="page-sub">
+          BrewSLM supports three entry modes. They all compile into the same <code>__SLM__</code>
+          pipeline, so you can start simple and grow into deeper control without rewriting process.
+        </p>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Path Snapshot</p>
+          <h2>At-a-glance fit by team shape</h2>
+        </div>
+        <div class="decision-grid">
+          <article class="decision-card reveal">
+            <h3>CLI Path</h3>
+            <p>Best when your team already runs shell-first workflows and CI automation.</p>
+            <p class="card-note"><strong>First milestone:</strong> scripted repeatable train + export job.</p>
+          </article>
+          <article class="decision-card reveal">
+            <h3>Python SDK Path</h3>
+            <p>Best when SLM lifecycle must integrate directly into backend services.</p>
+            <p class="card-note"><strong>First milestone:</strong> app-triggered benchmark + train pipeline.</p>
+          </article>
+          <article class="decision-card reveal">
+            <h3>Wizard UI Path</h3>
+            <p>Best when cross-functional teams need guided onboarding with visual checks.</p>
+            <p class="card-note"><strong>First milestone:</strong> first successful run with shared project view.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Interactive Breakdown</p>
+          <h2>Deep dive each interface mode</h2>
+        </div>
+
+        <div class="mode-console reveal" aria-label="Interface mode switcher">
+          <div class="mode-tabs" role="tablist" aria-label="BrewSLM creation interfaces">
+            <button class="mode-tab is-active" data-mode="cli" role="tab" aria-selected="true">
+              CLI
+            </button>
+            <button class="mode-tab" data-mode="python" role="tab" aria-selected="false">
+              Python SDK
+            </button>
+            <button class="mode-tab" data-mode="wizard" role="tab" aria-selected="false">
+              Wizard UI
+            </button>
+          </div>
+
+          <article class="mode-panel is-active" data-panel="cli">
+            <p class="mode-title">Terminal-first flow with strong reproducibility</p>
+            <div class="terminal-block">
+              <p>$ brewslm quickstart --task classify --data ./support_tickets.csv</p>
+              <p>$ brewslm preflight --strict</p>
+              <p>$ brewslm benchmark --preset practical --sample 5000</p>
+              <p>$ brewslm train --autopilot --cloud-burst on</p>
+              <p>$ brewslm export --target vllm --release support-v1</p>
+            </div>
+            <div class="mode-detail-grid">
+              <p><strong>Team fit:</strong> platform, infra, MLOps-heavy engineering teams.</p>
+              <p><strong>Risk reduced:</strong> drift from manual one-off notebook logic.</p>
+              <p><strong>Handoff style:</strong> commit command profiles into repo templates.</p>
+            </div>
+          </article>
+
+          <article class="mode-panel" data-panel="python">
+            <p class="mode-title">Programmatic control inside product codebases</p>
+            <div class="code-block">
+              <p><span class="code-key">from</span> slm <span class="code-key">import</span> Project</p>
+              <p>project = Project.create(task="classify", data="./tickets.csv")</p>
+              <p>project.preflight(strict=True)</p>
+              <p>project.benchmark(profile="practical", sample=5000)</p>
+              <p>artifact = project.train(autopilot=True, cloud_burst=True).export("vllm")</p>
+            </div>
+            <div class="mode-detail-grid">
+              <p><strong>Team fit:</strong> backend teams integrating training into services.</p>
+              <p><strong>Risk reduced:</strong> brittle shell glue around app workflows.</p>
+              <p><strong>Handoff style:</strong> expose internal training APIs to product teams.</p>
+            </div>
+          </article>
+
+          <article class="mode-panel" data-panel="wizard">
+            <p class="mode-title">Guided UI for fast onboarding and reviewable runs</p>
+            <ol class="wizard-flow">
+              <li>Choose task type, success metric, and run objective.</li>
+              <li>Attach data source and map fields using schema helpers.</li>
+              <li>Review generated preflight checks and model candidates.</li>
+              <li>Launch run, monitor logs, and export deployable artifact.</li>
+            </ol>
+            <div class="mode-detail-grid">
+              <p><strong>Team fit:</strong> mixed AI + product teams onboarding together.</p>
+              <p><strong>Risk reduced:</strong> hidden setup errors during early project stages.</p>
+              <p><strong>Handoff style:</strong> export configs and migrate to CLI/SDK when mature.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Decision Matrix</p>
+          <h2>Compare execution tradeoffs before choosing your default mode</h2>
+        </div>
+        <div class="table-wrap reveal">
+          <table class="compare-table" aria-label="Creation path comparison">
+            <thead>
+              <tr>
+                <th>Dimension</th>
+                <th>CLI</th>
+                <th>Python SDK</th>
+                <th>Wizard UI</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Onboarding speed</td>
+                <td>Fast for shell-native teams</td>
+                <td>Medium, requires code integration</td>
+                <td>Fastest for new mixed teams</td>
+              </tr>
+              <tr>
+                <td>Automation depth</td>
+                <td>High via scripts and CI</td>
+                <td>Highest via application orchestration</td>
+                <td>Medium, guided steps with exports</td>
+              </tr>
+              <tr>
+                <td>Reviewability</td>
+                <td>High if config snapshots are committed</td>
+                <td>High with typed wrappers and logs</td>
+                <td>High with visual run trace</td>
+              </tr>
+              <tr>
+                <td>Best starting point</td>
+                <td>Infra-oriented engineering orgs</td>
+                <td>Product/backend engineering orgs</td>
+                <td>Cross-functional pilot teams</td>
+              </tr>
+              <tr>
+                <td>Typical migration path</td>
+                <td>Stay CLI or add SDK wrappers</td>
+                <td>Remain SDK with selective CLI ops</td>
+                <td>Wizard first, then CLI or SDK</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Adoption Sequence</p>
+          <h2>A pragmatic rollout model teams actually use</h2>
+        </div>
+        <div class="adoption-steps">
+          <article class="adoption-step reveal">
+            <span>Phase 1</span>
+            <h3>Discover</h3>
+            <p>Use Wizard UI for initial project setup and quick validation runs.</p>
+          </article>
+          <article class="adoption-step reveal">
+            <span>Phase 2</span>
+            <h3>Stabilize</h3>
+            <p>Move repeated operations to CLI scripts with pinned configs.</p>
+          </article>
+          <article class="adoption-step reveal">
+            <span>Phase 3</span>
+            <h3>Integrate</h3>
+            <p>Use Python SDK for app-triggered evaluation and retrain pipelines.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Creation path guidance for the BrewSLM + <code>__SLM__</code> stack</p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

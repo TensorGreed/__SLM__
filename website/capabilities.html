@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrewSLM Capabilities | Developer Controls And Guardrails</title>
+    <meta
+      name="description"
+      content="Detailed BrewSLM capabilities across data ingestion, preflight, benchmarking, training orchestration, and deployment packaging."
+    />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html" aria-current="page">Capabilities</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">Capabilities</p>
+        <h1>Control-rich defaults for teams shipping real SLM systems.</h1>
+        <p class="page-sub">
+          BrewSLM gives immediate productivity through autopilot presets while preserving full control
+          over contracts, training behavior, benchmark policy, and deployment packaging.
+        </p>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Capability Clusters</p>
+          <h2>What you can do end-to-end</h2>
+        </div>
+        <div class="cluster-grid">
+          <article class="cluster-card reveal">
+            <h3>Data Intake + Mapping</h3>
+            <ul class="capability-list">
+              <li>Ingest local, URL, HF, Kaggle sources in one interface.</li>
+              <li>Generate canonical schema mappings and reusable profiles.</li>
+              <li>Apply validation checks before training visibility.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Contract + Runtime Preflight</h3>
+            <ul class="capability-list">
+              <li>Validate task and model compatibility constraints.</li>
+              <li>Check runtime dependencies and memory fit before launch.</li>
+              <li>Choose strict/fail-open policy per environment.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Benchmark Intelligence</h3>
+            <ul class="capability-list">
+              <li>Run sampled candidate comparisons on project data.</li>
+              <li>Rank by quality, latency, and budget dimensions.</li>
+              <li>Persist benchmark traces for reproducible selection.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Training Orchestration</h3>
+            <ul class="capability-list">
+              <li>Launch local or cloud burst from shared run definitions.</li>
+              <li>Track checkpoints, logs, retries, and cancellation state.</li>
+              <li>Tune autopilot plans with manual override fields.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Artifact Packaging</h3>
+            <ul class="capability-list">
+              <li>Bundle weights, config, metrics, and run metadata.</li>
+              <li>Export to serving targets such as vLLM-compatible flows.</li>
+              <li>Version and verify bundles using checksums.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Operational Governance</h3>
+            <ul class="capability-list">
+              <li>Enforce benchmark floors as release gate conditions.</li>
+              <li>Track run provenance across data and model versions.</li>
+              <li>Standardize handoff between AI and platform teams.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Control Depth</p>
+          <h2>How much control each mode gives you</h2>
+        </div>
+        <div class="table-wrap reveal">
+          <table class="compare-table" aria-label="Capability control matrix">
+            <thead>
+              <tr>
+                <th>Control Area</th>
+                <th>Autopilot Default</th>
+                <th>Manual Override</th>
+                <th>Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Schema Mapping</td>
+                <td>Suggested canonical mapping</td>
+                <td>Edit mapping and validation rules</td>
+                <td>Faster setup with traceable field decisions</td>
+              </tr>
+              <tr>
+                <td>Model Selection</td>
+                <td>Benchmark-informed shortlist</td>
+                <td>Pin exact model and constraints</td>
+                <td>Balanced quality, cost, and consistency</td>
+              </tr>
+              <tr>
+                <td>Training Config</td>
+                <td>Generated train plan</td>
+                <td>Tune optimizer, schedule, stop policy</td>
+                <td>Safe baseline with targeted optimization</td>
+              </tr>
+              <tr>
+                <td>Runtime Placement</td>
+                <td>Recommended local/cloud placement</td>
+                <td>Force local or burst by policy</td>
+                <td>Operational flexibility by workload</td>
+              </tr>
+              <tr>
+                <td>Release Gating</td>
+                <td>Default quality checks</td>
+                <td>Define custom promotion thresholds</td>
+                <td>Reduced regression risk on deployment</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Automation Playbooks</p>
+          <h2>Starter patterns teams automate in the first month</h2>
+        </div>
+        <div class="playbook-grid">
+          <article class="playbook-card reveal">
+            <h3>Nightly Candidate Benchmark</h3>
+            <p>Run sampled benchmark jobs nightly to detect model drift and ranking shifts.</p>
+            <div class="terminal-block dense">
+              <p>$ brewslm benchmark --preset practical --schedule nightly</p>
+            </div>
+          </article>
+          <article class="playbook-card reveal">
+            <h3>Weekly Retrain Gate</h3>
+            <p>Train only if fresh data passes preflight and benchmark thresholds.</p>
+            <div class="terminal-block dense">
+              <p>$ brewslm train --autopilot --require benchmark_floor=0.82</p>
+            </div>
+          </article>
+          <article class="playbook-card reveal">
+            <h3>Release Candidate Export</h3>
+            <p>Promote artifacts only when eval metrics beat the current production baseline.</p>
+            <div class="terminal-block dense">
+              <p>$ brewslm export --target vllm --gate compare=production</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section cta reveal">
+        <div class="cta-copy">
+          <p class="eyebrow">Capability Test Drive</p>
+          <h2>Validate the core stack with one short run</h2>
+          <div class="terminal-block">
+            <p>$ brewslm quickstart --task classify --data ./sample.csv</p>
+            <p>$ brewslm preflight --strict</p>
+            <p>$ brewslm benchmark --preset practical</p>
+            <p>$ brewslm train --autopilot</p>
+            <p>$ brewslm export --target vllm</p>
+          </div>
+        </div>
+        <aside class="quickstart-notes">
+          <p class="notes-head">After test drive</p>
+          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> inspect each artifact boundary.</p>
+          <p class="form-note"><a class="inline-link" href="./faqs.html">FAQs:</a> clarify rollout and governance details.</p>
+          <a class="btn btn-solid" href="./creation-paths.html">Review Path Options</a>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Capability reference for the BrewSLM + <code>__SLM__</code> stack</p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

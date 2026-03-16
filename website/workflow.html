@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrewSLM Workflow | End-to-End SLM Lifecycle</title>
+    <meta
+      name="description"
+      content="Technical workflow for BrewSLM: ingest, normalize, preflight, benchmark, train, and export with clear artifact boundaries."
+    />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html" aria-current="page">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">Workflow</p>
+        <h1>A deterministic path from source data to deployable SLM artifact.</h1>
+        <p class="page-sub">
+          BrewSLM turns model development into a repeatable runbook. Each stage emits explicit inputs,
+          outputs, and checks so teams can inspect and improve the system without guessing.
+        </p>
+      </section>
+
+      <section class="section workflow">
+        <div class="section-head reveal">
+          <p class="eyebrow">Lifecycle Map</p>
+          <h2>Stage-level execution model</h2>
+        </div>
+        <div class="workflow-map">
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>01</span>
+              <h3>Source Ingestion</h3>
+            </div>
+            <p><strong>Input:</strong> local files, URL, HF, Kaggle</p>
+            <p><strong>Output:</strong> versioned raw dataset snapshot</p>
+            <p><strong>Guardrail:</strong> malformed record and empty-split detection</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>02</span>
+              <h3>Schema Normalization</h3>
+            </div>
+            <p><strong>Input:</strong> raw records + mapping config</p>
+            <p><strong>Output:</strong> canonical training schema</p>
+            <p><strong>Guardrail:</strong> field coverage and label-shape verification</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>03</span>
+              <h3>Contract Preflight</h3>
+            </div>
+            <p><strong>Input:</strong> task type + model candidates + runtime profile</p>
+            <p><strong>Output:</strong> pass/fail launch readiness report</p>
+            <p><strong>Guardrail:</strong> capability, dependency, and memory-fit checks</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>04</span>
+              <h3>Benchmark Sampling</h3>
+            </div>
+            <p><strong>Input:</strong> candidate models + sampled project data</p>
+            <p><strong>Output:</strong> ranked model shortlist with metrics</p>
+            <p><strong>Guardrail:</strong> score confidence floor and run reproducibility tags</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>05</span>
+              <h3>Training Launch</h3>
+            </div>
+            <p><strong>Input:</strong> selected model + generated train plan</p>
+            <p><strong>Output:</strong> checkpoints + incremental eval metrics</p>
+            <p><strong>Guardrail:</strong> budget cap, early-stop, and retry strategy</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>06</span>
+              <h3>Run Observability</h3>
+            </div>
+            <p><strong>Input:</strong> logs, metrics, worker heartbeats</p>
+            <p><strong>Output:</strong> run timeline and issue diagnostics</p>
+            <p><strong>Guardrail:</strong> stalled worker and metric regression alerts</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>07</span>
+              <h3>Artifact Packaging</h3>
+            </div>
+            <p><strong>Input:</strong> best checkpoint + metadata + eval summary</p>
+            <p><strong>Output:</strong> deployable artifact bundle</p>
+            <p><strong>Guardrail:</strong> version trace and checksum validation</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head">
+              <span>08</span>
+              <h3>Delivery + Iteration</h3>
+            </div>
+            <p><strong>Input:</strong> exported bundle + serving target profile</p>
+            <p><strong>Output:</strong> release candidate and next-run backlog</p>
+            <p><strong>Guardrail:</strong> release gate by benchmark and drift policy</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Artifact Ledger</p>
+          <h2>What gets produced, where, and why it matters</h2>
+        </div>
+        <div class="table-wrap reveal">
+          <table class="compare-table" aria-label="Workflow artifact ledger">
+            <thead>
+              <tr>
+                <th>Artifact</th>
+                <th>Produced At</th>
+                <th>Used By</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Raw Snapshot</td>
+                <td>Ingest</td>
+                <td>Mapper, audits</td>
+                <td>Preserves original source state for replay</td>
+              </tr>
+              <tr>
+                <td>Canonical Dataset</td>
+                <td>Normalize</td>
+                <td>Preflight, benchmark, train</td>
+                <td>Stable schema for deterministic downstream steps</td>
+              </tr>
+              <tr>
+                <td>Preflight Report</td>
+                <td>Contract Check</td>
+                <td>Launch gate</td>
+                <td>Blocks incompatible runs before compute spend</td>
+              </tr>
+              <tr>
+                <td>Benchmark Summary</td>
+                <td>Benchmark</td>
+                <td>Model selection</td>
+                <td>Data-backed candidate ranking</td>
+              </tr>
+              <tr>
+                <td>Train Plan</td>
+                <td>Train Launch</td>
+                <td>Worker runtime</td>
+                <td>Defines training config with traceability</td>
+              </tr>
+              <tr>
+                <td>Checkpoint Set</td>
+                <td>Training</td>
+                <td>Exporter, evaluation</td>
+                <td>Captures recoverable model state</td>
+              </tr>
+              <tr>
+                <td>Export Bundle</td>
+                <td>Packaging</td>
+                <td>Serving stack</td>
+                <td>Deploy-ready model with metadata</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Operational Gates</p>
+          <h2>Hard stops that prevent avoidable failure modes</h2>
+        </div>
+        <div class="insight-grid">
+          <article class="insight-card reveal">
+            <h3>Gate A: Data Integrity</h3>
+            <p>Reject launches when mapping coverage, label validity, or split quality drops below threshold.</p>
+          </article>
+          <article class="insight-card reveal">
+            <h3>Gate B: Capability Match</h3>
+            <p>Reject task/model pairs that fail compatibility contracts or runtime requirements.</p>
+          </article>
+          <article class="insight-card reveal">
+            <h3>Gate C: Benchmark Floor</h3>
+            <p>Reject long training jobs when candidates fail minimum sampled quality criteria.</p>
+          </article>
+          <article class="insight-card reveal">
+            <h3>Gate D: Release Readiness</h3>
+            <p>Reject export promotion when final metrics regress against previous accepted runs.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section cta reveal">
+        <div class="cta-copy">
+          <p class="eyebrow">Workflow Starter</p>
+          <h2>Run the full lifecycle in practical order</h2>
+          <div class="terminal-block">
+            <p>$ brewslm ingest --source hf --id your/dataset</p>
+            <p>$ brewslm map --profile canonical.v2</p>
+            <p>$ brewslm preflight --strict</p>
+            <p>$ brewslm benchmark --preset practical</p>
+            <p>$ brewslm train --autopilot --cloud-burst on</p>
+            <p>$ brewslm export --target vllm</p>
+          </div>
+        </div>
+        <aside class="quickstart-notes">
+          <p class="notes-head">Complementary pages</p>
+          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> see all controls and guardrails.</p>
+          <p class="form-note"><a class="inline-link" href="./faqs.html">FAQs:</a> resolve rollout questions before launch.</p>
+          <a class="btn btn-solid" href="./creation-paths.html">Pick Interface Path</a>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Workflow reference for the BrewSLM + <code>__SLM__</code> stack</p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

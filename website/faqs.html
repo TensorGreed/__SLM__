@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrewSLM FAQs | Engineering Rollout Questions</title>
+    <meta
+      name="description"
+      content="Searchable BrewSLM FAQ page covering onboarding speed, workflow control, runtime behavior, and deployment decisions."
+    />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./faqs.html" aria-current="page">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">FAQs</p>
+        <h1>Answers for teams rolling BrewSLM into real delivery workflows.</h1>
+        <p class="page-sub">
+          Use the search box to filter questions by topic. This page focuses on practical engineering
+          concerns: setup speed, control depth, risk, and deployment behavior.
+        </p>
+      </section>
+
+      <section class="section">
+        <div class="faq-tools reveal">
+          <label class="search-label" for="faq-search">Search questions</label>
+          <input
+            id="faq-search"
+            class="search-input"
+            type="search"
+            placeholder="Try: preflight, cloud, benchmark, export"
+            data-faq-search
+          />
+          <p class="search-count">Visible questions: <span data-faq-count></span></p>
+        </div>
+      </section>
+
+      <section class="section faq">
+        <div class="faq-grid">
+          <details class="faq-item reveal" data-faq-item>
+            <summary>How fast can a new team run its first SLM job?</summary>
+            <p>Most teams can ingest data and start a first run in under 10 minutes using quickstart.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Do we have to use the Wizard UI?</summary>
+            <p>No. CLI and Python SDK are first-class and can own your full production path.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>What does preflight actually validate?</summary>
+            <p>Task-model compatibility, runtime dependencies, memory fit, and data-contract readiness.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Can we benchmark before committing to full training?</summary>
+            <p>Yes. BrewSLM supports sampled benchmark runs to rank candidates before long jobs.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>How do we prevent invalid runs from wasting cloud budget?</summary>
+            <p>Use strict preflight and benchmark floors as hard launch gates for training and export.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Can we pin exact models instead of relying on recommendations?</summary>
+            <p>Yes. Autopilot suggestions are optional. You can pin exact models and constraints.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Can we mix local development with cloud burst production jobs?</summary>
+            <p>Yes. BrewSLM preserves one run model while letting you choose local or cloud execution.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>What gets stored in exported artifacts?</summary>
+            <p>Weights, selected config, benchmark trace, and metadata required for reproducible serving.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>How do we compare new runs to current production quality?</summary>
+            <p>Use benchmark and release gating policies that compare candidate scores against baseline.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Can we integrate BrewSLM into existing CI/CD workflows?</summary>
+            <p>Yes. CLI commands and SDK calls are designed for scriptable automation pipelines.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>What if our dataset schema changes frequently?</summary>
+            <p>Mapping profiles and contract checks make schema drift visible and manageable.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Does BrewSLM support non-text data workflows?</summary>
+            <p>Text is default; multimodal paths are available when configured in your runtime profile.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Can we audit why a model was selected for training?</summary>
+            <p>Yes. Benchmark summaries and selection metadata are persisted for review and auditability.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>How do we handoff from prototyping to platform teams?</summary>
+            <p>Promote from Wizard to CLI/SDK and commit generated plans plus gating rules in version control.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>What is the recommended first production policy?</summary>
+            <p>Enforce strict preflight, benchmark floor, and release comparison against production baseline.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Where should we start if we are not sure which path to use?</summary>
+            <p>Start with Creation Paths, pick one mode, then lock workflow and capability policies.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="section cta reveal">
+        <div class="cta-copy">
+          <p class="eyebrow">Need a rollout path?</p>
+          <h2>Recommended read order for new teams</h2>
+          <p>Creation Paths -> Workflow -> Capabilities -> Quickstart run.</p>
+        </div>
+        <aside class="quickstart-notes">
+          <p class="notes-head">Go next</p>
+          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation Paths</a></p>
+          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow</a></p>
+          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities</a></p>
+          <a class="btn btn-solid" href="./index.html#quickstart">Run Quickstart</a>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Engineering FAQ reference for the BrewSLM + <code>__SLM__</code> stack</p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
