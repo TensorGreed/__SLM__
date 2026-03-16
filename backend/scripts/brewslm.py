@@ -346,6 +346,37 @@ def run_export(args: argparse.Namespace, client: ApiClient) -> int:
     return 0 if status in {"completed", "success"} else 1
 
 
+def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
+    result = client.request(
+        "GET",
+        f"/projects/{args.project_id}/runtime/readiness",
+    )
+    
+    status = result.get("status", "unknown")
+    strict = result.get("strict_mode", False)
+    
+    print(f"BrewSLM Doctor - Project {args.project_id}")
+    print(f"Overall Status: {status.upper()}")
+    print(f"Strict Mode: {'ENABLED' if strict else 'DISABLED'}")
+    print("-" * 40)
+    
+    checks = result.get("checks", [])
+    for check in checks:
+        c_status = check.get("status", "unknown").upper()
+        c_name = check.get("name", "Unknown Check")
+        c_msg = check.get("message", "")
+        c_fix = check.get("fix", "")
+        
+        icon = "✅" if c_status == "PASS" else "⚠️" if c_status == "WARN" else "❌"
+        print(f"{icon} {c_name}: {c_status}")
+        print(f"   {c_msg}")
+        if c_fix:
+            print(f"   FIX: {c_fix}")
+        print()
+
+    return 0 if status == "pass" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
@@ -434,6 +465,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--no-run", action="store_true", help="Only create export; skip run step")
     export_parser.add_argument("--no-smoke-tests", action="store_true")
     export_parser.set_defaults(func=run_export)
+
+    doctor_parser = subparsers.add_parser("doctor", help="Check project readiness (GPU/deps/secrets)")
+    doctor_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    doctor_parser.set_defaults(func=run_doctor)
 
     return parser
 

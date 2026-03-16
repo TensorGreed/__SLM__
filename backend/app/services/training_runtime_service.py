@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from app.config import settings
+from app.exceptions import StrictExecutionError
 
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
@@ -254,6 +255,8 @@ def _normalize_external_python_command(command: str) -> tuple[str, str | None]:
 
 
 def _validate_builtin_simulate() -> list[str]:
+    if settings.STRICT_EXECUTION_MODE:
+        raise StrictExecutionError("training", "Simulated training is blocked because STRICT_EXECUTION_MODE is enabled.")
     if settings.ALLOW_SIMULATED_TRAINING:
         return []
     return [

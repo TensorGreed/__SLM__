@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.hardware_service import get_hardware_catalog, recommend_for_hardware
+from app.exceptions import HardwareNotFoundError
 
 router = APIRouter(prefix="/hardware", tags=["Hardware"])
 
@@ -24,4 +25,6 @@ async def recommend(req: RecommendRequest):
         rec = recommend_for_hardware(req.hardware_id, req.task_type)
         return rec.__dict__
     except ValueError as e:
+        if "not found" in str(e).lower():
+            raise HardwareNotFoundError(req.hardware_id)
         raise HTTPException(status_code=400, detail=str(e))

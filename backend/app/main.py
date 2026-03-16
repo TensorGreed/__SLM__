@@ -38,6 +38,8 @@ from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
 from app.services.data_adapter_service import load_data_adapter_plugins_from_settings
 from app.services.runtime_settings_service import apply_persisted_runtime_overrides
+from app.exceptions import SLMError
+from fastapi.responses import JSONResponse
 
 
 @asynccontextmanager
@@ -165,3 +167,11 @@ async def health_check():
         "version": settings.APP_VERSION,
         "auth_enabled": settings.AUTH_ENABLED,
     }
+
+
+@app.exception_handler(SLMError)
+async def slm_exception_handler(request: Request, exc: SLMError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.detail,
+    )

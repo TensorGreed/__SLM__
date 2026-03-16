@@ -26,6 +26,7 @@ from app.security import get_request_principal, upsert_project_membership
 from app.services.domain_pack_service import assign_project_domain_pack, get_domain_pack
 from app.services.domain_profile_service import assign_project_domain_profile, get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
+from app.services.readiness_service import get_project_readiness
 from app.services.nl2pipeline_service import magic_create_pipeline_recipe
 from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
@@ -320,6 +321,12 @@ async def get_project_domain_runtime(
         return await resolve_project_domain_runtime(db, project_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.get("/{project_id}/runtime/readiness")
+async def get_project_runtime_readiness(project_id: int):
+    """Validate GPU/dependencies/paths/secrets before run."""
+    return await get_project_readiness(project_id)
 
 
 @router.delete("/{project_id}", status_code=204)

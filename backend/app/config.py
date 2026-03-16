@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     PYTHON_EXECUTABLE: str = ""
 
     # ── Process Runtime Controls ────────────────────────────────────────
+    STRICT_EXECUTION_MODE: bool = False
     EXTERNAL_COMMAND_TIMEOUT_SECONDS: int = 21600
 
     # ── Domain Hook Plugins ─────────────────────────────────────────────

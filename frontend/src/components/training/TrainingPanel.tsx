@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { ReadinessPanel } from '../shared/ReadinessPanel';
 import ExperimentCompare from './ExperimentCompare';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
@@ -3303,6 +3304,7 @@ export default function TrainingPanel({
                   : 'Essentials mode keeps only launch-critical controls visible. Switch to Advanced for full tuning.'}
               </span>
             </div>
+            <ReadinessPanel projectId={projectId} />
             <div className="training-setup-tabs" role="tablist" aria-label="Training setup steps">
               {setupTabOrder.map((tab, idx) => {
                 const label = tab === 'basics'

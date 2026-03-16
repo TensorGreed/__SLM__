@@ -3,6 +3,7 @@ import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { ReadinessPanel } from '../shared/ReadinessPanel';
 import { buildWsUrl } from '../../utils/ws';
 import EDADashboard from './EDADashboard';
 import './IngestionPanel.css';
@@ -520,6 +521,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
 
     return (
         <div className="ingestion-panel animate-fade-in">
+            <ReadinessPanel projectId={projectId} />
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
                     {(Object.keys(sourceTabConfig) as SourceTab[]).map((tab) => (

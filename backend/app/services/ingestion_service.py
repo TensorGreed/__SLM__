@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.exceptions import StrictExecutionError
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.project import Project
 from app.services.domain_hook_service import (
@@ -629,6 +630,8 @@ async def ingest_remote_dataset(
 
             if used_repo_fallback:
                 pass
+            elif settings.STRICT_EXECUTION_MODE:
+                raise StrictExecutionError("ingestion", f"HuggingFace live import failed and STRICT_EXECUTION_MODE is enabled. Details: {load_error}")
             elif not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
                 raise ValueError(
                     "HuggingFace import failed. Configure dependencies/network/auth and retry "
@@ -685,6 +688,8 @@ async def ingest_remote_dataset(
             source_mode = "live"
             await _progress(f"[kaggle] collected {len(raw_samples)} rows")
         except Exception as e:
+            if settings.STRICT_EXECUTION_MODE:
+                raise StrictExecutionError("ingestion", f"Kaggle live import failed and STRICT_EXECUTION_MODE is enabled. Details: {e}")
             if not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
                 raise ValueError(
                     "Kaggle import failed. Configure kaggle API credentials/dependency and retry "

@@ -14,6 +14,7 @@ from pathlib import Path
 from time import perf_counter
 
 from app.config import settings
+from app.exceptions import StrictExecutionError
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -150,6 +151,8 @@ async def quantize_model(
     created_at = datetime.now(timezone.utc).isoformat()
 
     if backend == "stub":
+        if settings.STRICT_EXECUTION_MODE:
+            raise StrictExecutionError("compression", "Stub compression is blocked because STRICT_EXECUTION_MODE is enabled.")
         if not settings.ALLOW_STUB_COMPRESSION:
             raise ValueError(
                 "Stub compression backend is disabled. Configure COMPRESSION_BACKEND=external "
@@ -239,6 +242,8 @@ async def merge_lora(
     created_at = datetime.now(timezone.utc).isoformat()
 
     if backend == "stub":
+        if settings.STRICT_EXECUTION_MODE:
+            raise StrictExecutionError("compression", "Stub model merging is blocked because STRICT_EXECUTION_MODE is enabled.")
         if not settings.ALLOW_STUB_COMPRESSION:
             raise ValueError(
                 "Stub compression backend is disabled. Configure COMPRESSION_BACKEND=external "
@@ -338,6 +343,8 @@ async def merge_models(
     created_at = datetime.now(timezone.utc).isoformat()
 
     if backend == "stub":
+        if settings.STRICT_EXECUTION_MODE:
+            raise StrictExecutionError("compression", "Stub model merging (multi) is blocked because STRICT_EXECUTION_MODE is enabled.")
         if not settings.ALLOW_STUB_COMPRESSION:
             raise ValueError(
                 "Stub compression backend is disabled. Configure COMPRESSION_BACKEND=external "
@@ -448,6 +455,8 @@ async def benchmark_model(
     }
 
     if backend == "stub":
+        if settings.STRICT_EXECUTION_MODE:
+            raise StrictExecutionError("compression", "Stub benchmarking is blocked because STRICT_EXECUTION_MODE is enabled.")
         if not settings.ALLOW_STUB_COMPRESSION:
             raise ValueError(
                 "Stub compression backend is disabled. Configure COMPRESSION_BACKEND=external "

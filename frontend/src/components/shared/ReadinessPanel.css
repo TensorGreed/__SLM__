@@ -1,0 +1,130 @@
+.readiness-panel {
+  padding: 1rem;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 1.5rem;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.readiness-panel.fail {
+  border-left: 4px solid #ef4444;
+}
+
+.readiness-panel.warn {
+  border-left: 4px solid #f59e0b;
+}
+
+.readiness-panel.pass {
+  border-left: 4px solid #10b981;
+}
+
+.readiness-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.readiness-title {
+  font-weight: 600;
+  color: #1e293b;
+  font-size: 1.1rem;
+}
+
+.readiness-badges {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.badge {
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge.strict {
+  background: #1e293b;
+  color: white;
+}
+
+.badge.status-pass { background: #d1fae5; color: #065f46; }
+.badge.status-warn { background: #fef3c7; color: #92400e; }
+.badge.status-fail { background: #fee2e2; color: #991b1b; }
+
+.readiness-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.readiness-check {
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #f1f5f9;
+}
+
+.check-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.check-icon {
+  font-size: 1.25rem;
+}
+
+.check-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.check-name {
+  font-weight: 600;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.check-message {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.check-type-tag.blocker {
+  background: #ef4444;
+  color: white;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+.check-fix {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.readiness-refresh {
+  margin-top: 1rem;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.2s;
+}
+
+.readiness-refresh:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
