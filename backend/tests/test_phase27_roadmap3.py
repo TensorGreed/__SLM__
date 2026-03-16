@@ -25,12 +25,23 @@ os.environ["TRAINING_RUNTIME_PLUGIN_MODULES"] = '["app.plugins.training_runtimes
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
 class Phase27Roadmap3Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        cls._prev_data_dir = settings.DATA_DIR
+        cls._prev_training_backend = settings.TRAINING_BACKEND
+        cls._prev_allow_simulated_training = settings.ALLOW_SIMULATED_TRAINING
+        cls._prev_runtime_plugin_modules = list(settings.TRAINING_RUNTIME_PLUGIN_MODULES or [])
+        settings.AUTH_ENABLED = False
+        settings.DATA_DIR = TEST_DATA_DIR.resolve()
+        settings.TRAINING_BACKEND = "simulate"
+        settings.ALLOW_SIMULATED_TRAINING = True
+        settings.TRAINING_RUNTIME_PLUGIN_MODULES = ["app.plugins.training_runtimes.example_runtime"]
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():
@@ -46,6 +57,11 @@ class Phase27Roadmap3Tests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+        settings.DATA_DIR = cls._prev_data_dir
+        settings.TRAINING_BACKEND = cls._prev_training_backend
+        settings.ALLOW_SIMULATED_TRAINING = cls._prev_allow_simulated_training
+        settings.TRAINING_RUNTIME_PLUGIN_MODULES = cls._prev_runtime_plugin_modules
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():

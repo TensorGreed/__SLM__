@@ -15,12 +15,23 @@ os.environ["DEBUG"] = "false"
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
 class Phase1AuthTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_auth = (
+            settings.AUTH_ENABLED,
+            settings.AUTH_BOOTSTRAP_API_KEY,
+            settings.AUTH_BOOTSTRAP_USERNAME,
+            settings.AUTH_BOOTSTRAP_ROLE,
+        )
+        settings.AUTH_ENABLED = True
+        settings.AUTH_BOOTSTRAP_API_KEY = "phase1-admin-key"
+        settings.AUTH_BOOTSTRAP_USERNAME = "phase1-admin"
+        settings.AUTH_BOOTSTRAP_ROLE = "admin"
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         cls._client_cm = TestClient(app)
@@ -30,6 +41,12 @@ class Phase1AuthTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        (
+            settings.AUTH_ENABLED,
+            settings.AUTH_BOOTSTRAP_API_KEY,
+            settings.AUTH_BOOTSTRAP_USERNAME,
+            settings.AUTH_BOOTSTRAP_ROLE,
+        ) = cls._prev_auth
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
 

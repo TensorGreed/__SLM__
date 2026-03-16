@@ -20,12 +20,15 @@ os.environ["ALLOW_SIMULATED_TRAINING"] = "true"
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
 class Phase24AlignmentScaffoldTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():
@@ -41,6 +44,7 @@ class Phase24AlignmentScaffoldTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():

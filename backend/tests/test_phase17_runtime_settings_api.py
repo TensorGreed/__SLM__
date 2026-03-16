@@ -17,12 +17,17 @@ os.environ["DB_REQUIRE_ALEMBIC_HEAD"] = "false"
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
 class Phase17RuntimeSettingsApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        cls._prev_data_dir = settings.DATA_DIR
+        settings.AUTH_ENABLED = False
+        settings.DATA_DIR = TEST_DATA_DIR.resolve()
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():
@@ -38,6 +43,8 @@ class Phase17RuntimeSettingsApiTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+        settings.DATA_DIR = cls._prev_data_dir
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         if TEST_DATA_DIR.exists():
@@ -90,4 +97,3 @@ class Phase17RuntimeSettingsApiTests(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 400, res.text)
         self.assertIn("Unsupported setting keys", res.text)
-

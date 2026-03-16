@@ -27,6 +27,8 @@ from app.main import app
 class Phase14TrainingPreflightTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
         cls._prev_data_dir = settings.DATA_DIR
         settings.DATA_DIR = TEST_DATA_DIR.resolve()
         if TEST_DB_PATH.exists():
@@ -44,6 +46,7 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
         settings.DATA_DIR = cls._prev_data_dir
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()

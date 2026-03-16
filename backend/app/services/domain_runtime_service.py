@@ -144,8 +144,20 @@ async def resolve_project_domain_runtime(db: AsyncSession, project_id: int) -> d
     pack_overlay = _extract_pack_overlay(pack_contract)
     pack_hooks = _extract_pack_hooks(pack_contract)
 
-    effective_contract = _deep_merge(core_contract, profile_contract)
-    effective_contract = _deep_merge(effective_contract, pack_overlay)
+    default_pack_id = str(DEFAULT_DOMAIN_PACK_CONTRACT["pack_id"]).strip().lower()
+    applied_pack_id = str(pack.pack_id or "").strip().lower() if pack else ""
+    is_default_pack = bool(applied_pack_id) and applied_pack_id == default_pack_id
+
+    # Keep the platform default pack as a baseline, but let an explicit
+    # project/domain profile override those defaults. Non-default packs keep
+    # overlay precedence to preserve pack-specialized behavior.
+    effective_contract = copy.deepcopy(core_contract)
+    if is_default_pack:
+        effective_contract = _deep_merge(effective_contract, pack_overlay)
+        effective_contract = _deep_merge(effective_contract, profile_contract)
+    else:
+        effective_contract = _deep_merge(effective_contract, profile_contract)
+        effective_contract = _deep_merge(effective_contract, pack_overlay)
 
     return {
         "project_id": project_id,

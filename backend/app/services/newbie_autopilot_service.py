@@ -422,6 +422,14 @@ def estimate_newbie_autopilot_run(
     dataset_size_rows: int = 1000,
 ) -> dict[str, Any]:
     """Heuristic for training time and cost estimation."""
+    normalized_profile = str(plan_profile or "").strip().lower()
+    if normalized_profile == "fastest":
+        normalized_profile = "safe"
+    elif normalized_profile == "best_quality":
+        normalized_profile = "max_quality"
+    if normalized_profile not in {"safe", "balanced", "max_quality"}:
+        normalized_profile = "balanced"
+
     # Base throughput seconds per 1k rows
     base_time_per_1k_rows = 300.0  # seconds (5 mins)
     if target_profile_id == "mobile_cpu":
@@ -431,9 +439,9 @@ def estimate_newbie_autopilot_run(
 
     # Profile modifiers
     multiplier = 1.0
-    if plan_profile == "fastest":
+    if normalized_profile == "safe":
         multiplier = 0.5
-    elif plan_profile == "best_quality":
+    elif normalized_profile == "max_quality":
         multiplier = 2.0
 
     estimated_seconds = int(base_time_per_1k_rows * (dataset_size_rows / 1000) * multiplier)
@@ -453,8 +461,8 @@ def estimate_newbie_autopilot_run(
         "unit": "credits" if estimated_cost > 0 else "Local (Free)",
         "confidence_score": 0.7,
         "labels": {
-            "speed": "Fast" if plan_profile == "fastest" else "Medium",
-            "quality": "High" if plan_profile == "best_quality" else "Standard",
+            "speed": "Fast" if normalized_profile == "safe" else "Medium",
+            "quality": "High" if normalized_profile == "max_quality" else "Standard",
             "cost": "Low" if estimated_cost < 5.0 else "High",
         },
     }
@@ -501,7 +509,7 @@ def resolve_newbie_autopilot_intent(
         "auto_oom_retry": True,
         "max_oom_retries": 2,
         "oom_retry_seq_shrink": 0.75,
-        "training_plan_profile": "fastest",
+        "training_plan_profile": "safe",
         **target_defaults,
     }
 

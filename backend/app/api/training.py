@@ -31,6 +31,7 @@ from app.services.training_service import (
 )
 from app.services.training_preflight_service import (
     TRAINING_PLAN_PROFILES,
+    normalize_training_plan_profile,
     run_training_preflight,
     run_training_preflight_plan,
 )
@@ -377,11 +378,17 @@ class NewbieAutopilotOneClickRequest(NewbieAutopilotIntentRequest):
     description: str | None = Field(default=None, max_length=1000)
     auto_apply_rewrite: bool = True
     intent_rewrite: str | None = Field(default=None, min_length=3, max_length=4000)
-    plan_profile: str = Field(default="balanced", pattern="^(fastest|balanced|best_quality)$")
+    plan_profile: str = Field(
+        default="balanced",
+        pattern="^(safe|balanced|max_quality|fastest|best_quality)$",
+    )
 
 
 class NewbieAutopilotEstimateRequest(BaseModel):
-    plan_profile: str = Field(..., pattern="^(fastest|balanced|best_quality)$")
+    plan_profile: str = Field(
+        ...,
+        pattern="^(safe|balanced|max_quality|fastest|best_quality)$",
+    )
     target_profile_id: str = Field(default="vllm_server", min_length=1, max_length=64)
     dataset_size_rows: int = Field(default=1000, ge=1)
 
@@ -846,10 +853,11 @@ async def estimate_training_autopilot_run(
 ):
     """Estimate training time and cost for a selected plan profile and hardware."""
     await _get_project_or_404(db, project_id)
+    plan_profile = normalize_training_plan_profile(req.plan_profile) or "balanced"
     return {
         "project_id": project_id,
         "estimate": estimate_newbie_autopilot_run(
-            plan_profile=req.plan_profile,
+            plan_profile=plan_profile,
             target_profile_id=req.target_profile_id,
             dataset_size_rows=req.dataset_size_rows,
         ),
@@ -922,8 +930,14 @@ async def run_training_autopilot_one_click(
         raise HTTPException(400, "Autopilot could not generate a runnable plan.")
 
     # Pick the plan matching req.plan_profile
+    requested_profile = normalize_training_plan_profile(req.plan_profile) or "balanced"
     selected_plan = next(
-        (p for p in plan_options if p.get("profile") == req.plan_profile),
+        (
+            p
+            for p in plan_options
+            if (normalize_training_plan_profile(p.get("profile")) or str(p.get("profile") or "").strip().lower())
+            == requested_profile
+        ),
         plan_options[0],
     )
     launch_guardrails = plan_v2_resp.guardrails
@@ -955,7 +969,11 @@ async def run_training_autopilot_one_click(
     else:
         training_mode = TrainingMode.SFT
 
-    selected_profile = str(selected_plan.get("profile") or req.plan_profile).strip() or "balanced"
+    selected_profile = (
+        normalize_training_plan_profile(selected_plan.get("profile"))
+        or requested_profile
+        or "balanced"
+    )
     suggested_name = str(selected_plan.get("title") or "").strip()
     if not suggested_name:
         suggested_name = f"Autopilot - {selected_profile.replace('_', ' ').title()}"
@@ -2081,13 +2099,13 @@ def _resolve_training_config(
 
 
 def _normalize_preferred_plan_profile(value: str) -> str:
-    candidate = str(value or "").strip().lower()
+    candidate = normalize_training_plan_profile(value)
     if candidate in TRAINING_PLAN_PROFILES:
-        return candidate
+        return str(candidate)
     allowed = ", ".join(TRAINING_PLAN_PROFILES)
     raise HTTPException(
         400,
-        f"Invalid preferred_plan_profile '{candidate}'. Allowed values: {allowed}",
+        f"Invalid preferred_plan_profile '{str(value or '').strip().lower()}'. Allowed values: {allowed}",
     )
 
 
@@ -2149,8 +2167,9 @@ async def get_training_preferences(
         raise HTTPException(404, f"Project {project_id} not found")
 
     stored = str(project.training_preferred_plan_profile or "").strip().lower()
-    preferred = stored if stored in TRAINING_PLAN_PROFILES else "balanced"
-    source = "project" if stored in TRAINING_PLAN_PROFILES else "default"
+    normalized = normalize_training_plan_profile(stored)
+    preferred = normalized if normalized in TRAINING_PLAN_PROFILES else "balanced"
+    source = "project" if normalized in TRAINING_PLAN_PROFILES else "default"
     return {
         "project_id": project_id,
         "preferred_plan_profile": preferred,

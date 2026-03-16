@@ -299,4 +299,4 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
         # Preserve default FastAPI validation detail for compatibility.
         payload["detail"] = validation_errors
         return JSONResponse(status_code=422, content=payload)
-    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})

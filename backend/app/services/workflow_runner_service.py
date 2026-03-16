@@ -245,8 +245,14 @@ def _autopilot_profile_is_stable(stats: dict[str, Any]) -> bool:
     if runs < AUTOPILOT_MIN_PROFILE_RUNS:
         return False
 
-    success_rate = float(stats.get("success_rate") or 0.0)
-    blocked_or_failed_rate = float(stats.get("blocked_or_failed_rate") or 1.0)
+    success_rate_raw = stats.get("success_rate")
+    blocked_or_failed_rate_raw = stats.get("blocked_or_failed_rate")
+    success_rate = float(success_rate_raw) if success_rate_raw is not None else 0.0
+    blocked_or_failed_rate = (
+        float(blocked_or_failed_rate_raw)
+        if blocked_or_failed_rate_raw is not None
+        else 1.0
+    )
     if success_rate < AUTOPILOT_PROMOTION_SUCCESS_RATE:
         return False
     if blocked_or_failed_rate > AUTOPILOT_PROMOTION_BLOCKED_FAILED_RATE:
@@ -254,7 +260,12 @@ def _autopilot_profile_is_stable(stats: dict[str, Any]) -> bool:
 
     preflight_checks = int(stats.get("preflight_checks") or 0)
     if preflight_checks >= AUTOPILOT_MIN_PROFILE_RUNS:
-        preflight_pass_rate = float(stats.get("preflight_pass_rate") or 0.0)
+        preflight_pass_rate_raw = stats.get("preflight_pass_rate")
+        preflight_pass_rate = (
+            float(preflight_pass_rate_raw)
+            if preflight_pass_rate_raw is not None
+            else 0.0
+        )
         if preflight_pass_rate < AUTOPILOT_PROMOTION_PREFLIGHT_PASS_RATE:
             return False
 

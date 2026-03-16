@@ -21,6 +21,7 @@ from app.services.capability_contract_service import (
 from app.services.dataset_contract_service import analyze_prepared_dataset_contract
 from app.services.model_introspection_service import introspect_hf_model
 from app.services.training_runtime_service import (
+    BUILTIN_SIMULATE_RUNTIME_ID,
     get_runtime_spec,
     resolve_training_runtime_id,
     validate_runtime,
@@ -156,21 +157,36 @@ _MEDIA_AUDIO_EXTENSIONS: set[str] = {
 }
 
 _PLAN_PROFILE_META: dict[str, dict[str, str]] = {
-    "fastest": {
-        "title": "Fastest",
+    "safe": {
+        "title": "Safe",
         "description": "Highest stability and lowest VRAM pressure for first successful run.",
     },
     "balanced": {
         "title": "Balanced",
         "description": "Good default tradeoff for speed, stability, and quality.",
     },
-    "best_quality": {
-        "title": "Best Quality",
+    "max_quality": {
+        "title": "Max Quality",
         "description": "Preserves most quality-oriented settings; may require more VRAM.",
     },
 }
 
+_PLAN_PROFILE_ALIASES: dict[str, str] = {
+    "safe": "safe",
+    "balanced": "balanced",
+    "max_quality": "max_quality",
+    "fastest": "safe",
+    "best_quality": "max_quality",
+}
+
 TRAINING_PLAN_PROFILES: tuple[str, ...] = tuple(_PLAN_PROFILE_META.keys())
+
+
+def normalize_training_plan_profile(value: Any) -> str | None:
+    token = str(value or "").strip().lower()
+    if not token:
+        return None
+    return _PLAN_PROFILE_ALIASES.get(token)
 
 
 def _module_available(module_name: str) -> bool:
@@ -834,6 +850,8 @@ def run_training_preflight(
     except ValueError as runtime_error:
         errors.append(str(runtime_error))
 
+    is_simulate_runtime = runtime_id == BUILTIN_SIMULATE_RUNTIME_ID
+
     dependencies = _dependency_status_snapshot()
     for package_name in runtime_required_dependencies:
         if not dependencies.get(package_name, False):
@@ -924,15 +942,26 @@ def run_training_preflight(
     alignment_contract: dict[str, Any] | None = None
     alignment_quality: dict[str, Any] | None = None
     if not train_exists:
-        errors.append(
-            (
-                f"Prepared training dataset missing at {train_file}. "
-                "Run dataset split/prep before starting training."
+        if is_simulate_runtime:
+            warnings.append(
+                (
+                    f"Prepared training dataset missing at {train_file}. "
+                    "Built-in simulate runtime can still run without dataset artifacts."
+                )
             )
-        )
-        hints.append(
-            "Go to Dataset Prep, run Split, and verify train.jsonl is created before starting training."
-        )
+            hints.append(
+                "Run Dataset Prep split to exercise full data-contract checks before switching to non-simulated runtimes."
+            )
+        else:
+            errors.append(
+                (
+                    f"Prepared training dataset missing at {train_file}. "
+                    "Run dataset split/prep before starting training."
+                )
+            )
+            hints.append(
+                "Go to Dataset Prep, run Split, and verify train.jsonl is created before starting training."
+            )
     if not val_exists:
         warnings.append(
             f"Validation dataset not found at {val_file}; evaluation during training may be skipped."
@@ -1009,12 +1038,21 @@ def run_training_preflight(
                 )
             )
         elif keep_count <= 0:
-            errors.append(
-                (
-                    "Judge quality threshold would drop all preference pairs. "
-                    "Lower alignment_quality_threshold or improve dataset quality."
+            if is_simulate_runtime:
+                warnings.append(
+                    (
+                        "Judge quality threshold would drop all preference pairs. "
+                        "Simulate runtime will continue, but lower alignment_quality_threshold "
+                        "or improve dataset quality before real training."
+                    )
                 )
-            )
+            else:
+                errors.append(
+                    (
+                        "Judge quality threshold would drop all preference pairs. "
+                        "Lower alignment_quality_threshold or improve dataset quality."
+                    )
+                )
         elif keep_ratio < min_keep_ratio:
             warnings.append(
                 (
@@ -1405,6 +1443,7 @@ def _apply_profile_tuning(
     *,
     capability_summary: dict[str, Any],
 ) -> None:
+    resolved_profile = normalize_training_plan_profile(profile) or "balanced"
     max_seq_current = _coerce_int(cfg.get("max_seq_length"), 2048, minimum=128)
     batch_size_current = _coerce_int(cfg.get("batch_size"), 4, minimum=1)
     grad_accum_current = _coerce_int(cfg.get("gradient_accumulation_steps"), 4, minimum=1)
@@ -1413,66 +1452,66 @@ def _apply_profile_tuning(
         dict(capability_summary.get("runtime_environment") or {}).get("cuda_available", False)
     )
 
-    if profile == "fastest":
+    if resolved_profile == "safe":
         _set_planned_field(
             cfg,
             changes,
             field="batch_size",
             to_value=1,
-            reason="fastest profile lowers memory pressure",
+            reason="safe profile lowers memory pressure",
         )
         _set_planned_field(
             cfg,
             changes,
             field="gradient_accumulation_steps",
             to_value=max(8, grad_accum_current),
-            reason="fastest profile preserves effective batch size while keeping batch_size=1",
+            reason="safe profile preserves effective batch size while keeping batch_size=1",
         )
         _set_planned_field(
             cfg,
             changes,
             field="max_seq_length",
             to_value=min(max_seq_current, 1024),
-            reason="fastest profile reduces context length for OOM resilience",
+            reason="safe profile reduces context length for OOM resilience",
         )
         _set_planned_field(
             cfg,
             changes,
             field="gradient_checkpointing",
             to_value=True,
-            reason="fastest profile reduces activation memory",
+            reason="safe profile reduces activation memory",
         )
         _set_planned_field(
             cfg,
             changes,
             field="sequence_packing",
             to_value=False,
-            reason="fastest profile prioritizes stability over throughput",
+            reason="safe profile prioritizes stability over throughput",
         )
         _set_planned_field(
             cfg,
             changes,
             field="flash_attention",
             to_value=False,
-            reason="fastest profile favors broad runtime compatibility",
+            reason="safe profile favors broad runtime compatibility",
         )
         _set_planned_field(
             cfg,
             changes,
             field="auto_oom_retry",
             to_value=True,
-            reason="fastest profile enables automatic OOM recovery",
+            reason="safe profile enables automatic OOM recovery",
         )
         _set_planned_field(
             cfg,
             changes,
             field="max_oom_retries",
             to_value=max(2, max_retries_current),
-            reason="fastest profile increases retry budget",
+            reason="safe profile increases retry budget",
         )
         return
 
-    if profile == "balanced":
+    if resolved_profile == "balanced":
         _set_planned_field(
             cfg,
             changes,
@@ -1525,7 +1564,7 @@ def _apply_profile_tuning(
             )
         return
 
-    # best_quality keeps user intent mostly intact, with conservative guards.
+    # max_quality keeps user intent mostly intact, with conservative guards.
     if not cuda_available and batch_size_current > 2:
         _set_planned_field(
             cfg,
@@ -1539,14 +1578,14 @@ def _apply_profile_tuning(
         changes,
         field="auto_oom_retry",
         to_value=True,
-        reason="best_quality profile still keeps OOM safety net",
+        reason="max_quality profile still keeps OOM safety net",
     )
     _set_planned_field(
         cfg,
         changes,
         field="max_oom_retries",
         to_value=max(1, max_retries_current),
-        reason="best_quality profile keeps minimal retry budget",
+        reason="max_quality profile keeps minimal retry budget",
     )
 
 
@@ -1611,7 +1650,7 @@ def _pick_recommended_profile(suggestions: list[dict[str, Any]]) -> str:
     if not suggestions:
         return "balanced"
 
-    priority = {"balanced": 0, "fastest": 1, "best_quality": 2}
+    priority = {"balanced": 0, "safe": 1, "max_quality": 2}
     candidates = [item for item in suggestions if bool(item.get("preflight", {}).get("ok", False))]
     pool = candidates if candidates else suggestions
 
@@ -1619,10 +1658,10 @@ def _pick_recommended_profile(suggestions: list[dict[str, Any]]) -> str:
         pool,
         key=lambda item: (
             int(item.get("estimated_vram_score", 999)),
-            int(priority.get(str(item.get("profile", "")), 99)),
+            int(priority.get(str(normalize_training_plan_profile(item.get("profile")) or ""), 99)),
         ),
     )
-    return str(best.get("profile", "balanced"))
+    return str(normalize_training_plan_profile(best.get("profile")) or "balanced")
 
 
 def run_training_preflight_plan(

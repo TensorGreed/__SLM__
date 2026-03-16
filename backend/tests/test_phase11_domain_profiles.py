@@ -19,6 +19,7 @@ os.environ["DOMAIN_HOOK_PLUGIN_MODULES"] = '["app.plugins.domain_hooks.example_h
 
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
@@ -148,6 +149,18 @@ def _sample_pack(
 class Phase11DomainProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._prev_auth = (
+            settings.AUTH_ENABLED,
+            settings.AUTH_BOOTSTRAP_API_KEY,
+            settings.AUTH_BOOTSTRAP_USERNAME,
+            settings.AUTH_BOOTSTRAP_ROLE,
+        )
+        cls._prev_domain_hook_modules = list(settings.DOMAIN_HOOK_PLUGIN_MODULES or [])
+        settings.AUTH_ENABLED = True
+        settings.AUTH_BOOTSTRAP_API_KEY = "phase11-admin-key"
+        settings.AUTH_BOOTSTRAP_USERNAME = "phase11-admin"
+        settings.AUTH_BOOTSTRAP_ROLE = "admin"
+        settings.DOMAIN_HOOK_PLUGIN_MODULES = ["app.plugins.domain_hooks.example_hooks"]
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
         cls._client_cm = TestClient(app)
@@ -157,6 +170,13 @@ class Phase11DomainProfileTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
+        (
+            settings.AUTH_ENABLED,
+            settings.AUTH_BOOTSTRAP_API_KEY,
+            settings.AUTH_BOOTSTRAP_USERNAME,
+            settings.AUTH_BOOTSTRAP_ROLE,
+        ) = cls._prev_auth
+        settings.DOMAIN_HOOK_PLUGIN_MODULES = cls._prev_domain_hook_modules
         if TEST_DB_PATH.exists():
             TEST_DB_PATH.unlink()
 
