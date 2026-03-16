@@ -405,6 +405,35 @@ def run_optimize(args: argparse.Namespace, client: ApiClient) -> int:
     return 0
 
 
+def run_project(args: argparse.Namespace, client: ApiClient) -> int:
+    # Use 'id' or 'project_id' as provided by parser
+    pid = getattr(args, "project_id", None)
+    if pid is None:
+        print("Project ID required.")
+        return 1
+
+    if args.subcommand == "budget":
+        project = client.request("GET", f"/projects/{pid}")
+        budget = project.get("budget_settings") or {}
+        print(f"Project: {project.get('name')} (ID: {project.get('id')})")
+        print(f"Monthly Cap: ${budget.get('monthly_cap', 0.0):.2f}")
+        print(f"Current Spend: ${budget.get('current_spend', 0.0):.2f}")
+        print(f"Alert Threshold: {int(budget.get('alert_threshold', 0.8) * 100)}%")
+        print(f"Auto-Cancel: {budget.get('auto_cancel', True)}")
+    elif args.subcommand == "budget-set":
+        project = client.request("GET", f"/projects/{pid}")
+        budget = project.get("budget_settings") or {}
+        if args.cap is not None:
+            budget["monthly_cap"] = args.cap
+        if args.threshold is not None:
+            budget["alert_threshold"] = args.threshold
+        if args.auto_cancel is not None:
+            budget["auto_cancel"] = args.auto_cancel.lower() == "true"
+        client.request("PATCH", f"/projects/{pid}", json_body={"budget_settings": budget})
+        print(f"Updated budget settings for project {pid}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
@@ -420,6 +449,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Project commands
+    project_parser = subparsers.add_parser("project", help="Manage project settings (budget, etc)")
+    project_sub = project_parser.add_subparsers(dest="subcommand", required=True)
+
+    p_budget = project_sub.add_parser("budget", help="Show project budget and spend")
+    p_budget.add_argument("--id", "--project-id", dest="project_id", type=int, required=True)
+
+    p_budget_set = project_sub.add_parser("budget-set", help="Update project budget policy")
+    p_budget_set.add_argument("--id", "--project-id", dest="project_id", type=int, required=True)
+    p_budget_set.add_argument("--cap", type=float, help="Monthly cap (USD)")
+    p_budget_set.add_argument("--threshold", type=float, help="Alert threshold (0.0-1.0)")
+    p_budget_set.add_argument("--auto-cancel", choices=["true", "false"], help="Auto-cancel on cap")
+    project_parser.set_defaults(func=run_project)
 
     ingest_parser = subparsers.add_parser("ingest", help="Import remote dataset (HF/Kaggle/URL)")
     ingest_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)

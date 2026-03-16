@@ -490,6 +490,12 @@ interface CloudBurstRunStatusResponse {
   metrics_tail_count?: number;
   log_bridge?: CloudBurstLogBridgeSummary | null;
   artifacts?: CloudBurstRunArtifacts | null;
+  current_run_cost?: number;
+  status_timeline?: Array<{
+    status: string;
+    reason: string;
+    at: string;
+  }>;
   record_path?: string;
 }
 
@@ -4353,6 +4359,34 @@ export default function TrainingPanel({
                       <span>Provider Status</span>
                       <strong>{String(cloudBurstActiveRun.provider_status_raw || '-')}</strong>
                     </div>
+                    {cloudBurstActiveRun.current_run_cost !== undefined && (
+                      <div className="resolved-defaults-panel__kv">
+                        <span>Current Run Cost</span>
+                        <strong className="text-success">
+                          ${Number(cloudBurstActiveRun.current_run_cost).toFixed(4)}
+                        </strong>
+                      </div>
+                    )}
+
+                    {cloudBurstActiveRun.status_timeline && cloudBurstActiveRun.status_timeline.length > 0 && (
+                      <div className="cloud-burst-timeline">
+                        <div className="cloud-burst-timeline__title">Run Timeline</div>
+                        <div className="cloud-burst-timeline__track">
+                          {cloudBurstActiveRun.status_timeline.map((event, idx) => (
+                            <div key={`timeline-${idx}`} className="cloud-burst-timeline__event">
+                              <div className="cloud-burst-timeline__dot" data-status={event.status}></div>
+                              <div className="cloud-burst-timeline__content">
+                                <div className="cloud-burst-timeline__status">{event.status}</div>
+                                <div className="cloud-burst-timeline__time">
+                                  {new Date(event.at).toLocaleTimeString()}
+                                </div>
+                                <div className="cloud-burst-timeline__reason">{event.reason}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {!!cloudBurstActiveRun.idempotent_replay && (
                       <div className="training-alert training-alert--warning training-alert--tight">
                         This run was returned via idempotency replay.

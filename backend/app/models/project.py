@@ -82,6 +82,15 @@ class Project(Base):
             "blocked_if_missing": True
         }
     )
+    budget_settings: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=lambda: {
+            "monthly_cap": 0.0,
+            "current_spend": 0.0,
+            "alert_threshold": 0.8,
+            "auto_cancel": True
+        }
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

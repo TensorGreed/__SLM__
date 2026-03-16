@@ -11,7 +11,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
 from uuid import uuid4
 
 import httpx
@@ -19,8 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import async_session_factory
 from app.exceptions import StrictExecutionError
 from app.models.experiment import Experiment
+from app.models.project import Project
 from app.services.secret_service import get_project_secret_value
 
 
@@ -131,6 +133,133 @@ _DEFAULT_SYNC_EXCLUDE_GLOBS: tuple[str, ...] = (
     "**/*.temp",
     "**/*.lock",
 )
+@runtime_checkable
+class CloudBurstProvider(Protocol):
+    """Protocol for managed cloud burst providers."""
+
+    async def submit_job(
+        self,
+        *,
+        api_key: str,
+        gpu_sku: str,
+        image: str,
+        startup_script: str,
+        run_name: str,
+    ) -> dict[str, Any]:
+        """Submit a new job to the provider."""
+        ...
+
+    async def fetch_job_status(
+        self,
+        *,
+        api_key: str,
+        provider_job_id: str,
+    ) -> dict[str, Any]:
+        """Fetch the current status of a job."""
+        ...
+
+    async def fetch_job_logs(
+        self,
+        *,
+        api_key: str,
+        provider_job_id: str,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Fetch the logs of a job."""
+        ...
+
+    async def cancel_job(
+        self,
+        *,
+        api_key: str,
+        provider_job_id: str,
+    ) -> dict[str, Any]:
+        """Cancel a running job."""
+        ...
+
+
+class RunPodProvider:
+    """RunPod provider implementation using GraphQL API."""
+
+    def __init__(self):
+        self.endpoint = "https://api.runpod.io/graphql"
+
+    async def submit_job(
+        self,
+        *,
+        api_key: str,
+        gpu_sku: str,
+        image: str,
+        startup_script: str,
+        run_name: str,
+    ) -> dict[str, Any]:
+        return await _retryable_provider_call(
+            op_name="runpod.submit",
+            call=lambda: _runpod_submit_job(
+                api_key=api_key,
+                gpu_sku=gpu_sku,
+                image=image,
+                startup_script=startup_script,
+                run_name=run_name,
+            ),
+        )
+
+    async def fetch_job_status(
+        self,
+        *,
+        api_key: str,
+        provider_job_id: str,
+    ) -> dict[str, Any]:
+        return await _retryable_provider_call(
+            op_name="runpod.status",
+            call=lambda: _runpod_get_job_status(
+                api_key=api_key,
+                provider_job_id=provider_job_id,
+            ),
+        )
+
+    async def fetch_job_logs(
+        self,
+        *,
+        api_key: str,
+        provider_job_id: str,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        try:
+            return await _runpod_get_job_logs(
+                api_key=api_key,
+                provider_job_id=provider_job_id,
+                limit=limit,
+            )
+        except Exception:
+            return {
+                "provider_job_id": provider_job_id,
+                "logs": [],
+                "provider_payload": {},
+            }
+
+    async def cancel_job(
+        self,
+        *,
+        api_key: str,
+        provider_job_id: str,
+    ) -> dict[str, Any]:
+        return await _retryable_provider_call(
+            op_name="runpod.cancel",
+            call=lambda: _runpod_cancel_job(
+                api_key=api_key,
+                provider_job_id=provider_job_id,
+            ),
+        )
+
+
+def _get_provider_implementation(provider_id: str) -> CloudBurstProvider:
+    token = str(provider_id or "").strip().lower()
+    if token == "runpod":
+        return RunPodProvider()
+    raise ValueError(f"Provider {provider_id} does not have a managed implementation yet")
+
+
 _MAX_SYNC_HISTORY_ENTRIES = 20
 _DEFAULT_API_TIMEOUT_SECONDS = 12.0
 _DEFAULT_POLL_INTERVAL_SECONDS = 4.0
@@ -1096,19 +1225,14 @@ async def _submit_provider_job(
     startup_script: str,
     run_name: str,
 ) -> dict[str, Any]:
-    provider = _normalize_token(provider_id)
-    if provider == "runpod":
-        return await _retryable_provider_call(
-            op_name="runpod.submit",
-            call=lambda: _runpod_submit_job(
-                api_key=api_key,
-                gpu_sku=gpu_sku,
-                image=image,
-                startup_script=startup_script,
-                run_name=run_name,
-            ),
-        )
-    raise ValueError(f"Provider {provider_id} does not support live submit yet")
+    impl = _get_provider_implementation(provider_id)
+    return await impl.submit_job(
+        api_key=api_key,
+        gpu_sku=gpu_sku,
+        image=image,
+        startup_script=startup_script,
+        run_name=run_name,
+    )
 
 
 async def _fetch_provider_job_status(
@@ -1117,16 +1241,11 @@ async def _fetch_provider_job_status(
     api_key: str,
     provider_job_id: str,
 ) -> dict[str, Any]:
-    provider = _normalize_token(provider_id)
-    if provider == "runpod":
-        return await _retryable_provider_call(
-            op_name="runpod.status",
-            call=lambda: _runpod_get_job_status(
-                api_key=api_key,
-                provider_job_id=provider_job_id,
-            ),
-        )
-    raise ValueError(f"Provider {provider_id} does not support live status yet")
+    impl = _get_provider_implementation(provider_id)
+    return await impl.fetch_job_status(
+        api_key=api_key,
+        provider_job_id=provider_job_id,
+    )
 
 
 async def _cancel_provider_job(
@@ -1135,16 +1254,11 @@ async def _cancel_provider_job(
     api_key: str,
     provider_job_id: str,
 ) -> dict[str, Any]:
-    provider = _normalize_token(provider_id)
-    if provider == "runpod":
-        return await _retryable_provider_call(
-            op_name="runpod.cancel",
-            call=lambda: _runpod_cancel_job(
-                api_key=api_key,
-                provider_job_id=provider_job_id,
-            ),
-        )
-    raise ValueError(f"Provider {provider_id} does not support managed cancel yet")
+    impl = _get_provider_implementation(provider_id)
+    return await impl.cancel_job(
+        api_key=api_key,
+        provider_job_id=provider_job_id,
+    )
 
 
 async def _fetch_provider_job_logs(
@@ -1154,25 +1268,12 @@ async def _fetch_provider_job_logs(
     provider_job_id: str,
     limit: int = _RUNPOD_LOG_FETCH_LIMIT,
 ) -> dict[str, Any]:
-    provider = _normalize_token(provider_id)
-    if provider == "runpod":
-        try:
-            return await _runpod_get_job_logs(
-                api_key=api_key,
-                provider_job_id=provider_job_id,
-                limit=limit,
-            )
-        except Exception:
-            return {
-                "provider_job_id": provider_job_id,
-                "logs": [],
-                "provider_payload": {},
-            }
-    return {
-        "provider_job_id": provider_job_id,
-        "logs": [],
-        "provider_payload": {},
-    }
+    impl = _get_provider_implementation(provider_id)
+    return await impl.fetch_job_logs(
+        api_key=api_key,
+        provider_job_id=provider_job_id,
+        limit=limit,
+    )
 
 
 def _map_provider_status_to_run_status(provider_status_raw: str) -> str:
@@ -1570,6 +1671,12 @@ def sync_cloud_burst_job_artifacts(
         "next_cursor": next_cursor,
         "remaining_count": max(0, len(candidate_rel_paths) - len(selected_rel_paths)),
         "dry_run": bool(dry_run),
+        "retry_audit": {
+            "attempt": int(artifacts.get("last_sync_summary", {}).get("retry_audit", {}).get("attempt") or 0) + 1
+            if status == "partial_error"
+            else 1,
+            "last_error": errors[0] if errors else None,
+        },
     }
 
     artifacts["policy"] = sync_policy
@@ -1894,6 +2001,43 @@ async def _run_managed_cloud_burst_job_live(
         run["provider_last_status_at"] = _utcnow_iso()
         run["provider_poll_count"] = int(run.get("provider_poll_count") or 0) + 1
 
+        # ── Cost Burn and Budget Guardrail ──────────────────────────────────
+        uptime_seconds = status_payload.get("provider_uptime_seconds")
+        if uptime_seconds is not None:
+            gpu_sku = str(run.get("gpu_sku") or "").strip()
+            sku_info = _GPU_SKUS.get(gpu_sku)
+            if sku_info:
+                hourly_rate = float(sku_info.get("hourly_usd", {}).get(provider_id, 0.0))
+                current_run_cost = (max(0, float(uptime_seconds)) / 3600.0) * hourly_rate
+                run["current_run_cost"] = round(current_run_cost, 4)
+
+                # Check budget and auto-cancel if exceeded
+                async with async_session_factory() as db:
+                    project = await db.get(Project, project_id)
+                    if project:
+                        budget = dict(project.budget_settings or {})
+                        monthly_cap = float(budget.get("monthly_cap") or 0.0)
+                        current_spend = float(budget.get("current_spend") or 0.0)
+                        alert_threshold = float(budget.get("alert_threshold") or 0.8)
+
+                        if monthly_cap > 0:
+                            if (current_spend + current_run_cost) >= monthly_cap:
+                                if budget.get("auto_cancel", True):
+                                    _append_run_log(
+                                        project_id,
+                                        run_id,
+                                        f"budget_guardrail: monthly_cap ${monthly_cap:.2f} reached. Auto-cancelling job.",
+                                    )
+                                    cancel_event.set()
+                            elif (current_spend + current_run_cost) >= (monthly_cap * alert_threshold):
+                                if not run.get("budget_alert_sent"):
+                                    _append_run_log(
+                                        project_id,
+                                        run_id,
+                                        f"budget_alert: current spend has reached {int(alert_threshold * 100)}% of monthly_cap.",
+                                    )
+                                    run["budget_alert_sent"] = True
+
         if _provider_supports_logs(provider_id):
             logs_payload = await _fetch_provider_job_logs(
                 provider_id=provider_id,
@@ -1921,6 +2065,17 @@ async def _run_managed_cloud_burst_job_live(
             _mark_run_status(project_id, run_id, status=mapped_status, reason=reason)
 
         if mapped_status in _TERMINAL_CLOUD_BURST_JOB_STATES:
+            # Update project spend upon completion
+            final_run_cost = float(run.get("current_run_cost") or 0.0)
+            if final_run_cost > 0:
+                async with async_session_factory() as db:
+                    project = await db.get(Project, project_id)
+                    if project:
+                        budget = dict(project.budget_settings or {})
+                        budget["current_spend"] = float(budget.get("current_spend") or 0.0) + final_run_cost
+                        project.budget_settings = budget
+                        await db.commit()
+
             if mapped_status == "completed":
                 _sync_artifacts_on_completion(
                     project_id=project_id,
@@ -2034,6 +2189,21 @@ async def submit_cloud_burst_job(
         startup_script=startup_script,
         spot=spot,
     )
+
+    # ── Budget Guardrail Check ───────────────────────────────────────────
+    project = await db.get(Project, project_id)
+    if project:
+        budget = project.budget_settings or {}
+        monthly_cap = float(budget.get("monthly_cap") or 0.0)
+        current_spend = float(budget.get("current_spend") or 0.0)
+        estimated_cost = float(plan.get("quote", {}).get("estimated_cost_usd") or 0.0)
+
+        if monthly_cap > 0 and (current_spend + estimated_cost) > monthly_cap:
+            raise ValueError(
+                f"Cloud burst blocked: budget cap exceeded. "
+                f"Cap: ${monthly_cap:.2f}, Current: ${current_spend:.2f}, Estimated: ${estimated_cost:.2f}. "
+                f"Increase monthly_cap in project settings to proceed."
+            )
 
     resolved_experiment_id = experiment_id
     if resolved_experiment_id is None:

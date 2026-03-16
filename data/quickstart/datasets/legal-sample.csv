@@ -1,0 +1,4 @@
+instruction,response
+"summarize this legal clause: 'The party of the first part shall indemnify the party of the second part...'", "This clause states that the first party must pay for any losses incurred by the second party."
+"extract the key dates from this contract: 'This agreement is effective March 1, 2024 and expires February 28, 2026.'", "Effective: 2024-03-01, Expires: 2026-02-28"
+"identify the governing law in this text: 'This contract shall be governed by the laws of Delaware.'", "Delaware"

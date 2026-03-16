@@ -1,0 +1,15 @@
+{
+  "name": "Customer Support Optimized",
+  "description": "High-efficiency template for customer support chat tasks.",
+  "base_model": "phi-2",
+  "pipeline": "fast",
+  "gate_policy": {
+    "must_pass": true,
+    "min_score": 0.75,
+    "blocked_if_missing": true
+  },
+  "budget": {
+    "monthly_cap": 5.0,
+    "alert_threshold": 0.8
+  }
+}

@@ -16,6 +16,7 @@ class ProjectCreate(BaseModel):
     domain_profile_id: int | None = None
     target_profile_id: str | None = "vllm_server"
     gate_policy: dict | None = None
+    budget_settings: dict | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -28,6 +29,7 @@ class ProjectUpdate(BaseModel):
     domain_profile_id: int | None = None
     target_profile_id: str | None = None
     gate_policy: dict | None = None
+    budget_settings: dict | None = None
 
 
 class ProjectDomainPackAssignRequest(BaseModel):
@@ -52,6 +54,7 @@ class ProjectResponse(BaseModel):
     domain_profile_id: int | None = None
     target_profile_id: str | None = None
     gate_policy: dict | None = None
+    budget_settings: dict | None = None
     created_at: datetime
     updated_at: datetime
 

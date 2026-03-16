@@ -119,6 +119,84 @@
     stroke: #f59e0b;
 }
 
+/* Cloud Burst Timeline */
+.cloud-burst-timeline {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.cloud-burst-timeline__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.cloud-burst-timeline__track {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  position: relative;
+  padding-left: 0.5rem;
+}
+
+.cloud-burst-timeline__track::before {
+  content: '';
+  position: absolute;
+  left: 0.85rem;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  width: 2px;
+  background: var(--border-color);
+  opacity: 0.5;
+}
+
+.cloud-burst-timeline__event {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  position: relative;
+  z-index: 1;
+}
+
+.cloud-burst-timeline__dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+  margin-top: 0.25rem;
+  border: 2px solid var(--bg-card);
+}
+
+.cloud-burst-timeline__dot[data-status="running"] { background: var(--success); }
+.cloud-burst-timeline__dot[data-status="failed"] { background: var(--error); }
+.cloud-burst-timeline__dot[data-status="cancelled"] { background: var(--warning); }
+.cloud-burst-timeline__dot[data-status="provisioning"] { background: var(--accent); }
+.cloud-burst-timeline__dot[data-status="completed"] { background: var(--success); }
+
+.cloud-burst-timeline__content {
+  flex: 1;
+}
+
+.cloud-burst-timeline__status {
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-transform: capitalize;
+}
+
+.cloud-burst-timeline__time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.cloud-burst-timeline__reason {
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+  opacity: 0.8;
+}
+
 .training-preflight-panel {
     margin-bottom: var(--space-md);
     border-radius: var(--radius-md);
