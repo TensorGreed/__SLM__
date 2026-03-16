@@ -14,6 +14,7 @@ class ProjectCreate(BaseModel):
     base_model_name: str = ""
     domain_pack_id: int | None = None
     domain_profile_id: int | None = None
+    target_profile_id: str | None = "vllm_server"
 
 
 class ProjectUpdate(BaseModel):
@@ -24,6 +25,7 @@ class ProjectUpdate(BaseModel):
     base_model_name: str | None = None
     domain_pack_id: int | None = None
     domain_profile_id: int | None = None
+    target_profile_id: str | None = None
 
 
 class ProjectDomainPackAssignRequest(BaseModel):
@@ -46,6 +48,7 @@ class ProjectResponse(BaseModel):
     base_model_name: str | None
     domain_pack_id: int | None = None
     domain_profile_id: int | None = None
+    target_profile_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -62,6 +62,10 @@ class Project(Base):
         String(32),
         default="balanced",
     )
+    target_profile_id: Mapped[str | None] = mapped_column(
+        String(64),
+        default="vllm_server",
+    )
     evaluation_preferred_pack_id: Mapped[str | None] = mapped_column(
         String(128),
         default=None,

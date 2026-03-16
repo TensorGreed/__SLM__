@@ -15,11 +15,15 @@ _TARGET_DEVICE_ALIASES: dict[str, str] = {
     "phone": "mobile",
     "tablet": "mobile",
     "mobile": "mobile",
+    "mobile_cpu": "mobile",
     "laptop": "laptop",
     "desktop": "laptop",
+    "edge_gpu": "laptop",
+    "browser_webgpu": "mobile",
     "workstation": "server",
     "cloud": "server",
     "server": "server",
+    "vllm_server": "server",
 }
 
 _PRIMARY_LANGUAGE_ALIASES: dict[str, str] = {

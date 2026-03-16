@@ -124,12 +124,13 @@ export default function ProjectWizardPage() {
 
   const [currentStep, setCurrentStep] = useState(1);
   const [intentText, setIntentText] = useState('');
-  const [targetDevice, setTargetDevice] = useState<'mobile' | 'laptop' | 'server'>('laptop');
-  const [availableVramGb, setAvailableVramGb] = useState('8');
   const [runNameOverride, setRunNameOverride] = useState('');
+  const [targetProfileId, setTargetProfileId] = useState('vllm_server');
+  const [targetCatalog, setTargetCatalog] = useState<any[]>([]);
+  const [targetLoading, setTargetLoading] = useState(false);
+  const [targetError, setTargetError] = useState('');
   const [acknowledgeIntentClarification, setAcknowledgeIntentClarification] = useState(false);
-  const [selectedIntentRewrite, setSelectedIntentRewrite] = useState('');
-  const [selectedProfile, setSelectedProfile] = useState('balanced');
+  const [availableVramGb, setAvailableVramGb] = useState('8');
 
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState('');
@@ -144,11 +145,29 @@ export default function ProjectWizardPage() {
   const [statusResponse, setStatusResponse] = useState<ExperimentStatusResponse | null>(null);
   const [trainingProgress, setTrainingProgress] = useState(0);
 
+  const [selectedIntentRewrite, setSelectedIntentRewrite] = useState('');
+  const [selectedProfile, setSelectedProfile] = useState('balanced');
+
+  useEffect(() => {
+    const fetchCatalog = async () => {
+      setTargetLoading(true);
+      try {
+        const res = await api.get('/targets/catalog');
+        setTargetCatalog(res.data || []);
+      } catch (err: any) {
+        setTargetError('Failed to load target catalog.');
+      } finally {
+        setTargetLoading(false);
+      }
+    };
+    void fetchCatalog();
+  }, []);
+
   const stepItems = useMemo(
     () => [
-      { num: 1, label: 'Describe Goal' },
-      { num: 2, label: 'Review Safe Plan' },
-      { num: 3, label: 'One-Click Launch' },
+      { num: 1, label: 'Select Target' },
+      { num: 2, label: 'Describe Goal' },
+      { num: 3, label: 'Review Safe Plan' },
       { num: 4, label: 'Monitor Training' },
       { num: 5, label: 'Chat with Model' },
     ],
@@ -186,7 +205,7 @@ export default function ProjectWizardPage() {
         `/projects/${projectId}/training/autopilot/plan-v2`,
         {
           intent: trimmedIntent,
-          target_device: targetDevice,
+          target_profile_id: targetProfileId,
           primary_language: 'english',
           available_vram_gb: Number.isFinite(parsedVram) && parsedVram > 0 ? parsedVram : undefined,
         },
@@ -195,7 +214,7 @@ export default function ProjectWizardPage() {
       if (res.data?.recommended_profile) {
         setSelectedProfile(res.data.recommended_profile);
       }
-      setCurrentStep(2);
+      setCurrentStep(3);
     } catch (err: any) {
       setPlanResponse(null);
       setPlanError(err?.response?.data?.detail || 'Failed to resolve an autopilot plan.');
@@ -218,7 +237,7 @@ export default function ProjectWizardPage() {
         `/projects/${projectId}/training/autopilot/one-click-run`,
         {
           intent: trimmedIntent,
-          target_device: targetDevice,
+          target_profile_id: targetProfileId,
           primary_language: 'english',
           available_vram_gb: Number.isFinite(parsedVram) && parsedVram > 0 ? parsedVram : undefined,
           auto_apply_rewrite: true,
@@ -257,7 +276,7 @@ export default function ProjectWizardPage() {
       const status = String(payload?.status || '').toLowerCase();
       if (status === 'completed') {
         setTrainingProgress(100);
-        setCurrentStep(5);
+        setCurrentStep(6);
       } else if (status === 'failed' || status === 'cancelled') {
         setTrainingProgress(100);
       } else if (status === 'running') {
@@ -315,6 +334,47 @@ export default function ProjectWizardPage() {
 
         {currentStep === 1 && (
           <section className="wizard-section">
+            <h3>Where will this model run?</h3>
+            <p className="wizard-muted">Pick your target deployment environment to get optimized training recommendations.</p>
+            {targetLoading ? (
+              <div className="wizard-loading">Loading targets...</div>
+            ) : targetError ? (
+              <div className="wizard-error">{targetError}</div>
+            ) : (
+              <div className="target-grid">
+                {targetCatalog.map((target) => (
+                  <div
+                    key={target.id}
+                    className={`target-card ${targetProfileId === target.id ? 'selected' : ''}`}
+                    onClick={() => setTargetProfileId(target.id)}
+                  >
+                    <h4>{target.name}</h4>
+                    <p>{target.description}</p>
+                    <div className="constraints">
+                      {target.constraints.max_parameters_billions && (
+                        <div>Max Size: {target.constraints.max_parameters_billions}B parameters</div>
+                      )}
+                      {target.constraints.min_vram_gb && (
+                        <div>Min VRAM: {target.constraints.min_vram_gb}GB</div>
+                      )}
+                      {target.constraints.preferred_formats?.length > 0 && (
+                        <div>Preferred: {target.constraints.preferred_formats.join(', ').toUpperCase()}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="wizard-actions wizard-actions-bottom">
+              <button className="btn btn-primary" onClick={() => setCurrentStep(2)}>
+                Next: Describe Goal
+              </button>
+            </div>
+          </section>
+        )}
+
+        {currentStep === 2 && (
+          <section className="wizard-section">
             <h3>What do you want your model to do?</h3>
             <p className="wizard-muted">
               Example:
@@ -333,18 +393,6 @@ export default function ProjectWizardPage() {
               placeholder="Describe your use case in one or two sentences..."
               rows={4}
             />
-            <div className="wizard-param-row">
-              <label className="form-label">Target hardware</label>
-              <select
-                className="input"
-                value={targetDevice}
-                onChange={(e) => setTargetDevice(e.target.value as 'mobile' | 'laptop' | 'server')}
-              >
-                <option value="mobile">Mobile / Edge</option>
-                <option value="laptop">Laptop / Single GPU</option>
-                <option value="server">Server GPU</option>
-              </select>
-            </div>
             <div className="wizard-param-row">
               <label className="form-label">Available VRAM (optional)</label>
               <input
@@ -365,6 +413,9 @@ export default function ProjectWizardPage() {
             </div>
             {planError && <div className="wizard-error">{planError}</div>}
             <div className="wizard-actions wizard-actions-bottom">
+              <button className="btn btn-secondary" onClick={() => setCurrentStep(1)}>
+                Back
+              </button>
               <button className="btn btn-primary" onClick={() => void resolveSafePlan()} disabled={planLoading}>
                 {planLoading ? 'Building Safe Plan...' : 'Build Safe Plan'}
               </button>
@@ -372,7 +423,7 @@ export default function ProjectWizardPage() {
           </section>
         )}
 
-        {currentStep === 2 && (
+        {currentStep === 3 && (
           <section className="wizard-section">
             <h3>Choose your path</h3>
             <p className="wizard-muted">We've prepared 3 ways to reach your goal. Pick one to launch.</p>
@@ -493,7 +544,7 @@ export default function ProjectWizardPage() {
                 )}
             </div>
             <div className="wizard-actions wizard-actions-bottom">
-              <button className="btn btn-secondary" onClick={() => setCurrentStep(1)}>Back</button>
+              <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>Back</button>
               <button
                 className="btn btn-primary"
                 onClick={() => void launchOneClickRun()}
@@ -510,7 +561,7 @@ export default function ProjectWizardPage() {
           </section>
         )}
 
-        {currentStep === 3 && (
+        {currentStep === 4 && (
           <section className="wizard-section">
             <h3>Launch Result</h3>
             <p className="wizard-muted">We created your experiment and attempted to start training.</p>
@@ -538,10 +589,10 @@ export default function ProjectWizardPage() {
               )}
             </div>
             <div className="wizard-actions wizard-actions-bottom">
-              <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>Back</button>
+              <button className="btn btn-secondary" onClick={() => setCurrentStep(3)}>Back</button>
               <button
                 className="btn btn-primary"
-                onClick={() => setCurrentStep(4)}
+                onClick={() => setCurrentStep(5)}
                 disabled={!launchResponse?.experiment?.id}
               >
                 Monitor Training
@@ -550,7 +601,7 @@ export default function ProjectWizardPage() {
           </section>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 5 && (
           <section className="wizard-section">
             <h3>Training Progress</h3>
             <p className="wizard-muted">
@@ -578,7 +629,7 @@ export default function ProjectWizardPage() {
           </section>
         )}
 
-        {currentStep === 5 && (
+        {currentStep === 6 && (
           <section className="wizard-section">
             <h3>Model Ready</h3>
             <p className="wizard-muted">Training completed. You can now test and export your model.</p>

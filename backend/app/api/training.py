@@ -105,6 +105,7 @@ from app.services.newbie_autopilot_service import (
     estimate_newbie_autopilot_run,
     resolve_newbie_autopilot_intent,
 )
+from app.services.target_profile_service import check_compatibility
 from app.services.capability_contract_service import build_training_capability_contract
 from app.services.cloud_burst_service import (
     build_cloud_burst_launch_plan,
@@ -365,7 +366,8 @@ class CloudBurstArtifactSyncRequest(BaseModel):
 
 class NewbieAutopilotIntentRequest(BaseModel):
     intent: str = Field(..., min_length=3, max_length=4000)
-    target_device: str = Field(default="laptop", pattern="^(mobile|laptop|server)$")
+    target_profile_id: str = Field(default="vllm_server", min_length=1, max_length=64)
+    target_device: str = Field(default="server", pattern="^(mobile|laptop|server)$")
     primary_language: str = Field(default="english", min_length=1, max_length=32)
     available_vram_gb: float | None = Field(default=None, ge=0)
 
@@ -380,7 +382,7 @@ class NewbieAutopilotOneClickRequest(NewbieAutopilotIntentRequest):
 
 class NewbieAutopilotEstimateRequest(BaseModel):
     plan_profile: str = Field(..., pattern="^(fastest|balanced|best_quality)$")
-    target_device: str = Field(default="laptop", pattern="^(mobile|laptop|server)$")
+    target_profile_id: str = Field(default="vllm_server", min_length=1, max_length=64)
     dataset_size_rows: int = Field(default=1000, ge=1)
 
 
@@ -393,6 +395,7 @@ class AutopilotPlanV2Response(BaseModel):
     guardrails: dict[str, object]
     dataset_readiness: dict[str, object]
     intent_clarification: dict[str, object]
+    target_compatibility: dict[str, object] | None = None
 
 
 def _sse_json(payload: dict) -> str:
@@ -510,7 +513,7 @@ def _build_newbie_autopilot_plan_v2(
     # 1. Resolve basic intent preset
     plan_meta = resolve_newbie_autopilot_intent(
         intent=req.intent,
-        target_device=req.target_device,
+        target_profile_id=req.target_profile_id,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
     )
@@ -556,7 +559,7 @@ def _build_newbie_autopilot_plan_v2(
         profile = suggestion["profile"]
         estimate = estimate_newbie_autopilot_run(
             plan_profile=profile,
-            target_device=req.target_device,
+            target_profile_id=req.target_profile_id,
             dataset_size_rows=dataset_rows,
         )
         suggestion["estimate"] = estimate
@@ -565,6 +568,12 @@ def _build_newbie_autopilot_plan_v2(
     # 6. Build Guardrails
     guardrail_blockers = []
     guardrail_warnings = []
+    
+    # Target compatibility check
+    compatibility = check_compatibility(model_id, req.target_profile_id)
+    if not compatibility.get("compatible"):
+        guardrail_blockers.extend(compatibility.get("reasons") or ["Model is not compatible with target hardware constraints."])
+    
     guardrail_blockers.extend([str(item) for item in list(dataset_readiness.get("blockers") or [])])
 
     # Check if any plan is actually runnable
@@ -582,6 +591,7 @@ def _build_newbie_autopilot_plan_v2(
         intent=req.intent,
         plans=enriched_plans,
         recommended_profile=preflight_plan.get("recommended_profile", "balanced"),
+        target_compatibility=compatibility,
         guardrails={
             "can_run": can_run,
             "blockers": guardrail_blockers,
@@ -681,7 +691,7 @@ async def estimate_training_autopilot_run(
         "project_id": project_id,
         "estimate": estimate_newbie_autopilot_run(
             plan_profile=req.plan_profile,
-            target_device=req.target_device,
+            target_profile_id=req.target_profile_id,
             dataset_size_rows=req.dataset_size_rows,
         ),
     }

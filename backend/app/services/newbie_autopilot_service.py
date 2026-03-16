@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.services import target_profile_service
 
 
 _INTENT_PRESETS: list[dict[str, Any]] = [
@@ -98,23 +99,27 @@ def _normalize_intent(intent: str) -> str:
     return token
 
 
-def _normalize_target_device(value: str | None) -> str:
+def _normalize_target_profile(value: str | None) -> str:
     token = str(value or "").strip().lower()
-    if token in {"mobile", "laptop", "server"}:
-        return token
-    return "laptop"
+    if not token:
+        return "vllm_server"
+    return token
 
 
-def _safe_defaults_for_device(target_device: str) -> dict[str, Any]:
-    device = _normalize_target_device(target_device)
-    if device == "mobile":
+def _safe_defaults_for_target(target_profile_id: str) -> dict[str, Any]:
+    target = target_profile_service.get_target_by_id(target_profile_id)
+    if not target:
+        return {"batch_size": 1, "max_seq_length": 512}
+    
+    # Heuristics based on target
+    if target_profile_id == "mobile_cpu":
         return {
             "batch_size": 1,
             "gradient_accumulation_steps": 8,
             "max_seq_length": 1024,
             "num_epochs": 2,
         }
-    if device == "server":
+    if target_profile_id == "vllm_server":
         return {
             "batch_size": 4,
             "gradient_accumulation_steps": 4,
@@ -413,15 +418,15 @@ def build_newbie_autopilot_run_name(
 def estimate_newbie_autopilot_run(
     *,
     plan_profile: str,
-    target_device: str,
+    target_profile_id: str,
     dataset_size_rows: int = 1000,
 ) -> dict[str, Any]:
     """Heuristic for training time and cost estimation."""
     # Base throughput seconds per 1k rows
     base_time_per_1k_rows = 300.0  # seconds (5 mins)
-    if target_device == "mobile":
+    if target_profile_id == "mobile_cpu":
         base_time_per_1k_rows = 1200.0
-    elif target_device == "server":
+    elif target_profile_id == "vllm_server":
         base_time_per_1k_rows = 60.0
 
     # Profile modifiers
@@ -435,9 +440,9 @@ def estimate_newbie_autopilot_run(
 
     # Cost in "credits" (fake currency)
     cost_per_hour = 10.0
-    if target_device == "server":
+    if target_profile_id == "vllm_server":
         cost_per_hour = 50.0
-    elif target_device == "mobile":
+    elif target_profile_id == "mobile_cpu":
         cost_per_hour = 0.0  # Local
 
     estimated_cost = round((estimated_seconds / 3600.0) * cost_per_hour, 2)
@@ -458,7 +463,7 @@ def estimate_newbie_autopilot_run(
 def resolve_newbie_autopilot_intent(
     *,
     intent: str,
-    target_device: str = "laptop",
+    target_profile_id: str = "vllm_server",
     primary_language: str = "english",
     available_vram_gb: float | None = None,
 ) -> dict[str, Any]:
@@ -476,8 +481,8 @@ def resolve_newbie_autopilot_intent(
             selected_score = score
             selected_keywords = matched
 
-    normalized_device = _normalize_target_device(target_device)
-    device_defaults = _safe_defaults_for_device(normalized_device)
+    normalized_target = _normalize_target_profile(target_profile_id)
+    target_defaults = _safe_defaults_for_target(normalized_target)
     safe_training_config = {
         "base_model": "microsoft/phi-2",
         "training_mode": "sft",
@@ -497,12 +502,12 @@ def resolve_newbie_autopilot_intent(
         "max_oom_retries": 2,
         "oom_retry_seq_shrink": 0.75,
         "training_plan_profile": "fastest",
-        **device_defaults,
+        **target_defaults,
     }
 
     return {
         "intent": normalized_intent,
-        "target_device": normalized_device,
+        "target_profile_id": normalized_target,
         "primary_language": str(primary_language or "english").strip().lower() or "english",
         "available_vram_gb": available_vram_gb,
         "preset_id": str(selected.get("preset_id") or _DEFAULT_PRESET["preset_id"]),
