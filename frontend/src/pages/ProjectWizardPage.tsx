@@ -67,12 +67,6 @@ interface AutopilotLaunchGuardrails {
   one_click_fix_available?: boolean;
 }
 
-interface AutopilotModelRecommendation {
-  model_id?: string;
-  match_score?: number;
-  match_reasons?: string[];
-}
-
 interface AutopilotPreflight {
   ok?: boolean;
   errors?: string[];
@@ -128,6 +122,7 @@ export default function ProjectWizardPage() {
   const [targetProfileId, setTargetProfileId] = useState('vllm_server');
   const [targetCatalog, setTargetCatalog] = useState<any[]>([]);
   const [targetLoading, setTargetLoading] = useState(false);
+  const [targetSaving, setTargetSaving] = useState(false);
   const [targetError, setTargetError] = useState('');
   const [acknowledgeIntentClarification, setAcknowledgeIntentClarification] = useState(false);
   const [availableVramGb, setAvailableVramGb] = useState('8');
@@ -182,6 +177,21 @@ export default function ProjectWizardPage() {
   const launchGuardrailsPass = planResponse?.guardrails?.can_run !== false;
   const canLaunchFromPlan = launchGuardrailsPass
     && (!clarificationRequired || acknowledgeIntentClarification || hasSelectedRewrite);
+
+  const saveTargetAndContinue = async () => {
+    setTargetError('');
+    setTargetSaving(true);
+    try {
+      await api.put(`/projects/${projectId}`, {
+        target_profile_id: targetProfileId,
+      });
+      setCurrentStep(2);
+    } catch (err: any) {
+      setTargetError('Failed to save target selection. Please try again.');
+    } finally {
+      setTargetSaving(false);
+    }
+  };
 
   const resolveSafePlan = async (intentOverride?: string) => {
     const baseIntent = typeof intentOverride === 'string' ? intentOverride : intentText;
@@ -366,8 +376,12 @@ export default function ProjectWizardPage() {
               </div>
             )}
             <div className="wizard-actions wizard-actions-bottom">
-              <button className="btn btn-primary" onClick={() => setCurrentStep(2)}>
-                Next: Describe Goal
+              <button
+                className="btn btn-primary"
+                onClick={() => void saveTargetAndContinue()}
+                disabled={targetSaving || targetLoading}
+              >
+                {targetSaving ? 'Saving Target...' : 'Next: Describe Goal'}
               </button>
             </div>
           </section>

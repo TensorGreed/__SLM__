@@ -418,7 +418,7 @@ def _build_newbie_autopilot_plan(
 ) -> dict[str, object]:
     plan = resolve_newbie_autopilot_intent(
         intent=req.intent,
-        target_device=req.target_device,
+        target_profile_id=req.target_profile_id,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
     )
@@ -709,6 +709,7 @@ async def run_training_autopilot_one_click(
     effective_intent = str(req.intent).strip()
     effective_req = NewbieAutopilotIntentRequest(
         intent=effective_intent,
+        target_profile_id=req.target_profile_id,
         target_device=req.target_device,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
@@ -740,6 +741,7 @@ async def run_training_autopilot_one_click(
         effective_intent = rewrite_intent
         effective_req = NewbieAutopilotIntentRequest(
             intent=effective_intent,
+            target_profile_id=req.target_profile_id,
             target_device=req.target_device,
             primary_language=req.primary_language,
             available_vram_gb=req.available_vram_gb,
@@ -755,10 +757,15 @@ async def run_training_autopilot_one_click(
             "source": rewrite_source,
         }
 
+    plan_payload = plan_v2_resp.model_dump()
+    plan_options = [dict(item) for item in list(plan_v2_resp.plans or []) if isinstance(item, dict)]
+    if not plan_options:
+        raise HTTPException(400, "Autopilot could not generate a runnable plan.")
+
     # Pick the plan matching req.plan_profile
     selected_plan = next(
-        (p for p in plan_v2_resp.plans if p.get("profile") == req.plan_profile),
-        plan_v2_resp.plans[0],
+        (p for p in plan_options if p.get("profile") == req.plan_profile),
+        plan_options[0],
     )
     launch_guardrails = plan_v2_resp.guardrails
     can_one_click_run = bool(launch_guardrails.get("can_run", False))
@@ -776,7 +783,7 @@ async def run_training_autopilot_one_click(
             "start_result": None,
             "start_error": f"Autopilot blocked one-click run: {error_preview}",
             "applied_intent_rewrite": applied_intent_rewrite,
-            "plan_v2": plan_v2_resp.model_dump(),
+            "plan_v2": plan_payload,
         }
 
     safe_config = dict(selected_plan.get("config") or {})
@@ -789,8 +796,10 @@ async def run_training_autopilot_one_click(
     else:
         training_mode = TrainingMode.SFT
 
-    plan = dict(plan_payload.get("plan") or {})
-    suggested_name = str(plan.get("run_name_suggestion") or "").strip()
+    selected_profile = str(selected_plan.get("profile") or req.plan_profile).strip() or "balanced"
+    suggested_name = str(selected_plan.get("title") or "").strip()
+    if not suggested_name:
+        suggested_name = f"Autopilot - {selected_profile.replace('_', ' ').title()}"
     run_name = str(req.run_name or "").strip() or suggested_name or "Autopilot Run"
     description = str(req.description or "").strip() or (
         f"Autopilot run from intent: {effective_intent[:120]}"
@@ -826,7 +835,7 @@ async def run_training_autopilot_one_click(
         "start_result": start_result,
         "start_error": start_error or None,
         "applied_intent_rewrite": applied_intent_rewrite,
-        **plan_payload,
+        "plan_v2": plan_payload,
     }
 
 
@@ -2487,6 +2496,43 @@ async def start(
     db: AsyncSession = Depends(get_db),
 ):
     """Start training for an experiment."""
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    exp_result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    exp = exp_result.scalar_one_or_none()
+    if exp is None:
+        raise HTTPException(404, f"Experiment {experiment_id} not found in project {project_id}")
+
+    target_profile_id = str(project.target_profile_id or "vllm_server").strip() or "vllm_server"
+    compatibility = check_compatibility(exp.base_model, target_profile_id)
+    if not bool(compatibility.get("compatible", False)):
+        reasons = [str(item).strip() for item in list(compatibility.get("reasons") or []) if str(item).strip()]
+        actionable_fix = reasons[0] if reasons else "Choose a smaller base model or a less constrained target profile."
+        raise HTTPException(
+            400,
+            {
+                "error_code": "TARGET_INCOMPATIBLE",
+                "stage": "training",
+                "message": (
+                    f"Base model '{exp.base_model}' is not compatible with target profile '{target_profile_id}'."
+                ),
+                "actionable_fix": actionable_fix,
+                "docs_url": "/docs/targets/compatibility",
+                "metadata": {
+                    "target_profile_id": target_profile_id,
+                    "reasons": reasons,
+                },
+            },
+        )
+
     try:
         return await start_training(db, project_id, experiment_id)
     except ValueError as e:

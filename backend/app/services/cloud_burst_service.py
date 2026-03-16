@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.exceptions import StrictExecutionError
 from app.models.experiment import Experiment
 from app.services.secret_service import get_project_secret_value
 
@@ -2053,7 +2054,7 @@ async def submit_cloud_burst_job(
 
     provider_token = str(plan.get("provider_id") or provider_id).strip().lower() or "provider"
     requested_execution_mode = _normalize_execution_mode(execution_mode)
-    fallback_allowed = bool(allow_fallback_to_simulation)
+    fallback_allowed = bool(allow_fallback_to_simulation) and not settings.STRICT_EXECUTION_MODE
     credential_snapshot = dict(plan.get("credentials") or {})
     credentials_ready = bool(credential_snapshot.get("ready"))
     provider_live_supported = _provider_supports_live(provider_token)
@@ -2067,16 +2068,33 @@ async def submit_cloud_burst_job(
     fallback_reason = ""
 
     if requested_execution_mode == "simulate":
+        if settings.STRICT_EXECUTION_MODE:
+            raise StrictExecutionError(
+                "training",
+                "Cloud burst simulate mode is blocked because STRICT_EXECUTION_MODE is enabled. "
+                "Use execution_mode=live with provider credentials configured.",
+            )
         execution_mode_effective = "simulate"
         fallback_reason = "Explicit simulate mode requested."
     elif requested_execution_mode == "live":
         if not provider_live_supported:
             if not fallback_allowed:
+                if settings.STRICT_EXECUTION_MODE:
+                    raise StrictExecutionError(
+                        "training",
+                        f"Cloud burst live execution is required in strict mode, but provider '{provider_token}' "
+                        "does not support live execution.",
+                    )
                 raise ValueError(f"Provider '{provider_token}' does not support live execution yet.")
             execution_mode_effective = "simulate"
             fallback_reason = "Provider does not support live execution; fallback to simulation."
         elif not credentials_ready:
             if not fallback_allowed:
+                if settings.STRICT_EXECUTION_MODE:
+                    raise StrictExecutionError(
+                        "training",
+                        "Cloud burst live execution is required in strict mode, but provider credentials are missing.",
+                    )
                 missing = ", ".join(list(credential_snapshot.get("missing_keys") or []))
                 raise ValueError(
                     f"Live mode requires provider credentials. Missing keys: {missing or 'unknown'}."
@@ -2089,6 +2107,24 @@ async def submit_cloud_burst_job(
         if provider_live_supported and credentials_ready:
             execution_mode_effective = "live"
         else:
+            if not fallback_allowed:
+                if settings.STRICT_EXECUTION_MODE:
+                    if not provider_live_supported:
+                        raise StrictExecutionError(
+                            "training",
+                            f"Cloud burst strict mode requires live execution, but provider '{provider_token}' "
+                            "does not support live execution.",
+                        )
+                    raise StrictExecutionError(
+                        "training",
+                        "Cloud burst strict mode requires provider credentials for live execution.",
+                    )
+                if not provider_live_supported:
+                    raise ValueError(f"Provider '{provider_token}' does not support live execution yet.")
+                missing = ", ".join(list(credential_snapshot.get("missing_keys") or []))
+                raise ValueError(
+                    f"Live mode requires provider credentials. Missing keys: {missing or 'unknown'}."
+                )
             execution_mode_effective = "simulate"
             if not provider_live_supported:
                 fallback_reason = "Provider live execution is not available; auto-fallback to simulation."
@@ -2105,6 +2141,11 @@ async def submit_cloud_burst_job(
         provider_api_key = str(credential_values.get("api_key") or "").strip() or None
         if not provider_api_key:
             if not fallback_allowed:
+                if settings.STRICT_EXECUTION_MODE:
+                    raise StrictExecutionError(
+                        "training",
+                        "Cloud burst strict mode requires provider api_key credential for live execution.",
+                    )
                 raise ValueError("Live mode requires provider api_key credential.")
             execution_mode_effective = "simulate"
             fallback_reason = "Provider api_key missing at submit time; fallback to simulation."
@@ -2125,6 +2166,11 @@ async def submit_cloud_burst_job(
             except Exception as exc:  # noqa: BLE001
                 provider_submit_error = str(exc)
                 if not fallback_allowed:
+                    if settings.STRICT_EXECUTION_MODE:
+                        raise StrictExecutionError(
+                            "training",
+                            "Cloud burst provider submit failed in strict mode; simulation fallback is blocked.",
+                        ) from exc
                     raise ValueError(
                         f"Live provider submit failed and fallback disabled: {provider_submit_error}"
                     ) from exc

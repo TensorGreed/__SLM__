@@ -24,6 +24,17 @@ interface ReadinessPanelProps {
   className?: string;
 }
 
+const normalizeStatus = (value: unknown): 'pass' | 'warn' | 'fail' => {
+  const token = String(value || '').toLowerCase();
+  if (token === 'pass' || token === 'warn' || token === 'fail') {
+    return token;
+  }
+  if (token === 'error') {
+    return 'fail';
+  }
+  return 'warn';
+};
+
 export const ReadinessPanel: React.FC<ReadinessPanelProps> = ({
   projectId,
   refreshInterval = 30000,
@@ -36,7 +47,33 @@ export const ReadinessPanel: React.FC<ReadinessPanelProps> = ({
   const fetchReadiness = async () => {
     try {
       const response = await api.get(`/projects/${projectId}/runtime/readiness`);
-      setReadiness(response.data);
+      const payload = response.data || {};
+      const checks = Array.isArray(payload.checks) ? payload.checks : [];
+      const normalizedChecks: ReadinessCheck[] = checks.map((check: any, idx: number) => ({
+        id: String(check?.id || `check-${idx}`),
+        name: String(check?.name || 'Readiness Check'),
+        status: normalizeStatus(check?.status),
+        message: String(check?.message || ''),
+        type: check?.type === 'blocker' ? 'blocker' : 'warning',
+        fix: check?.fix ? String(check.fix) : undefined,
+      }));
+
+      if (normalizedChecks.length === 0 && payload?.message) {
+        normalizedChecks.push({
+          id: 'summary',
+          name: 'Readiness',
+          status: normalizeStatus(payload?.status),
+          message: String(payload.message),
+          type: 'warning',
+        });
+      }
+
+      setReadiness({
+        project_id: Number(payload?.project_id || projectId),
+        status: normalizeStatus(payload?.status),
+        strict_mode: Boolean(payload?.strict_mode),
+        checks: normalizedChecks,
+      });
       setError(null);
     } catch (err) {
       console.error('Failed to fetch readiness:', err);
@@ -63,6 +100,7 @@ export const ReadinessPanel: React.FC<ReadinessPanelProps> = ({
   }
 
   if (!readiness) return null;
+  const readinessStatus = normalizeStatus(readiness.status);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -74,13 +112,13 @@ export const ReadinessPanel: React.FC<ReadinessPanelProps> = ({
   };
 
   return (
-    <div className={`readiness-panel ${readiness.status} ${className}`}>
+    <div className={`readiness-panel ${readinessStatus} ${className}`}>
       <div className="readiness-header">
         <span className="readiness-title">System Readiness</span>
         <div className="readiness-badges">
           {readiness.strict_mode && <span className="badge strict">Strict Mode</span>}
-          <span className={`badge status-${readiness.status}`}>
-            {readiness.status.toUpperCase()}
+          <span className={`badge status-${readinessStatus}`}>
+            {readinessStatus.toUpperCase()}
           </span>
         </div>
       </div>

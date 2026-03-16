@@ -6,6 +6,7 @@ const { apiMock, navigateMock } = vi.hoisted(() => ({
   apiMock: {
     get: vi.fn(),
     post: vi.fn(),
+    put: vi.fn(),
   },
   navigateMock: vi.fn(),
 }));
@@ -30,37 +31,71 @@ describe('ProjectWizardPage newbie autopilot', () => {
     navigateMock.mockReset();
     apiMock.get.mockReset();
     apiMock.post.mockReset();
+    apiMock.put.mockReset();
+
+    apiMock.put.mockResolvedValue({ data: {} });
 
     apiMock.post.mockImplementation(async (url: string) => {
-      if (url.includes('/training/autopilot/intent-resolve')) {
+      if (url.includes('/training/autopilot/plan-v2')) {
         return {
           data: {
             project_id: 1,
-            plan: {
-              preset_id: 'autopilot.support_qa_safe',
-              preset_label: 'Support Q&A Assistant',
-              preset_description: 'Answer customer/support questions with grounded, concise replies.',
-              task_profile: 'qa',
-              confidence: 0.82,
-              run_name_suggestion: 'Autopilot - Support Q&A Assistant',
-              user_friendly_plan: [
-                'We auto-picked a safe starter recipe for your goal.',
-                'We keep memory settings conservative to reduce training failures.',
-              ],
-            },
-            safe_training_config: {
-              base_model: 'microsoft/phi-2',
-              task_type: 'causal_lm',
-              batch_size: 2,
-            },
-            model_recommendation: {
-              model_id: 'microsoft/phi-2',
-              match_score: 0.91,
-            },
-            preflight: {
-              ok: true,
-              errors: [],
+            intent: 'support intent',
+            plans: [
+              {
+                profile: 'fastest',
+                title: 'Fastest',
+                description: 'Fastest profile',
+                estimate: {
+                  estimated_seconds: 240,
+                  estimated_cost: 1.2,
+                  unit: 'credits',
+                  labels: { speed: 'High', quality: 'Medium', cost: 'Low' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+              {
+                profile: 'balanced',
+                title: 'Balanced',
+                description: 'Balanced profile',
+                estimate: {
+                  estimated_seconds: 420,
+                  estimated_cost: 2.5,
+                  unit: 'credits',
+                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+              {
+                profile: 'best_quality',
+                title: 'Best Quality',
+                description: 'Best quality profile',
+                estimate: {
+                  estimated_seconds: 900,
+                  estimated_cost: 5.5,
+                  unit: 'credits',
+                  labels: { speed: 'Low', quality: 'Highest', cost: 'High' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+            ],
+            recommended_profile: 'balanced',
+            guardrails: {
+              can_run: true,
+              blockers: [],
               warnings: [],
+              one_click_fix_available: false,
+            },
+            dataset_readiness: {
+              ready: true,
+              prepared_row_count: 128,
+              blockers: [],
+              auto_fixes: [],
+            },
+            intent_clarification: {
+              required: false,
+              confidence_band: 'high',
+              rewrite_suggestions: [],
             },
           },
         };
@@ -78,6 +113,12 @@ describe('ProjectWizardPage newbie autopilot', () => {
             started: true,
             start_result: { status: 'started' },
             start_error: null,
+            applied_intent_rewrite: {
+              applied: false,
+              original_intent: null,
+              rewritten_intent: null,
+              source: null,
+            },
           },
         };
       }
@@ -85,7 +126,31 @@ describe('ProjectWizardPage newbie autopilot', () => {
     });
 
     apiMock.get.mockImplementation(async (url: string) => {
-      if (url.includes('/training/experiments/99/status')) {
+      if (url.includes('/targets/catalog')) {
+        return {
+          data: [
+            {
+              id: 'vllm_server',
+              name: 'vLLM Server',
+              description: 'High-throughput GPU server using vLLM.',
+              constraints: {
+                min_vram_gb: 16,
+                preferred_formats: ['huggingface'],
+              },
+            },
+            {
+              id: 'mobile_cpu',
+              name: 'Mobile (CPU)',
+              description: 'On-device inference on CPU.',
+              constraints: {
+                max_parameters_billions: 4,
+                preferred_formats: ['gguf'],
+              },
+            },
+          ],
+        };
+      }
+      if (url.includes('/training/experiments/') && url.includes('/status')) {
         return {
           data: {
             experiment_id: 99,
@@ -102,14 +167,23 @@ describe('ProjectWizardPage newbie autopilot', () => {
     const user = userEvent.setup();
     render(<ProjectWizardPage />);
 
+    await screen.findByText('vLLM Server');
+    await user.click(screen.getByRole('button', { name: 'Next: Describe Goal' }));
+
+    await waitFor(() => {
+      expect(apiMock.put).toHaveBeenCalledWith('/projects/1', {
+        target_profile_id: 'vllm_server',
+      });
+    });
+
     await user.type(
       screen.getByLabelText('Plain-language goal'),
       'I want a model that answers customer support questions clearly.',
     );
     await user.click(screen.getByRole('button', { name: 'Build Safe Plan' }));
 
-    expect(await screen.findByText('Safe plan is ready')).toBeInTheDocument();
-    expect(await screen.findByText('Support Q&A Assistant')).toBeInTheDocument();
+    expect(await screen.findByText('Choose your path')).toBeInTheDocument();
+    expect(await screen.findByText('Balanced')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'One-Click Run' }));
 
@@ -117,7 +191,8 @@ describe('ProjectWizardPage newbie autopilot', () => {
       expect(apiMock.post).toHaveBeenCalledWith(
         '/projects/1/training/autopilot/one-click-run',
         expect.objectContaining({
-          target_device: 'laptop',
+          target_profile_id: 'vllm_server',
+          plan_profile: 'balanced',
         }),
       );
     });
@@ -125,21 +200,57 @@ describe('ProjectWizardPage newbie autopilot', () => {
   });
 
   it('applies suggested intent rewrite before one-click launch', async () => {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.includes('/targets/catalog')) {
+        return {
+          data: [
+            {
+              id: 'vllm_server',
+              name: 'vLLM Server',
+              description: 'High-throughput GPU server using vLLM.',
+              constraints: {
+                min_vram_gb: 16,
+                preferred_formats: ['huggingface'],
+              },
+            },
+          ],
+        };
+      }
+      if (url.includes('/training/experiments/') && url.includes('/status')) {
+        return {
+          data: {
+            experiment_id: 101,
+            status: 'pending',
+            checkpoints: [],
+          },
+        };
+      }
+      return { data: {} };
+    });
+
     apiMock.post.mockImplementation(async (url: string, payload?: any) => {
-      if (url.includes('/training/autopilot/intent-resolve')) {
+      if (url.includes('/training/autopilot/plan-v2')) {
         const rawIntent = String(payload?.intent || '').toLowerCase();
         if (rawIntent.includes('summarize each support ticket')) {
           return {
             data: {
               project_id: 1,
-              plan: {
-                preset_id: 'autopilot.summarization_safe',
-                preset_label: 'Summarization Assistant',
-                preset_description: 'Summarize long content into concise, useful outputs.',
-                task_profile: 'summarization',
-                confidence: 0.9,
-                run_name_suggestion: 'Autopilot - Summarization Assistant',
-              },
+              intent: String(payload?.intent || ''),
+              plans: [
+                {
+                  profile: 'balanced',
+                  title: 'Balanced',
+                  description: 'Balanced profile',
+                  estimate: {
+                    estimated_seconds: 420,
+                    estimated_cost: 2.5,
+                    unit: 'credits',
+                    labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+              ],
+              recommended_profile: 'balanced',
               intent_clarification: {
                 required: false,
                 confidence_band: 'high',
@@ -147,19 +258,16 @@ describe('ProjectWizardPage newbie autopilot', () => {
                 suggested_intent_examples: [],
                 rewrite_suggestions: [],
               },
-              launch_guardrails: {
-                can_one_click_run: true,
+              guardrails: {
+                can_run: true,
                 blockers: [],
                 warnings: [],
               },
-              safe_training_config: {
-                base_model: 'microsoft/phi-2',
-                task_type: 'causal_lm',
-              },
-              preflight: {
-                ok: true,
-                errors: [],
-                warnings: [],
+              dataset_readiness: {
+                ready: true,
+                prepared_row_count: 24,
+                blockers: [],
+                auto_fixes: [],
               },
             },
           };
@@ -167,14 +275,22 @@ describe('ProjectWizardPage newbie autopilot', () => {
         return {
           data: {
             project_id: 1,
-            plan: {
-              preset_id: 'autopilot.general_chat_safe',
-              preset_label: 'General Assistant',
-              preset_description: 'General-purpose assistant behavior with safe starter defaults.',
-              task_profile: 'instruction_sft',
-              confidence: 0.35,
-              run_name_suggestion: 'Autopilot - General Assistant',
-            },
+            intent: String(payload?.intent || ''),
+            plans: [
+              {
+                profile: 'balanced',
+                title: 'Balanced',
+                description: 'Balanced profile',
+                estimate: {
+                  estimated_seconds: 420,
+                  estimated_cost: 2.5,
+                  unit: 'credits',
+                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+            ],
+            recommended_profile: 'balanced',
             intent_clarification: {
               required: true,
               confidence_band: 'low',
@@ -191,19 +307,16 @@ describe('ProjectWizardPage newbie autopilot', () => {
                 },
               ],
             },
-            launch_guardrails: {
-              can_one_click_run: true,
+            guardrails: {
+              can_run: true,
               blockers: [],
               warnings: ['Intent clarification recommended.'],
             },
-            safe_training_config: {
-              base_model: 'microsoft/phi-2',
-              task_type: 'causal_lm',
-            },
-            preflight: {
-              ok: true,
-              errors: [],
-              warnings: [],
+            dataset_readiness: {
+              ready: true,
+              prepared_row_count: 24,
+              blockers: [],
+              auto_fixes: [],
             },
           },
         };
@@ -219,9 +332,9 @@ describe('ProjectWizardPage newbie autopilot', () => {
               status: 'pending',
               base_model: 'microsoft/phi-2',
             },
-            started: false,
-            start_result: null,
-            start_error: 'Simulated launch stop for test',
+            started: true,
+            start_result: { status: 'started' },
+            start_error: null,
             applied_intent_rewrite: {
               applied: true,
               original_intent: 'help',
@@ -237,6 +350,9 @@ describe('ProjectWizardPage newbie autopilot', () => {
     const user = userEvent.setup();
     render(<ProjectWizardPage />);
 
+    await screen.findByText('vLLM Server');
+    await user.click(screen.getByRole('button', { name: 'Next: Describe Goal' }));
+
     await user.type(screen.getByLabelText('Plain-language goal'), 'help');
     await user.click(screen.getByRole('button', { name: 'Build Safe Plan' }));
 
@@ -245,7 +361,7 @@ describe('ProjectWizardPage newbie autopilot', () => {
 
     await waitFor(() => {
       expect(apiMock.post).toHaveBeenCalledWith(
-        '/projects/1/training/autopilot/intent-resolve',
+        '/projects/1/training/autopilot/plan-v2',
         expect.objectContaining({
           intent: 'Summarize each support ticket into 3 bullet points and next actions.',
         }),

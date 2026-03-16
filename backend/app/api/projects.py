@@ -124,6 +124,7 @@ async def create_project(
         base_model_name=data.base_model_name,
         domain_pack_id=resolved_domain_pack_id,
         domain_profile_id=resolved_domain_profile_id,
+        target_profile_id=data.target_profile_id or "vllm_server",
     )
     db.add(project)
     await db.flush()

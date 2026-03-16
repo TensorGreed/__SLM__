@@ -424,6 +424,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 source_type: RemoteSourceTab;
                 identifier: string;
                 split: string;
+                config_name?: string | null;
                 max_samples: number | null;
                 adapter_id: string;
                 adapter_config?: Record<string, unknown>;
