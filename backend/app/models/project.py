@@ -74,6 +74,14 @@ class Project(Base):
         JSON,
         default=dict,
     )
+    gate_policy: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=lambda: {
+            "must_pass": True,
+            "min_score": 0.0,
+            "blocked_if_missing": True
+        }
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

@@ -12,6 +12,7 @@ from app.models.dataset import Dataset, RawDocument
 from app.models.domain_pack import DomainPack
 from app.models.domain_profile import DomainProfile
 from app.models.project import Project, ProjectStatus
+from app.models.experiment import Experiment, ExperimentStatus
 from app.schemas.project import (
     ProjectDomainPackAssignRequest,
     ProjectDomainProfileAssignRequest,
@@ -30,6 +31,7 @@ from app.services.readiness_service import get_project_readiness
 from app.services.nl2pipeline_service import magic_create_pipeline_recipe
 from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
+from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
 
 class MagicCreateRequest(BaseModel):
     prompt: str
@@ -338,6 +340,78 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     if not project:
         raise HTTPException(404, "Project not found")
     await db.delete(project)
+
+
+@router.get("/{project_id}/gate-check")
+async def project_deployment_gate_check(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if the project is ready for deployment/export based on gates."""
+    # Find latest completed experiment
+    stmt = (
+        select(Experiment)
+        .where(Experiment.project_id == project_id)
+        .where(Experiment.status == ExperimentStatus.COMPLETED)
+        .order_by(Experiment.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    experiment = result.scalar_one_or_none()
+
+    if not experiment:
+        # Fallback to any latest experiment if no completed one
+        stmt = (
+            select(Experiment)
+            .where(Experiment.project_id == project_id)
+            .order_by(Experiment.created_at.desc())
+            .limit(1)
+        )
+        result = await db.execute(stmt)
+        experiment = result.scalar_one_or_none()
+
+    if not experiment:
+        raise HTTPException(404, f"No experiments found for project {project_id}")
+
+    # Evaluate gates
+    report = await evaluate_experiment_auto_gates(
+        db,
+        project_id=project_id,
+        experiment_id=experiment.id,
+    )
+
+    # Apply Project Gate Policy
+    project_stmt = select(Project).where(Project.id == project_id)
+    project_res = await db.execute(project_stmt)
+    project = project_res.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    policy = project.gate_policy or {}
+    must_pass = policy.get("must_pass", True)
+    min_score = policy.get("min_score", 0.0)
+    blocked_if_missing = policy.get("blocked_if_missing", True)
+
+    is_blocked = False
+    reasons = []
+
+    if must_pass and not report.get("passed"):
+        is_blocked = True
+        reasons.append("Mandatory quality gates failed.")
+
+    if blocked_if_missing and report.get("missing_required_metrics"):
+        is_blocked = True
+        reasons.append(f"Missing required metrics: {', '.join(report.get('missing_required_metrics', []))}")
+
+    return {
+        "project_id": project_id,
+        "experiment_id": experiment.id,
+        "passed": not is_blocked,
+        "is_blocked": is_blocked,
+        "reasons": reasons,
+        "policy": policy,
+        "gate_report": report
+    }
 
 
 @router.get("/{project_id}/stats", response_model=ProjectStatsResponse)

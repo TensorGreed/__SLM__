@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.export import Export, ExportFormat, ExportStatus
 from app.models.experiment import Experiment
+from app.models.project import Project
 from app.schemas.export import OptimizationCandidate, OptimizationMetric, OptimizationResponse
 from app.services import target_profile_service
 from app.services.deployment_target_service import (
@@ -291,6 +292,39 @@ async def run_export(
 
     export.status = ExportStatus.IN_PROGRESS
     await db.flush()
+
+    # Check mandatory quality gates
+    from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
+    project_stmt = select(Project).where(Project.id == project_id)
+    project_res = await db.execute(project_stmt)
+    project = project_res.scalar_one_or_none()
+    
+    if project:
+        policy = project.gate_policy or {}
+        must_pass = policy.get("must_pass", True)
+        blocked_if_missing = policy.get("blocked_if_missing", True)
+        
+        if must_pass or blocked_if_missing:
+            gate_report = await evaluate_experiment_auto_gates(
+                db,
+                project_id=project_id,
+                experiment_id=experiment.id,
+            )
+            
+            is_blocked = False
+            reasons = []
+            if must_pass and not gate_report.get("passed"):
+                is_blocked = True
+                reasons.append("Mandatory quality gates failed.")
+            if blocked_if_missing and gate_report.get("missing_required_metrics"):
+                is_blocked = True
+                reasons.append(f"Missing required metrics: {', '.join(gate_report.get('missing_required_metrics', []))}")
+                
+            if is_blocked:
+                export.status = ExportStatus.FAILED
+                export.error_message = f"Export blocked by deployment gates: {'; '.join(reasons)}"
+                await db.flush()
+                return export
 
     deployment_report: dict | None = None
     run_dir: Path | None = None

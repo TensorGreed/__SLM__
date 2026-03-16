@@ -1,0 +1,115 @@
+.scorecard-container {
+  padding: var(--space-lg);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-card);
+  margin-bottom: var(--space-lg);
+}
+
+.scorecard-container.ship {
+  border-left: 8px solid #10b981;
+}
+
+.scorecard-container.no-ship {
+  border-left: 8px solid #ef4444;
+}
+
+.scorecard-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.decision-badge {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.05em;
+}
+
+.ship .decision-badge {
+  background-color: #10b981;
+  color: white;
+}
+
+.no-ship .decision-badge {
+  background-color: #ef4444;
+  color: white;
+}
+
+.scorecard-reasons {
+  background-color: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: var(--border-radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-lg);
+  color: #991b1b;
+}
+
+.scorecard-reasons h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.blocker-item {
+  font-weight: 600;
+}
+
+.gates-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-lg);
+}
+
+@media (min-width: 1024px) {
+  .gates-grid {
+    grid-template-columns: 2fr 1fr;
+  }
+}
+
+.gates-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.gates-table th, .gates-table td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.gates-table tr.failed {
+  background-color: #fff1f2;
+}
+
+.gates-table tr.warn {
+  background-color: #fffbeb;
+}
+
+.missing-metric-tag {
+  display: inline-block;
+  background-color: #e5e7eb;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin: 4px;
+  font-family: monospace;
+}
+
+.missing-diagnostics {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-top: 12px;
+  font-style: italic;
+}
+
+.scorecard-footer {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-color);
+  font-size: 0.875rem;
+  color: #9ca3af;
+  text-align: center;
+}

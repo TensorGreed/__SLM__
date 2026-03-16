@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
+import ScorecardPanel from './ScorecardPanel';
 import './EvalPanel.css';
 
 interface EvalPanelProps {
@@ -903,6 +904,10 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         </button>
                     </div>
                 </div>
+            )}
+
+            {selectedExperimentId !== 'latest' && parseInt(selectedExperimentId) > 0 && (
+                <ScorecardPanel projectId={projectId} experimentId={parseInt(selectedExperimentId)} />
             )}
 
             {latestInference && (

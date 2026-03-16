@@ -293,6 +293,58 @@ async def evaluate_gates_for_experiment(
         raise HTTPException(404, str(e))
 
 
+@router.get("/scorecard/{experiment_id}")
+async def experiment_scorecard(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Detailed scorecard for a specific experiment including Ship/No-Ship decision."""
+    try:
+        report = await evaluate_experiment_auto_gates(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+        )
+
+        project_stmt = select(Project).where(Project.id == project_id)
+        project_res = await db.execute(project_stmt)
+        project = project_res.scalar_one_or_none()
+        if not project:
+            raise HTTPException(404, "Project not found")
+
+        policy = project.gate_policy or {}
+        must_pass = policy.get("must_pass", True)
+        blocked_if_missing = policy.get("blocked_if_missing", True)
+
+        failed_gates = report.get("failed_gate_ids", [])
+        missing_metrics = report.get("missing_required_metrics", [])
+
+        is_ship = True
+        reasons = []
+
+        if must_pass and not report.get("passed"):
+            is_ship = False
+            reasons.append(f"Failed {len(failed_gates)} mandatory gates.")
+
+        if blocked_if_missing and missing_metrics:
+            is_ship = False
+            reasons.append(f"Missing {len(missing_metrics)} required metrics.")
+
+        return {
+            "experiment_id": experiment_id,
+            "is_ship": is_ship,
+            "decision": "SHIP" if is_ship else "NO-SHIP",
+            "reasons": reasons,
+            "failed_gates": failed_gates,
+            "missing_metrics": missing_metrics,
+            "gate_report": report,
+            "policy": policy
+        }
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/results/{experiment_id}", response_model=list[EvalResultResponse])
 async def get_results(
     project_id: int,

@@ -394,6 +394,53 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
                 ],
             ),
         ]
+    if kind == "legal":
+        return [
+            _build_task_spec(
+                task_profile="qa",
+                display_name="Legal Clause QA",
+                required_metric_ids=["f1", "exact_match", "precision", "recall"],
+                gates=[
+                    _gate("min_f1", "f1", 0.75, required=True),
+                    _gate("min_recall", "recall", 0.8, required=True),
+                ],
+            ),
+        ]
+    if kind == "support":
+        return [
+            _build_task_spec(
+                task_profile="instruction_sft",
+                display_name="Customer Support",
+                required_metric_ids=["accuracy", "f1", "hallucination_rate"],
+                gates=[
+                    _gate("min_accuracy", "accuracy", 0.8, required=True),
+                    _gate("max_hallucination", "hallucination_rate", 0.05, operator="lte", required=True),
+                ],
+            ),
+        ]
+    if kind == "healthcare":
+        return [
+            _build_task_spec(
+                task_profile="qa",
+                display_name="Clinical Reasoning",
+                required_metric_ids=["precision", "recall", "safety_pass_rate"],
+                gates=[
+                    _gate("min_precision", "precision", 0.85, required=True),
+                    _gate("min_safety", "safety_pass_rate", 0.98, required=True),
+                ],
+            ),
+        ]
+    if kind == "finance":
+        return [
+            _build_task_spec(
+                task_profile="qa",
+                display_name="Financial Analysis",
+                required_metric_ids=["arithmetic_accuracy", "f1"],
+                gates=[
+                    _gate("min_arithmetic_accuracy", "arithmetic_accuracy", 0.9, required=True),
+                ],
+            ),
+        ]
     return [
         _build_task_spec(
             task_profile="instruction_sft",
@@ -519,6 +566,50 @@ _BUILTIN_EVALUATION_PACKS: list[dict[str, Any]] = [
         "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
         "default_task_profile": "instruction_sft",
         "task_specs": _default_task_specs_for_pack("fast"),
+    },
+    {
+        "pack_id": "evalpack.domain.legal",
+        "display_name": "Legal Review Gates",
+        "description": "High-precision gates for legal document analysis and reasoning.",
+        "version": "1.0.0",
+        "owner": "platform",
+        "tags": ["legal", "high-precision"],
+        "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
+        "default_task_profile": "qa",
+        "task_specs": _default_task_specs_for_pack("legal"),
+    },
+    {
+        "pack_id": "evalpack.domain.support",
+        "display_name": "Customer Support Gates",
+        "description": "Accuracy and hallucination gates for support interaction.",
+        "version": "1.0.0",
+        "owner": "platform",
+        "tags": ["support", "customer-service"],
+        "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
+        "default_task_profile": "instruction_sft",
+        "task_specs": _default_task_specs_for_pack("support"),
+    },
+    {
+        "pack_id": "evalpack.domain.healthcare",
+        "display_name": "Healthcare & Clinical Gates",
+        "description": "Strict safety and precision gates for healthcare domains.",
+        "version": "1.0.0",
+        "owner": "platform",
+        "tags": ["healthcare", "clinical", "safety"],
+        "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
+        "default_task_profile": "qa",
+        "task_specs": _default_task_specs_for_pack("healthcare"),
+    },
+    {
+        "pack_id": "evalpack.domain.finance",
+        "display_name": "Financial Reasoning Gates",
+        "description": "Arithmetic and extraction accuracy gates for finance.",
+        "version": "1.0.0",
+        "owner": "platform",
+        "tags": ["finance", "arithmetic"],
+        "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
+        "default_task_profile": "qa",
+        "task_specs": _default_task_specs_for_pack("finance"),
     },
 ]
 
