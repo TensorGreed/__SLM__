@@ -2,9 +2,12 @@
 
 from contextlib import asynccontextmanager
 from time import perf_counter
+from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -41,6 +44,92 @@ from app.services.data_adapter_service import load_data_adapter_plugins_from_set
 from app.services.runtime_settings_service import apply_persisted_runtime_overrides
 from app.exceptions import SLMError
 from fastapi.responses import JSONResponse
+
+_TARGET_STRUCTURED_ERROR_STAGES: tuple[str, ...] = ("ingestion", "training", "export")
+_STAGE_DOCS_URL: dict[str, str] = {
+    "ingestion": "/docs/ingestion/troubleshooting",
+    "training": "/docs/training/troubleshooting",
+    "export": "/docs/export/troubleshooting",
+    "general": "/docs/troubleshooting",
+}
+
+
+def _infer_structured_error_stage(path: str) -> str | None:
+    if not path.startswith("/api/projects/"):
+        return None
+    normalized = path.lower()
+    for stage in _TARGET_STRUCTURED_ERROR_STAGES:
+        if f"/{stage}" in normalized:
+            return stage
+    return None
+
+
+def _default_error_code(stage: str, status_code: int) -> str:
+    prefix = str(stage or "general").strip().upper() or "GENERAL"
+    if status_code == 404:
+        return f"{prefix}_NOT_FOUND"
+    if status_code == 409:
+        return f"{prefix}_CONFLICT"
+    if status_code == 422:
+        return f"{prefix}_VALIDATION_ERROR"
+    if status_code >= 500:
+        return f"{prefix}_INTERNAL_ERROR"
+    return f"{prefix}_REQUEST_FAILED"
+
+
+def _default_actionable_fix(stage: str, status_code: int) -> str:
+    if status_code == 404:
+        return "Verify the project/resource identifier and try again."
+    if status_code in {400, 422}:
+        return "Review request inputs and retry."
+    if status_code == 409:
+        return "Resolve the conflicting resource state and retry."
+    if status_code >= 500:
+        return f"Retry the {stage} action. If it persists, inspect server logs."
+    return f"Retry the {stage} operation after checking configuration."
+
+
+def _structured_error_payload(
+    *,
+    stage: str,
+    status_code: int,
+    detail: Any,
+) -> dict[str, Any]:
+    docs_url = _STAGE_DOCS_URL.get(stage, _STAGE_DOCS_URL["general"])
+    if isinstance(detail, dict):
+        payload = dict(detail)
+        message = str(
+            payload.get("message")
+            or payload.get("detail")
+            or payload.get("error")
+            or "Request failed."
+        )
+        payload["error_code"] = str(
+            payload.get("error_code") or _default_error_code(stage, status_code)
+        )
+        payload["stage"] = str(payload.get("stage") or stage)
+        payload["message"] = message
+        payload["actionable_fix"] = str(
+            payload.get("actionable_fix")
+            or _default_actionable_fix(str(payload.get("stage") or stage), status_code)
+        )
+        payload["docs_url"] = str(payload.get("docs_url") or docs_url)
+        payload.setdefault("metadata", payload.get("metadata"))
+        # Keep backward compatibility with callers/tests expecting plain `detail`.
+        payload.setdefault("detail", message)
+        return payload
+
+    message = str(detail or "Request failed.")
+    return {
+        "error_code": _default_error_code(stage, status_code),
+        "stage": stage,
+        "message": message,
+        "actionable_fix": _default_actionable_fix(stage, status_code),
+        "docs_url": docs_url,
+        "metadata": None,
+        # Keep backward compatibility with callers/tests expecting plain `detail`.
+        "detail": message,
+    }
 
 
 @asynccontextmanager
@@ -177,3 +266,37 @@ async def slm_exception_handler(request: Request, exc: SLMError):
         status_code=exc.status_code,
         content=exc.detail,
     )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    stage = _infer_structured_error_stage(request.url.path)
+    if stage:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_structured_error_payload(
+                stage=stage,
+                status_code=exc.status_code,
+                detail=exc.detail,
+            ),
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    stage = _infer_structured_error_stage(request.url.path)
+    if stage:
+        validation_errors = jsonable_encoder(exc.errors())
+        payload = _structured_error_payload(
+            stage=stage,
+            status_code=422,
+            detail={
+                "message": "Request validation failed.",
+                "metadata": {"validation_errors": validation_errors},
+            },
+        )
+        # Preserve default FastAPI validation detail for compatibility.
+        payload["detail"] = validation_errors
+        return JSONResponse(status_code=422, content=payload)
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})

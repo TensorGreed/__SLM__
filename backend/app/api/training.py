@@ -411,6 +411,129 @@ async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:
     return project
 
 
+def _dedupe_preserve(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in values:
+        token = str(item).strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+    return ordered
+
+
+def _guardrail_reason_code(message: str, *, blocker: bool) -> str:
+    token = str(message or "").strip().lower()
+    if not token:
+        return "GUARDRAIL_BLOCKED" if blocker else "GUARDRAIL_WARNING"
+    if "target" in token and ("compat" in token or "not fit" in token):
+        return "TARGET_INCOMPATIBLE"
+    if "dataset" in token or "prepared" in token or "ingest" in token:
+        return "DATASET_NOT_READY"
+    if "preflight" in token:
+        return "TRAINING_PREFLIGHT_FAILED"
+    if "intent" in token and "clarification" in token:
+        return "INTENT_NEEDS_CLARIFICATION"
+    if "credential" in token or "secret" in token or "token" in token:
+        return "MISSING_CREDENTIALS"
+    return "GUARDRAIL_BLOCKED" if blocker else "GUARDRAIL_WARNING"
+
+
+def _build_guardrail_reason_codes(
+    *,
+    blockers: list[str],
+    warnings: list[str],
+) -> list[str]:
+    reason_codes: list[str] = []
+    reason_codes.extend([_guardrail_reason_code(item, blocker=True) for item in blockers])
+    reason_codes.extend([_guardrail_reason_code(item, blocker=False) for item in warnings])
+    return _dedupe_preserve(reason_codes)
+
+
+def _build_guardrail_unblock_actions(
+    *,
+    project_id: int,
+    blockers: list[str],
+    dataset_readiness: dict[str, object],
+    intent_clarification: dict[str, object],
+    target_compatibility: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+
+    auto_fixes = [item for item in list(dataset_readiness.get("auto_fixes") or []) if isinstance(item, dict)]
+    for idx, fix in enumerate(auto_fixes):
+        label = str(fix.get("label") or fix.get("id") or f"Open suggested fix {idx + 1}").strip()
+        if not label:
+            continue
+        navigate_to = str(fix.get("navigate_to") or "").strip()
+        action: dict[str, object] = {
+            "reason_code": "DATASET_NOT_READY",
+            "label": label,
+            "description": str(fix.get("description") or "").strip() or "Open guided remediation.",
+            "navigate_to": navigate_to or f"/project/{project_id}/pipeline/ingestion",
+            "one_click_available": bool(navigate_to),
+        }
+        actions.append(action)
+
+    has_dataset_blocker = any(_guardrail_reason_code(item, blocker=True) == "DATASET_NOT_READY" for item in blockers)
+    if has_dataset_blocker and not auto_fixes:
+        actions.append(
+            {
+                "reason_code": "DATASET_NOT_READY",
+                "label": "Complete data prep",
+                "description": "Import and prepare a training split before launching Autopilot.",
+                "navigate_to": f"/project/{project_id}/pipeline/ingestion",
+                "one_click_available": True,
+            }
+        )
+
+    if target_compatibility is not None and not bool(target_compatibility.get("compatible", False)):
+        reasons = [
+            str(item).strip()
+            for item in list(target_compatibility.get("reasons") or [])
+            if str(item).strip()
+        ]
+        actions.append(
+            {
+                "reason_code": "TARGET_INCOMPATIBLE",
+                "label": "Change target or base model",
+                "description": reasons[0] if reasons else "Selected base model does not fit target constraints.",
+                "navigate_to": f"/project/{project_id}/wizard",
+                "one_click_available": True,
+            }
+        )
+
+    if bool(intent_clarification.get("required", False)):
+        rewrite_rows = [item for item in list(intent_clarification.get("rewrite_suggestions") or []) if isinstance(item, dict)]
+        if rewrite_rows:
+            top = dict(rewrite_rows[0])
+            rewritten_intent = str(top.get("rewritten_intent") or "").strip()
+            actions.append(
+                {
+                    "reason_code": "INTENT_NEEDS_CLARIFICATION",
+                    "label": str(top.get("label") or "Apply suggested rewrite").strip() or "Apply suggested rewrite",
+                    "description": str(top.get("reason") or "Clarifies intent and expected outputs.").strip(),
+                    "rewritten_intent": rewritten_intent or None,
+                    "one_click_available": bool(rewritten_intent),
+                }
+            )
+
+    deduped: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for action in actions:
+        reason_code = str(action.get("reason_code") or "").strip() or "GUARDRAIL_BLOCKED"
+        label = str(action.get("label") or "").strip() or "Open remediation"
+        dedupe_key = (reason_code, label)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        action["reason_code"] = reason_code
+        action["label"] = label
+        deduped.append(action)
+    return deduped
+
+
 def _build_newbie_autopilot_plan(
     *,
     project_id: int,
@@ -487,11 +610,25 @@ def _build_newbie_autopilot_plan(
         if reason:
             guardrail_warnings.append(f"Intent clarification recommended: {reason}.")
 
+    reason_codes = _build_guardrail_reason_codes(
+        blockers=guardrail_blockers,
+        warnings=guardrail_warnings,
+    )
+    unblock_actions = _build_guardrail_unblock_actions(
+        project_id=project_id,
+        blockers=guardrail_blockers,
+        dataset_readiness=dataset_readiness,
+        intent_clarification=intent_clarification,
+        target_compatibility=None,
+    )
+
     can_one_click_run = len(guardrail_blockers) == 0
     launch_guardrails = {
         "can_one_click_run": can_one_click_run,
         "blockers": guardrail_blockers,
         "warnings": guardrail_warnings,
+        "reason_codes": reason_codes,
+        "unblock_actions": unblock_actions,
     }
     return {
         "plan": plan,
@@ -575,15 +712,35 @@ def _build_newbie_autopilot_plan_v2(
         guardrail_blockers.extend(compatibility.get("reasons") or ["Model is not compatible with target hardware constraints."])
     
     guardrail_blockers.extend([str(item) for item in list(dataset_readiness.get("blockers") or [])])
-
-    # Check if any plan is actually runnable
-    can_run = any(p.get("preflight", {}).get("ok", False) for p in enriched_plans) and not guardrail_blockers
+    guardrail_warnings.extend([str(item) for item in list(dataset_readiness.get("warnings") or [])])
 
     intent_clarification = build_newbie_autopilot_intent_clarification(
         intent=req.intent,
         confidence=float(plan_meta.get("confidence") or 0.0),
         task_profile=task_profile,
         matched_keywords=[str(k) for k in list(plan_meta.get("matched_keywords") or [])],
+    )
+    if bool(intent_clarification.get("required", False)):
+        reason = str(intent_clarification.get("reason") or "").strip()
+        if reason:
+            guardrail_warnings.append(f"Intent clarification recommended: {reason}.")
+
+    any_runnable_plan = any(p.get("preflight", {}).get("ok", False) for p in enriched_plans)
+    if not any_runnable_plan:
+        guardrail_blockers.append("Training preflight failed: no generated plan passed preflight checks.")
+
+    # Check if any plan is actually runnable
+    can_run = any_runnable_plan and not guardrail_blockers
+    reason_codes = _build_guardrail_reason_codes(
+        blockers=[str(item) for item in guardrail_blockers],
+        warnings=[str(item) for item in guardrail_warnings],
+    )
+    unblock_actions = _build_guardrail_unblock_actions(
+        project_id=project_id,
+        blockers=[str(item) for item in guardrail_blockers],
+        dataset_readiness=dataset_readiness,
+        intent_clarification=intent_clarification,
+        target_compatibility=compatibility,
     )
 
     return AutopilotPlanV2Response(
@@ -596,7 +753,9 @@ def _build_newbie_autopilot_plan_v2(
             "can_run": can_run,
             "blockers": guardrail_blockers,
             "warnings": guardrail_warnings,
-            "one_click_fix_available": len(dataset_readiness.get("auto_fixes", [])) > 0,
+            "reason_codes": reason_codes,
+            "unblock_actions": unblock_actions,
+            "one_click_fix_available": any(bool(item.get("one_click_available")) for item in unblock_actions),
         },
         dataset_readiness=dataset_readiness,
         intent_clarification=intent_clarification,
