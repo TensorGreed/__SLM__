@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     BookOpen,
@@ -59,9 +59,24 @@ function getStageIndex(stage: string): number {
     return idx >= 0 ? idx : 0;
 }
 
+function isRailKey(value: unknown): value is RailKey {
+    return value === 'home'
+        || value === 'pipeline'
+        || value === 'training'
+        || value === 'playground'
+        || value === 'workflow'
+        || value === 'domain';
+}
+
 export default function ProjectSidebar({ projectId, projectName, pipelineStatus }: ProjectSidebarProps) {
     const location = useLocation();
     const navigate = useNavigate();
+    const railHintRaw = (location.state as { sidebarRail?: unknown } | null)?.sidebarRail;
+    const railHint = isRailKey(railHintRaw) ? railHintRaw : null;
+    const lastNonWizardRailRef = useRef<RailKey>('home');
+    const pipelineBasePath = `/project/${projectId}/pipeline`;
+    const pipelineDataPath = `${pipelineBasePath}/data`;
+    const pipelineTrainingPath = `${pipelineBasePath}/training`;
 
     const currentStageIndex = useMemo(
         () => (pipelineStatus ? getStageIndex(pipelineStatus.current_stage) : 0),
@@ -70,8 +85,10 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
 
     const isGuideRoute = location.pathname === `/project/${projectId}/guide`;
     const isPipelineRoute =
-        location.pathname === `/project/${projectId}/pipeline`
-        || location.pathname.startsWith(`/project/${projectId}/pipeline/`);
+        location.pathname === pipelineBasePath
+        || location.pathname.startsWith(`${pipelineBasePath}/`);
+    const isPipelineDataRoute = location.pathname === pipelineBasePath || location.pathname === pipelineDataPath;
+    const isPipelineTrainingRoute = location.pathname === pipelineTrainingPath;
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
     const isRecipesRoute = location.pathname === `/project/${projectId}/recipes`;
     const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
@@ -82,22 +99,35 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     const isDomainProfilesRoute = location.pathname === `/project/${projectId}/domain/profiles`;
     const isWizardRoute = location.pathname === `/project/${projectId}/wizard`;
 
-    const selectedRailKey: RailKey = useMemo(() => {
-        if (isPipelineRoute) return 'pipeline';
-        if (isTrainingConfigRoute) return 'training';
+    const routeRailKey: RailKey = useMemo(() => {
+        if (isTrainingConfigRoute || isPipelineTrainingRoute) return 'training';
         if (isPlaygroundRoute) return 'playground';
         if (isWorkflowRoute || isRecipesRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
+        if (isPipelineRoute) return 'pipeline';
         return 'home';
     }, [
-        isPipelineRoute,
         isTrainingConfigRoute,
+        isPipelineTrainingRoute,
         isPlaygroundRoute,
         isWorkflowRoute,
         isRecipesRoute,
         isDomainPacksRoute,
         isDomainProfilesRoute,
+        isPipelineRoute,
     ]);
+
+    useEffect(() => {
+        if (!isWizardRoute) {
+            lastNonWizardRailRef.current = routeRailKey;
+        }
+    }, [isWizardRoute, routeRailKey]);
+
+    const selectedRailKey: RailKey = isWizardRoute
+        ? (railHint ?? lastNonWizardRailRef.current)
+        : routeRailKey;
+    const isHomeWizardRoute = isWizardRoute && selectedRailKey === 'home';
+    const isTrainingWizardRoute = isWizardRoute && selectedRailKey === 'training';
 
     const panelHeadingByRail: Record<RailKey, { kicker: string; title: string }> = {
         home: { kicker: 'Guided', title: 'Start and Discover' },
@@ -217,14 +247,14 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                                 <span className="nav-label">Start Here</span>
                             </button>
                             <button
-                                className={`workspace-nav-item ${isWizardRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/wizard`)}
+                                className={`workspace-nav-item ${isHomeWizardRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/wizard`, { state: { sidebarRail: 'home' } })}
                             >
                                 <Sparkles size={15} />
                                 <span className="nav-label">Wizard Mode</span>
                             </button>
                             <button
-                                className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
+                                className={`workspace-nav-item ${isPipelineDataRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
                             >
                                 <FolderTree size={15} />
@@ -237,7 +267,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                         <>
                             <div className="nav-section-label">Data Pipeline</div>
                             <button
-                                className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
+                                className={`workspace-nav-item ${isPipelineDataRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
                             >
                                 <FolderTree size={15} />
@@ -280,14 +310,14 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                                 <span className="nav-label">Configurations</span>
                             </button>
                             <button
-                                className={`workspace-nav-item ${isWizardRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/wizard`)}
+                                className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/wizard`, { state: { sidebarRail: 'training' } })}
                             >
                                 <Sparkles size={15} />
                                 <span className="nav-label">Guided Setup</span>
                             </button>
                             <button
-                                className={`workspace-nav-item ${isPipelineRoute ? 'active' : ''}`}
+                                className={`workspace-nav-item ${isPipelineTrainingRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
                             >
                                 <FolderTree size={15} />
