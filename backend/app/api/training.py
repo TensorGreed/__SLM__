@@ -102,6 +102,7 @@ from app.services.training_runtime_service import (
 from app.services.newbie_autopilot_service import (
     build_newbie_autopilot_intent_clarification,
     evaluate_newbie_autopilot_dataset_readiness,
+    estimate_newbie_autopilot_run,
     resolve_newbie_autopilot_intent,
 )
 from app.services.capability_contract_service import build_training_capability_contract
@@ -374,6 +375,24 @@ class NewbieAutopilotOneClickRequest(NewbieAutopilotIntentRequest):
     description: str | None = Field(default=None, max_length=1000)
     auto_apply_rewrite: bool = True
     intent_rewrite: str | None = Field(default=None, min_length=3, max_length=4000)
+    plan_profile: str = Field(default="balanced", pattern="^(fastest|balanced|best_quality)$")
+
+
+class NewbieAutopilotEstimateRequest(BaseModel):
+    plan_profile: str = Field(..., pattern="^(fastest|balanced|best_quality)$")
+    target_device: str = Field(default="laptop", pattern="^(mobile|laptop|server)$")
+    dataset_size_rows: int = Field(default=1000, ge=1)
+
+
+class AutopilotPlanV2Response(BaseModel):
+    project_id: int
+    intent: str
+    intent_rewrite: str | None = None
+    plans: list[dict[str, object]]
+    recommended_profile: str
+    guardrails: dict[str, object]
+    dataset_readiness: dict[str, object]
+    intent_clarification: dict[str, object]
 
 
 def _sse_json(payload: dict) -> str:
@@ -483,6 +502,97 @@ def _build_newbie_autopilot_plan(
     }
 
 
+def _build_newbie_autopilot_plan_v2(
+    *,
+    project_id: int,
+    req: NewbieAutopilotIntentRequest,
+) -> AutopilotPlanV2Response:
+    # 1. Resolve basic intent preset
+    plan_meta = resolve_newbie_autopilot_intent(
+        intent=req.intent,
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+    )
+    task_profile = str(plan_meta.get("task_profile") or "instruction_sft")
+
+    # 2. Get base model recommendation
+    recommendation = recommend_training_base_models(
+        target_device=req.target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+        task_profile=task_profile,
+        top_k=1,
+    )
+    top_recommendation = None
+    recommendation_rows = list(recommendation.get("recommendations") or [])
+    if recommendation_rows and isinstance(recommendation_rows[0], dict):
+        top_recommendation = dict(recommendation_rows[0])
+
+    model_id = str(top_recommendation.get("model_id") or "microsoft/phi-2") if top_recommendation else "microsoft/phi-2"
+
+    # 3. Build base config for preflight plan
+    base_config = dict(plan_meta.get("safe_training_config") or {})
+    if top_recommendation:
+        base_config["base_model"] = model_id
+        suggested_defaults = dict(top_recommendation.get("suggested_defaults") or {})
+        for key in ("chat_template", "batch_size", "max_seq_length"):
+            if key in suggested_defaults and suggested_defaults[key] is not None:
+                base_config[key] = suggested_defaults[key]
+
+    # 4. Generate all 3 profile suggestions
+    preflight_plan = run_training_preflight_plan(
+        project_id=project_id,
+        config=base_config,
+        base_model=model_id,
+    )
+
+    # 5. Enrich suggestions with estimates and labels
+    dataset_readiness = evaluate_newbie_autopilot_dataset_readiness(project_id=project_id)
+    dataset_rows = dataset_readiness.get("prepared_row_count", 1000)
+
+    enriched_plans = []
+    for suggestion in preflight_plan.get("suggestions", []):
+        profile = suggestion["profile"]
+        estimate = estimate_newbie_autopilot_run(
+            plan_profile=profile,
+            target_device=req.target_device,
+            dataset_size_rows=dataset_rows,
+        )
+        suggestion["estimate"] = estimate
+        enriched_plans.append(suggestion)
+
+    # 6. Build Guardrails
+    guardrail_blockers = []
+    guardrail_warnings = []
+    guardrail_blockers.extend([str(item) for item in list(dataset_readiness.get("blockers") or [])])
+
+    # Check if any plan is actually runnable
+    can_run = any(p.get("preflight", {}).get("ok", False) for p in enriched_plans) and not guardrail_blockers
+
+    intent_clarification = build_newbie_autopilot_intent_clarification(
+        intent=req.intent,
+        confidence=float(plan_meta.get("confidence") or 0.0),
+        task_profile=task_profile,
+        matched_keywords=[str(k) for k in list(plan_meta.get("matched_keywords") or [])],
+    )
+
+    return AutopilotPlanV2Response(
+        project_id=project_id,
+        intent=req.intent,
+        plans=enriched_plans,
+        recommended_profile=preflight_plan.get("recommended_profile", "balanced"),
+        guardrails={
+            "can_run": can_run,
+            "blockers": guardrail_blockers,
+            "warnings": guardrail_warnings,
+            "one_click_fix_available": len(dataset_readiness.get("auto_fixes", [])) > 0,
+        },
+        dataset_readiness=dataset_readiness,
+        intent_clarification=intent_clarification,
+    )
+
+
 @router.get("/runtimes")
 async def get_training_runtime_catalog(
     project_id: int,
@@ -545,6 +655,38 @@ async def resolve_training_autopilot_intent(
     }
 
 
+@router.post("/autopilot/plan-v2", response_model=AutopilotPlanV2Response)
+async def resolve_training_autopilot_plan_v2(
+    project_id: int,
+    req: NewbieAutopilotIntentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return three plan options (Fastest, Balanced, Best Quality) with cost/time estimates."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return _build_newbie_autopilot_plan_v2(project_id=project_id, req=req)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/autopilot/estimate")
+async def estimate_training_autopilot_run(
+    project_id: int,
+    req: NewbieAutopilotEstimateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Estimate training time and cost for a selected plan profile and hardware."""
+    await _get_project_or_404(db, project_id)
+    return {
+        "project_id": project_id,
+        "estimate": estimate_newbie_autopilot_run(
+            plan_profile=req.plan_profile,
+            target_device=req.target_device,
+            dataset_size_rows=req.dataset_size_rows,
+        ),
+    }
+
+
 @router.post("/autopilot/one-click-run")
 async def run_training_autopilot_one_click(
     project_id: int,
@@ -567,15 +709,17 @@ async def run_training_autopilot_one_click(
         "rewritten_intent": None,
         "source": None,
     }
+
+    # Use v2 logic to get the right plan
     try:
-        plan_payload = _build_newbie_autopilot_plan(project_id=project_id, req=effective_req)
+        plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
     rewrite_intent = str(req.intent_rewrite or "").strip()
     rewrite_source = "request.intent_rewrite"
     if not rewrite_intent and bool(req.auto_apply_rewrite):
-        clarification = dict(plan_payload.get("intent_clarification") or {})
+        clarification = plan_v2_resp.intent_clarification
         rewrite_rows = list(clarification.get("rewrite_suggestions") or [])
         if rewrite_rows and isinstance(rewrite_rows[0], dict):
             top = dict(rewrite_rows[0])
@@ -591,7 +735,7 @@ async def run_training_autopilot_one_click(
             available_vram_gb=req.available_vram_gb,
         )
         try:
-            plan_payload = _build_newbie_autopilot_plan(project_id=project_id, req=effective_req)
+            plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
         except ValueError as e:
             raise HTTPException(400, str(e))
         applied_intent_rewrite = {
@@ -601,8 +745,13 @@ async def run_training_autopilot_one_click(
             "source": rewrite_source,
         }
 
-    launch_guardrails = dict(plan_payload.get("launch_guardrails") or {})
-    can_one_click_run = bool(launch_guardrails.get("can_one_click_run", False))
+    # Pick the plan matching req.plan_profile
+    selected_plan = next(
+        (p for p in plan_v2_resp.plans if p.get("profile") == req.plan_profile),
+        plan_v2_resp.plans[0],
+    )
+    launch_guardrails = plan_v2_resp.guardrails
+    can_one_click_run = bool(launch_guardrails.get("can_run", False))
     if not can_one_click_run:
         blockers = [
             str(item).strip()
@@ -617,10 +766,10 @@ async def run_training_autopilot_one_click(
             "start_result": None,
             "start_error": f"Autopilot blocked one-click run: {error_preview}",
             "applied_intent_rewrite": applied_intent_rewrite,
-            **plan_payload,
+            "plan_v2": plan_v2_resp.model_dump(),
         }
 
-    safe_config = dict(plan_payload.get("safe_training_config") or {})
+    safe_config = dict(selected_plan.get("config") or {})
     base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
     training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
     if training_mode_token == TrainingMode.DPO.value:

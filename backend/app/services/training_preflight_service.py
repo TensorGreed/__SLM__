@@ -156,16 +156,16 @@ _MEDIA_AUDIO_EXTENSIONS: set[str] = {
 }
 
 _PLAN_PROFILE_META: dict[str, dict[str, str]] = {
-    "safe": {
-        "title": "Safe",
+    "fastest": {
+        "title": "Fastest",
         "description": "Highest stability and lowest VRAM pressure for first successful run.",
     },
     "balanced": {
         "title": "Balanced",
         "description": "Good default tradeoff for speed, stability, and quality.",
     },
-    "max_quality": {
-        "title": "Max Quality",
+    "best_quality": {
+        "title": "Best Quality",
         "description": "Preserves most quality-oriented settings; may require more VRAM.",
     },
 }
@@ -1413,62 +1413,62 @@ def _apply_profile_tuning(
         dict(capability_summary.get("runtime_environment") or {}).get("cuda_available", False)
     )
 
-    if profile == "safe":
+    if profile == "fastest":
         _set_planned_field(
             cfg,
             changes,
             field="batch_size",
             to_value=1,
-            reason="safe profile lowers memory pressure",
+            reason="fastest profile lowers memory pressure",
         )
         _set_planned_field(
             cfg,
             changes,
             field="gradient_accumulation_steps",
             to_value=max(8, grad_accum_current),
-            reason="safe profile preserves effective batch size while keeping batch_size=1",
+            reason="fastest profile preserves effective batch size while keeping batch_size=1",
         )
         _set_planned_field(
             cfg,
             changes,
             field="max_seq_length",
             to_value=min(max_seq_current, 1024),
-            reason="safe profile reduces context length for OOM resilience",
+            reason="fastest profile reduces context length for OOM resilience",
         )
         _set_planned_field(
             cfg,
             changes,
             field="gradient_checkpointing",
             to_value=True,
-            reason="safe profile reduces activation memory",
+            reason="fastest profile reduces activation memory",
         )
         _set_planned_field(
             cfg,
             changes,
             field="sequence_packing",
             to_value=False,
-            reason="safe profile prioritizes stability over throughput",
+            reason="fastest profile prioritizes stability over throughput",
         )
         _set_planned_field(
             cfg,
             changes,
             field="flash_attention",
             to_value=False,
-            reason="safe profile favors broad runtime compatibility",
+            reason="fastest profile favors broad runtime compatibility",
         )
         _set_planned_field(
             cfg,
             changes,
             field="auto_oom_retry",
             to_value=True,
-            reason="safe profile enables automatic OOM recovery",
+            reason="fastest profile enables automatic OOM recovery",
         )
         _set_planned_field(
             cfg,
             changes,
             field="max_oom_retries",
             to_value=max(2, max_retries_current),
-            reason="safe profile increases retry budget",
+            reason="fastest profile increases retry budget",
         )
         return
 
@@ -1525,7 +1525,7 @@ def _apply_profile_tuning(
             )
         return
 
-    # max_quality keeps user intent mostly intact, with conservative guards.
+    # best_quality keeps user intent mostly intact, with conservative guards.
     if not cuda_available and batch_size_current > 2:
         _set_planned_field(
             cfg,
@@ -1539,14 +1539,14 @@ def _apply_profile_tuning(
         changes,
         field="auto_oom_retry",
         to_value=True,
-        reason="max_quality profile still keeps OOM safety net",
+        reason="best_quality profile still keeps OOM safety net",
     )
     _set_planned_field(
         cfg,
         changes,
         field="max_oom_retries",
         to_value=max(1, max_retries_current),
-        reason="max_quality profile keeps minimal retry budget",
+        reason="best_quality profile keeps minimal retry budget",
     )
 
 
@@ -1611,7 +1611,7 @@ def _pick_recommended_profile(suggestions: list[dict[str, Any]]) -> str:
     if not suggestions:
         return "balanced"
 
-    priority = {"balanced": 0, "safe": 1, "max_quality": 2}
+    priority = {"balanced": 0, "fastest": 1, "best_quality": 2}
     candidates = [item for item in suggestions if bool(item.get("preflight", {}).get("ok", False))]
     pool = candidates if candidates else suggestions
 

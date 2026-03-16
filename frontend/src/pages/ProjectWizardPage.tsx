@@ -6,14 +6,22 @@ import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectWizardPage.css';
 
 interface AutopilotPlan {
-  preset_id?: string;
-  preset_label?: string;
-  preset_description?: string;
-  task_profile?: string;
-  confidence?: number;
-  matched_keywords?: string[];
-  run_name_suggestion?: string;
-  user_friendly_plan?: string[];
+  profile?: string;
+  title?: string;
+  description?: string;
+  config?: Record<string, unknown>;
+  changes?: Array<{ field: string; from?: unknown; to?: unknown; reason?: string }>;
+  estimated_vram_risk?: string;
+  estimated_vram_score?: number;
+  estimated_vram_note?: string | null;
+  preflight?: AutopilotPreflight;
+  estimate?: {
+    estimated_seconds?: number;
+    estimated_cost?: number;
+    unit?: string;
+    confidence_score?: number;
+    labels?: { speed: string; quality: string; cost: string };
+  };
 }
 
 interface AutopilotIntentClarification {
@@ -53,9 +61,10 @@ interface AutopilotDatasetReadiness {
 }
 
 interface AutopilotLaunchGuardrails {
-  can_one_click_run?: boolean;
+  can_run?: boolean;
   blockers?: string[];
   warnings?: string[];
+  one_click_fix_available?: boolean;
 }
 
 interface AutopilotModelRecommendation {
@@ -73,13 +82,12 @@ interface AutopilotPreflight {
 
 interface AutopilotIntentResolveResponse {
   project_id: number;
-  plan?: AutopilotPlan;
+  intent: string;
+  plans?: AutopilotPlan[];
+  recommended_profile?: string;
   intent_clarification?: AutopilotIntentClarification;
   dataset_readiness?: AutopilotDatasetReadiness;
-  launch_guardrails?: AutopilotLaunchGuardrails;
-  safe_training_config?: Record<string, unknown>;
-  model_recommendation?: AutopilotModelRecommendation | null;
-  preflight?: AutopilotPreflight;
+  guardrails?: AutopilotLaunchGuardrails;
 }
 
 interface AutopilotOneClickRunResponse extends AutopilotIntentResolveResponse {
@@ -121,6 +129,7 @@ export default function ProjectWizardPage() {
   const [runNameOverride, setRunNameOverride] = useState('');
   const [acknowledgeIntentClarification, setAcknowledgeIntentClarification] = useState(false);
   const [selectedIntentRewrite, setSelectedIntentRewrite] = useState('');
+  const [selectedProfile, setSelectedProfile] = useState('balanced');
 
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState('');
@@ -151,7 +160,7 @@ export default function ProjectWizardPage() {
   const latestStatus = String(statusResponse?.status || launchResponse?.experiment?.status || '').toLowerCase();
   const clarificationRequired = Boolean(planResponse?.intent_clarification?.required);
   const hasSelectedRewrite = selectedIntentRewrite.trim().length >= 3;
-  const launchGuardrailsPass = planResponse?.launch_guardrails?.can_one_click_run !== false;
+  const launchGuardrailsPass = planResponse?.guardrails?.can_run !== false;
   const canLaunchFromPlan = launchGuardrailsPass
     && (!clarificationRequired || acknowledgeIntentClarification || hasSelectedRewrite);
 
@@ -174,7 +183,7 @@ export default function ProjectWizardPage() {
     }
     try {
       const res = await api.post<AutopilotIntentResolveResponse>(
-        `/projects/${projectId}/training/autopilot/intent-resolve`,
+        `/projects/${projectId}/training/autopilot/plan-v2`,
         {
           intent: trimmedIntent,
           target_device: targetDevice,
@@ -183,6 +192,9 @@ export default function ProjectWizardPage() {
         },
       );
       setPlanResponse(res.data || null);
+      if (res.data?.recommended_profile) {
+        setSelectedProfile(res.data.recommended_profile);
+      }
       setCurrentStep(2);
     } catch (err: any) {
       setPlanResponse(null);
@@ -212,6 +224,7 @@ export default function ProjectWizardPage() {
           auto_apply_rewrite: true,
           intent_rewrite: hasSelectedRewrite ? selectedIntentRewrite.trim() : undefined,
           run_name: runNameOverride.trim() || undefined,
+          plan_profile: selectedProfile,
         },
       );
       const payload = res.data || null;
@@ -361,32 +374,44 @@ export default function ProjectWizardPage() {
 
         {currentStep === 2 && (
           <section className="wizard-section">
-            <h3>Safe plan is ready</h3>
-            <p className="wizard-muted">Review, then launch with one click.</p>
+            <h3>Choose your path</h3>
+            <p className="wizard-muted">We've prepared 3 ways to reach your goal. Pick one to launch.</p>
             <div className="wizard-panel">
-              <div><strong>Intent:</strong> {intentText.trim()}</div>
-              {hasSelectedRewrite && (
-                <div>
-                  <strong>Selected rewrite:</strong>
-                  {' '}
-                  {selectedIntentRewrite.trim()}
-                </div>
-              )}
-              <div><strong>Preset:</strong> {planResponse?.plan?.preset_label || '-'}</div>
-              <div><strong>Why this preset:</strong> {planResponse?.plan?.preset_description || '-'}</div>
-              <div><strong>Task profile:</strong> {planResponse?.plan?.task_profile || '-'}</div>
-              <div>
-                <strong>Confidence:</strong>
-                {' '}
-                {Number.isFinite(Number(planResponse?.plan?.confidence))
-                  ? `${Math.round(Number(planResponse?.plan?.confidence) * 100)}%`
-                  : 'n/a'}
+              <div className="wizard-intent-summary">
+                <strong>Intent:</strong> {intentText.trim()}
+                {hasSelectedRewrite && (
+                  <div className="wizard-rewrite-badge">
+                    <span>Rewritten for clarity:</span> {selectedIntentRewrite.trim()}
+                  </div>
+                )}
               </div>
-              <div>
-                <strong>Recommended model:</strong>
-                {' '}
-                {planResponse?.model_recommendation?.model_id || '-'}
+
+              <div className="autopilot-plan-grid">
+                {(planResponse?.plans || []).map((plan) => (
+                  <div
+                    key={plan.profile}
+                    className={`autopilot-plan-card ${selectedProfile === plan.profile ? 'selected' : ''}`}
+                    onClick={() => setSelectedProfile(plan.profile || 'balanced')}
+                  >
+                    <div className="plan-header">
+                      <h4>{plan.title}</h4>
+                      {plan.profile === planResponse?.recommended_profile && (
+                        <span className="badge badge-success">Recommended</span>
+                      )}
+                    </div>
+                    <p className="plan-description">{plan.description}</p>
+                    <div className="plan-estimate">
+                      <div>Time: ~{Math.round((plan.estimate?.estimated_seconds || 0) / 60)}m</div>
+                      <div>Cost: {plan.estimate?.estimated_cost} {plan.estimate?.unit}</div>
+                    </div>
+                    <div className="plan-labels">
+                      <span className="label-badge speed">{plan.estimate?.labels?.speed} Speed</span>
+                      <span className="label-badge quality">{plan.estimate?.labels?.quality} Quality</span>
+                    </div>
+                  </div>
+                ))}
               </div>
+
               {planResponse?.dataset_readiness && (
                 <div className={`wizard-upload-box ${planResponse.dataset_readiness.ready ? '' : 'wizard-error'}`}>
                   <div>
@@ -401,75 +426,37 @@ export default function ProjectWizardPage() {
                   </div>
                   {Array.isArray(planResponse.dataset_readiness.blockers)
                     && planResponse.dataset_readiness.blockers.length > 0 && (
-                      <div>
-                        Blockers:
-                        {' '}
-                        {planResponse.dataset_readiness.blockers.slice(0, 2).join(' | ')}
-                      </div>
-                    )}
-                  {Array.isArray(planResponse.dataset_readiness.warnings)
-                    && planResponse.dataset_readiness.warnings.length > 0 && (
-                      <div>
-                        Warnings:
-                        {' '}
-                        {planResponse.dataset_readiness.warnings.slice(0, 2).join(' | ')}
+                      <div className="wizard-blockers">
+                        <strong>Blockers:</strong>
+                        <ul className="wizard-filter-list">
+                          {planResponse.dataset_readiness.blockers.map((b) => <li key={b}>{b}</li>)}
+                        </ul>
                       </div>
                     )}
                 </div>
               )}
+
               {planResponse?.intent_clarification?.required && (
-                <div className="wizard-upload-box wizard-error">
+                <div className="wizard-upload-box wizard-warning">
                   <div>
                     <strong>Clarification recommended</strong>
                     {' '}
                     ({planResponse.intent_clarification.confidence_band || 'low'} confidence)
                   </div>
-                  {planResponse.intent_clarification.reason && (
-                    <div>{planResponse.intent_clarification.reason}</div>
-                  )}
-                  {Array.isArray(planResponse.intent_clarification.questions)
-                    && planResponse.intent_clarification.questions.length > 0 && (
-                      <ul className="wizard-filter-list">
-                        {planResponse.intent_clarification.questions.slice(0, 3).map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    )}
-                  {Array.isArray(planResponse.intent_clarification.suggested_intent_examples)
-                    && planResponse.intent_clarification.suggested_intent_examples.length > 0 && (
-                      <details>
-                        <summary>See better intent examples</summary>
-                        <ul className="wizard-filter-list">
-                          {planResponse.intent_clarification.suggested_intent_examples.map((item) => (
-                            <li key={item}>{item}</li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
                   {Array.isArray(planResponse.intent_clarification.rewrite_suggestions)
                     && planResponse.intent_clarification.rewrite_suggestions.length > 0 && (
-                      <div className="wizard-panel">
-                        <strong>Try one-click rewrites</strong>
-                        <div className="wizard-actions wizard-actions-bottom">
-                          {planResponse.intent_clarification.rewrite_suggestions.slice(0, 3).map((suggestion) => {
-                            const rewritten = String(suggestion?.rewritten_intent || '').trim();
-                            if (!rewritten) {
-                              return null;
-                            }
-                            return (
-                              <button
-                                key={String(suggestion?.id || rewritten)}
-                                className="btn btn-secondary"
-                                disabled={planLoading}
-                                onClick={() => {
-                                  setSelectedIntentRewrite(rewritten);
-                                  void resolveSafePlan(rewritten);
-                                }}
-                              >
-                                {suggestion?.label || 'Use and Rebuild Plan'}
-                              </button>
-                            );
-                          })}
+                      <div className="wizard-rewrites-inline">
+                        <strong>Try these rewrites:</strong>
+                        <div className="wizard-actions">
+                          {planResponse.intent_clarification.rewrite_suggestions.slice(0, 2).map((suggestion) => (
+                            <button
+                              key={suggestion.id}
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => void resolveSafePlan(suggestion.rewritten_intent)}
+                            >
+                              {suggestion.label}
+                            </button>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -483,15 +470,16 @@ export default function ProjectWizardPage() {
                   </label>
                 </div>
               )}
+
               {Array.isArray(planResponse?.dataset_readiness?.auto_fixes)
                 && planResponse?.dataset_readiness?.auto_fixes?.length > 0 && (
-                  <div className="wizard-panel">
+                  <div className="wizard-panel wizard-fix-panel">
                     <strong>Suggested fixes</strong>
                     <div className="wizard-actions wizard-actions-bottom">
                       {planResponse?.dataset_readiness?.auto_fixes?.slice(0, 3).map((fix) => (
                         <button
                           key={String(fix.id || fix.label || 'fix')}
-                          className="btn btn-secondary"
+                          className={`btn ${fix.navigate_to ? 'btn-primary' : 'btn-secondary'}`}
                           onClick={() => {
                             const path = String(fix.navigate_to || '').trim();
                             if (path) navigate(path);
@@ -503,29 +491,6 @@ export default function ProjectWizardPage() {
                     </div>
                   </div>
                 )}
-              {Array.isArray(planResponse?.plan?.user_friendly_plan) && planResponse?.plan?.user_friendly_plan?.length > 0 && (
-                <ul className="wizard-filter-list">
-                  {planResponse?.plan?.user_friendly_plan?.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              )}
-              {planResponse?.preflight && (
-                <div className={`wizard-upload-box ${planResponse.preflight.ok ? '' : 'wizard-error'}`}>
-                  <div>
-                    <strong>Preflight:</strong>
-                    {' '}
-                    {planResponse.preflight.ok ? 'PASS' : 'BLOCKED'}
-                  </div>
-                  {!planResponse.preflight.ok && Array.isArray(planResponse.preflight.errors) && planResponse.preflight.errors.length > 0 && (
-                    <div>{planResponse.preflight.errors.slice(0, 2).join(' | ')}</div>
-                  )}
-                </div>
-              )}
-              <details>
-                <summary>Show safe config JSON</summary>
-                <pre>{JSON.stringify(planResponse?.safe_training_config || {}, null, 2)}</pre>
-              </details>
             </div>
             <div className="wizard-actions wizard-actions-bottom">
               <button className="btn btn-secondary" onClick={() => setCurrentStep(1)}>Back</button>
@@ -537,15 +502,9 @@ export default function ProjectWizardPage() {
                 {launchLoading ? 'Launching...' : 'One-Click Run'}
               </button>
             </div>
-            {(!canLaunchFromPlan
-              || (Array.isArray(planResponse?.launch_guardrails?.warnings) && planResponse?.launch_guardrails?.warnings?.length > 0)) && (
-              <div className="wizard-muted">
-                {Array.isArray(planResponse?.launch_guardrails?.blockers) && planResponse?.launch_guardrails?.blockers?.length > 0
-                  ? `Blocked: ${planResponse?.launch_guardrails?.blockers?.slice(0, 2).join(' | ')}`
-                  : ''}
-                {Array.isArray(planResponse?.launch_guardrails?.warnings) && planResponse?.launch_guardrails?.warnings?.length > 0
-                  ? `${Array.isArray(planResponse?.launch_guardrails?.blockers) && planResponse?.launch_guardrails?.blockers?.length > 0 ? ' • ' : ''}Warnings: ${planResponse?.launch_guardrails?.warnings?.slice(0, 2).join(' | ')}`
-                  : ''}
+            {!canLaunchFromPlan && (
+              <div className="wizard-error-summary">
+                Please resolve blockers before launching.
               </div>
             )}
           </section>

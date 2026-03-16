@@ -338,6 +338,7 @@ def evaluate_newbie_autopilot_dataset_readiness(
                 "id": "open_data_pipeline",
                 "label": "Open Data Prep",
                 "description": "Open data prep tab and create prepared train/val splits.",
+                "action_type": "navigate",
                 "navigate_to": f"/project/{project_id}/pipeline/data",
             }
         )
@@ -409,6 +410,51 @@ def build_newbie_autopilot_run_name(
     return f"Autopilot - {base}"
 
 
+def estimate_newbie_autopilot_run(
+    *,
+    plan_profile: str,
+    target_device: str,
+    dataset_size_rows: int = 1000,
+) -> dict[str, Any]:
+    """Heuristic for training time and cost estimation."""
+    # Base throughput seconds per 1k rows
+    base_time_per_1k_rows = 300.0  # seconds (5 mins)
+    if target_device == "mobile":
+        base_time_per_1k_rows = 1200.0
+    elif target_device == "server":
+        base_time_per_1k_rows = 60.0
+
+    # Profile modifiers
+    multiplier = 1.0
+    if plan_profile == "fastest":
+        multiplier = 0.5
+    elif plan_profile == "best_quality":
+        multiplier = 2.0
+
+    estimated_seconds = int(base_time_per_1k_rows * (dataset_size_rows / 1000) * multiplier)
+
+    # Cost in "credits" (fake currency)
+    cost_per_hour = 10.0
+    if target_device == "server":
+        cost_per_hour = 50.0
+    elif target_device == "mobile":
+        cost_per_hour = 0.0  # Local
+
+    estimated_cost = round((estimated_seconds / 3600.0) * cost_per_hour, 2)
+
+    return {
+        "estimated_seconds": max(30, estimated_seconds),
+        "estimated_cost": estimated_cost,
+        "unit": "credits" if estimated_cost > 0 else "Local (Free)",
+        "confidence_score": 0.7,
+        "labels": {
+            "speed": "Fast" if plan_profile == "fastest" else "Medium",
+            "quality": "High" if plan_profile == "best_quality" else "Standard",
+            "cost": "Low" if estimated_cost < 5.0 else "High",
+        },
+    }
+
+
 def resolve_newbie_autopilot_intent(
     *,
     intent: str,
@@ -450,6 +496,7 @@ def resolve_newbie_autopilot_intent(
         "auto_oom_retry": True,
         "max_oom_retries": 2,
         "oom_retry_seq_shrink": 0.75,
+        "training_plan_profile": "fastest",
         **device_defaults,
     }
 
