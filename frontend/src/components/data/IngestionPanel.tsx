@@ -31,6 +31,8 @@ interface RemoteImportStatusResponse {
         source_type?: string;
         identifier?: string;
     };
+    result_visible_in_api_db?: boolean;
+    warning?: string;
     error?: string;
 }
 
@@ -246,7 +248,14 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     const imported = status.result?.samples_ingested ?? 0;
                     const source = status.result?.source_type ?? activeTab;
                     const identifier = status.result?.identifier ?? remoteId;
-                    setImportStatus(`Imported ${imported} samples from ${source}:${identifier}`);
+                    if (status.result_visible_in_api_db === false) {
+                        setImportStatus(
+                            status.warning
+                                || 'Import completed in worker, but this API process cannot see the document. Verify API/worker DATABASE_URL alignment and restart both.',
+                        );
+                    } else {
+                        setImportStatus(`Imported ${imported} samples from ${source}:${identifier}`);
+                    }
                     setIsImporting(false);
                     setActiveReportPath(null);
                     setActiveTaskId(null);

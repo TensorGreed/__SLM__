@@ -4,11 +4,12 @@ import asyncio
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.dataset import DocumentStatus
+from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.schemas.dataset import DocumentResponse, DocumentUploadResponse
 from app.services.job_service import cancel_task, get_task_status
 from app.services.ingestion_service import (
@@ -266,10 +267,39 @@ async def import_remote_dataset_queue(
 async def remote_import_job_status(
     project_id: int,
     report_path: str = Query(..., min_length=1, max_length=4096),
+    db: AsyncSession = Depends(get_db),
 ):
     """Poll a queued remote import job status by report path."""
     try:
-        return get_import_job_status(project_id, report_path)
+        payload = get_import_job_status(project_id, report_path)
+        status = str(payload.get("status") or "").strip().lower()
+        if status == "completed":
+            result_payload = payload.get("result")
+            result_data = result_payload if isinstance(result_payload, dict) else {}
+            try:
+                document_id = int(result_data.get("document_id") or 0)
+            except (TypeError, ValueError):
+                document_id = 0
+            if document_id > 0:
+                lookup = await db.execute(
+                    select(RawDocument.id)
+                    .join(Dataset, Dataset.id == RawDocument.dataset_id)
+                    .where(
+                        Dataset.project_id == project_id,
+                        Dataset.dataset_type == DatasetType.RAW,
+                        RawDocument.id == document_id,
+                    )
+                    .limit(1)
+                )
+                visible = lookup.scalar_one_or_none() is not None
+                payload["result_visible_in_api_db"] = bool(visible)
+                if not visible:
+                    payload["warning"] = (
+                        "Import completed in worker, but this API process cannot find the imported "
+                        "document in its database. Verify API and worker are using the same DATABASE_URL "
+                        "and restart both processes."
+                    )
+        return payload
     except ValueError as e:
         raise HTTPException(400, str(e))
 

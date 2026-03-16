@@ -419,3 +419,135 @@
     flex-shrink: 0;
     margin-top: .1rem;
 }
+
+/* Light workspace overrides */
+.dp-view-tab {
+    border-color: #ccd9ec;
+    background: #ffffff;
+    color: #587193;
+}
+
+.dp-view-tab:hover {
+    border-color: #9fb8dc;
+    background: #f5f9ff;
+    color: #1e3e68;
+}
+
+.dp-view-tab.active {
+    border-color: #3d79cb;
+    background: #eaf2ff;
+    color: #1f4b89;
+}
+
+.dp-section {
+    background: #f8fbff;
+    border-color: #d8e2f2;
+}
+
+.dp-actions select,
+.dp-actions input,
+.dp-split-field input,
+.dp-split-field select {
+    background: #ffffff;
+    border-color: #ccd9ec;
+    color: #1d395f;
+}
+
+.dp-json-field,
+.dp-split-default-toggle label,
+.dp-split-field label,
+.dp-field-bar .field-name,
+.dp-resolved-title,
+.dp-resolved-kv,
+.dp-resolved-subtitle,
+.dp-info {
+    color: #587193;
+}
+
+.dp-json-input {
+    background: #f5f8fd;
+    border-color: #d5e0f1;
+    color: #1f3d63;
+}
+
+.dp-stat {
+    background: #ffffff;
+    border: 1px solid #d9e3f2;
+}
+
+.dp-stat .label {
+    color: #6b809b;
+}
+
+.dp-source-badge.cleaned {
+    background: #e9f8f0;
+    color: #1f7a4f;
+}
+
+.dp-source-badge.synthetic {
+    background: #e8f2ff;
+    color: #1f5ea8;
+}
+
+.dp-source-badge.gold_dev {
+    background: #fff6da;
+    color: #8a6400;
+}
+
+.dp-source-badge.raw {
+    background: #e8f4ff;
+    color: #1e5f98;
+}
+
+.dp-table-wrap {
+    border-color: #d7e2f2;
+    background: #ffffff;
+}
+
+.dp-table th {
+    background: #f2f7ff;
+    color: #5f7696;
+    border-bottom-color: #d8e3f3;
+}
+
+.dp-table td {
+    color: #233f64;
+    border-bottom-color: #e6edf8;
+}
+
+.dp-table tr:hover td {
+    background: #f6faff;
+}
+
+.dp-field-bar .bar-track {
+    background: #eaf1fb;
+}
+
+.dp-field-bar .bar-count {
+    color: #6d82a0;
+}
+
+.dp-resolved-panel {
+    background: #f1f7ff;
+    border-color: #c7dbf6;
+}
+
+.dp-resolved-kv strong {
+    color: #234770;
+}
+
+.dp-resolved-json {
+    background: #f8fbff;
+    border-color: #d5e1f2;
+    color: #2c4d74;
+}
+
+.dp-manifest pre {
+    background: #edf5ff;
+    color: #355776;
+}
+
+.dp-info {
+    background: #eff7ff;
+    border-color: #c7def8;
+}
