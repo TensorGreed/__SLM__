@@ -121,10 +121,20 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [activeTab, setActiveTab] = useState<SourceTab>('upload');
     const [remoteId, setRemoteId] = useState('');
     const [remoteSplit, setRemoteSplit] = useState('train');
+    const [remoteConfig, setRemoteConfig] = useState('');
     const [remoteMaxSamples, setRemoteMaxSamples] = useState('');
     const [hfToken, setHfToken] = useState('');
     const [kaggleUsername, setKaggleUsername] = useState('');
     const [kaggleKey, setKaggleKey] = useState('');
+
+    const [isInspecting, setIsInspecting] = useState(false);
+    const [inspectionResult, setInspectionResult] = useState<{
+        configs?: string[];
+        splits?: string[];
+        features?: Record<string, string>;
+        error?: string;
+        remediation?: string;
+    } | null>(null);
 
     const [isImporting, setIsImporting] = useState(false);
     const [importStatus, setImportStatus] = useState('');
@@ -347,6 +357,40 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
         }
     };
 
+    const handleInspect = async () => {
+        if (!remoteId.trim()) return;
+        setIsInspecting(true);
+        setInspectionResult(null);
+        setImportStatus('');
+
+        try {
+            const params: any = {
+                project_id: projectId,
+                source_type: activeTab,
+                identifier: remoteId.trim(),
+            };
+            if (activeTab === 'huggingface') {
+                if (hfToken.trim()) params.hf_token = hfToken.trim();
+                else if (useSavedHfToken) params.use_saved_secrets = true;
+            }
+
+            const res = await api.get(`/projects/${projectId}/ingestion/import-remote/inspect`, { params });
+            const data = res.data;
+            setInspectionResult(data);
+            
+            if (data.configs && data.configs.length > 0) {
+                setRemoteConfig(data.configs[0]);
+            }
+            if (data.splits && data.splits.length > 0) {
+                setRemoteSplit(data.splits[0]);
+            }
+        } catch (err) {
+            setImportStatus(`Inspection failed: ${extractErrorMessage(err)}`);
+        } finally {
+            setIsInspecting(false);
+        }
+    };
+
     const handleRemoteImport = async () => {
         if (!remoteId.trim()) return;
         if (activeTab === 'upload') return;
@@ -391,6 +435,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                 source_type: remoteSource,
                 identifier: remoteId.trim(),
                 split: remoteSource === 'huggingface' ? (remoteSplit || 'train') : 'train',
+                config_name: remoteSource === 'huggingface' ? (remoteConfig || null) : null,
                 max_samples: parsedMaxSamples,
                 adapter_id: remoteAdapterId,
                 use_saved_secrets:
@@ -572,76 +617,148 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                         <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', margin: 0 }}>
                             {sourceTabConfig[activeTab].help}
                         </p>
-                        <div className="remote-import-grid">
+                        <div className="remote-import-grid" style={{ gridTemplateColumns: '1fr auto', alignItems: 'end' }}>
                             <div className="form-group" style={{ margin: 0 }}>
                                 <label className="form-label">Dataset Identifier</label>
                                 <input
                                     className="input"
                                     value={remoteId}
-                                    onChange={(e) => setRemoteId(e.target.value)}
+                                    onChange={(e) => {
+                                        setRemoteId(e.target.value);
+                                        setInspectionResult(null);
+                                    }}
                                     placeholder={sourceTabConfig[activeTab].placeholder}
                                 />
                             </div>
-                            {activeTab === 'huggingface' && (
-                                <div className="form-group" style={{ margin: 0 }}>
-                                    <label className="form-label">Split</label>
-                                    <select
-                                        className="input"
-                                        value={remoteSplit}
-                                        onChange={(e) => setRemoteSplit(e.target.value)}
-                                        style={{ width: 120 }}
-                                    >
-                                        <option value="train">train</option>
-                                        <option value="test">test</option>
-                                        <option value="validation">validation</option>
-                                    </select>
-                                </div>
-                            )}
-                            <div className="form-group" style={{ margin: 0 }}>
-                                <label className="form-label">Max Samples</label>
-                                <input
-                                    className="input"
-                                    type="number"
-                                    value={remoteMaxSamples}
-                                    onChange={(e) => setRemoteMaxSamples(e.target.value)}
-                                    placeholder="All"
-                                    style={{ width: 100 }}
-                                />
-                            </div>
-                            <div className="form-group" style={{ margin: 0 }}>
-                                <label className="form-label">Adapter</label>
-                                <select
-                                    className="input"
-                                    value={remoteAdapterId}
-                                    onChange={(e) => setRemoteAdapterId(e.target.value)}
-                                    style={{ minWidth: 180 }}
-                                >
-                                    <option value="auto">auto</option>
-                                    {Object.keys(adapterCatalog?.adapters || {})
-                                        .filter((adapterKey) => adapterKey !== 'auto')
-                                        .map((adapterKey) => (
-                                            <option key={adapterKey} value={adapterKey}>
-                                                {adapterKey}
-                                            </option>
-                                        ))}
-                                </select>
-                            </div>
-                        </div>
-                        <div className="remote-import-adapter-box">
-                            <div className="remote-import-adapter-head">
-                                <strong>Adapter Mapping</strong>
-                                <span>Optional JSON overrides for adapter behavior.</span>
-                            </div>
-                            <label className="form-label" style={{ marginBottom: 4 }}>Adapter Config JSON (optional)</label>
-                            <textarea
-                                className="input remote-import-json"
-                                value={remoteAdapterConfigText}
-                                onChange={(e) => setRemoteAdapterConfigText(e.target.value)}
-                                placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
-                            />
+                            <button
+                                className={`btn ${inspectionResult ? 'btn-secondary' : 'btn-primary'}`}
+                                onClick={() => void handleInspect()}
+                                disabled={isInspecting || !remoteId.trim()}
+                            >
+                                {isInspecting ? 'Inspecting...' : (inspectionResult ? 'Re-Inspect' : 'Inspect Source')}
+                            </button>
                         </div>
 
-                        {activeTab === 'huggingface' && (
+                        {inspectionResult?.error && (
+                            <div className="alert alert-error" style={{ marginTop: 'var(--space-md)' }}>
+                                <div style={{ fontWeight: 600 }}>{inspectionResult.error}</div>
+                                {inspectionResult.remediation && (
+                                    <div style={{ marginTop: 4, fontSize: '0.9em', opacity: 0.9 }}>
+                                        💡 {inspectionResult.remediation}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {inspectionResult && !inspectionResult.error && (
+                            <div className="remote-import-step2 animate-slide-up" style={{ marginTop: 'var(--space-md)', padding: 'var(--space-md)', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)' }}>
+                                <div className="remote-import-grid">
+                                    {activeTab === 'huggingface' && inspectionResult.configs && inspectionResult.configs.length > 1 && (
+                                        <div className="form-group" style={{ margin: 0 }}>
+                                            <label className="form-label">Config / Subset</label>
+                                            <select
+                                                className="input"
+                                                value={remoteConfig}
+                                                onChange={(e) => setRemoteConfig(e.target.value)}
+                                            >
+                                                {inspectionResult.configs.map(c => <option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                        </div>
+                                    )}
+                                    <div className="form-group" style={{ margin: 0 }}>
+                                        <label className="form-label">Split</label>
+                                        <select
+                                            className="input"
+                                            value={remoteSplit}
+                                            onChange={(e) => setRemoteSplit(e.target.value)}
+                                            style={{ width: 140 }}
+                                        >
+                                            {inspectionResult.splits?.map(s => <option key={s} value={s}>{s}</option>) || (
+                                                <>
+                                                    <option value="train">train</option>
+                                                    <option value="test">test</option>
+                                                    <option value="validation">validation</option>
+                                                </>
+                                            )}
+                                        </select>
+                                    </div>
+                                    <div className="form-group" style={{ margin: 0 }}>
+                                        <label className="form-label">Max Samples</label>
+                                        <input
+                                            className="input"
+                                            type="number"
+                                            value={remoteMaxSamples}
+                                            onChange={(e) => setRemoteMaxSamples(e.target.value)}
+                                            placeholder="All"
+                                            style={{ width: 100 }}
+                                        />
+                                    </div>
+                                    <div className="form-group" style={{ margin: 0 }}>
+                                        <label className="form-label">Adapter</label>
+                                        <select
+                                            className="input"
+                                            value={remoteAdapterId}
+                                            onChange={(e) => setRemoteAdapterId(e.target.value)}
+                                            style={{ minWidth: 180 }}
+                                        >
+                                            <option value="auto">auto-detect</option>
+                                            {Object.keys(adapterCatalog?.adapters || {})
+                                                .filter((adapterKey) => adapterKey !== 'auto')
+                                                .map((adapterKey) => (
+                                                    <option key={adapterKey} value={adapterKey}>
+                                                        {adapterKey}
+                                                    </option>
+                                                ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {inspectionResult.features && Object.keys(inspectionResult.features).length > 0 && (
+                                    <div style={{ marginTop: 'var(--space-md)', fontSize: 'var(--font-size-xs)' }}>
+                                        <div style={{ color: 'var(--text-secondary)', marginBottom: 4 }}>Detected Schema:</div>
+                                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                            {Object.entries(inspectionResult.features).map(([name, type]) => (
+                                                <span key={name} className="badge badge-outline" title={type}>{name}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="remote-import-adapter-box" style={{ marginTop: 'var(--space-md)' }}>
+                                    <div className="remote-import-adapter-head">
+                                        <strong>Adapter Mapping</strong>
+                                        <span>Optional JSON overrides for adapter behavior.</span>
+                                    </div>
+                                    <textarea
+                                        className="input remote-import-json"
+                                        value={remoteAdapterConfigText}
+                                        onChange={(e) => setRemoteAdapterConfigText(e.target.value)}
+                                        placeholder='{"field_mapping":{"instruction":"question","response":"answer"}}'
+                                        style={{ height: 60 }}
+                                    />
+                                </div>
+
+                                <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center', marginTop: 'var(--space-lg)' }}>
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={() => void handleRemoteImport()}
+                                        disabled={isImporting}
+                                    >
+                                        {isImporting ? 'Importing...' : `Import Selected Data`}
+                                    </button>
+                                    {isImporting && activeTaskId && (
+                                        <button
+                                            className="btn btn-secondary"
+                                            onClick={() => void handleCancelImport()}
+                                        >
+                                            Cancel Import
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {!inspectionResult && activeTab === 'huggingface' && (
                             <div className="form-group" style={{ margin: 0 }}>
                                 <label className="form-label">HuggingFace Token (optional)</label>
                                 <input

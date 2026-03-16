@@ -370,6 +370,103 @@ def get_import_job_status(project_id: int, report_path: str) -> dict:
         "output_digest": digest,
     }
 
+async def inspect_remote_dataset(
+    project_id: int,
+    source_type: str,
+    identifier: str,
+    hf_token: str | None = None,
+    db: AsyncSession | None = None,
+) -> dict:
+    """Inspect a remote dataset to see available splits/configs/features."""
+    from app.services.secret_service import get_project_secret_value
+
+    if source_type == "huggingface":
+        if not hf_token and db:
+            hf_token = await get_project_secret_value(db, project_id, "huggingface", "token")
+
+        try:
+            from datasets import get_dataset_config_names, get_dataset_split_names, get_dataset_infos
+            from huggingface_hub import HfApi
+
+            # 1. Try to get configs
+            try:
+                configs = get_dataset_config_names(identifier, token=hf_token)
+            except Exception:
+                configs = ["default"]
+
+            res = {
+                "source_type": "huggingface",
+                "identifier": identifier,
+                "configs": configs,
+            }
+
+            if configs:
+                # Default to the first config
+                target_config = configs[0]
+                try:
+                    splits = get_dataset_split_names(identifier, config_name=target_config, token=hf_token)
+                    res["splits"] = splits
+                except Exception:
+                    res["splits"] = ["train"]
+
+                try:
+                    infos = get_dataset_infos(identifier, token=hf_token)
+                    if target_config in infos:
+                        info = infos[target_config]
+                        res["features"] = {k: str(v) for k, v in (info.features or {}).items()}
+                        res["description"] = info.description
+                        res["license"] = info.license
+                        res["size_bytes"] = info.dataset_size
+                except Exception:
+                    res["features"] = {}
+            
+            # Check for repo files too as a fallback indicator
+            api = HfApi(token=hf_token)
+            try:
+                files = list(api.list_repo_files(identifier, repo_type="dataset"))
+                res["has_scripts"] = any(f.endswith(".py") for f in files)
+                res["has_parquet"] = any(f.endswith(".parquet") for f in files)
+            except Exception:
+                pass
+
+            return res
+        except Exception as e:
+            return {
+                "source_type": "huggingface",
+                "identifier": identifier,
+                "error": str(e),
+                "remediation": (
+                    "If this is a private dataset, ensure you have provided a valid HuggingFace token. "
+                    "If the dataset identifier is wrong, please correct it. "
+                    "Actionable fix: Set 'HF_TOKEN' in project secrets or provide it in the request."
+                )
+            }
+
+    elif source_type == "kaggle":
+        try:
+            from kaggle.api.kaggle_api_extended import KaggleApi
+            api = KaggleApi()
+            api.authenticate()
+            files = api.dataset_list_files(identifier).files
+            return {
+                "source_type": "kaggle",
+                "identifier": identifier,
+                "configs": ["default"],
+                "splits": ["default"],
+                "files": [f.name for f in files],
+                "remediation": "Kaggle datasets are usually downloaded as a whole. You can select specific files after import if needed."
+            }
+        except Exception as e:
+            return {
+                "source_type": "kaggle",
+                "identifier": identifier,
+                "error": str(e),
+                "remediation": "Ensure your Kaggle API key is configured correctly and the dataset identifier (user/dataset) is correct."
+            }
+
+    return {"error": f"Unsupported source type: {source_type}"}
+
+
 async def ingest_remote_dataset(
     db: AsyncSession,
     project_id: int,
@@ -417,6 +514,30 @@ async def ingest_remote_dataset(
             pass
 
     raw_dataset = await get_or_create_raw_dataset(db, project_id)
+
+    # Idempotency check: avoid duplicate imports
+    existing_check = await db.execute(
+        select(RawDocument).where(
+            RawDocument.dataset_id == raw_dataset.id,
+            RawDocument.source == f"{source_type}:{identifier}",
+            RawDocument.status == DocumentStatus.ACCEPTED
+        )
+    )
+    for existing_doc in existing_check.scalars().all():
+        m = existing_doc.metadata_ or {}
+        if m.get("split") == split and m.get("config_name") == config_name:
+            await _progress(f"[import] Identical dataset already exists (document_id={existing_doc.id}). Skipping.")
+            return {
+                "document_id": existing_doc.id,
+                "filename": existing_doc.filename,
+                "source_type": source_type,
+                "identifier": identifier,
+                "raw_samples": m.get("raw_samples", 0),
+                "samples_ingested": m.get("num_samples", 0),
+                "status": "accepted",
+                "already_exists": True
+            }
+
     data_dir = _project_data_dir(project_id)
     raw_samples: list[dict] = []
     source_mode = "simulated"
@@ -524,7 +645,7 @@ async def ingest_remote_dataset(
         repo_files = list(api.list_repo_files(identifier, repo_type="dataset"))
         await _progress(f"[hf] repo file fallback discovered {len(repo_files)} files")
 
-        allowed_exts = {".jsonl", ".json", ".csv", ".tsv", ".txt"}
+        allowed_exts = {".jsonl", ".json", ".csv", ".tsv", ".txt", ".parquet"}
         candidate_files = [
             item
             for item in repo_files
@@ -563,6 +684,7 @@ async def ingest_remote_dataset(
                     or lowered.endswith(f"{alias}.csv")
                     or lowered.endswith(f"{alias}.tsv")
                     or lowered.endswith(f"{alias}.txt")
+                    or lowered.endswith(f"{alias}.parquet")
                 ):
                     return 0
             return 1
@@ -578,8 +700,19 @@ async def ingest_remote_dataset(
                 token=token,
             )
             ext = Path(repo_file).suffix.lower()
-            raw_text = Path(local_path).read_text(encoding="utf-8", errors="replace")
-            _append_records_from_text(raw_text, ext, target_samples)
+            if ext == ".parquet":
+                try:
+                    import pandas as pd
+                    df = pd.read_parquet(local_path)
+                    for _, row in df.iterrows():
+                        raw_samples.append(row.to_dict())
+                        if len(raw_samples) >= target_samples:
+                            break
+                except Exception as pe:
+                    await _progress(f"[hf] failed to parse parquet {repo_file}: {pe}")
+            else:
+                raw_text = Path(local_path).read_text(encoding="utf-8", errors="replace")
+                _append_records_from_text(raw_text, ext, target_samples)
             if idx <= 3 or idx % 20 == 0:
                 await _progress(
                     f"[hf] repo fallback parsed {idx}/{len(ordered_files)} files, rows={len(raw_samples)}"
@@ -589,65 +722,90 @@ async def ingest_remote_dataset(
     if source_type == "huggingface":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))
         filename = f"hf_{safe_name}_{split}.jsonl"
-        try:
-            from datasets import load_dataset
 
-            dataset_kwargs = {"split": split}
-            if config_name:
-                dataset_kwargs["name"] = config_name
-            if hf_token:
-                dataset_kwargs["token"] = hf_token
-            await _progress("[hf] loading dataset from HuggingFace Hub...")
-            hf_dataset = load_dataset(identifier, **dataset_kwargs)
-            await _progress("[hf] dataset loaded. Collecting rows...")
-            for i, row in enumerate(hf_dataset):
-                if i >= target_samples:
-                    break
-                if isinstance(row, dict):
-                    raw_samples.append(row)
-                else:
-                    raw_samples.append({"value": row})
-                if (i + 1) % 200 == 0:
-                    await _progress(f"[hf] collected {i + 1} rows")
-            source_mode = "live"
-            await _progress(f"[hf] collected {len(raw_samples)} rows")
-        except Exception as e:
-            load_error = str(e)
-            used_repo_fallback = False
-            if "Dataset scripts are no longer supported" in load_error:
-                await _progress(
-                    "[hf] load_dataset() rejected legacy dataset script; trying repository file fallback..."
-                )
+        # Retry policy
+        max_retries = 3
+        backoff = 2
+        delay = 2
+
+        load_error = "Unknown error"
+        for attempt in range(max_retries):
+            try:
+                from datasets import load_dataset
+                dataset_kwargs = {"split": split}
+                if config_name:
+                    dataset_kwargs["name"] = config_name
+                if hf_token:
+                    dataset_kwargs["token"] = hf_token
+
+                await _progress(f"[hf] loading dataset from HuggingFace Hub (attempt {attempt+1}/{max_retries})...")
+                # Using to_thread for sync load_dataset
+                import asyncio
+                hf_dataset = await asyncio.to_thread(load_dataset, identifier, **dataset_kwargs)
+
+                await _progress("[hf] dataset loaded. Collecting rows...")
+                for i, row in enumerate(hf_dataset):
+                    if i >= target_samples:
+                        break
+                    if isinstance(row, dict):
+                        raw_samples.append(row)
+                    else:
+                        raw_samples.append({"value": row})
+                    if (i + 1) % 200 == 0:
+                        await _progress(f"[hf] collected {i + 1} rows")
+
+                source_mode = "live"
+                await _progress(f"[hf] collected {len(raw_samples)} rows")
+                break  # Success!
+
+            except Exception as e:
+                load_error = str(e)
+                # Don't retry on 404 or DatasetNotFoundError
+                if attempt < max_retries - 1 and "404" not in load_error and "DatasetNotFoundError" not in load_error:
+                    await _progress(f"[hf] attempt {attempt+1} failed: {load_error}. Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    delay *= backoff
+                    continue
+                
+                # If we're here, either it was the last attempt or it's a non-retryable error
+                await _progress(f"[hf] load_dataset() failed: {load_error}. Trying repository file fallback...")
                 try:
                     parsed_rows = await _collect_hf_rows_from_repo_files()
                     if parsed_rows > 0:
                         source_mode = "live_hub_files"
-                        used_repo_fallback = True
                         await _progress(f"[hf] repository file fallback collected {parsed_rows} rows")
+                        break
                 except Exception as repo_fallback_error:
                     await _progress(f"[hf] repository file fallback failed: {repo_fallback_error}")
                     load_error = f"{load_error}; fallback_error={repo_fallback_error}"
 
-            if used_repo_fallback:
-                pass
-            elif settings.STRICT_EXECUTION_MODE:
-                raise StrictExecutionError("ingestion", f"HuggingFace live import failed and STRICT_EXECUTION_MODE is enabled. Details: {load_error}")
-            elif not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
-                raise ValueError(
-                    "HuggingFace import failed. Configure dependencies/network/auth and retry "
-                    "(or set ALLOW_SIMULATED_INGESTION_FALLBACK=true for demo fallback). "
-                    f"Details: {load_error}"
-                )
-            else:
-                await _progress("[hf] live import failed; using simulated fallback rows")
-                for i in range(target_samples):
-                    raw_samples.append({
-                        "instruction": f"Sample instruction #{i+1} from {identifier}",
-                        "input": f"Context for sample {i+1}",
-                        "output": f"Expected output for sample {i+1} from the {identifier} dataset.",
-                        "source": f"huggingface/{identifier}",
-                        "split": split,
-                    })
+                if settings.STRICT_EXECUTION_MODE:
+                    raise StrictExecutionError("ingestion", f"HuggingFace live import failed and STRICT_EXECUTION_MODE is enabled. Details: {load_error}")
+                elif not settings.ALLOW_SIMULATED_INGESTION_FALLBACK:
+                     # Better exception mapping
+                     remediation = "Actionable fix: "
+                     lowered_error = load_error.lower()
+                     if "token" in lowered_error or "401" in lowered_error:
+                         remediation += "Set a valid HF_TOKEN in project secrets for private/gated datasets."
+                     elif "404" in lowered_error or "not found" in lowered_error:
+                         remediation += "Verify the dataset identifier is correct on HuggingFace Hub."
+                     elif "scripts are no longer supported" in lowered_error:
+                         remediation += "This dataset requires a custom script which is disabled. Try a different dataset or split."
+                     else:
+                         remediation += "Check network connectivity or try a different split/config."
+
+                     raise ValueError(f"HuggingFace import failed. {remediation} Details: {load_error}")
+                else:
+                    await _progress("[hf] live import failed; using simulated fallback rows")
+                    for i in range(target_samples):
+                        raw_samples.append({
+                            "instruction": f"Sample instruction #{i+1} from {identifier}",
+                            "input": f"Context for sample {i+1}",
+                            "output": f"Expected output for sample {i+1} from the {identifier} dataset.",
+                            "source": f"huggingface/{identifier}",
+                            "split": split,
+                        })
+                    break
 
     elif source_type == "kaggle":
         safe_name = _safe_remote_name(identifier.replace("/", "_"))

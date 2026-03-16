@@ -19,6 +19,7 @@ from app.services.ingestion_service import (
     list_documents,
     process_document,
     queue_remote_import,
+    inspect_remote_dataset,
 )
 from app.services.dataset_intelligence_service import get_project_eda_stats
 from app.services.dataset_intelligence_service import remove_project_outliers
@@ -179,6 +180,27 @@ async def upload_batch(
             errors.append({"filename": f.filename, "error": str(e)})
 
     return {"uploaded": len(results), "errors": errors, "documents": results}
+
+
+@router.get("/import-remote/inspect")
+async def inspect_remote(
+    project_id: int,
+    source_type: str,
+    identifier: str,
+    hf_token: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Inspect a remote dataset's configs and splits before importing."""
+    try:
+        return await inspect_remote_dataset(
+            project_id=project_id,
+            source_type=source_type,
+            identifier=identifier,
+            hf_token=hf_token,
+            db=db,
+        )
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/import-remote", status_code=201)
