@@ -8,6 +8,35 @@
       name="description"
       content="BrewSLM gives engineering teams a developer-first interface to create, benchmark, and deploy small language models with the __SLM__ stack."
     />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://tensorgreed.github.io/__SLM__/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta
+      property="og:title"
+      content="BrewSLM | Build Small Language Models Like Production Software"
+    />
+    <meta
+      property="og:description"
+      content="Developer-first workflow to create, train, evaluate, and export small language models with guardrails."
+    />
+    <meta property="og:url" content="https://tensorgreed.github.io/__SLM__/" />
+    <meta property="og:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="BrewSLM | Build Small Language Models Like Production Software"
+    />
+    <meta
+      name="twitter:description"
+      content="Developer-first workflow to create, train, evaluate, and export small language models with guardrails."
+    />
+    <meta name="twitter:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -15,6 +44,15 @@
       href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "TensorGreed",
+        "url": "https://github.com/TensorGreed",
+        "sameAs": ["https://github.com/TensorGreed/__SLM__"]
+      }
+    </script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -39,13 +77,13 @@
           <p class="eyebrow">BrewSLM Engineering Control Plane</p>
           <h1>Create small language models with production-grade discipline, not notebook chaos.</h1>
           <p class="hero-sub">
-            BrewSLM wraps the <code>__SLM__</code> stack into a developer-native workflow: ingest,
-            map, preflight, benchmark, train, and export from one consistent interface with guardrails
-            and override control built in.
+            BrewSLM wraps the <code>__SLM__</code> stack into a developer-native workflow: create a project,
+            ingest or import data, run preflight, launch one-click training, and export from one consistent
+            interface with guardrails and override control built in.
           </p>
           <div class="metric-row">
             <article class="metric-chip">
-              <strong>4 commands</strong>
+              <strong>5 commands</strong>
               <span>to first run</span>
             </article>
             <article class="metric-chip">
@@ -54,7 +92,7 @@
             </article>
             <article class="metric-chip">
               <strong>1 pipeline</strong>
-              <span>local and cloud burst parity</span>
+              <span>CLI, Python API, and Wizard parity</span>
             </article>
           </div>
           <div class="hero-actions">
@@ -69,15 +107,15 @@
             <span>status: ready</span>
           </div>
           <div class="terminal-block">
-            <p>$ brewslm init --project support-intent --task classify</p>
-            <p>$ brewslm ingest --source hf --id mteb/amazon_reviews_multi --split train</p>
-            <p>$ brewslm preflight --strict</p>
-            <p>$ brewslm train --autopilot --budget medium --cloud-burst on</p>
-            <p>$ brewslm export --target vllm --format safetensors</p>
+            <p>$ ./brewslm project create --name support-intent --template support</p>
+            <p>$ ./brewslm ingest --project 1 --source hf --id mteb/amazon_reviews_multi --split train --wait</p>
+            <p>$ ./brewslm preflight --project 1 --task causal_lm</p>
+            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
+            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
           </div>
           <ul class="run-metrics">
             <li><strong>contracts</strong><span>task/data/runtime checks passed</span></li>
-            <li><strong>benchmarks</strong><span>3 model candidates ranked on sample</span></li>
+            <li><strong>plans</strong><span>autopilot profile + launch guardrails resolved</span></li>
             <li><strong>artifacts</strong><span>weights + metadata + eval trace packed</span></li>
           </ul>
         </aside>
@@ -138,12 +176,12 @@
             <p class="pane-title">Run Timeline</p>
             <div class="terminal-block dense">
               <p>[09:00:11] ingest.started source=hf dataset=mteb/amazon_reviews_multi</p>
-              <p>[09:00:23] map.completed records=65000 schema=canonical.v2</p>
+              <p>[09:00:23] ingest.completed records=65000 source=huggingface</p>
               <p>[09:00:37] preflight.pass memory_fit=true contract=strict</p>
-              <p>[09:01:41] benchmark.completed winner=qwen2.5-1.5b score=0.842</p>
-              <p>[09:02:04] train.started mode=autopilot env=cloud-burst</p>
+              <p>[09:01:11] autopilot.plan profile=balanced blockers=0</p>
+              <p>[09:02:04] train.started mode=autopilot-one-click</p>
               <p>[09:16:12] checkpoint.saved step=1200 eval_f1=0.819</p>
-              <p>[09:22:51] export.completed target=vllm artifact=slm-support-v3</p>
+              <p>[09:22:51] export.completed target=runner.vllm artifact=slm-support-v3</p>
             </div>
           </article>
           <article class="pane reveal">
@@ -243,16 +281,20 @@
           <p>Use this baseline command pack when provisioning a new environment.</p>
           <div class="terminal-block">
             <p>$ git clone &lt;repo&gt; __SLM__</p>
-            <p>$ cd __SLM__ &amp;&amp; docker-compose up -d</p>
-            <p>$ cd backend &amp;&amp; .venv/bin/celery -A app.worker worker -l info</p>
-            <p>$ cd frontend &amp;&amp; npm run dev</p>
-            <p>$ brewslm quickstart --task classify --data ./sample.csv</p>
+            <p>$ cd __SLM__/backend &amp;&amp; python -m venv .venv &amp;&amp; .venv/bin/pip install -r requirements.txt</p>
+            <p>$ cd __SLM__/backend &amp;&amp; .venv/bin/uvicorn app.main:app --reload --port 8000</p>
+            <p>$ cd __SLM__/backend &amp;&amp; .venv/bin/celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2</p>
+            <p>$ cd __SLM__/frontend &amp;&amp; npm install &amp;&amp; npm run dev</p>
+            <p>$ ./brewslm project create --name demo-slm --template general</p>
+            <p>$ ./brewslm dataset import --project 1 --sample general-chat-v1</p>
+            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
+            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
           </div>
         </div>
 
         <aside class="quickstart-notes">
           <p class="notes-head">Next Reads</p>
-          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation Paths:</a> choose CLI, SDK, or Wizard based on team mode.</p>
+          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation Paths:</a> choose CLI, Python API, or Wizard based on team mode.</p>
           <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> inspect each stage and artifact boundary.</p>
           <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> review automation and override controls.</p>
           <a class="btn btn-solid" href="./faqs.html">Read Engineering FAQs</a>
@@ -262,7 +304,16 @@
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Developer workflow UI for fast SLM creation with the <code>__SLM__</code> tool</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
     </footer>
 
     <script src="./script.js"></script>

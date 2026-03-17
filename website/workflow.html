@@ -8,6 +8,35 @@
       name="description"
       content="Technical workflow for BrewSLM: ingest, normalize, preflight, benchmark, train, and export with clear artifact boundaries."
     />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://tensorgreed.github.io/__SLM__/workflow.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta
+      property="og:title"
+      content="BrewSLM Workflow | End-to-End SLM Lifecycle"
+    />
+    <meta
+      property="og:description"
+      content="Review the BrewSLM lifecycle from ingestion to export with stage-level guardrails."
+    />
+    <meta property="og:url" content="https://tensorgreed.github.io/__SLM__/workflow.html" />
+    <meta property="og:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="BrewSLM Workflow | End-to-End SLM Lifecycle"
+    />
+    <meta
+      name="twitter:description"
+      content="Review the BrewSLM lifecycle from ingestion to export with stage-level guardrails."
+    />
+    <meta name="twitter:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -217,12 +246,12 @@
           <p class="eyebrow">Workflow Starter</p>
           <h2>Run the full lifecycle in practical order</h2>
           <div class="terminal-block">
-            <p>$ brewslm ingest --source hf --id your/dataset</p>
-            <p>$ brewslm map --profile canonical.v2</p>
-            <p>$ brewslm preflight --strict</p>
-            <p>$ brewslm benchmark --preset practical</p>
-            <p>$ brewslm train --autopilot --cloud-burst on</p>
-            <p>$ brewslm export --target vllm</p>
+            <p>$ ./brewslm project create --name workflow-demo --template general</p>
+            <p>$ ./brewslm dataset import --project 1 --sample general-chat-v1</p>
+            <p>$ ./brewslm preflight --project 1 --task causal_lm --plan</p>
+            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
+            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
+            <p>$ ./brewslm optimize --project 1 --target mobile_iphone15</p>
           </div>
         </div>
         <aside class="quickstart-notes">
@@ -236,7 +265,16 @@
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Workflow reference for the BrewSLM + <code>__SLM__</code> stack</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
     </footer>
 
     <script src="./script.js"></script>

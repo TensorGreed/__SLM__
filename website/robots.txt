@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://tensorgreed.github.io/__SLM__/sitemap.xml

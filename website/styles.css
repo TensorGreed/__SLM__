@@ -168,6 +168,7 @@ code {
 
 .section {
   padding: 4.7rem 0;
+  scroll-margin-top: 6rem;
 }
 
 .eyebrow {
@@ -834,6 +835,16 @@ h3 {
   font-size: 0.85rem;
 }
 
+.footer-link {
+  color: var(--accent-3);
+  text-decoration: none;
+}
+
+.footer-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .reveal {
   opacity: 0;
   transform: translateY(16px);
@@ -927,25 +938,85 @@ h3 {
 }
 
 @media (max-width: 780px) {
+  .site-header,
+  .section,
+  .site-footer {
+    width: min(1220px, calc(100% - 1.25rem));
+  }
+
   .site-header {
-    justify-content: center;
+    justify-content: space-between;
     flex-wrap: wrap;
+    gap: 0.55rem;
+    padding: 0.72rem 0 0.56rem;
   }
 
   .nav-links {
     order: 3;
     width: 100%;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 0.85rem;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.12rem;
+    scrollbar-width: thin;
+  }
+
+  .site-header > .btn {
+    order: 2;
+    margin-left: auto;
+    padding: 0.5rem 0.82rem;
+    font-size: 0.82rem;
+  }
+
+  .nav-links a {
+    white-space: nowrap;
+    font-size: 0.84rem;
   }
 
   .section {
-    padding: 3.6rem 0;
+    padding: 3rem 0;
   }
 
   .brand-logo {
     height: 1.85rem;
+  }
+
+  .hero {
+    padding-top: 0.9rem;
+  }
+
+  .hero-panel,
+  .page-hero,
+  .mode-console,
+  .faq-tools,
+  .pane,
+  .architecture-shell {
+    padding: 0.95rem;
+  }
+
+  .pipeline-card,
+  .decision-card,
+  .insight-card,
+  .playbook-card,
+  .workflow-step,
+  .cluster-card,
+  .adoption-step,
+  .link-card,
+  .page-card,
+  .feature-card,
+  .faq-item {
+    padding: 0.88rem;
+  }
+
+  .cta-copy,
+  .quickstart-notes {
+    padding: 0.9rem;
+  }
+
+  .table-wrap {
+    padding: 0.55rem;
   }
 
   .metric-row,
@@ -967,5 +1038,52 @@ h3 {
   .terminal-block p,
   .code-block p {
     white-space: normal;
+  }
+
+  .site-footer {
+    padding: 0.88rem 0 1.35rem;
+    font-size: 0.81rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .site-header,
+  .section,
+  .site-footer {
+    width: min(1220px, calc(100% - 0.86rem));
+  }
+
+  .section {
+    padding: 2.45rem 0;
+  }
+
+  .hero-panel,
+  .page-hero,
+  .mode-console,
+  .faq-tools,
+  .pane,
+  .architecture-shell {
+    border-radius: 20px;
+    padding: 0.9rem;
+  }
+
+  .pipeline-card,
+  .decision-card,
+  .insight-card,
+  .playbook-card,
+  .workflow-step,
+  .cluster-card,
+  .adoption-step,
+  .link-card,
+  .page-card,
+  .feature-card,
+  .faq-item {
+    border-radius: 16px;
+    padding: 0.8rem;
+  }
+
+  .terminal-block,
+  .code-block {
+    padding: 0.72rem;
   }
 }

@@ -8,6 +8,35 @@
       name="description"
       content="Searchable BrewSLM FAQ page covering onboarding speed, workflow control, runtime behavior, and deployment decisions."
     />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://tensorgreed.github.io/__SLM__/faqs.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta
+      property="og:title"
+      content="BrewSLM FAQs | Engineering Rollout Questions"
+    />
+    <meta
+      property="og:description"
+      content="Find practical answers on setup speed, control depth, deployment, and guardrails for BrewSLM."
+    />
+    <meta property="og:url" content="https://tensorgreed.github.io/__SLM__/faqs.html" />
+    <meta property="og:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="BrewSLM FAQs | Engineering Rollout Questions"
+    />
+    <meta
+      name="twitter:description"
+      content="Find practical answers on setup speed, control depth, deployment, and guardrails for BrewSLM."
+    />
+    <meta name="twitter:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -61,11 +90,15 @@
         <div class="faq-grid">
           <details class="faq-item reveal" data-faq-item>
             <summary>How fast can a new team run its first SLM job?</summary>
-            <p>Most teams can ingest data and start a first run in under 10 minutes using quickstart.</p>
+            <p>Most teams can create a project, import a sample dataset, and start a first run in under 10 minutes.</p>
+          </details>
+          <details class="faq-item reveal" data-faq-item>
+            <summary>Where should we ask support questions?</summary>
+            <p>Use the <a class="inline-link" href="https://github.com/TensorGreed/__SLM__/issues" target="_blank" rel="noopener noreferrer">__SLM__ GitHub Issues page</a> for support and troubleshooting.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>Do we have to use the Wizard UI?</summary>
-            <p>No. CLI and Python SDK are first-class and can own your full production path.</p>
+            <p>No. CLI and Python API flows are first-class and can own your full production path.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>What does preflight actually validate?</summary>
@@ -73,11 +106,11 @@
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>Can we benchmark before committing to full training?</summary>
-            <p>Yes. BrewSLM supports sampled benchmark runs to rank candidates before long jobs.</p>
+            <p>Yes. Training UI and model-selection APIs support sampled benchmark sweeps before long jobs.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>How do we prevent invalid runs from wasting cloud budget?</summary>
-            <p>Use strict preflight and benchmark floors as hard launch gates for training and export.</p>
+            <p>Run preflight before launch, then enforce evaluation/registry gates before promotion.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>Can we pin exact models instead of relying on recommendations?</summary>
@@ -93,11 +126,11 @@
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>How do we compare new runs to current production quality?</summary>
-            <p>Use benchmark and release gating policies that compare candidate scores against baseline.</p>
+            <p>Use evaluation scorecards and gate policies to compare candidate runs against your baseline.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>Can we integrate BrewSLM into existing CI/CD workflows?</summary>
-            <p>Yes. CLI commands and SDK calls are designed for scriptable automation pipelines.</p>
+            <p>Yes. CLI commands and Python API calls are designed for scriptable automation pipelines.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>What if our dataset schema changes frequently?</summary>
@@ -113,7 +146,7 @@
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>How do we handoff from prototyping to platform teams?</summary>
-            <p>Promote from Wizard to CLI/SDK and commit generated plans plus gating rules in version control.</p>
+            <p>Promote from Wizard to CLI/Python API and commit generated plans plus gating rules in version control.</p>
           </details>
           <details class="faq-item reveal" data-faq-item>
             <summary>What is the recommended first production policy?</summary>
@@ -144,7 +177,16 @@
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Engineering FAQ reference for the BrewSLM + <code>__SLM__</code> stack</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
     </footer>
 
     <script src="./script.js"></script>

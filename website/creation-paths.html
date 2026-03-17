@@ -3,11 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrewSLM Creation Paths | CLI, Python SDK, Wizard UI</title>
+    <title>BrewSLM Creation Paths | CLI, Python API, Wizard UI</title>
     <meta
       name="description"
-      content="Compare BrewSLM creation paths with practical guidance for CLI, Python SDK, and Wizard UI teams."
+      content="Compare BrewSLM creation paths with practical guidance for CLI, Python API usage, and Wizard UI teams."
     />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://tensorgreed.github.io/__SLM__/creation-paths.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta
+      property="og:title"
+      content="BrewSLM Creation Paths | CLI, Python API, Wizard UI"
+    />
+    <meta
+      property="og:description"
+      content="Choose between CLI, Python API, and Wizard UI paths based on your team workflow."
+    />
+    <meta property="og:url" content="https://tensorgreed.github.io/__SLM__/creation-paths.html" />
+    <meta property="og:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="BrewSLM Creation Paths | CLI, Python API, Wizard UI"
+    />
+    <meta
+      name="twitter:description"
+      content="Choose between CLI, Python API, and Wizard UI paths based on your team workflow."
+    />
+    <meta name="twitter:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -55,9 +84,9 @@
             <p class="card-note"><strong>First milestone:</strong> scripted repeatable train + export job.</p>
           </article>
           <article class="decision-card reveal">
-            <h3>Python SDK Path</h3>
+            <h3>Python API Path</h3>
             <p>Best when SLM lifecycle must integrate directly into backend services.</p>
-            <p class="card-note"><strong>First milestone:</strong> app-triggered benchmark + train pipeline.</p>
+            <p class="card-note"><strong>First milestone:</strong> service-triggered one-click run + export API flow.</p>
           </article>
           <article class="decision-card reveal">
             <h3>Wizard UI Path</h3>
@@ -79,7 +108,7 @@
               CLI
             </button>
             <button class="mode-tab" data-mode="python" role="tab" aria-selected="false">
-              Python SDK
+              Python API
             </button>
             <button class="mode-tab" data-mode="wizard" role="tab" aria-selected="false">
               Wizard UI
@@ -89,11 +118,11 @@
           <article class="mode-panel is-active" data-panel="cli">
             <p class="mode-title">Terminal-first flow with strong reproducibility</p>
             <div class="terminal-block">
-              <p>$ brewslm quickstart --task classify --data ./support_tickets.csv</p>
-              <p>$ brewslm preflight --strict</p>
-              <p>$ brewslm benchmark --preset practical --sample 5000</p>
-              <p>$ brewslm train --autopilot --cloud-burst on</p>
-              <p>$ brewslm export --target vllm --release support-v1</p>
+              <p>$ ./brewslm project create --name support-assistant --template support</p>
+              <p>$ ./brewslm dataset import --project 1 --sample support-chat-v1</p>
+              <p>$ ./brewslm preflight --project 1 --task causal_lm</p>
+              <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
+              <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
             </div>
             <div class="mode-detail-grid">
               <p><strong>Team fit:</strong> platform, infra, MLOps-heavy engineering teams.</p>
@@ -105,11 +134,14 @@
           <article class="mode-panel" data-panel="python">
             <p class="mode-title">Programmatic control inside product codebases</p>
             <div class="code-block">
-              <p><span class="code-key">from</span> slm <span class="code-key">import</span> Project</p>
-              <p>project = Project.create(task="classify", data="./tickets.csv")</p>
-              <p>project.preflight(strict=True)</p>
-              <p>project.benchmark(profile="practical", sample=5000)</p>
-              <p>artifact = project.train(autopilot=True, cloud_burst=True).export("vllm")</p>
+              <p><span class="code-key">import</span> httpx</p>
+              <p>api = "http://127.0.0.1:8000/api"</p>
+              <p>token = "sk-mock-admin-key"</p>
+              <p>headers = {"Authorization": f"Bearer {token}"}</p>
+              <p>project = httpx.post(f"{api}/projects", json={"name": "Support SLM"}, headers=headers).json()</p>
+              <p>pid = project["id"]</p>
+              <p>httpx.post(f"{api}/projects/{pid}/training/autopilot/one-click-run", json={"intent": "Draft support replies"}, headers=headers)</p>
+              <p>httpx.get(f"{api}/projects/{pid}/training/experiments", headers=headers)</p>
             </div>
             <div class="mode-detail-grid">
               <p><strong>Team fit:</strong> backend teams integrating training into services.</p>
@@ -121,15 +153,16 @@
           <article class="mode-panel" data-panel="wizard">
             <p class="mode-title">Guided UI for fast onboarding and reviewable runs</p>
             <ol class="wizard-flow">
-              <li>Choose task type, success metric, and run objective.</li>
-              <li>Attach data source and map fields using schema helpers.</li>
-              <li>Review generated preflight checks and model candidates.</li>
-              <li>Launch run, monitor logs, and export deployable artifact.</li>
+              <li>Select deployment target from the target catalog.</li>
+              <li>Describe your goal in plain language (plus optional VRAM and run name).</li>
+              <li>Review safe/balanced/max-quality plans and dataset readiness blockers.</li>
+              <li>Launch one-click run and monitor training status in the wizard.</li>
+              <li>Continue to Training, Playground, or Export when complete.</li>
             </ol>
             <div class="mode-detail-grid">
               <p><strong>Team fit:</strong> mixed AI + product teams onboarding together.</p>
               <p><strong>Risk reduced:</strong> hidden setup errors during early project stages.</p>
-              <p><strong>Handoff style:</strong> export configs and migrate to CLI/SDK when mature.</p>
+              <p><strong>Handoff style:</strong> move repeatable runs to CLI or Python API when mature.</p>
             </div>
           </article>
         </div>
@@ -146,7 +179,7 @@
               <tr>
                 <th>Dimension</th>
                 <th>CLI</th>
-                <th>Python SDK</th>
+                <th>Python API</th>
                 <th>Wizard UI</th>
               </tr>
             </thead>
@@ -160,13 +193,13 @@
               <tr>
                 <td>Automation depth</td>
                 <td>High via scripts and CI</td>
-                <td>Highest via application orchestration</td>
+                <td>High via direct REST orchestration from services</td>
                 <td>Medium, guided steps with exports</td>
               </tr>
               <tr>
                 <td>Reviewability</td>
                 <td>High if config snapshots are committed</td>
-                <td>High with typed wrappers and logs</td>
+                <td>High with explicit payloads and API logs</td>
                 <td>High with visual run trace</td>
               </tr>
               <tr>
@@ -177,9 +210,9 @@
               </tr>
               <tr>
                 <td>Typical migration path</td>
-                <td>Stay CLI or add SDK wrappers</td>
-                <td>Remain SDK with selective CLI ops</td>
-                <td>Wizard first, then CLI or SDK</td>
+                <td>Stay CLI or add Python API helpers</td>
+                <td>Remain API-driven with selective CLI ops</td>
+                <td>Wizard first, then CLI or Python API</td>
               </tr>
             </tbody>
           </table>
@@ -205,7 +238,7 @@
           <article class="adoption-step reveal">
             <span>Phase 3</span>
             <h3>Integrate</h3>
-            <p>Use Python SDK for app-triggered evaluation and retrain pipelines.</p>
+            <p>Use Python API calls for app-triggered training, evaluation, and export pipelines.</p>
           </article>
         </div>
       </section>
@@ -213,7 +246,16 @@
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Creation path guidance for the BrewSLM + <code>__SLM__</code> stack</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
     </footer>
 
     <script src="./script.js"></script>

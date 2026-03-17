@@ -8,6 +8,35 @@
       name="description"
       content="Detailed BrewSLM capabilities across data ingestion, preflight, benchmarking, training orchestration, and deployment packaging."
     />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://tensorgreed.github.io/__SLM__/capabilities.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta
+      property="og:title"
+      content="BrewSLM Capabilities | Developer Controls And Guardrails"
+    />
+    <meta
+      property="og:description"
+      content="Explore BrewSLM capabilities across ingestion, preflight, training orchestration, and export."
+    />
+    <meta property="og:url" content="https://tensorgreed.github.io/__SLM__/capabilities.html" />
+    <meta property="og:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="BrewSLM Capabilities | Developer Controls And Guardrails"
+    />
+    <meta
+      name="twitter:description"
+      content="Explore BrewSLM capabilities across ingestion, preflight, training orchestration, and export."
+    />
+    <meta name="twitter:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -39,7 +68,7 @@
         <h1>Control-rich defaults for teams shipping real SLM systems.</h1>
         <p class="page-sub">
           BrewSLM gives immediate productivity through autopilot presets while preserving full control
-          over contracts, training behavior, benchmark policy, and deployment packaging.
+          over data adapters, runtime preflight, training behavior, and deployment packaging.
         </p>
       </section>
 
@@ -68,7 +97,7 @@
           <article class="cluster-card reveal">
             <h3>Benchmark Intelligence</h3>
             <ul class="capability-list">
-              <li>Run sampled candidate comparisons on project data.</li>
+              <li>Run sampled candidate comparisons from Training UI and model-selection APIs.</li>
               <li>Rank by quality, latency, and budget dimensions.</li>
               <li>Persist benchmark traces for reproducible selection.</li>
             </ul>
@@ -76,9 +105,9 @@
           <article class="cluster-card reveal">
             <h3>Training Orchestration</h3>
             <ul class="capability-list">
-              <li>Launch local or cloud burst from shared run definitions.</li>
+              <li>Launch one-click autopilot runs from CLI or Wizard UI.</li>
               <li>Track checkpoints, logs, retries, and cancellation state.</li>
-              <li>Tune autopilot plans with manual override fields.</li>
+              <li>Tune plan choices with intent, runtime, and profile overrides.</li>
             </ul>
           </article>
           <article class="cluster-card reveal">
@@ -92,7 +121,7 @@
           <article class="cluster-card reveal">
             <h3>Operational Governance</h3>
             <ul class="capability-list">
-              <li>Enforce benchmark floors as release gate conditions.</li>
+              <li>Enforce evaluation gates and registry promotion checks.</li>
               <li>Track run provenance across data and model versions.</li>
               <li>Standardize handoff between AI and platform teams.</li>
             </ul>
@@ -158,24 +187,25 @@
         </div>
         <div class="playbook-grid">
           <article class="playbook-card reveal">
-            <h3>Nightly Candidate Benchmark</h3>
-            <p>Run sampled benchmark jobs nightly to detect model drift and ranking shifts.</p>
+            <h3>Nightly Runtime Readiness</h3>
+            <p>Check GPU/dependency/secret readiness before scheduled automation starts.</p>
             <div class="terminal-block dense">
-              <p>$ brewslm benchmark --preset practical --schedule nightly</p>
+              <p>$ ./brewslm doctor --project 1</p>
             </div>
           </article>
           <article class="playbook-card reveal">
-            <h3>Weekly Retrain Gate</h3>
-            <p>Train only if fresh data passes preflight and benchmark thresholds.</p>
+            <h3>Weekly Autopilot Retrain</h3>
+            <p>Kick off a guided one-click run from intent text with project defaults.</p>
             <div class="terminal-block dense">
-              <p>$ brewslm train --autopilot --require benchmark_floor=0.82</p>
+              <p>$ ./brewslm train --project 1 --autopilot --one-click --intent "Refresh support model"</p>
             </div>
           </article>
           <article class="playbook-card reveal">
             <h3>Release Candidate Export</h3>
-            <p>Promote artifacts only when eval metrics beat the current production baseline.</p>
+            <p>Tune for device constraints, then package an export candidate for serving.</p>
             <div class="terminal-block dense">
-              <p>$ brewslm export --target vllm --gate compare=production</p>
+              <p>$ ./brewslm optimize --project 1 --target mobile_iphone15</p>
+              <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
             </div>
           </article>
         </div>
@@ -186,11 +216,11 @@
           <p class="eyebrow">Capability Test Drive</p>
           <h2>Validate the core stack with one short run</h2>
           <div class="terminal-block">
-            <p>$ brewslm quickstart --task classify --data ./sample.csv</p>
-            <p>$ brewslm preflight --strict</p>
-            <p>$ brewslm benchmark --preset practical</p>
-            <p>$ brewslm train --autopilot</p>
-            <p>$ brewslm export --target vllm</p>
+            <p>$ ./brewslm project create --name demo-slm --template general</p>
+            <p>$ ./brewslm dataset import --project 1 --sample general-chat-v1</p>
+            <p>$ ./brewslm preflight --project 1 --task causal_lm</p>
+            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
+            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
           </div>
         </div>
         <aside class="quickstart-notes">
@@ -204,7 +234,16 @@
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Capability reference for the BrewSLM + <code>__SLM__</code> stack</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
     </footer>
 
     <script src="./script.js"></script>
