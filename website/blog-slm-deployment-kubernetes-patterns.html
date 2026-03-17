@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SLM Deployment On Kubernetes: Patterns That Hold Up | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="Kubernetes deployment patterns for SLM services with stable autoscaling, artifact control, and recovery planning."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-slm-deployment-kubernetes-patterns.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="SLM Deployment On Kubernetes: Patterns That Hold Up | BrewSLM Blog" />
+    <meta property="og:description" content="Kubernetes deployment patterns for SLM services with stable autoscaling, artifact control, and recovery planning." />
+    <meta property="og:url" content="https://brewslm.com/blog-slm-deployment-kubernetes-patterns.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/slm-deployment-kubernetes-patterns.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SLM Deployment On Kubernetes: Patterns That Hold Up | BrewSLM Blog" />
+    <meta name="twitter:description" content="Kubernetes deployment patterns for SLM services with stable autoscaling, artifact control, and recovery planning." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/slm-deployment-kubernetes-patterns.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>SLM Deployment On Kubernetes: Patterns That Hold Up</h1>
+        <p class="page-sub">
+          Kubernetes can run SLM workloads efficiently, but only when scheduling, runtime, and release policy are designed together. These patterns focus on consistency and operability under real traffic.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> SLM deployment</p>
+          <p><strong>Secondary keywords:</strong> Kubernetes model serving, SLM autoscaling, inference workload scheduling, containerized LLM runtime, production model rollout</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/slm-deployment-kubernetes-patterns.svg" alt="Kubernetes patterns for SLM deployment" />
+          </div>
+          <h2>Separate build artifacts from runtime configuration</h2>
+          <p>Store model artifacts as immutable release units and inject runtime settings through environment-specific config. This keeps deployments reproducible while allowing cluster-specific tuning. Artifact immutability simplifies rollback and incident debugging.</p>
+          <h2>Use node classes for predictable placement</h2>
+          <p>Define explicit node pools for CPU inference, edge GPU, or higher-memory serving profiles. Placement rules should be policy-driven rather than best-effort. Predictable placement lowers tail latency variance and avoids surprise evictions.</p>
+          <h2>Scale on the right signals</h2>
+          <p>For SLM serving, queue depth and tail latency are usually better autoscaling inputs than raw CPU percentage. Couple autoscaling with concurrency limits so pods do not degrade into overload behavior. Stability under burst traffic matters more than average throughput peaks.</p>
+          <h2>Plan recovery paths before first production release</h2>
+          <p>Run game-day scenarios for pod crash loops, node exhaustion, and malformed model artifacts. Document restoration order and ownership for each failure mode. Recovery quality is a core part of deployment quality.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

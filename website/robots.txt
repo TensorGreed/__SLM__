@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://tensorgreed.github.io/__SLM__/sitemap.xml
+Sitemap: https://brewslm.com/sitemap.xml
+

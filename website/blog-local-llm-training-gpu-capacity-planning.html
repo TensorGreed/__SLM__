@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local LLM Training Workflow: GPU Capacity Planning | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="Plan local GPU capacity for model training using practical VRAM estimates and risk-based experiment tiers."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-local-llm-training-gpu-capacity-planning.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Local LLM Training Workflow: GPU Capacity Planning | BrewSLM Blog" />
+    <meta property="og:description" content="Plan local GPU capacity for model training using practical VRAM estimates and risk-based experiment tiers." />
+    <meta property="og:url" content="https://brewslm.com/blog-local-llm-training-gpu-capacity-planning.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/local-llm-training-gpu-capacity-planning.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Local LLM Training Workflow: GPU Capacity Planning | BrewSLM Blog" />
+    <meta name="twitter:description" content="Plan local GPU capacity for model training using practical VRAM estimates and risk-based experiment tiers." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/local-llm-training-gpu-capacity-planning.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>Local LLM Training Workflow: GPU Capacity Planning</h1>
+        <p class="page-sub">
+          Most local training failures are capacity planning failures. Better VRAM estimates and staged execution can prevent wasted runs and keep teams productive on limited hardware.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> local LLM training workflows</p>
+          <p><strong>Secondary keywords:</strong> GPU memory planning, local training capacity, VRAM estimation, workstation model training, experiment scheduling</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/local-llm-training-gpu-capacity-planning.svg" alt="GPU capacity planning for local LLM training" />
+          </div>
+          <h2>Estimate VRAM from first principles</h2>
+          <p>Base estimates on parameter count, precision, sequence length, batch size, and optimizer behavior. Include activation and checkpoint overhead explicitly. Rough numbers are useful only when they include margin for runtime variance.</p>
+          <h2>Plan experiments in risk tiers</h2>
+          <p>Run low-risk pilots first with conservative sequence lengths and smaller batches. Promote only configurations that pass preflight and telemetry thresholds. Tiering keeps local queues moving while still enabling quality exploration.</p>
+          <h2>Protect shared workstations with scheduling rules</h2>
+          <p>When multiple engineers use the same hardware, enforce queue windows and cancellation policy. Unmanaged concurrency causes unpredictable failures and team-wide delays. Capacity planning is as much about coordination as it is about raw hardware.</p>
+          <h2>Track capacity assumptions as versioned metadata</h2>
+          <p>Record estimated and observed memory usage for every run. Over time, this builds a local capacity baseline that improves planning accuracy. Historical telemetry turns guesswork into a reusable operating model.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

@@ -6,7 +6,7 @@
     <title>BrewSLM | Build Small Language Models Like Production Software</title>
     <meta
       name="description"
-      content="BrewSLM gives engineering teams a developer-first interface to create, benchmark, and deploy small language models with the __SLM__ stack."
+      content="BrewSLM is a production-grade SLM platform for every developer workflow, with a reliable training pipeline to build and deploy faster."
     />
     <meta
       name="robots"
@@ -14,7 +14,7 @@
     />
     <meta name="author" content="TensorGreed" />
     <meta name="theme-color" content="#050b14" />
-    <link rel="canonical" href="https://tensorgreed.github.io/__SLM__/" />
+    <link rel="canonical" href="https://brewslm.com/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="BrewSLM" />
     <meta
@@ -23,10 +23,10 @@
     />
     <meta
       property="og:description"
-      content="Developer-first workflow to create, train, evaluate, and export small language models with guardrails."
+      content="BrewSLM is a production-grade SLM platform for every developer workflow, with a reliable training pipeline to build and deploy faster."
     />
-    <meta property="og:url" content="https://tensorgreed.github.io/__SLM__/" />
-    <meta property="og:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta property="og:url" content="https://brewslm.com/" />
+    <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta
       name="twitter:title"
@@ -34,9 +34,9 @@
     />
     <meta
       name="twitter:description"
-      content="Developer-first workflow to create, train, evaluate, and export small language models with guardrails."
+      content="BrewSLM is a production-grade SLM platform for every developer workflow, with a reliable training pipeline to build and deploy faster."
     />
-    <meta name="twitter:image" content="https://tensorgreed.github.io/__SLM__/assets/brewslm-logo.svg" />
+    <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -53,6 +53,36 @@
         "sameAs": ["https://github.com/TensorGreed/__SLM__"]
       }
     </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "BrewSLM",
+        "url": "https://brewslm.com/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Windows, macOS, Linux",
+        "description": "Production-grade SLM platform for every developer workflow with a reliable training pipeline.",
+        "featureList": [
+          "BrewSLM CLI for project, ingest, preflight, train, and export workflows",
+          "Python SDK for scripted orchestration and pipeline automation",
+          "Wizard UI for guided setup, benchmarking, and one-click training",
+          "Pipeline guardrails across ingest, schema mapping, preflight, benchmarking, and packaging"
+        ],
+        "isAccessibleForFree": true,
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD",
+          "url": "https://brewslm.com/",
+          "availability": "https://schema.org/InStock"
+        },
+        "provider": {
+          "@type": "Organization",
+          "name": "TensorGreed",
+          "url": "https://github.com/TensorGreed"
+        }
+      }
+    </script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -66,6 +96,7 @@
         <a href="./creation-paths.html">Creation Paths</a>
         <a href="./workflow.html">Workflow</a>
         <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html">Blogs</a>
         <a href="./faqs.html">FAQs</a>
       </nav>
       <a class="btn btn-outline" href="#quickstart">Quickstart</a>
@@ -147,14 +178,14 @@
           </article>
           <article class="pipeline-card reveal">
             <p class="stage">04 Benchmark</p>
-            <h3>Candidate Ranking</h3>
-            <p>Sampled evaluations compare model quality, latency, and cost before full training.</p>
-            <p class="card-note"><strong>You control:</strong> acceptance metrics and ranking weights.</p>
+            <h3>LLM Benchmarks + Leaderboard</h3>
+            <p>Sampled LLM benchmarks and AI benchmarks compare model quality, latency, and cost before full training.</p>
+            <p class="card-note"><strong>You control:</strong> acceptance metrics, LLM leaderboard rules, and ranking weights.</p>
           </article>
           <article class="pipeline-card reveal">
             <p class="stage">05 Train</p>
             <h3>Local Or Cloud Burst</h3>
-            <p>Run jobs with one command model while retaining consistent logs and checkpoint handling.</p>
+            <p>Run jobs with one command model, including guided flows for queries like "how to finetune llama 4".</p>
             <p class="card-note"><strong>You control:</strong> compute budget and schedule windows.</p>
           </article>
           <article class="pipeline-card reveal">
@@ -241,11 +272,11 @@
           </article>
           <article class="insight-card reveal">
             <h3>Benchmark-Driven Model Picks</h3>
-            <p>Candidate ranking is based on your project samples, not static guesswork.</p>
+            <p>Candidate ranking feeds an auditable LLM leaderboard so model picks are sample-backed, not static guesswork.</p>
           </article>
           <article class="insight-card reveal">
-            <h3>One Runbook For Local + Cloud</h3>
-            <p>Same command model and telemetry surfaces reduce context-switching during operations.</p>
+            <h3>Safer LLM Updates</h3>
+            <p>Same command model and telemetry surfaces make LLM updates easier to validate before release.</p>
           </article>
         </div>
       </section>
@@ -272,6 +303,34 @@
             <p><strong>Design principle:</strong> Every stage emits traceable metadata so you can reproduce, audit, and iterate safely.</p>
           </div>
         </article>
+      </section>
+
+      <section class="section faq">
+        <div class="section-head reveal">
+          <p class="eyebrow">Homepage FAQs</p>
+          <h2>Answers teams ask before production rollout</h2>
+        </div>
+        <div class="faq-grid">
+          <details class="faq-item reveal">
+            <summary>How does BrewSLM run LLM benchmarks and AI benchmarks?</summary>
+            <p>Benchmark runs compare quality, latency, and cost on your project samples before long jobs are approved.</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Can BrewSLM generate an internal LLM leaderboard?</summary>
+            <p>Yes. Benchmark outputs are persisted so teams can rank candidates and gate promotion with repeatable rules.</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>How do we ship LLM updates without regressions?</summary>
+            <p>Preflight checks, benchmark floors, and release policies provide a controlled path for recurring LLM updates.</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Can BrewSLM support workflows like "how to finetune llama 4"?</summary>
+            <p>Yes. CLI, Python SDK, and Wizard UI all support repeatable fine-tune workflows with one shared run model.</p>
+          </details>
+        </div>
+        <p class="form-note faq-home-link reveal">
+          <a class="inline-link" href="./faqs.html">Read full Engineering FAQs</a> for rollout, governance, and support details.
+        </p>
       </section>
 
       <section id="quickstart" class="section cta reveal">
@@ -319,3 +378,4 @@
     <script src="./script.js"></script>
   </body>
 </html>
+

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fine-Tuning vs. RAG For Cost And Latency Budgets | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="A practical framework to compare fine-tuning vs RAG for infrastructure spend and latency performance."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-fine-tuning-vs-rag-cost-latency.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Fine-Tuning vs. RAG For Cost And Latency Budgets | BrewSLM Blog" />
+    <meta property="og:description" content="A practical framework to compare fine-tuning vs RAG for infrastructure spend and latency performance." />
+    <meta property="og:url" content="https://brewslm.com/blog-fine-tuning-vs-rag-cost-latency.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/fine-tuning-vs-rag-cost-latency.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Fine-Tuning vs. RAG For Cost And Latency Budgets | BrewSLM Blog" />
+    <meta name="twitter:description" content="A practical framework to compare fine-tuning vs RAG for infrastructure spend and latency performance." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/fine-tuning-vs-rag-cost-latency.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>Fine-Tuning vs. RAG For Cost And Latency Budgets</h1>
+        <p class="page-sub">
+          Architecture decisions should be priced and benchmarked early. This framework helps teams compare fine-tuning and RAG using cost and latency signals that matter in production.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> fine-tuning vs. RAG</p>
+          <p><strong>Secondary keywords:</strong> LLM cost optimization, inference latency budgeting, retrieval system overhead, adaptation ROI, serving cost model</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/fine-tuning-vs-rag-cost-latency.svg" alt="Cost and latency budgeting for fine-tuning versus RAG" />
+          </div>
+          <h2>Break fine-tuning costs into lifecycle components</h2>
+          <p>Include data curation, training compute, validation runs, and model version operations in your estimate. Fine-tuning can reduce prompt overhead at runtime but shifts cost into retraining cycles. Teams should model this across expected update frequency.</p>
+          <h2>Break RAG costs into query path components</h2>
+          <p>RAG cost is not just vector database spend. Include embedding refresh, retrieval orchestration, reranking, and context token expansion. These costs can dominate at scale when query volume grows faster than expected.</p>
+          <h2>Use p95 latency math, not average latency</h2>
+          <p>Users experience tail latency, especially in multi-step retrieval flows. Benchmark p95 and p99 end-to-end with realistic concurrency. Averages can hide the operational risk that drives support load and churn.</p>
+          <h2>Choose by workload shape and update cadence</h2>
+          <p>High-volatility knowledge workloads often favor RAG despite extra request complexity. Stable behavior-heavy workloads may justify fine-tuning with leaner runtime calls. The best architecture is the one that fits your traffic and change profile.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

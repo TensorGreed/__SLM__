@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local LLM Training Workflows Need Strong Evaluation Gates | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="How to add practical evaluation gates to local LLM training workflows so low-quality runs do not ship."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-local-llm-training-evaluation-gates.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Local LLM Training Workflows Need Strong Evaluation Gates | BrewSLM Blog" />
+    <meta property="og:description" content="How to add practical evaluation gates to local LLM training workflows so low-quality runs do not ship." />
+    <meta property="og:url" content="https://brewslm.com/blog-local-llm-training-evaluation-gates.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/local-llm-training-evaluation-gates.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Local LLM Training Workflows Need Strong Evaluation Gates | BrewSLM Blog" />
+    <meta name="twitter:description" content="How to add practical evaluation gates to local LLM training workflows so low-quality runs do not ship." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/local-llm-training-evaluation-gates.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>Local LLM Training Workflows Need Strong Evaluation Gates</h1>
+        <p class="page-sub">
+          Local training speed can become a liability when teams skip evaluation discipline. Evaluation gates make local iteration safe by enforcing quality thresholds before deployment.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> local LLM training workflows</p>
+          <p><strong>Secondary keywords:</strong> LLM evaluation gates, checkpoint quality control, experiment comparison, local model QA, release gating strategy</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/local-llm-training-evaluation-gates.svg" alt="Evaluation gates in local LLM training workflows" />
+          </div>
+          <h2>Define task-specific gold sets early</h2>
+          <p>Gold sets should be ready before training starts, not after the first promising checkpoint. Task-specific coverage is critical for useful gate signals. The earlier you define gold sets, the less rework you create later.</p>
+          <h2>Evaluate every checkpoint with consistent policy</h2>
+          <p>Automate evaluation on scheduled checkpoints and record results in a comparable format. Consistent policy enables trend analysis and early regression detection. Manual spot checks alone are too noisy for release decisions.</p>
+          <h2>Use side-by-side comparison to reduce bias</h2>
+          <p>Compare current runs against accepted baselines using identical prompts and scoring contracts. Side-by-side views expose subtle degradation that raw averages can hide. Promotion decisions should be evidence-based, not intuition-based.</p>
+          <h2>Block promotion on failed gates</h2>
+          <p>If required metrics fail, keep artifacts out of staging and production. This protects downstream teams from unstable model versions. Gates only work when they are enforced automatically and consistently.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

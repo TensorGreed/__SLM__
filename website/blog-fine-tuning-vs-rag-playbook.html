@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fine-Tuning vs. RAG: A Decision Playbook For Engineers | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="How to decide between fine-tuning and RAG based on freshness, failure modes, and system constraints."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-fine-tuning-vs-rag-playbook.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Fine-Tuning vs. RAG: A Decision Playbook For Engineers | BrewSLM Blog" />
+    <meta property="og:description" content="How to decide between fine-tuning and RAG based on freshness, failure modes, and system constraints." />
+    <meta property="og:url" content="https://brewslm.com/blog-fine-tuning-vs-rag-playbook.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/fine-tuning-vs-rag-playbook.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Fine-Tuning vs. RAG: A Decision Playbook For Engineers | BrewSLM Blog" />
+    <meta name="twitter:description" content="How to decide between fine-tuning and RAG based on freshness, failure modes, and system constraints." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/fine-tuning-vs-rag-playbook.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>Fine-Tuning vs. RAG: A Decision Playbook For Engineers</h1>
+        <p class="page-sub">
+          Teams often frame fine-tuning and RAG as competing choices, but the right decision depends on task volatility, compliance constraints, and reliability targets. This playbook gives an engineering-first way to choose.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> fine-tuning vs. RAG</p>
+          <p><strong>Secondary keywords:</strong> RAG architecture design, model adaptation strategy, retrieval augmentation tradeoffs, domain SLM design, hybrid LLM systems</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/fine-tuning-vs-rag-playbook.svg" alt="Fine-tuning versus RAG decision playbook" />
+          </div>
+          <h2>Start with freshness requirements</h2>
+          <p>If your knowledge base changes daily, retrieval usually wins because updates can land without model retraining. If your task is stable and style-heavy, fine-tuning often gives stronger consistency and lower prompt complexity. Freshness cadence is usually the first branch in the decision tree.</p>
+          <h2>Compare failure modes, not just headline accuracy</h2>
+          <p>RAG failures often come from retrieval misses, chunking issues, and context ranking mistakes. Fine-tuning failures are more about distribution shift, overfitting, and stale model behavior over time. Choose the failure mode your team can detect, debug, and fix fastest.</p>
+          <h2>Map infra and latency budgets</h2>
+          <p>RAG introduces retrieval hops, vector storage, and query orchestration overhead. Fine-tuned systems reduce retrieval complexity but can require heavier retraining cycles and version management. Build latency and cost budgets with realistic p95 workloads before committing to an architecture.</p>
+          <h2>Use hybrid only when responsibilities are clear</h2>
+          <p>Hybrid systems work best when tuned behavior and retrieved knowledge have explicit boundaries. Keep retrieval for fast-changing facts and adaptation for tone, policy, or structured output behavior. Without clean boundaries, hybrid complexity can erase the expected gains.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

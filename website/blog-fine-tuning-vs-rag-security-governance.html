@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fine-Tuning vs. RAG For Security And Governance | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="Compare security and governance implications of fine-tuning and RAG architectures for regulated teams."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-fine-tuning-vs-rag-security-governance.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Fine-Tuning vs. RAG For Security And Governance | BrewSLM Blog" />
+    <meta property="og:description" content="Compare security and governance implications of fine-tuning and RAG architectures for regulated teams." />
+    <meta property="og:url" content="https://brewslm.com/blog-fine-tuning-vs-rag-security-governance.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/fine-tuning-vs-rag-security-governance.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Fine-Tuning vs. RAG For Security And Governance | BrewSLM Blog" />
+    <meta name="twitter:description" content="Compare security and governance implications of fine-tuning and RAG architectures for regulated teams." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/fine-tuning-vs-rag-security-governance.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>Fine-Tuning vs. RAG For Security And Governance</h1>
+        <p class="page-sub">
+          Security review often changes architecture decisions. Fine-tuning and RAG expose different control points, so governance programs need architecture-specific policies.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> fine-tuning vs. RAG</p>
+          <p><strong>Secondary keywords:</strong> AI governance controls, secure model deployment, retrieval security, compliance for LLM systems, policy gating</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/fine-tuning-vs-rag-security-governance.svg" alt="Security and governance comparison for fine-tuning versus RAG" />
+          </div>
+          <h2>Map data residency and retention exposure</h2>
+          <p>Fine-tuning pipelines centralize sensitive data during adaptation phases, while RAG pipelines distribute exposure across indexes and retrieval layers. Both can be secure, but controls must match data flow shape. Start with data lineage before selecting controls.</p>
+          <h2>Design least-privilege access by layer</h2>
+          <p>Model registries, retrieval stores, and runtime endpoints should have separate permission boundaries. Avoid broad shared credentials across training and serving planes. Layered access reduces blast radius during operational mistakes.</p>
+          <h2>Auditability requirements differ by architecture</h2>
+          <p>RAG requires retrieval traceability and source provenance logging. Fine-tuning requires dataset version lineage and model promotion evidence. Governance should demand proof artifacts relevant to each path, not generic checklists.</p>
+          <h2>Gate promotions with policy evidence</h2>
+          <p>Promotion should require explicit evidence packs: quality metrics, security checks, and change approvals. Make gate decisions machine-readable so audits are reproducible. Governance is strongest when it is operationalized in the release flow.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

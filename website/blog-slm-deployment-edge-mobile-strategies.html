@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SLM Deployment Strategies For Edge And Mobile Targets | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="Target-first SLM deployment strategies for edge and mobile use cases with strict latency and memory limits."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-slm-deployment-edge-mobile-strategies.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="SLM Deployment Strategies For Edge And Mobile Targets | BrewSLM Blog" />
+    <meta property="og:description" content="Target-first SLM deployment strategies for edge and mobile use cases with strict latency and memory limits." />
+    <meta property="og:url" content="https://brewslm.com/blog-slm-deployment-edge-mobile-strategies.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/slm-deployment-edge-mobile-strategies.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SLM Deployment Strategies For Edge And Mobile Targets | BrewSLM Blog" />
+    <meta name="twitter:description" content="Target-first SLM deployment strategies for edge and mobile use cases with strict latency and memory limits." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/slm-deployment-edge-mobile-strategies.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>SLM Deployment Strategies For Edge And Mobile Targets</h1>
+        <p class="page-sub">
+          Edge and mobile deployment require a tighter engineering loop than server-side release paths. Teams need target-driven modeling, quantization policy, and staged release controls from day one.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> SLM deployment</p>
+          <p><strong>Secondary keywords:</strong> edge AI deployment, mobile inference optimization, quantized model serving, on-device LLM strategy, low-latency SLM runtime</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/slm-deployment-edge-mobile-strategies.svg" alt="SLM deployment strategies for edge and mobile" />
+          </div>
+          <h2>Choose model size by device class</h2>
+          <p>Map device tiers to parameter and memory budgets before model selection. A model that fits high-end devices may fail across your full user population. Deployment strategy should optimize for the median device, not only benchmark hardware.</p>
+          <h2>Quantize with task-aware validation</h2>
+          <p>Quantization can preserve throughput while harming specific task behaviors. Validate against task-specific gold sets after every quantization step. Speed gains are only valuable when user-visible quality remains stable.</p>
+          <h2>Design for intermittent connectivity</h2>
+          <p>Edge systems should define fallback behavior when network retrieval is unavailable. Keep critical logic local and make degraded-mode responses predictable. Reliability under weak connectivity is a core product requirement in many mobile contexts.</p>
+          <h2>Use phased rollout with telemetry feedback</h2>
+          <p>Start with internal cohorts, then controlled user slices, then wider traffic. Track latency, crash behavior, and quality regressions by device tier. Phase-based rollout protects users while giving engineers rapid, actionable feedback.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

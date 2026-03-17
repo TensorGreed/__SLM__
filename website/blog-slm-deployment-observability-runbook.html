@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SLM Deployment Observability Runbook For Platform Teams | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="An observability runbook for SLM deployment with required metrics, logging standards, and incident response design."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-slm-deployment-observability-runbook.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="SLM Deployment Observability Runbook For Platform Teams | BrewSLM Blog" />
+    <meta property="og:description" content="An observability runbook for SLM deployment with required metrics, logging standards, and incident response design." />
+    <meta property="og:url" content="https://brewslm.com/blog-slm-deployment-observability-runbook.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/slm-deployment-observability-runbook.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SLM Deployment Observability Runbook For Platform Teams | BrewSLM Blog" />
+    <meta name="twitter:description" content="An observability runbook for SLM deployment with required metrics, logging standards, and incident response design." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/slm-deployment-observability-runbook.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>SLM Deployment Observability Runbook For Platform Teams</h1>
+        <p class="page-sub">
+          Observability should be designed into SLM deployments before traffic arrives. This runbook defines the minimum telemetry, alerting, and response standards that keep incidents short.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> SLM deployment</p>
+          <p><strong>Secondary keywords:</strong> model observability, inference monitoring, SLM incident response, runtime telemetry, production reliability</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/slm-deployment-observability-runbook.svg" alt="Observability runbook for SLM deployment" />
+          </div>
+          <h2>Define required endpoint metrics</h2>
+          <p>Capture throughput, p95 latency, error rates, timeout counts, and queue backlog per deployment target. Include model version tags in every metric stream. Without version-aware metrics, release impact analysis is incomplete.</p>
+          <h2>Standardize logs for debugging and audit</h2>
+          <p>Use structured logs with request IDs, model version, target profile, and gate status fields. Avoid storing sensitive payload content by default and enforce retention policy. Logs should support troubleshooting without creating compliance drift.</p>
+          <h2>Alert on symptoms and causes</h2>
+          <p>Symptom alerts catch user-facing issues quickly, while cause alerts narrow triage scope. Pair both with ownership and escalation routes. Alert quality matters more than alert volume in model-serving environments.</p>
+          <h2>Run post-incident reviews tied to deployment policy</h2>
+          <p>Every incident should feed a concrete improvement in gating, observability, or rollback process. Track these as policy updates, not ad hoc notes. Reliability maturity comes from recurring feedback loops.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

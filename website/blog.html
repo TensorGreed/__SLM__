@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BrewSLM Blog | SLM Deployment And Local LLM Engineering Guides</title>
+    <meta
+      name="description"
+      content="Technical blog posts for software engineers and ML practitioners covering SLM deployment, fine-tuning vs. RAG, and local LLM training workflows."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta
+      property="og:title"
+      content="BrewSLM Blog | SLM Deployment And Local LLM Engineering Guides"
+    />
+    <meta
+      property="og:description"
+      content="Technical blog posts for software engineers and ML practitioners covering deployment, RAG, and local training workflows."
+    />
+    <meta property="og:url" content="https://brewslm.com/blog.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="BrewSLM Blog | SLM Deployment And Local LLM Engineering Guides"
+    />
+    <meta
+      name="twitter:description"
+      content="Technical blog posts for software engineers and ML practitioners covering deployment, RAG, and local training workflows."
+    />
+    <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">Engineering Blog</p>
+        <h1>Practical guides for shipping SLM systems with confidence.</h1>
+        <p class="page-sub">
+          These posts target software engineers and ML practitioners working on production SLMs:
+          deployment architecture, retrieval vs adaptation decisions, and local model training workflows.
+        </p>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Latest Posts</p>
+          <h2>Read by topic and keyword focus</h2>
+        </div>
+        <div class="blog-grid">
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/slm-deployment-checklist.svg" alt="SLM deployment checklist diagram" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>SLM Deployment Checklist for Engineering Teams</h3>
+              <p class="blog-keyword">Primary keyword: SLM deployment</p>
+              <p class="blog-summary">A practical rollout checklist from artifact validation to live monitoring.</p>
+              <a class="btn btn-solid" href="./blog-slm-deployment-checklist.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/fine-tuning-vs-rag-playbook.svg" alt="Fine-tuning versus RAG decision map" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>Fine-Tuning vs. RAG: A Decision Playbook</h3>
+              <p class="blog-keyword">Primary keyword: fine-tuning vs. RAG</p>
+              <p class="blog-summary">How to choose between model adaptation and retrieval architecture by use case.</p>
+              <a class="btn btn-solid" href="./blog-fine-tuning-vs-rag-playbook.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/local-llm-training-workflows-guide.svg" alt="Local LLM training workflow pipeline" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>Local LLM Training Workflows: End-to-End Guide</h3>
+              <p class="blog-keyword">Primary keyword: local LLM training workflows</p>
+              <p class="blog-summary">Build repeatable local training systems with clear data, compute, and export stages.</p>
+              <a class="btn btn-solid" href="./blog-local-llm-training-workflows-guide.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/slm-deployment-kubernetes-patterns.svg" alt="Kubernetes SLM deployment topology" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>SLM Deployment on Kubernetes: Patterns That Hold Up</h3>
+              <p class="blog-keyword">Primary keyword: SLM deployment</p>
+              <p class="blog-summary">Reference patterns for serving SLMs in containerized environments with tight budgets.</p>
+              <a class="btn btn-solid" href="./blog-slm-deployment-kubernetes-patterns.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/fine-tuning-vs-rag-cost-latency.svg" alt="Cost and latency comparison chart for fine-tuning versus RAG" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>Fine-Tuning vs. RAG for Cost and Latency</h3>
+              <p class="blog-keyword">Primary keyword: fine-tuning vs. RAG</p>
+              <p class="blog-summary">A framework to model infra spend, token overhead, and tail latency before committing.</p>
+              <a class="btn btn-solid" href="./blog-fine-tuning-vs-rag-cost-latency.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/local-llm-training-gpu-capacity-planning.svg" alt="GPU planning board for local model training" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>Local LLM Training Workflow: GPU Capacity Planning</h3>
+              <p class="blog-keyword">Primary keyword: local LLM training workflows</p>
+              <p class="blog-summary">Estimate local VRAM requirements and avoid expensive training retries.</p>
+              <a class="btn btn-solid" href="./blog-local-llm-training-gpu-capacity-planning.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/slm-deployment-observability-runbook.svg" alt="Observability runbook for deployed SLM services" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>SLM Deployment Observability Runbook</h3>
+              <p class="blog-keyword">Primary keyword: SLM deployment</p>
+              <p class="blog-summary">Define the minimum telemetry and alerting stack for live SLM endpoints.</p>
+              <a class="btn btn-solid" href="./blog-slm-deployment-observability-runbook.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/fine-tuning-vs-rag-security-governance.svg" alt="Security and governance model for fine-tuning versus RAG" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>Fine-Tuning vs. RAG for Security and Governance</h3>
+              <p class="blog-keyword">Primary keyword: fine-tuning vs. RAG</p>
+              <p class="blog-summary">Compare risk surfaces and policy controls for adaptation-heavy vs retrieval-heavy systems.</p>
+              <a class="btn btn-solid" href="./blog-fine-tuning-vs-rag-security-governance.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/local-llm-training-evaluation-gates.svg" alt="Evaluation gates in local LLM training workflow" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>Local LLM Training Workflows Need Evaluation Gates</h3>
+              <p class="blog-keyword">Primary keyword: local LLM training workflows</p>
+              <p class="blog-summary">How to stop low-quality checkpoints from reaching staging and production.</p>
+              <a class="btn btn-solid" href="./blog-local-llm-training-evaluation-gates.html">Read Post</a>
+            </div>
+          </article>
+
+          <article class="blog-card reveal">
+            <div class="blog-card-media">
+              <img src="./assets/blog/slm-deployment-edge-mobile-strategies.svg" alt="Edge and mobile SLM deployment strategy diagram" />
+            </div>
+            <div class="blog-card-body">
+              <p class="blog-meta">March 2026</p>
+              <h3>SLM Deployment for Edge and Mobile Targets</h3>
+              <p class="blog-keyword">Primary keyword: SLM deployment</p>
+              <p class="blog-summary">A target-first strategy for quantization, runtime selection, and rollout safety.</p>
+              <a class="btn btn-solid" href="./blog-slm-deployment-edge-mobile-strategies.html">Read Post</a>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
+

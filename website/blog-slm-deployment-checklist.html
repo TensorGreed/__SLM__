@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SLM Deployment Checklist for Engineering Teams | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="A practical SLM deployment checklist covering target profiles, artifact validation, rollout gates, and observability."
+    />
+    <meta
+      name="robots"
+      content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1"
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-slm-deployment-checklist.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="SLM Deployment Checklist for Engineering Teams | BrewSLM Blog" />
+    <meta property="og:description" content="A practical SLM deployment checklist covering target profiles, artifact validation, rollout gates, and observability." />
+    <meta property="og:url" content="https://brewslm.com/blog-slm-deployment-checklist.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/blog/slm-deployment-checklist.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SLM Deployment Checklist for Engineering Teams | BrewSLM Blog" />
+    <meta name="twitter:description" content="A practical SLM deployment checklist covering target profiles, artifact validation, rollout gates, and observability." />
+    <meta name="twitter:image" content="https://brewslm.com/assets/blog/slm-deployment-checklist.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blogs</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <section class="section page-hero reveal">
+        <p class="eyebrow">BrewSLM Blog | March 17, 2026</p>
+        <h1>SLM Deployment Checklist for Engineering Teams</h1>
+        <p class="page-sub">
+          Shipping an SLM to production is mostly an engineering discipline problem, not just a model quality problem. This checklist is designed for teams that want predictable deploys, fast rollback, and fewer release surprises.
+        </p>
+        <div class="blog-keywords">
+          <p><strong>Primary keyword:</strong> SLM deployment</p>
+          <p><strong>Secondary keywords:</strong> SLM release checklist, model serving reliability, deployment readiness gates, inference smoke tests, rollback strategy</p>
+        </div>
+      </section>
+
+      <section class="section blog-post-shell">
+        <article class="blog-post-content reveal">
+          <div class="blog-post-image">
+            <img src="./assets/blog/slm-deployment-checklist.svg" alt="SLM deployment checklist visual" />
+          </div>
+          <h2>Define target profiles before you train</h2>
+          <p>Start with deployment targets such as vLLM server, edge GPU, or mobile runtime. Lock the runtime constraints up front, including model format, VRAM budget, and maximum latency. This avoids training toward a model profile that cannot be served where your users are.</p>
+          <h2>Validate artifacts and runtime compatibility</h2>
+          <p>Treat export bundles as release artifacts with strict contracts. Validate format compatibility, quantization assumptions, tokenizer parity, and smoke prompt behavior before promotion. A deployable bundle should include enough metadata to replay the exact training and export path.</p>
+          <h2>Roll out with staged health checks</h2>
+          <p>Use staged rollout gates such as canary, synthetic prompt checks, and baseline comparison on key tasks. Require pass criteria for latency, response quality, and runtime stability. If any gate fails, keep the release in staging and capture actionable diagnostics for the next iteration.</p>
+          <h2>Monitor, alert, and rollback with policy</h2>
+          <p>Define SLOs before launch and alert on tail latency, error rate, and quality drift. Pair metric alerts with operational runbooks so on-call engineers can react quickly. A rollback path should be one command and one decision, not a multi-hour incident workflow.</p>
+
+          <div class="blog-post-footer">
+            <a class="btn btn-solid" href="./blog.html">Back To Blog Hub</a>
+            <a class="btn btn-ghost" href="./creation-paths.html">Compare Creation Paths</a>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Powered by TensorGreed</p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; Questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
