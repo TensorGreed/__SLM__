@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import api from '../api/client';
@@ -74,14 +74,35 @@ interface AutopilotPreflight {
   hints?: string[];
 }
 
+interface AutopilotTargetCompatibility {
+  compatible?: boolean;
+  reasons?: string[];
+  warnings?: string[];
+  target?: {
+    id?: string;
+    name?: string;
+    description?: string;
+  } | null;
+  model_metadata?: {
+    model_id?: string;
+    parameters_billions?: number | null;
+    parameters_source?: string;
+    estimated_min_vram_gb?: number | null;
+    estimated_ideal_vram_gb?: number | null;
+    source?: string;
+  } | null;
+}
+
 interface AutopilotIntentResolveResponse {
   project_id: number;
   intent: string;
+  resolved_target_device?: string;
   plans?: AutopilotPlan[];
   recommended_profile?: string;
   intent_clarification?: AutopilotIntentClarification;
   dataset_readiness?: AutopilotDatasetReadiness;
   guardrails?: AutopilotLaunchGuardrails;
+  target_compatibility?: AutopilotTargetCompatibility | null;
 }
 
 interface AutopilotOneClickRunResponse extends AutopilotIntentResolveResponse {
@@ -101,6 +122,20 @@ interface AutopilotOneClickRunResponse extends AutopilotIntentResolveResponse {
     rewritten_intent?: string | null;
     source?: string | null;
   } | null;
+  auto_prepare?: {
+    attempted?: boolean;
+    succeeded?: boolean;
+    method?: string | null;
+    error?: string | null;
+    raw_documents?: {
+      attempted?: boolean;
+      accepted_before?: number;
+      pending_before?: number;
+      accepted_after?: number;
+      processed_count?: number;
+      failed_count?: number;
+    } | null;
+  } | null;
 }
 
 interface ExperimentStatusResponse {
@@ -111,6 +146,42 @@ interface ExperimentStatusResponse {
   total_steps?: number | null;
   checkpoints?: Array<Record<string, unknown>>;
 }
+
+interface IngestionDocumentSummary {
+  id?: number;
+  status?: string;
+}
+
+type RemoteSourceTab = 'huggingface' | 'kaggle' | 'url';
+
+interface RemoteImportQueueResponse {
+  status?: string;
+  report_path?: string;
+  source_type?: string;
+  identifier?: string;
+  task_id?: string;
+}
+
+interface RemoteImportStatusResponse {
+  status?: string;
+  result?: {
+    samples_ingested?: number;
+    source_type?: string;
+    identifier?: string;
+  };
+  result_visible_in_api_db?: boolean;
+  warning?: string;
+  error?: string;
+}
+
+type TargetDevice = 'mobile' | 'laptop' | 'server';
+
+const TARGET_PROFILE_DEVICE_MAP: Record<string, TargetDevice> = {
+  mobile_cpu: 'mobile',
+  browser_webgpu: 'mobile',
+  edge_gpu: 'laptop',
+  vllm_server: 'server',
+};
 
 export default function ProjectWizardPage() {
   const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
@@ -126,6 +197,7 @@ export default function ProjectWizardPage() {
   const [targetError, setTargetError] = useState('');
   const [acknowledgeIntentClarification, setAcknowledgeIntentClarification] = useState(false);
   const [availableVramGb, setAvailableVramGb] = useState('8');
+  const [baseModelOverride, setBaseModelOverride] = useState('');
 
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState('');
@@ -139,6 +211,22 @@ export default function ProjectWizardPage() {
   const [statusError, setStatusError] = useState('');
   const [statusResponse, setStatusResponse] = useState<ExperimentStatusResponse | null>(null);
   const [trainingProgress, setTrainingProgress] = useState(0);
+  const [intakeLoading, setIntakeLoading] = useState(false);
+  const [intakeError, setIntakeError] = useState('');
+  const [intakeStatus, setIntakeStatus] = useState('');
+  const [ingestionStats, setIngestionStats] = useState({ total: 0, accepted: 0, pending: 0 });
+  const [remoteSource, setRemoteSource] = useState<RemoteSourceTab>('huggingface');
+  const [remoteIdentifier, setRemoteIdentifier] = useState('');
+  const [remoteSplit, setRemoteSplit] = useState('train');
+  const [remoteConfigName, setRemoteConfigName] = useState('');
+  const [remoteMaxSamples, setRemoteMaxSamples] = useState('');
+  const [remoteHfToken, setRemoteHfToken] = useState('');
+  const [remoteKaggleUsername, setRemoteKaggleUsername] = useState('');
+  const [remoteKaggleKey, setRemoteKaggleKey] = useState('');
+  const [remoteImportLoading, setRemoteImportLoading] = useState(false);
+  const [remoteImportError, setRemoteImportError] = useState('');
+  const [remoteImportStatus, setRemoteImportStatus] = useState('');
+  const [remoteImportReportPath, setRemoteImportReportPath] = useState<string | null>(null);
 
   const [selectedIntentRewrite, setSelectedIntentRewrite] = useState('');
   const [selectedProfile, setSelectedProfile] = useState('balanced');
@@ -170,13 +258,189 @@ export default function ProjectWizardPage() {
   );
 
   const parsedVram = Number.parseFloat(availableVramGb);
+  const resolvedTargetDevice = useMemo<TargetDevice>(() => {
+    const selectedTarget = targetCatalog.find((target) => String(target?.id || '') === targetProfileId);
+    const catalogDevice = String(selectedTarget?.device_class || '').trim().toLowerCase();
+    if (catalogDevice === 'mobile' || catalogDevice === 'laptop' || catalogDevice === 'server') {
+      return catalogDevice;
+    }
+    return TARGET_PROFILE_DEVICE_MAP[targetProfileId] || 'laptop';
+  }, [targetCatalog, targetProfileId]);
   const experimentId = Number(launchResponse?.experiment?.id || 0);
   const latestStatus = String(statusResponse?.status || launchResponse?.experiment?.status || '').toLowerCase();
   const clarificationRequired = Boolean(planResponse?.intent_clarification?.required);
   const hasSelectedRewrite = selectedIntentRewrite.trim().length >= 3;
   const launchGuardrailsPass = planResponse?.guardrails?.can_run !== false;
-  const canLaunchFromPlan = launchGuardrailsPass
+  const guardrailBlockers = Array.isArray(planResponse?.guardrails?.blockers)
+    ? planResponse?.guardrails?.blockers || []
+    : [];
+  const canLaunchWithAutoPrep = !launchGuardrailsPass && guardrailBlockers.length > 0 && guardrailBlockers.every((blocker) => {
+    const token = String(blocker || '').toLowerCase();
+    return token.includes('dataset')
+      || token.includes('prepared')
+      || token.includes('ingest')
+      || token.includes('split');
+  });
+  const canLaunchFromPlan = (launchGuardrailsPass || canLaunchWithAutoPrep)
     && (!clarificationRequired || acknowledgeIntentClarification || hasSelectedRewrite);
+
+  const fetchIngestionStats = useCallback(async () => {
+    try {
+      const res = await api.get<IngestionDocumentSummary[]>(
+        `/projects/${projectId}/ingestion/documents`,
+      );
+      const docs = Array.isArray(res.data) ? res.data : [];
+      let accepted = 0;
+      let pending = 0;
+      docs.forEach((doc) => {
+        const token = String(doc?.status || '').trim().toLowerCase();
+        if (token === 'accepted') accepted += 1;
+        if (token === 'pending' || token === 'processing') pending += 1;
+      });
+      setIngestionStats({ total: docs.length, accepted, pending });
+    } catch {
+      setIngestionStats((prev) => prev);
+    }
+  }, [projectId]);
+
+  const uploadAndProcessWizardFiles = async (files: FileList | File[]) => {
+    const rows = Array.from(files || []);
+    if (rows.length === 0) return;
+    setIntakeLoading(true);
+    setIntakeError('');
+    setIntakeStatus('');
+    try {
+      const formData = new FormData();
+      rows.forEach((file) => formData.append('files', file));
+      const uploadRes = await api.post<{
+        uploaded?: number;
+        errors?: Array<{ filename?: string; error?: string }>;
+        documents?: Array<{ id?: number }>;
+      }>(
+        `/projects/${projectId}/ingestion/upload-batch`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      const uploaded = Number(uploadRes.data?.uploaded || 0);
+      const documents = Array.isArray(uploadRes.data?.documents) ? uploadRes.data?.documents || [] : [];
+      const processResponses = await Promise.all(
+        documents.map(async (doc) => {
+          const id = Number(doc?.id || 0);
+          if (!Number.isFinite(id) || id <= 0) return false;
+          try {
+            await api.post(`/projects/${projectId}/ingestion/documents/${id}/process`);
+            return true;
+          } catch {
+            return false;
+          }
+        }),
+      );
+      const processed = processResponses.filter(Boolean).length;
+      const errorCount = Array.isArray(uploadRes.data?.errors) ? uploadRes.data?.errors?.length || 0 : 0;
+      setIntakeStatus(
+        `Uploaded ${uploaded} file(s), processed ${processed}.`
+        + (errorCount > 0 ? ` ${errorCount} upload error(s).` : ''),
+      );
+    } catch (err: any) {
+      setIntakeError(err?.response?.data?.detail || 'Failed to upload/process files.');
+    } finally {
+      setIntakeLoading(false);
+      void fetchIngestionStats();
+    }
+  };
+
+  const extractErrorMessage = useCallback((error: unknown): string => {
+    if (typeof error === 'object' && error !== null) {
+      const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+      if (typeof detail === 'string' && detail.trim()) {
+        return detail;
+      }
+      if (Array.isArray(detail)) {
+        const joined = detail
+          .map((item) => {
+            if (typeof item === 'string') return item;
+            if (typeof item === 'object' && item !== null) {
+              const msg = (item as { msg?: unknown }).msg;
+              if (typeof msg === 'string') return msg;
+            }
+            return '';
+          })
+          .filter((item) => item)
+          .join('; ');
+        if (joined) return joined;
+      }
+    }
+    if (error instanceof Error && error.message.trim()) {
+      return error.message;
+    }
+    return 'Operation failed';
+  }, []);
+
+  const queueRemoteImportFromWizard = async () => {
+    const identifier = remoteIdentifier.trim();
+    if (!identifier) {
+      setRemoteImportError('Enter a dataset identifier or URL first.');
+      return;
+    }
+    setRemoteImportLoading(true);
+    setRemoteImportError('');
+    setRemoteImportStatus('');
+
+    let parsedMaxSamples: number | null = null;
+    if (remoteMaxSamples.trim()) {
+      const parsed = Number(remoteMaxSamples);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        setRemoteImportLoading(false);
+        setRemoteImportError('Max samples must be a positive number or empty.');
+        return;
+      }
+      parsedMaxSamples = Math.floor(parsed);
+    }
+
+    const payload: {
+      source_type: RemoteSourceTab;
+      identifier: string;
+      split: string;
+      config_name?: string | null;
+      max_samples: number | null;
+      use_saved_secrets: boolean;
+      hf_token?: string;
+      kaggle_username?: string;
+      kaggle_key?: string;
+    } = {
+      source_type: remoteSource,
+      identifier,
+      split: remoteSource === 'huggingface' ? (remoteSplit.trim() || 'train') : 'train',
+      config_name: remoteSource === 'huggingface' ? (remoteConfigName.trim() || null) : null,
+      max_samples: parsedMaxSamples,
+      use_saved_secrets: true,
+    };
+    if (remoteSource === 'huggingface' && remoteHfToken.trim()) {
+      payload.hf_token = remoteHfToken.trim();
+    }
+    if (remoteSource === 'kaggle') {
+      if (remoteKaggleUsername.trim()) payload.kaggle_username = remoteKaggleUsername.trim();
+      if (remoteKaggleKey.trim()) payload.kaggle_key = remoteKaggleKey.trim();
+    }
+
+    try {
+      const res = await api.post<RemoteImportQueueResponse>(
+        `/projects/${projectId}/ingestion/import-remote/queue`,
+        payload,
+      );
+      const reportPath = String(res.data?.report_path || '').trim();
+      if (!reportPath) {
+        setRemoteImportLoading(false);
+        setRemoteImportError('Import queued but no report path was returned.');
+        return;
+      }
+      setRemoteImportReportPath(reportPath);
+      setRemoteImportStatus(`Import queued for ${remoteSource}. Waiting for completion...`);
+    } catch (error) {
+      setRemoteImportLoading(false);
+      setRemoteImportError(`Import failed: ${extractErrorMessage(error)}`);
+    }
+  };
 
   const saveTargetAndContinue = async () => {
     setTargetError('');
@@ -192,6 +456,57 @@ export default function ProjectWizardPage() {
       setTargetSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (currentStep !== 2) return;
+    void fetchIngestionStats();
+  }, [currentStep, fetchIngestionStats]);
+
+  useEffect(() => {
+    if (!remoteImportReportPath) return;
+    const interval = window.setInterval(async () => {
+      try {
+        const statusRes = await api.get<RemoteImportStatusResponse>(
+          `/projects/${projectId}/ingestion/imports/status`,
+          { params: { report_path: remoteImportReportPath } },
+        );
+        const payload = statusRes.data || {};
+        const state = String(payload.status || '').trim().toLowerCase();
+        if (state === 'completed') {
+          const ingested = Number(payload.result?.samples_ingested || 0);
+          const source = String(payload.result?.source_type || remoteSource);
+          const identifier = String(payload.result?.identifier || remoteIdentifier.trim());
+          if (payload.result_visible_in_api_db === false) {
+            setRemoteImportError(
+              payload.warning
+                || 'Import completed in worker but API cannot see the document. Verify API/worker DB settings.',
+            );
+          } else {
+            setRemoteImportStatus(`Imported ${ingested} samples from ${source}:${identifier}.`);
+          }
+          setRemoteImportLoading(false);
+          setRemoteImportReportPath(null);
+          void fetchIngestionStats();
+        } else if (state === 'failed') {
+          setRemoteImportError(String(payload.error || 'Remote import failed.'));
+          setRemoteImportLoading(false);
+          setRemoteImportReportPath(null);
+        }
+      } catch (error) {
+        setRemoteImportError(`Import polling failed: ${extractErrorMessage(error)}`);
+        setRemoteImportLoading(false);
+        setRemoteImportReportPath(null);
+      }
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [
+    extractErrorMessage,
+    fetchIngestionStats,
+    projectId,
+    remoteIdentifier,
+    remoteImportReportPath,
+    remoteSource,
+  ]);
 
   const resolveSafePlan = async (intentOverride?: string) => {
     const baseIntent = typeof intentOverride === 'string' ? intentOverride : intentText;
@@ -216,8 +531,10 @@ export default function ProjectWizardPage() {
         {
           intent: trimmedIntent,
           target_profile_id: targetProfileId,
+          target_device: resolvedTargetDevice,
           primary_language: 'english',
           available_vram_gb: Number.isFinite(parsedVram) && parsedVram > 0 ? parsedVram : undefined,
+          base_model: baseModelOverride.trim() || undefined,
         },
       );
       setPlanResponse(res.data || null);
@@ -248,8 +565,10 @@ export default function ProjectWizardPage() {
         {
           intent: trimmedIntent,
           target_profile_id: targetProfileId,
+          target_device: resolvedTargetDevice,
           primary_language: 'english',
           available_vram_gb: Number.isFinite(parsedVram) && parsedVram > 0 ? parsedVram : undefined,
+          base_model: baseModelOverride.trim() || undefined,
           auto_apply_rewrite: true,
           intent_rewrite: hasSelectedRewrite ? selectedIntentRewrite.trim() : undefined,
           run_name: runNameOverride.trim() || undefined,
@@ -395,6 +714,132 @@ export default function ProjectWizardPage() {
               {' '}
               "I want a model that reads support tickets and drafts short answers."
             </p>
+            <div className="wizard-upload-box wizard-data-intake">
+              <div className="wizard-data-intake-copy">
+                <strong>Dataset intake</strong>
+                <span>Upload files now. Wizard will parse them, then one-click will auto-prepare train/val/test.</span>
+                <span>
+                  Raw docs: {ingestionStats.total} total, {ingestionStats.accepted} accepted, {ingestionStats.pending} pending
+                </span>
+              </div>
+              <label className="btn btn-secondary" htmlFor="wizard-intake-upload">
+                {intakeLoading ? 'Uploading...' : 'Upload Dataset Files'}
+              </label>
+              <input
+                id="wizard-intake-upload"
+                type="file"
+                multiple
+                disabled={intakeLoading}
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    void uploadAndProcessWizardFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <button
+                className="btn btn-secondary"
+                onClick={() => navigate(`/project/${projectId}/pipeline/ingestion`)}
+              >
+                Remote/Advanced Intake
+              </button>
+              {intakeStatus && <span>{intakeStatus}</span>}
+              {intakeError && <div className="wizard-error">{intakeError}</div>}
+            </div>
+            <div className="wizard-upload-box wizard-data-intake">
+              <div className="wizard-data-intake-copy">
+                <strong>Remote dataset import</strong>
+                <span>Import directly from HuggingFace, Kaggle, or URL without leaving the wizard.</span>
+              </div>
+              <div className="wizard-remote-controls">
+                <div className="wizard-remote-row">
+                  <select
+                    className="input"
+                    value={remoteSource}
+                    onChange={(e) => setRemoteSource(e.target.value as RemoteSourceTab)}
+                    disabled={remoteImportLoading}
+                  >
+                    <option value="huggingface">HuggingFace</option>
+                    <option value="kaggle">Kaggle</option>
+                    <option value="url">URL</option>
+                  </select>
+                  <input
+                    className="input"
+                    value={remoteIdentifier}
+                    onChange={(e) => setRemoteIdentifier(e.target.value)}
+                    placeholder={
+                      remoteSource === 'huggingface'
+                        ? 'Dataset id (e.g. tatsu-lab/alpaca)'
+                        : remoteSource === 'kaggle'
+                          ? 'Dataset id (e.g. owner/dataset-name)'
+                          : 'Direct file URL'
+                    }
+                    disabled={remoteImportLoading}
+                  />
+                </div>
+                {remoteSource === 'huggingface' && (
+                  <div className="wizard-remote-row">
+                    <input
+                      className="input"
+                      value={remoteSplit}
+                      onChange={(e) => setRemoteSplit(e.target.value)}
+                      placeholder="Split (train)"
+                      disabled={remoteImportLoading}
+                    />
+                    <input
+                      className="input"
+                      value={remoteConfigName}
+                      onChange={(e) => setRemoteConfigName(e.target.value)}
+                      placeholder="Config name (optional)"
+                      disabled={remoteImportLoading}
+                    />
+                    <input
+                      className="input"
+                      value={remoteHfToken}
+                      onChange={(e) => setRemoteHfToken(e.target.value)}
+                      placeholder="HF token (optional)"
+                      disabled={remoteImportLoading}
+                    />
+                  </div>
+                )}
+                {remoteSource === 'kaggle' && (
+                  <div className="wizard-remote-row">
+                    <input
+                      className="input"
+                      value={remoteKaggleUsername}
+                      onChange={(e) => setRemoteKaggleUsername(e.target.value)}
+                      placeholder="Kaggle username (optional)"
+                      disabled={remoteImportLoading}
+                    />
+                    <input
+                      className="input"
+                      value={remoteKaggleKey}
+                      onChange={(e) => setRemoteKaggleKey(e.target.value)}
+                      placeholder="Kaggle key (optional)"
+                      disabled={remoteImportLoading}
+                    />
+                  </div>
+                )}
+                <div className="wizard-remote-row">
+                  <input
+                    className="input"
+                    value={remoteMaxSamples}
+                    onChange={(e) => setRemoteMaxSamples(e.target.value)}
+                    placeholder="Max samples (optional)"
+                    disabled={remoteImportLoading}
+                  />
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => void queueRemoteImportFromWizard()}
+                    disabled={remoteImportLoading}
+                  >
+                    {remoteImportLoading ? 'Importing...' : 'Import Remote Dataset'}
+                  </button>
+                </div>
+              </div>
+              {remoteImportStatus && <span>{remoteImportStatus}</span>}
+              {remoteImportError && <div className="wizard-error">{remoteImportError}</div>}
+            </div>
             <label className="form-label" htmlFor="wizard-intent-input">Plain-language goal</label>
             <textarea
               id="wizard-intent-input"
@@ -414,6 +859,15 @@ export default function ProjectWizardPage() {
                 value={availableVramGb}
                 onChange={(e) => setAvailableVramGb(e.target.value)}
                 placeholder="8"
+              />
+            </div>
+            <div className="wizard-param-row">
+              <label className="form-label">Base model (optional override)</label>
+              <input
+                className="input"
+                value={baseModelOverride}
+                onChange={(e) => setBaseModelOverride(e.target.value)}
+                placeholder="Qwen/Qwen2.5-1.5B-Instruct"
               />
             </div>
             <div className="wizard-param-row">
@@ -444,6 +898,11 @@ export default function ProjectWizardPage() {
             <div className="wizard-panel">
               <div className="wizard-intent-summary">
                 <strong>Intent:</strong> {intentText.trim()}
+                {baseModelOverride.trim() && (
+                  <div>
+                    <strong>Base model override:</strong> {baseModelOverride.trim()}
+                  </div>
+                )}
                 {hasSelectedRewrite && (
                   <div className="wizard-rewrite-badge">
                     <span>Rewritten for clarity:</span> {selectedIntentRewrite.trim()}
@@ -501,6 +960,63 @@ export default function ProjectWizardPage() {
                 </div>
               )}
 
+              {planResponse?.target_compatibility && (
+                <div
+                  className={`wizard-upload-box ${
+                    planResponse.target_compatibility.compatible === false ? 'wizard-error' : 'wizard-warning'
+                  }`}
+                >
+                  <div>
+                    <strong>Target compatibility:</strong>
+                    {' '}
+                    {planResponse.target_compatibility.compatible === false ? 'BLOCKED' : 'OK'}
+                  </div>
+                  <div>
+                    Target:
+                    {' '}
+                    {String(
+                      planResponse.target_compatibility.target?.name
+                      || planResponse.target_compatibility.target?.id
+                      || targetProfileId,
+                    )}
+                  </div>
+                  {typeof planResponse.target_compatibility.model_metadata?.parameters_billions === 'number' && (
+                    <div>
+                      Model size:
+                      {' '}
+                      {planResponse.target_compatibility.model_metadata.parameters_billions}
+                      B
+                    </div>
+                  )}
+                  {typeof planResponse.target_compatibility.model_metadata?.estimated_min_vram_gb === 'number' && (
+                    <div>
+                      Estimated min VRAM:
+                      {' '}
+                      {planResponse.target_compatibility.model_metadata.estimated_min_vram_gb}
+                      GB
+                    </div>
+                  )}
+                  {Array.isArray(planResponse.target_compatibility.reasons)
+                    && planResponse.target_compatibility.reasons.length > 0 && (
+                      <div className="wizard-blockers">
+                        <strong>Blockers:</strong>
+                        <ul className="wizard-filter-list">
+                          {planResponse.target_compatibility.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  {Array.isArray(planResponse.target_compatibility.warnings)
+                    && planResponse.target_compatibility.warnings.length > 0 && (
+                      <div className="wizard-blockers">
+                        <strong>Warnings:</strong>
+                        <ul className="wizard-filter-list">
+                          {planResponse.target_compatibility.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                </div>
+              )}
+
               {planResponse?.intent_clarification?.required && (
                 <div className="wizard-upload-box wizard-warning">
                   <div>
@@ -533,6 +1049,24 @@ export default function ProjectWizardPage() {
                     />
                     I reviewed this and still want to launch with this intent
                   </label>
+                </div>
+              )}
+
+              {Array.isArray(planResponse?.guardrails?.warnings)
+                && planResponse?.guardrails?.warnings?.length > 0 && (
+                  <div className="wizard-upload-box wizard-warning">
+                    <strong>Launch warnings</strong>
+                    <ul className="wizard-filter-list">
+                      {planResponse.guardrails.warnings.slice(0, 5).map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              {canLaunchWithAutoPrep && (
+                <div className="wizard-upload-box wizard-warning">
+                  <strong>Auto-fix on launch</strong>
+                  <span>Dataset blockers were detected. One-click will auto-process and auto-prepare data before training.</span>
                 </div>
               )}
 
@@ -599,6 +1133,19 @@ export default function ProjectWizardPage() {
               {(launchError || launchResponse?.start_error) && (
                 <div className="wizard-error">
                   {launchError || launchResponse?.start_error}
+                </div>
+              )}
+              {launchResponse?.auto_prepare?.attempted && (
+                <div>
+                  <strong>Auto data prep:</strong>
+                  {' '}
+                  {launchResponse.auto_prepare.succeeded ? 'applied' : 'not applied'}
+                  {launchResponse.auto_prepare.method ? ` (${launchResponse.auto_prepare.method})` : ''}
+                  {launchResponse.auto_prepare.raw_documents && (
+                    <span>
+                      {` · docs processed ${Number(launchResponse.auto_prepare.raw_documents.processed_count || 0)} (accepted: ${Number(launchResponse.auto_prepare.raw_documents.accepted_after || 0)})`}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

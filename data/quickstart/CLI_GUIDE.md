@@ -25,6 +25,8 @@ brewslm dataset import --project-id 1 --sample "support-chat-v1"
 Launch a balanced training run on the cloud:
 ```bash
 brewslm train --project-id 1 --autopilot --one-click --intent "Fine-tune a practical assistant on my imported dataset."
+# Optional explicit base model override:
+brewslm train --project-id 1 --autopilot --one-click --intent "Fine-tune a practical assistant on my imported dataset." --base-model "Qwen/Qwen2.5-1.5B-Instruct"
 ```
 
 ## 5. Optimize & Export

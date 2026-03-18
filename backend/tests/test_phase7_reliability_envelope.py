@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -26,15 +27,38 @@ from app.main import app
 
 class Phase7ReliabilityEnvelopeTests(unittest.TestCase):
     @classmethod
-    def setUpClass(cls):
-        if TEST_DB_PATH.exists():
-            TEST_DB_PATH.unlink()
+    def _cleanup_test_artifacts(cls):
         if TEST_DATA_DIR.exists():
             for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
                 if path.is_file():
-                    path.unlink()
+                    try:
+                        path.unlink()
+                    except PermissionError:
+                        pass
                 elif path.is_dir():
-                    path.rmdir()
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+
+        if TEST_DB_PATH.exists():
+            for _ in range(40):
+                try:
+                    TEST_DB_PATH.unlink()
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
+                except FileNotFoundError:
+                    break
+            if TEST_DB_PATH.exists():
+                try:
+                    TEST_DB_PATH.unlink(missing_ok=True)
+                except PermissionError:
+                    pass
+
+    @classmethod
+    def setUpClass(cls):
+        cls._cleanup_test_artifacts()
         TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
         cls._client_cm = TestClient(app)
         cls.client = cls._client_cm.__enter__()
@@ -42,14 +66,7 @@ class Phase7ReliabilityEnvelopeTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
-        if TEST_DB_PATH.exists():
-            TEST_DB_PATH.unlink()
-        if TEST_DATA_DIR.exists():
-            for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    path.rmdir()
+        cls._cleanup_test_artifacts()
 
     def _create_project(self, name: str) -> int:
         unique_name = f"{name}-{uuid.uuid4().hex[:8]}"
@@ -113,6 +130,7 @@ class Phase7ReliabilityEnvelopeTests(unittest.TestCase):
         self.assertEqual(plan_resp.status_code, 200, plan_resp.text)
         payload = plan_resp.json()
         guardrails = dict(payload.get("guardrails") or {})
+        self.assertEqual(str(payload.get("resolved_target_device") or ""), "mobile", payload)
 
         reason_codes = [str(item) for item in list(guardrails.get("reason_codes") or [])]
         self.assertGreaterEqual(len(reason_codes), 1, guardrails)
@@ -123,6 +141,31 @@ class Phase7ReliabilityEnvelopeTests(unittest.TestCase):
             self.assertTrue(str(action.get("reason_code") or "").strip(), action)
             self.assertTrue(str(action.get("label") or "").strip(), action)
             self.assertIn("one_click_available", action)
+
+    def test_autopilot_plan_v2_surfaces_target_compatibility_warnings(self):
+        project_id = self._create_project("phase7-target-warnings")
+
+        plan_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/plan-v2",
+            json={
+                "intent": "Build a domain support assistant.",
+                "target_device": "laptop",
+                "target_profile_id": "edge_gpu",
+                "base_model": "meta-llama/Llama-3.1-8B-Instruct",
+                "available_vram_gb": 8,
+            },
+        )
+        self.assertEqual(plan_resp.status_code, 200, plan_resp.text)
+        payload = plan_resp.json()
+        self.assertEqual(str(payload.get("resolved_target_device") or ""), "laptop", payload)
+        compatibility = dict(payload.get("target_compatibility") or {})
+        warnings = [str(item) for item in list(compatibility.get("warnings") or [])]
+        self.assertGreaterEqual(len(warnings), 1, compatibility)
+        self.assertTrue(any("VRAM" in item for item in warnings), warnings)
+
+        guardrails = dict(payload.get("guardrails") or {})
+        guardrail_warnings = [str(item) for item in list(guardrails.get("warnings") or [])]
+        self.assertTrue(any("VRAM" in item for item in guardrail_warnings), guardrail_warnings)
 
 
 if __name__ == "__main__":

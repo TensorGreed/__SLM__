@@ -447,6 +447,7 @@ def run_train(args: argparse.Namespace, client: ApiClient) -> int:
         "target_device": args.target_device,
         "primary_language": args.primary_language,
         "available_vram_gb": args.available_vram_gb,
+        "base_model": args.base_model or None,
         "run_name": args.run_name or None,
         "description": args.description or None,
         "auto_apply_rewrite": not args.no_auto_rewrite,
@@ -828,6 +829,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument("--primary-language", default="english")
     train_parser.add_argument("--available-vram-gb", type=float, default=None)
+    train_parser.add_argument("--base-model", default="", help="Optional explicit base model override")
     train_parser.add_argument("--run-name", default="")
     train_parser.add_argument("--description", default="")
     train_parser.add_argument("--intent-rewrite", default="")

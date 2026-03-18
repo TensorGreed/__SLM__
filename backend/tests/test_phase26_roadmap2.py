@@ -8,6 +8,7 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 TEST_DB_PATH = Path(__file__).resolve().parent / "phase26_roadmap2_test.db"
 TEST_DATA_DIR = Path(__file__).resolve().parent / "phase26_roadmap2_data"
@@ -31,6 +32,36 @@ from app.main import app
 
 class Phase26Roadmap2Tests(unittest.TestCase):
     @classmethod
+    def _cleanup_test_artifacts(cls):
+        if TEST_DATA_DIR.exists():
+            for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
+                if path.is_file():
+                    try:
+                        path.unlink()
+                    except PermissionError:
+                        pass
+                elif path.is_dir():
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
+
+        if TEST_DB_PATH.exists():
+            for _ in range(40):
+                try:
+                    TEST_DB_PATH.unlink()
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
+                except FileNotFoundError:
+                    break
+            if TEST_DB_PATH.exists():
+                try:
+                    TEST_DB_PATH.unlink(missing_ok=True)
+                except PermissionError:
+                    pass
+
+    @classmethod
     def setUpClass(cls):
         settings.AUTH_ENABLED = False
         settings.DEBUG = False
@@ -41,14 +72,7 @@ class Phase26Roadmap2Tests(unittest.TestCase):
         settings.TRAINING_BACKEND = "simulate"
         settings.ALLOW_SIMULATED_TRAINING = True
         settings.ensure_dirs()
-        if TEST_DB_PATH.exists():
-            TEST_DB_PATH.unlink()
-        if TEST_DATA_DIR.exists():
-            for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    path.rmdir()
+        cls._cleanup_test_artifacts()
         TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
         cls._client_cm = TestClient(app)
         cls.client = cls._client_cm.__enter__()
@@ -56,14 +80,7 @@ class Phase26Roadmap2Tests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._client_cm.__exit__(None, None, None)
-        if TEST_DB_PATH.exists():
-            TEST_DB_PATH.unlink()
-        if TEST_DATA_DIR.exists():
-            for path in sorted(TEST_DATA_DIR.rglob("*"), reverse=True):
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    path.rmdir()
+        cls._cleanup_test_artifacts()
 
     def _create_project(self, name: str) -> int:
         unique_name = f"{name}-{uuid.uuid4().hex[:8]}"
@@ -82,6 +99,27 @@ class Phase26Roadmap2Tests(unittest.TestCase):
             for row in rows:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
         return train_path
+
+    def _upload_and_process_raw_text(self, project_id: int, *, filename: str, content: str) -> int:
+        upload_resp = self.client.post(
+            f"/api/projects/{project_id}/ingestion/upload",
+            files={"file": (filename, content.encode("utf-8"), "text/plain")},
+            data={"source": "upload", "sensitivity": "internal", "license_info": ""},
+        )
+        self.assertEqual(upload_resp.status_code, 201, upload_resp.text)
+        document_id = int(upload_resp.json()["id"])
+        process_resp = self.client.post(f"/api/projects/{project_id}/ingestion/documents/{document_id}/process")
+        self.assertEqual(process_resp.status_code, 200, process_resp.text)
+        return document_id
+
+    def _upload_raw_text_pending(self, project_id: int, *, filename: str, content: str) -> int:
+        upload_resp = self.client.post(
+            f"/api/projects/{project_id}/ingestion/upload",
+            files={"file": (filename, content.encode("utf-8"), "text/plain")},
+            data={"source": "upload", "sensitivity": "internal", "license_info": ""},
+        )
+        self.assertEqual(upload_resp.status_code, 201, upload_resp.text)
+        return int(upload_resp.json()["id"])
 
     def test_item1_multiturn_synthetic_generation_and_save(self):
         project_id = self._create_project("phase26-item1")
@@ -618,6 +656,251 @@ class Phase26Roadmap2Tests(unittest.TestCase):
         rewritten_intent = str(applied.get("rewritten_intent") or "").strip().lower()
         self.assertTrue(rewritten_intent, applied)
         self.assertNotEqual(original_intent, rewritten_intent, applied)
+
+    def test_item6c_newbie_autopilot_respects_base_model_override(self):
+        project_id = self._create_project("phase26-item6c")
+        self._write_prepared_rows(
+            project_id,
+            rows=[
+                {
+                    "text": f"User: classify ticket {idx}\nAssistant: label it as billing or technical {idx}",
+                }
+                for idx in range(28)
+            ],
+        )
+        override_model = "Qwen/Qwen2.5-1.5B-Instruct"
+
+        plan_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/plan-v2",
+            json={
+                "intent": "Classify incoming support tickets by queue.",
+                "target_device": "laptop",
+                "available_vram_gb": 8,
+                "base_model": override_model,
+            },
+        )
+        self.assertEqual(plan_resp.status_code, 200, plan_resp.text)
+        plans = [dict(item) for item in list(plan_resp.json().get("plans") or []) if isinstance(item, dict)]
+        self.assertGreater(len(plans), 0, plan_resp.json())
+        for plan in plans:
+            config = dict(plan.get("config") or {})
+            self.assertEqual(str(config.get("base_model") or "").strip(), override_model)
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "Classify incoming support tickets by queue.",
+                "target_device": "laptop",
+                "available_vram_gb": 8,
+                "base_model": override_model,
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        run_payload = run_resp.json()
+        experiment = dict(run_payload.get("experiment") or {})
+        self.assertGreater(int(experiment.get("id") or 0), 0, run_payload)
+        self.assertEqual(str(experiment.get("base_model") or "").strip(), override_model)
+
+    def test_item6d_newbie_autopilot_resolves_target_device_from_profile(self):
+        project_id = self._create_project("phase26-item6d")
+        self._write_prepared_rows(
+            project_id,
+            rows=[
+                {
+                    "text": f"User: support ticket {idx}\nAssistant: concise answer {idx}",
+                }
+                for idx in range(28)
+            ],
+        )
+
+        plan_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/plan-v2",
+            json={
+                "intent": "Build a support Q&A assistant.",
+                "target_profile_id": "mobile_cpu",
+                "target_device": "server",
+                "available_vram_gb": 6,
+            },
+        )
+        self.assertEqual(plan_resp.status_code, 200, plan_resp.text)
+        plan_payload = plan_resp.json()
+        self.assertEqual(str(plan_payload.get("resolved_target_device") or ""), "mobile", plan_payload)
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "Build a support Q&A assistant.",
+                "target_profile_id": "mobile_cpu",
+                "target_device": "server",
+                "available_vram_gb": 6,
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        run_payload = run_resp.json()
+        plan_v2 = dict(run_payload.get("plan_v2") or {})
+        self.assertEqual(str(plan_v2.get("resolved_target_device") or ""), "mobile", run_payload)
+
+    def test_item6e_newbie_autopilot_one_click_auto_prepares_raw_data(self):
+        project_id = self._create_project("phase26-item6e")
+        raw_lines = "\n".join(
+            [f"Ticket {idx}: customer cannot sign in. Response should include reset steps." for idx in range(36)]
+        )
+        self._upload_and_process_raw_text(
+            project_id,
+            filename="support_tickets.txt",
+            content=raw_lines,
+        )
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "Summarize support tickets with next steps.",
+                "target_profile_id": "edge_gpu",
+                "available_vram_gb": 8,
+                "auto_prepare_data": True,
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        run_payload = run_resp.json()
+        auto_prepare = dict(run_payload.get("auto_prepare") or {})
+        self.assertTrue(bool(auto_prepare.get("succeeded")), run_payload)
+
+        prepared_train = TEST_DATA_DIR / "projects" / str(project_id) / "prepared" / "train.jsonl"
+        self.assertTrue(prepared_train.exists(), prepared_train)
+        row_count = len([line for line in prepared_train.read_text(encoding="utf-8").splitlines() if line.strip()])
+        self.assertGreater(row_count, 0, row_count)
+        experiment = dict(run_payload.get("experiment") or {})
+        self.assertGreater(int(experiment.get("id") or 0), 0, run_payload)
+
+    def test_item6f_newbie_autopilot_auto_processes_pending_raw_docs(self):
+        project_id = self._create_project("phase26-item6f")
+        raw_lines = "\n".join(
+            [f"Ticket {idx}: customer cannot sign in. Response should include reset steps." for idx in range(24)]
+        )
+        doc_id = self._upload_raw_text_pending(
+            project_id,
+            filename="support_pending.txt",
+            content=raw_lines,
+        )
+
+        docs_before = self.client.get(f"/api/projects/{project_id}/ingestion/documents")
+        self.assertEqual(docs_before.status_code, 200, docs_before.text)
+        before_rows = [dict(item) for item in docs_before.json() if isinstance(item, dict)]
+        target_before = next((item for item in before_rows if int(item.get("id") or 0) == doc_id), {})
+        self.assertEqual(str(target_before.get("status") or "").strip().lower(), "pending", target_before)
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "Summarize support tickets with next steps.",
+                "target_profile_id": "edge_gpu",
+                "available_vram_gb": 8,
+                "auto_prepare_data": True,
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        run_payload = run_resp.json()
+        auto_prepare = dict(run_payload.get("auto_prepare") or {})
+        self.assertTrue(bool(auto_prepare.get("succeeded")), run_payload)
+        raw_docs = dict(auto_prepare.get("raw_documents") or {})
+        self.assertTrue(bool(raw_docs.get("attempted")), raw_docs)
+        self.assertGreaterEqual(int(raw_docs.get("processed_count") or 0), 1, raw_docs)
+        self.assertGreaterEqual(int(raw_docs.get("accepted_after") or 0), 1, raw_docs)
+
+        docs_after = self.client.get(f"/api/projects/{project_id}/ingestion/documents")
+        self.assertEqual(docs_after.status_code, 200, docs_after.text)
+        after_rows = [dict(item) for item in docs_after.json() if isinstance(item, dict)]
+        target_after = next((item for item in after_rows if int(item.get("id") or 0) == doc_id), {})
+        self.assertEqual(str(target_after.get("status") or "").strip().lower(), "accepted", target_after)
+
+    def test_item6g_newbie_autopilot_auto_repairs_incompatible_override_in_plan_v2(self):
+        project_id = self._create_project("phase26-item6g")
+        self._write_prepared_rows(
+            project_id,
+            rows=[
+                {
+                    "text": f"User: route ticket {idx}\nAssistant: classify and route by intent {idx}",
+                }
+                for idx in range(30)
+            ],
+        )
+        incompatible_override = "meta-llama/Llama-3.1-8B-Instruct"
+
+        plan_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/plan-v2",
+            json={
+                "intent": "Classify support tickets for on-device assistant.",
+                "target_profile_id": "mobile_cpu",
+                "target_device": "server",
+                "available_vram_gb": 8,
+                "base_model": incompatible_override,
+            },
+        )
+        self.assertEqual(plan_resp.status_code, 200, plan_resp.text)
+        payload = plan_resp.json()
+
+        compatibility = dict(payload.get("target_compatibility") or {})
+        self.assertTrue(bool(compatibility.get("compatible")), compatibility)
+        auto_repair = dict(compatibility.get("auto_repair") or {})
+        self.assertTrue(bool(auto_repair.get("applied")), auto_repair)
+        self.assertEqual(str(auto_repair.get("original_model_id") or "").strip(), incompatible_override)
+        repaired_model = str(auto_repair.get("repaired_model_id") or "").strip()
+        self.assertTrue(repaired_model, auto_repair)
+        self.assertNotEqual(repaired_model, incompatible_override, auto_repair)
+
+        plans = [dict(item) for item in list(payload.get("plans") or []) if isinstance(item, dict)]
+        self.assertGreater(len(plans), 0, payload)
+        for plan in plans:
+            config = dict(plan.get("config") or {})
+            self.assertEqual(str(config.get("base_model") or "").strip(), repaired_model)
+
+        guardrails = dict(payload.get("guardrails") or {})
+        warnings = [str(item) for item in list(guardrails.get("warnings") or [])]
+        self.assertTrue(any("Autopilot switched" in item for item in warnings), warnings)
+
+    @patch("app.api.training.start_training", new_callable=AsyncMock)
+    def test_item6h_newbie_autopilot_one_click_uses_auto_repaired_model(self, mock_start_training: AsyncMock):
+        project_id = self._create_project("phase26-item6h")
+        self._write_prepared_rows(
+            project_id,
+            rows=[
+                {
+                    "text": f"User: resolve issue {idx}\nAssistant: provide support resolution {idx}",
+                }
+                for idx in range(30)
+            ],
+        )
+        incompatible_override = "meta-llama/Llama-3.1-8B-Instruct"
+        mock_start_training.return_value = {"ok": True, "task_id": "stub-autopilot-run"}
+
+        run_resp = self.client.post(
+            f"/api/projects/{project_id}/training/autopilot/one-click-run",
+            json={
+                "intent": "Build an on-device support assistant.",
+                "target_profile_id": "mobile_cpu",
+                "target_device": "server",
+                "available_vram_gb": 8,
+                "base_model": incompatible_override,
+                "plan_profile": "balanced",
+            },
+        )
+        self.assertEqual(run_resp.status_code, 200, run_resp.text)
+        payload = run_resp.json()
+
+        plan_v2 = dict(payload.get("plan_v2") or {})
+        compatibility = dict(plan_v2.get("target_compatibility") or {})
+        self.assertTrue(bool(compatibility.get("compatible")), compatibility)
+        auto_repair = dict(compatibility.get("auto_repair") or {})
+        self.assertTrue(bool(auto_repair.get("applied")), auto_repair)
+        repaired_model = str(auto_repair.get("repaired_model_id") or "").strip()
+        self.assertTrue(repaired_model, auto_repair)
+        self.assertNotEqual(repaired_model, incompatible_override, auto_repair)
+
+        experiment = dict(payload.get("experiment") or {})
+        experiment_id = int(experiment.get("id") or 0)
+        self.assertGreater(experiment_id, 0, payload)
+        self.assertEqual(str(experiment.get("base_model") or "").strip(), repaired_model)
+        self.assertTrue(bool(payload.get("started")), payload)
 
 
 if __name__ == "__main__":

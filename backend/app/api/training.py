@@ -14,9 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.models.dataset import DatasetType
 from app.models.experiment import Checkpoint, Experiment, TrainingMode
 from app.models.project import Project
 from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
+from app.services.dataset_service import (
+    preview_project_data_adapter,
+    resolve_project_dataset_adapter_preference,
+    save_project_dataset_adapter_preference,
+    split_dataset,
+)
+from app.services.ingestion_service import list_documents, process_document
 from app.services.job_service import get_task_status
 from app.services.domain_profile_service import get_training_defaults
 from app.services.domain_runtime_service import resolve_project_domain_runtime
@@ -106,7 +114,10 @@ from app.services.newbie_autopilot_service import (
     estimate_newbie_autopilot_run,
     resolve_newbie_autopilot_intent,
 )
-from app.services.target_profile_service import check_compatibility
+from app.services.target_profile_service import (
+    check_compatibility,
+    resolve_target_device,
+)
 from app.services.capability_contract_service import build_training_capability_contract
 from app.services.cloud_burst_service import (
     build_cloud_burst_launch_plan,
@@ -376,9 +387,11 @@ class CloudBurstArtifactSyncRequest(BaseModel):
 class NewbieAutopilotIntentRequest(BaseModel):
     intent: str = Field(..., min_length=3, max_length=4000)
     target_profile_id: str = Field(default="vllm_server", min_length=1, max_length=64)
-    target_device: str = Field(default="server", pattern="^(mobile|laptop|server)$")
+    target_device: str | None = Field(default=None, pattern="^(mobile|laptop|server)$")
     primary_language: str = Field(default="english", min_length=1, max_length=32)
     available_vram_gb: float | None = Field(default=None, ge=0)
+    base_model: str | None = Field(default=None, min_length=1, max_length=255)
+    auto_prepare_data: bool = True
 
 
 class NewbieAutopilotOneClickRequest(NewbieAutopilotIntentRequest):
@@ -405,6 +418,7 @@ class AutopilotPlanV2Response(BaseModel):
     project_id: int
     intent: str
     intent_rewrite: str | None = None
+    resolved_target_device: str
     plans: list[dict[str, object]]
     recommended_profile: str
     guardrails: dict[str, object]
@@ -438,11 +452,21 @@ def _dedupe_preserve(values: list[str]) -> list[str]:
     return ordered
 
 
+def _resolve_autopilot_target_device(
+    *,
+    target_profile_id: str | None,
+    target_device: str | None,
+) -> str:
+    return resolve_target_device(target_profile_id, fallback=target_device)
+
+
 def _guardrail_reason_code(message: str, *, blocker: bool) -> str:
     token = str(message or "").strip().lower()
     if not token:
         return "GUARDRAIL_BLOCKED" if blocker else "GUARDRAIL_WARNING"
     if "target" in token and ("compat" in token or "not fit" in token):
+        return "TARGET_INCOMPATIBLE"
+    if "target" in token and "vram" in token:
         return "TARGET_INCOMPATIBLE"
     if "dataset" in token or "prepared" in token or "ingest" in token:
         return "DATASET_NOT_READY"
@@ -453,6 +477,275 @@ def _guardrail_reason_code(message: str, *, blocker: bool) -> str:
     if "credential" in token or "secret" in token or "token" in token:
         return "MISSING_CREDENTIALS"
     return "GUARDRAIL_BLOCKED" if blocker else "GUARDRAIL_WARNING"
+
+
+def _has_dataset_guardrail_blocker(blockers: list[str]) -> bool:
+    for item in blockers:
+        if _guardrail_reason_code(str(item), blocker=True) == "DATASET_NOT_READY":
+            return True
+    return False
+
+
+def _compat_params_b(payload: dict[str, object] | None) -> float | None:
+    if not isinstance(payload, dict):
+        return None
+    metadata = payload.get("model_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("parameters_billions")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _find_recommendation_by_model_id(
+    recommendations: list[dict[str, object]],
+    model_id: str,
+) -> dict[str, object] | None:
+    token = str(model_id or "").strip().lower()
+    if not token:
+        return None
+    for item in recommendations:
+        candidate = str(item.get("model_id") or "").strip().lower()
+        if candidate == token:
+            return item
+    return None
+
+
+def _attempt_compatibility_auto_repair(
+    *,
+    model_id: str,
+    target_profile_id: str,
+    recommendations: list[dict[str, object]],
+) -> tuple[str, dict[str, object], dict[str, object] | None]:
+    initial = check_compatibility(model_id, target_profile_id)
+    if bool(initial.get("compatible", False)):
+        return model_id, dict(initial), None
+
+    base_params = _compat_params_b(initial)
+    best_candidate_id = ""
+    best_candidate_compat: dict[str, object] | None = None
+    best_score: tuple[float, int] | None = None
+
+    for idx, rec in enumerate(recommendations):
+        candidate_id = str(rec.get("model_id") or "").strip()
+        if not candidate_id:
+            continue
+        if candidate_id.lower() == model_id.lower():
+            continue
+        candidate_compat = check_compatibility(candidate_id, target_profile_id)
+        if not bool(candidate_compat.get("compatible", False)):
+            continue
+
+        candidate_params = _compat_params_b(candidate_compat)
+        if candidate_params is None:
+            try:
+                candidate_params = float(rec.get("params_b")) if rec.get("params_b") is not None else None
+            except (TypeError, ValueError):
+                candidate_params = None
+
+        if base_params is not None and candidate_params is not None:
+            distance = abs(candidate_params - base_params)
+        else:
+            # Fall back to recommendation rank if model sizes cannot be compared.
+            distance = float(idx)
+        score = (float(distance), int(idx))
+        if best_score is None or score < best_score:
+            best_score = score
+            best_candidate_id = candidate_id
+            best_candidate_compat = dict(candidate_compat)
+
+    if best_candidate_id and best_candidate_compat is not None:
+        return (
+            best_candidate_id,
+            best_candidate_compat,
+            {
+                "applied": True,
+                "original_model_id": model_id,
+                "repaired_model_id": best_candidate_id,
+                "target_profile_id": target_profile_id,
+                "strategy": "nearest_compatible_recommendation",
+            },
+        )
+
+    return model_id, dict(initial), None
+
+
+async def _attempt_autopilot_auto_process_raw_documents(
+    *,
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, object]:
+    report: dict[str, object] = {
+        "attempted": True,
+        "accepted_before": 0,
+        "pending_before": 0,
+        "accepted_after": 0,
+        "processed_count": 0,
+        "failed_count": 0,
+        "failed_document_ids": [],
+        "succeeded": False,
+    }
+    try:
+        docs = await list_documents(db, project_id)
+    except ValueError as exc:
+        report["error"] = str(exc)
+        return report
+
+    accepted_before = 0
+    pending_ids: list[int] = []
+    for doc in docs:
+        raw_status = getattr(doc, "status", None)
+        status_token = str(getattr(raw_status, "value", raw_status) or "").strip().lower()
+        if status_token == "accepted":
+            accepted_before += 1
+        elif status_token in {"pending", "processing", "error"}:
+            try:
+                pending_ids.append(int(getattr(doc, "id")))
+            except (TypeError, ValueError):
+                continue
+
+    report["accepted_before"] = accepted_before
+    report["pending_before"] = len(pending_ids)
+    if not pending_ids:
+        report["accepted_after"] = accepted_before
+        report["succeeded"] = accepted_before > 0
+        return report
+
+    processed = 0
+    failed: list[int] = []
+    for document_id in pending_ids:
+        try:
+            processed_doc = await process_document(db, project_id, document_id)
+            raw_status_after = getattr(processed_doc, "status", None)
+            status_after = str(getattr(raw_status_after, "value", raw_status_after) or "").strip().lower()
+            if status_after == "accepted":
+                processed += 1
+            else:
+                failed.append(document_id)
+        except Exception:  # noqa: BLE001
+            failed.append(document_id)
+            await db.rollback()
+
+    report["processed_count"] = processed
+    report["failed_count"] = len(failed)
+    report["failed_document_ids"] = failed[:20]
+    report["accepted_after"] = accepted_before + processed
+    report["succeeded"] = (accepted_before + processed) > 0
+    return report
+
+
+async def _attempt_autopilot_auto_prepare_data(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    task_profile: str | None,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "attempted": True,
+        "succeeded": False,
+        "method": None,
+        "error": None,
+    }
+    raw_document_report = await _attempt_autopilot_auto_process_raw_documents(
+        db=db,
+        project_id=project_id,
+    )
+    result["raw_documents"] = raw_document_report
+
+    try:
+        preset = await resolve_project_dataset_adapter_preference(db, project_id)
+    except ValueError as exc:
+        result["error"] = str(exc)
+        return result
+
+    adapter_id = str(preset.get("adapter_id") or "default-canonical").strip() or "default-canonical"
+    adapter_config = dict(preset.get("adapter_config") or {})
+    field_mapping = dict(preset.get("field_mapping") or {})
+    resolved_task_profile = str(task_profile or preset.get("task_profile") or "").strip() or None
+
+    try:
+        preview = await preview_project_data_adapter(
+            db=db,
+            project_id=project_id,
+            dataset_type=DatasetType.RAW,
+            sample_size=250,
+            adapter_id="auto",
+            adapter_config=adapter_config,
+            field_mapping=field_mapping,
+            task_profile=resolved_task_profile,
+            preview_limit=10,
+        )
+    except ValueError:
+        preview = None
+    except Exception:  # noqa: BLE001
+        preview = None
+
+    if isinstance(preview, dict):
+        mapped_records = int(preview.get("mapped_records") or 0)
+        if mapped_records > 0:
+            adapter_id = str(preview.get("resolved_adapter_id") or adapter_id).strip() or adapter_id
+            preview_task_profile = str(preview.get("resolved_task_profile") or "").strip() or None
+            if preview_task_profile:
+                resolved_task_profile = preview_task_profile
+            try:
+                await save_project_dataset_adapter_preference(
+                    db,
+                    project_id,
+                    adapter_id=adapter_id,
+                    adapter_config=adapter_config,
+                    field_mapping=field_mapping,
+                    task_profile=resolved_task_profile,
+                )
+            except ValueError:
+                pass
+            try:
+                manifest = await split_dataset(
+                    db=db,
+                    project_id=project_id,
+                    include_types=[DatasetType.RAW.value],
+                    adapter_id=adapter_id,
+                    adapter_config=adapter_config,
+                    field_mapping=field_mapping,
+                    task_profile=resolved_task_profile,
+                )
+                result["succeeded"] = True
+                result["method"] = "raw_auto_detect"
+                result["manifest"] = manifest
+                return result
+            except ValueError:
+                await db.rollback()
+
+    try:
+        manifest = await split_dataset(
+            db=db,
+            project_id=project_id,
+            include_types=[
+                DatasetType.CLEANED.value,
+                DatasetType.SYNTHETIC.value,
+                DatasetType.GOLD_DEV.value,
+            ],
+            adapter_id=adapter_id,
+            adapter_config=adapter_config,
+            field_mapping=field_mapping,
+            task_profile=resolved_task_profile,
+        )
+        result["succeeded"] = True
+        result["method"] = "prepared_sources"
+        result["manifest"] = manifest
+        return result
+    except ValueError as exc:
+        await db.rollback()
+        result["error"] = str(exc)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        await db.rollback()
+        result["error"] = str(exc)
+        return result
 
 
 def _build_guardrail_reason_codes(
@@ -554,6 +847,10 @@ def _build_newbie_autopilot_plan(
     project_id: int,
     req: NewbieAutopilotIntentRequest,
 ) -> dict[str, object]:
+    resolved_target_device = _resolve_autopilot_target_device(
+        target_profile_id=req.target_profile_id,
+        target_device=req.target_device,
+    )
     plan = resolve_newbie_autopilot_intent(
         intent=req.intent,
         target_profile_id=req.target_profile_id,
@@ -562,7 +859,7 @@ def _build_newbie_autopilot_plan(
     )
     task_profile = str(plan.get("task_profile") or "instruction_sft")
     recommendation = recommend_training_base_models(
-        target_device=req.target_device,
+        target_device=resolved_target_device,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
         task_profile=task_profile,
@@ -573,8 +870,11 @@ def _build_newbie_autopilot_plan(
     if recommendation_rows and isinstance(recommendation_rows[0], dict):
         top_recommendation = dict(recommendation_rows[0])
 
+    requested_base_model = str(req.base_model or "").strip()
     safe_config = dict(plan.get("safe_training_config") or {})
-    if top_recommendation is not None:
+    if requested_base_model:
+        safe_config["base_model"] = requested_base_model
+    elif top_recommendation is not None:
         model_id = str(top_recommendation.get("model_id") or "").strip()
         if model_id:
             safe_config["base_model"] = model_id
@@ -647,11 +947,12 @@ def _build_newbie_autopilot_plan(
     }
     return {
         "plan": plan,
+        "resolved_target_device": resolved_target_device,
         "intent_clarification": intent_clarification,
         "dataset_readiness": dataset_readiness,
         "launch_guardrails": launch_guardrails,
         "safe_training_config": safe_config,
-        "model_recommendation": top_recommendation,
+        "model_recommendation": None if requested_base_model else top_recommendation,
         "recommendation_context": recommendation.get("request"),
         "preflight": preflight,
     }
@@ -662,6 +963,10 @@ def _build_newbie_autopilot_plan_v2(
     project_id: int,
     req: NewbieAutopilotIntentRequest,
 ) -> AutopilotPlanV2Response:
+    resolved_target_device = _resolve_autopilot_target_device(
+        target_profile_id=req.target_profile_id,
+        target_device=req.target_device,
+    )
     # 1. Resolve basic intent preset
     plan_meta = resolve_newbie_autopilot_intent(
         intent=req.intent,
@@ -673,24 +978,44 @@ def _build_newbie_autopilot_plan_v2(
 
     # 2. Get base model recommendation
     recommendation = recommend_training_base_models(
-        target_device=req.target_device,
+        target_device=resolved_target_device,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
         task_profile=task_profile,
-        top_k=1,
+        top_k=5,
     )
     top_recommendation = None
-    recommendation_rows = list(recommendation.get("recommendations") or [])
+    recommendation_rows = [
+        dict(item)
+        for item in list(recommendation.get("recommendations") or [])
+        if isinstance(item, dict)
+    ]
     if recommendation_rows and isinstance(recommendation_rows[0], dict):
         top_recommendation = dict(recommendation_rows[0])
 
-    model_id = str(top_recommendation.get("model_id") or "microsoft/phi-2") if top_recommendation else "microsoft/phi-2"
+    requested_base_model = str(req.base_model or "").strip()
+    if requested_base_model:
+        model_id = requested_base_model
+    else:
+        model_id = (
+            str(top_recommendation.get("model_id") or "microsoft/phi-2")
+            if top_recommendation
+            else "microsoft/phi-2"
+        )
+    repaired_model_id, repaired_compatibility, auto_repair = _attempt_compatibility_auto_repair(
+        model_id=model_id,
+        target_profile_id=req.target_profile_id,
+        recommendations=recommendation_rows,
+    )
+    model_id = repaired_model_id
 
     # 3. Build base config for preflight plan
     base_config = dict(plan_meta.get("safe_training_config") or {})
-    if top_recommendation:
-        base_config["base_model"] = model_id
-        suggested_defaults = dict(top_recommendation.get("suggested_defaults") or {})
+    base_config["base_model"] = model_id
+    effective_recommendation = _find_recommendation_by_model_id(recommendation_rows, model_id) or top_recommendation
+    auto_repair_applied = bool(auto_repair and auto_repair.get("applied"))
+    if effective_recommendation and (not requested_base_model or auto_repair_applied):
+        suggested_defaults = dict(effective_recommendation.get("suggested_defaults") or {})
         for key in ("chat_template", "batch_size", "max_seq_length"):
             if key in suggested_defaults and suggested_defaults[key] is not None:
                 base_config[key] = suggested_defaults[key]
@@ -722,9 +1047,30 @@ def _build_newbie_autopilot_plan_v2(
     guardrail_warnings = []
     
     # Target compatibility check
-    compatibility = check_compatibility(model_id, req.target_profile_id)
+    compatibility = dict(repaired_compatibility)
+    if auto_repair_applied:
+        compatibility["auto_repair"] = dict(auto_repair or {})
+        original_model_id = str(auto_repair.get("original_model_id") or "").strip()
+        repaired_model_id = str(auto_repair.get("repaired_model_id") or "").strip()
+        if original_model_id and repaired_model_id and original_model_id != repaired_model_id:
+            guardrail_warnings.append(
+                (
+                    f"Base model '{original_model_id}' was incompatible with target "
+                    f"'{req.target_profile_id}'. Autopilot switched to '{repaired_model_id}'."
+                )
+            )
+
     if not compatibility.get("compatible"):
-        guardrail_blockers.extend(compatibility.get("reasons") or ["Model is not compatible with target hardware constraints."])
+        guardrail_blockers.extend(
+            compatibility.get("reasons") or ["Model is not compatible with target hardware constraints."]
+        )
+    compatibility_warnings = [
+        str(item).strip()
+        for item in list(compatibility.get("warnings") or [])
+        if str(item).strip()
+    ]
+    if compatibility_warnings:
+        guardrail_warnings.extend(compatibility_warnings)
     
     guardrail_blockers.extend([str(item) for item in list(dataset_readiness.get("blockers") or [])])
     guardrail_warnings.extend([str(item) for item in list(dataset_readiness.get("warnings") or [])])
@@ -761,6 +1107,7 @@ def _build_newbie_autopilot_plan_v2(
     return AutopilotPlanV2Response(
         project_id=project_id,
         intent=req.intent,
+        resolved_target_device=resolved_target_device,
         plans=enriched_plans,
         recommended_profile=preflight_plan.get("recommended_profile", "balanced"),
         target_compatibility=compatibility,
@@ -882,12 +1229,18 @@ async def run_training_autopilot_one_click(
     await _get_project_or_404(db, project_id)
 
     effective_intent = str(req.intent).strip()
+    resolved_target_device = _resolve_autopilot_target_device(
+        target_profile_id=req.target_profile_id,
+        target_device=req.target_device,
+    )
     effective_req = NewbieAutopilotIntentRequest(
         intent=effective_intent,
         target_profile_id=req.target_profile_id,
-        target_device=req.target_device,
+        target_device=resolved_target_device,
         primary_language=req.primary_language,
         available_vram_gb=req.available_vram_gb,
+        base_model=req.base_model,
+        auto_prepare_data=req.auto_prepare_data,
     )
     applied_intent_rewrite: dict[str, object] = {
         "applied": False,
@@ -917,9 +1270,11 @@ async def run_training_autopilot_one_click(
         effective_req = NewbieAutopilotIntentRequest(
             intent=effective_intent,
             target_profile_id=req.target_profile_id,
-            target_device=req.target_device,
+            target_device=resolved_target_device,
             primary_language=req.primary_language,
             available_vram_gb=req.available_vram_gb,
+            base_model=req.base_model,
+            auto_prepare_data=req.auto_prepare_data,
         )
         try:
             plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
@@ -933,12 +1288,73 @@ async def run_training_autopilot_one_click(
         }
 
     plan_payload = plan_v2_resp.model_dump()
+    requested_profile = normalize_training_plan_profile(req.plan_profile) or "balanced"
+    launch_guardrails = plan_v2_resp.guardrails
+    auto_prepare_result: dict[str, object] | None = None
+    can_one_click_run = bool(launch_guardrails.get("can_run", False))
+    blockers = [
+        str(item).strip()
+        for item in list(launch_guardrails.get("blockers") or [])
+        if str(item).strip()
+    ]
+
+    if (
+        not can_one_click_run
+        and bool(req.auto_prepare_data)
+        and _has_dataset_guardrail_blocker(blockers)
+    ):
+        plan_options_for_hint = [dict(item) for item in list(plan_v2_resp.plans or []) if isinstance(item, dict)]
+        selected_plan_for_hint = next(
+            (
+                p
+                for p in plan_options_for_hint
+                if (normalize_training_plan_profile(p.get("profile")) or str(p.get("profile") or "").strip().lower())
+                == requested_profile
+            ),
+            plan_options_for_hint[0] if plan_options_for_hint else {},
+        )
+        config_hint = dict(selected_plan_for_hint.get("config") or {})
+        task_profile_hint = str(config_hint.get("task_profile") or "").strip() or None
+        auto_prepare_result = await _attempt_autopilot_auto_prepare_data(
+            db=db,
+            project_id=project_id,
+            task_profile=task_profile_hint,
+        )
+        if bool(auto_prepare_result.get("succeeded")):
+            try:
+                plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            plan_payload = plan_v2_resp.model_dump()
+            launch_guardrails = plan_v2_resp.guardrails
+            can_one_click_run = bool(launch_guardrails.get("can_run", False))
+            blockers = [
+                str(item).strip()
+                for item in list(launch_guardrails.get("blockers") or [])
+                if str(item).strip()
+            ]
+
+    if not can_one_click_run:
+        error_preview = blockers[0] if blockers else "Autopilot guardrails blocked this run."
+        if auto_prepare_result is not None and not bool(auto_prepare_result.get("succeeded")):
+            prep_error = str(auto_prepare_result.get("error") or "").strip()
+            if prep_error:
+                error_preview = f"{error_preview} Auto data prep failed: {prep_error}"
+        return {
+            "project_id": project_id,
+            "experiment": None,
+            "started": False,
+            "start_result": None,
+            "start_error": f"Autopilot blocked one-click run: {error_preview}",
+            "applied_intent_rewrite": applied_intent_rewrite,
+            "auto_prepare": auto_prepare_result,
+            "plan_v2": plan_payload,
+        }
+
     plan_options = [dict(item) for item in list(plan_v2_resp.plans or []) if isinstance(item, dict)]
     if not plan_options:
         raise HTTPException(400, "Autopilot could not generate a runnable plan.")
 
-    # Pick the plan matching req.plan_profile
-    requested_profile = normalize_training_plan_profile(req.plan_profile) or "balanced"
     selected_plan = next(
         (
             p
@@ -948,25 +1364,6 @@ async def run_training_autopilot_one_click(
         ),
         plan_options[0],
     )
-    launch_guardrails = plan_v2_resp.guardrails
-    can_one_click_run = bool(launch_guardrails.get("can_run", False))
-    if not can_one_click_run:
-        blockers = [
-            str(item).strip()
-            for item in list(launch_guardrails.get("blockers") or [])
-            if str(item).strip()
-        ]
-        error_preview = blockers[0] if blockers else "Autopilot guardrails blocked this run."
-        return {
-            "project_id": project_id,
-            "experiment": None,
-            "started": False,
-            "start_result": None,
-            "start_error": f"Autopilot blocked one-click run: {error_preview}",
-            "applied_intent_rewrite": applied_intent_rewrite,
-            "plan_v2": plan_payload,
-        }
-
     safe_config = dict(selected_plan.get("config") or {})
     base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
     training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
@@ -1020,6 +1417,7 @@ async def run_training_autopilot_one_click(
         "start_result": start_result,
         "start_error": start_error or None,
         "applied_intent_rewrite": applied_intent_rewrite,
+        "auto_prepare": auto_prepare_result,
         "plan_v2": plan_payload,
     }
 
