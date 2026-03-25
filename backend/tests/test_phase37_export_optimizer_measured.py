@@ -162,6 +162,19 @@ class Phase37ExportOptimizerMeasuredTests(unittest.TestCase):
         reasons = [str(item) for item in list(top.get("reasons") or [])]
         self.assertTrue(any("Benchmark probe failed" in item for item in reasons), reasons)
 
+    def test_optimizer_returns_actionable_error_when_no_artifacts_exist(self):
+        project_id = self._create_project("phase37-optimize-empty")
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/export/optimize",
+            json={"target_id": "vllm_server"},
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+        payload = dict(resp.json() or {})
+        detail = str(payload.get("detail") or "")
+        self.assertIn("No model artifacts were found for optimization", detail)
+        self.assertIn("Create at least one trained model", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

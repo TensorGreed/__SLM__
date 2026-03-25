@@ -307,6 +307,97 @@ describe('ProjectWizardPage newbie autopilot', () => {
     expect(screen.getByText(/heuristic estimates from dataset size and target profile/i)).toBeInTheDocument();
   });
 
+  it('shows blocked launch messaging and disables one-click run when guardrails fail', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url.includes('/training/autopilot/plan-v2')) {
+        return {
+          data: {
+            project_id: 1,
+            intent: 'blocked intent',
+            plans: [
+              {
+                profile: 'balanced',
+                title: 'Balanced',
+                description: 'Balanced profile',
+                estimate: {
+                  estimated_seconds: 420,
+                  estimated_cost: 2.5,
+                  unit: 'credits',
+                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+            ],
+            recommended_profile: 'balanced',
+            guardrails: {
+              can_run: false,
+              blockers: ['VRAM incompatibility with selected target profile.'],
+              warnings: ['Target compatibility check failed.'],
+              one_click_fix_available: false,
+            },
+            dataset_readiness: {
+              ready: true,
+              prepared_row_count: 128,
+              blockers: [],
+              auto_fixes: [],
+            },
+            target_compatibility: {
+              compatible: false,
+              reasons: [
+                'Estimated minimum VRAM (7.6 GB) exceeds target baseline (4 GB) by 3.6 GB.',
+              ],
+              warnings: [],
+              target: {
+                id: 'edge_gpu',
+                name: 'Edge GPU (NVIDIA Jetson/Desktop)',
+              },
+              model_metadata: {
+                model_id: 'microsoft/phi-2',
+                parameters_billions: 6.0,
+                estimated_min_vram_gb: 7.6,
+                source: 'hf_config',
+              },
+            },
+            intent_clarification: {
+              required: false,
+              confidence_band: 'high',
+              rewrite_suggestions: [],
+            },
+          },
+        };
+      }
+      if (url.includes('/training/autopilot/one-click-run')) {
+        return {
+          data: {
+            started: true,
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ProjectWizardPage />);
+
+    await screen.findByText('vLLM Server');
+    await user.click(screen.getByRole('button', { name: 'Next: Describe Goal' }));
+    await user.type(screen.getByLabelText('Plain-language goal'), 'Train a support assistant for ticket triage.');
+    await user.click(screen.getByRole('button', { name: 'Build Safe Plan' }));
+
+    expect(await screen.findByText('Choose your path')).toBeInTheDocument();
+    expect(screen.getByText(/Target compatibility:/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Estimated minimum VRAM \(7.6 GB\) exceeds target baseline \(4 GB\) by 3.6 GB\./i),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Please resolve blockers before launching.')).toBeInTheDocument();
+
+    const launchButton = screen.getByRole('button', { name: 'One-Click Run' });
+    expect(launchButton).toBeDisabled();
+    expect(
+      apiMock.post.mock.calls.some(([url]) => String(url).includes('/training/autopilot/one-click-run')),
+    ).toBe(false);
+  });
+
   it('applies suggested intent rewrite before one-click launch', async () => {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url.includes('/targets/catalog')) {

@@ -149,6 +149,38 @@ class Phase39TargetVramBlockerTests(unittest.TestCase):
         self.assertEqual(str(payload.get("task_id") or ""), "phase39-task", payload)
         self.assertEqual(mock_start_training.await_count, 1)
 
+    @patch("app.api.training.start_training", new_callable=AsyncMock)
+    @patch("app.services.target_profile_service.introspect_hf_model")
+    def test_start_training_allows_vram_warning_band_when_not_clearly_over_target(
+        self,
+        mock_introspect,
+        mock_start_training: AsyncMock,
+    ):
+        project_id = self._create_project("phase39-vram-warning")
+        self._set_target_profile(project_id, "edge_gpu")
+        experiment_id = self._create_experiment(project_id, base_model="microsoft/phi-2")
+        mock_start_training.return_value = {"status": "queued", "task_id": "phase39-warning-task"}
+
+        mock_introspect.return_value = {
+            "model_id": "microsoft/phi-2",
+            "resolved": True,
+            "source": "hf_config",
+            "params_estimate_b": 6.0,
+            "memory_profile": {"estimated_min_vram_gb": 4.3, "estimated_ideal_vram_gb": 6.0},
+            "architecture": "causal_lm",
+            "context_length": 4096,
+            "license": "apache-2.0",
+        }
+
+        start_resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments/{experiment_id}/start",
+        )
+        self.assertEqual(start_resp.status_code, 200, start_resp.text)
+        payload = dict(start_resp.json() or {})
+        self.assertEqual(str(payload.get("status") or ""), "queued", payload)
+        self.assertEqual(str(payload.get("task_id") or ""), "phase39-warning-task", payload)
+        self.assertEqual(mock_start_training.await_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
