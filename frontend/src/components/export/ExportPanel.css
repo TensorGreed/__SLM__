@@ -410,6 +410,17 @@
     transform: translateY(-2px);
 }
 
+.optimization-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-sm);
+}
+
+.optimization-source-badge {
+    white-space: nowrap;
+}
+
 .recommendation-badge {
     position: absolute;
     top: -10px;
@@ -448,6 +459,36 @@
 .optimization-metric-value {
     font-size: var(--font-size-sm);
     font-weight: 600;
+}
+
+.optimization-metric-source {
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.optimization-metric-source.is-measured {
+    color: var(--color-success);
+}
+
+.optimization-metric-source.is-estimated,
+.optimization-metric-source.is-simulated {
+    color: var(--color-warning);
+}
+
+.optimization-metric-source.is-mixed {
+    color: var(--color-info);
+}
+
+.optimization-provenance-note {
+    font-size: var(--font-size-xs);
+    color: #556a86;
+    background: #f5f8fd;
+    border: 1px dashed #c9d8ef;
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
 }
 
 .optimization-reasons {

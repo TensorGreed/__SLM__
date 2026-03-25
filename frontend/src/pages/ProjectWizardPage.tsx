@@ -20,6 +20,10 @@ interface AutopilotPlan {
     estimated_cost?: number;
     unit?: string;
     confidence_score?: number;
+    metric_source?: string;
+    provenance?: string;
+    source?: string;
+    note?: string | null;
     labels?: { speed: string; quality: string; cost: string };
   };
 }
@@ -175,6 +179,7 @@ interface RemoteImportStatusResponse {
 }
 
 type TargetDevice = 'mobile' | 'laptop' | 'server';
+type PlanEstimateSource = 'measured' | 'estimated' | 'simulated';
 
 const TARGET_PROFILE_DEVICE_MAP: Record<string, TargetDevice> = {
   mobile_cpu: 'mobile',
@@ -182,6 +187,70 @@ const TARGET_PROFILE_DEVICE_MAP: Record<string, TargetDevice> = {
   edge_gpu: 'laptop',
   vllm_server: 'server',
 };
+
+const PLAN_ESTIMATE_BADGE_CLASS: Record<PlanEstimateSource, string> = {
+  measured: 'badge-success',
+  estimated: 'badge-warning',
+  simulated: 'badge-warning',
+};
+
+const PLAN_ESTIMATE_BADGE_LABEL: Record<PlanEstimateSource, string> = {
+  measured: 'Measured',
+  estimated: 'Estimated',
+  simulated: 'Simulated',
+};
+
+function normalizePlanEstimateSource(value: unknown): PlanEstimateSource | null {
+  const token = String(value || '').trim().toLowerCase();
+  if (!token) return null;
+  if (token === 'measured') return 'measured';
+  if (token === 'simulated') return 'simulated';
+  return 'estimated';
+}
+
+function planEstimateSource(plan: AutopilotPlan): PlanEstimateSource {
+  const estimate = plan.estimate;
+  const explicit = normalizePlanEstimateSource(estimate?.metric_source)
+    || normalizePlanEstimateSource(estimate?.provenance)
+    || normalizePlanEstimateSource(estimate?.source);
+  return explicit || 'estimated';
+}
+
+function formatPlanEstimateMinutes(seconds: unknown, source: PlanEstimateSource): string {
+  const parsed = Number(seconds);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 'n/a';
+  const minutes = Math.max(1, Math.round(parsed / 60));
+  const prefix = source === 'measured' ? '' : '~';
+  return `${prefix}${minutes}m`;
+}
+
+function formatPlanEstimateCost(cost: unknown, unit: unknown, source: PlanEstimateSource): string {
+  const parsed = Number(cost);
+  const unitLabel = String(unit || '').trim();
+  if (!Number.isFinite(parsed)) return 'n/a';
+  const prefix = source === 'measured' ? '' : '~';
+  const numeric = Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(2);
+  return `${prefix}${numeric}${unitLabel ? ` ${unitLabel}` : ''}`;
+}
+
+function planEstimateHelpText(plan: AutopilotPlan, source: PlanEstimateSource): string {
+  const estimate = plan.estimate || {};
+  const note = String(estimate.note || '').trim();
+  const confidence = Number(estimate.confidence_score);
+  const confidenceText = Number.isFinite(confidence)
+    ? ` Confidence: ${(confidence * 100).toFixed(0)}%.`
+    : '';
+  if (source === 'measured') {
+    const base = 'Time/cost come from measured historical runs on comparable configs.';
+    return `${base}${confidenceText}${note ? ` ${note}` : ''}`.trim();
+  }
+  if (source === 'simulated') {
+    const base = 'Time/cost are simulated planning values, not measured from real runs.';
+    return `${base}${confidenceText}${note ? ` ${note}` : ''}`.trim();
+  }
+  const base = 'Time/cost are heuristic estimates from dataset size and target profile, not measured runs.';
+  return `${base}${confidenceText}${note ? ` ${note}` : ''}`.trim();
+}
 
 export default function ProjectWizardPage() {
   const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
@@ -911,29 +980,42 @@ export default function ProjectWizardPage() {
               </div>
 
               <div className="autopilot-plan-grid">
-                {(planResponse?.plans || []).map((plan) => (
-                  <div
-                    key={plan.profile}
-                    className={`autopilot-plan-card ${selectedProfile === plan.profile ? 'selected' : ''}`}
-                    onClick={() => setSelectedProfile(plan.profile || 'balanced')}
-                  >
-                    <div className="plan-header">
-                      <h4>{plan.title}</h4>
-                      {plan.profile === planResponse?.recommended_profile && (
-                        <span className="badge badge-success">Recommended</span>
-                      )}
+                {(planResponse?.plans || []).map((plan) => {
+                  const estimateSource = planEstimateSource(plan);
+                  const estimateHelp = planEstimateHelpText(plan, estimateSource);
+                  return (
+                    <div
+                      key={plan.profile}
+                      className={`autopilot-plan-card ${selectedProfile === plan.profile ? 'selected' : ''}`}
+                      onClick={() => setSelectedProfile(plan.profile || 'balanced')}
+                    >
+                      <div className="plan-header">
+                        <h4>{plan.title}</h4>
+                        <div className="plan-header-badges">
+                          {plan.profile === planResponse?.recommended_profile && (
+                            <span className="badge badge-success">Recommended</span>
+                          )}
+                          <span
+                            className={`badge ${PLAN_ESTIMATE_BADGE_CLASS[estimateSource]} plan-provenance-badge`}
+                            title={estimateHelp}
+                          >
+                            {PLAN_ESTIMATE_BADGE_LABEL[estimateSource]}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="plan-description">{plan.description}</p>
+                      <div className="plan-estimate">
+                        <div>Time: {formatPlanEstimateMinutes(plan.estimate?.estimated_seconds, estimateSource)}</div>
+                        <div>Cost: {formatPlanEstimateCost(plan.estimate?.estimated_cost, plan.estimate?.unit, estimateSource)}</div>
+                      </div>
+                      <div className="plan-estimate-note" title={estimateHelp}>{estimateHelp}</div>
+                      <div className="plan-labels">
+                        <span className="label-badge speed">{plan.estimate?.labels?.speed} Speed</span>
+                        <span className="label-badge quality">{plan.estimate?.labels?.quality} Quality</span>
+                      </div>
                     </div>
-                    <p className="plan-description">{plan.description}</p>
-                    <div className="plan-estimate">
-                      <div>Time: ~{Math.round((plan.estimate?.estimated_seconds || 0) / 60)}m</div>
-                      <div>Cost: {plan.estimate?.estimated_cost} {plan.estimate?.unit}</div>
-                    </div>
-                    <div className="plan-labels">
-                      <span className="label-badge speed">{plan.estimate?.labels?.speed} Speed</span>
-                      <span className="label-badge quality">{plan.estimate?.labels?.quality} Quality</span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {planResponse?.dataset_readiness && (

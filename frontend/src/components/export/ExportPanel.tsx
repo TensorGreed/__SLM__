@@ -181,6 +181,9 @@ interface OptimizationMetric {
     quality_score: number;
 }
 
+type OptimizationMetricKey = keyof OptimizationMetric;
+type MetricSource = 'measured' | 'estimated' | 'mixed' | 'simulated';
+
 interface OptimizationCandidate {
     id: string;
     name: string;
@@ -189,6 +192,13 @@ interface OptimizationCandidate {
     metrics: OptimizationMetric;
     is_recommended: boolean;
     reasons: string[];
+    metric_source?: string;
+    metric_sources?: Partial<Record<OptimizationMetricKey, string>>;
+    measurement?: {
+        mode?: string;
+        fallback_reason?: string;
+        [key: string]: unknown;
+    } | null;
 }
 
 interface OptimizationResponse {
@@ -208,6 +218,102 @@ function toErrorMessage(error: unknown): string {
         return error.message;
     }
     return 'Operation failed';
+}
+
+const METRIC_SOURCE_BADGE_CLASS: Record<MetricSource, string> = {
+    measured: 'badge-success',
+    mixed: 'badge-info',
+    estimated: 'badge-warning',
+    simulated: 'badge-warning',
+};
+
+const METRIC_SOURCE_LABEL: Record<MetricSource, string> = {
+    measured: 'Measured',
+    mixed: 'Mixed Source',
+    estimated: 'Estimated',
+    simulated: 'Simulated',
+};
+
+const METRIC_SOURCE_SHORT_LABEL: Record<MetricSource, string> = {
+    measured: 'Measured',
+    mixed: 'Mixed',
+    estimated: 'Estimated',
+    simulated: 'Simulated',
+};
+
+function normalizeMetricSource(value: unknown): MetricSource | null {
+    const token = String(value || '').trim().toLowerCase();
+    if (!token) return null;
+    if (token === 'measured') return 'measured';
+    if (token === 'mixed') return 'mixed';
+    if (token === 'simulated') return 'simulated';
+    return 'estimated';
+}
+
+function candidateMetricSource(candidate: OptimizationCandidate): MetricSource {
+    const explicit = normalizeMetricSource(candidate.metric_source);
+    if (explicit) return explicit;
+    const modeSource = normalizeMetricSource(candidate.measurement?.mode);
+    if (modeSource) return modeSource;
+    return 'estimated';
+}
+
+function metricSourceForKey(candidate: OptimizationCandidate, key: OptimizationMetricKey): MetricSource {
+    const perMetric = normalizeMetricSource(candidate.metric_sources?.[key]);
+    if (perMetric) return perMetric;
+    const aggregate = candidateMetricSource(candidate);
+    if (aggregate === 'mixed') return 'estimated';
+    return aggregate;
+}
+
+function metricSourceHelpText(source: MetricSource): string {
+    if (source === 'measured') {
+        return 'Measured from real local benchmark probes on project artifacts.';
+    }
+    if (source === 'mixed') {
+        return 'Combination of measured and estimated values.';
+    }
+    if (source === 'simulated') {
+        return 'Simulated numbers for planning only; not measured on live artifacts.';
+    }
+    return 'Estimated from artifact profile/heuristics because probe data is unavailable.';
+}
+
+function candidateProvenanceText(candidate: OptimizationCandidate): string {
+    const source = candidateMetricSource(candidate);
+    const fallbackReason = String(candidate.measurement?.fallback_reason || '').trim();
+    if (source === 'measured') {
+        return 'All candidate metrics are measured from benchmark probe runs.';
+    }
+    if (source === 'mixed') {
+        return fallbackReason
+            ? `This card mixes measured and estimated values. ${fallbackReason}`
+            : 'This card mixes measured and estimated values. Check per-metric tags for details.';
+    }
+    if (source === 'simulated') {
+        return fallbackReason
+            ? `Metrics are simulated for planning only. ${fallbackReason}`
+            : 'Metrics are simulated for planning only and may differ from runtime behavior.';
+    }
+    return fallbackReason
+        ? `Metrics are estimated from artifact metadata/heuristics. ${fallbackReason}`
+        : 'Metrics are estimated from artifact metadata/heuristics and not directly benchmarked.';
+}
+
+function formatOptimizationMetricValue(
+    key: OptimizationMetricKey,
+    value: number | null | undefined,
+    source: MetricSource,
+): string {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+    const prefix = source === 'measured' ? '' : '~';
+    if (key === 'latency_ms') {
+        return `${prefix}${value.toFixed(1)}ms`;
+    }
+    if (key === 'memory_gb') {
+        return `${prefix}${value.toFixed(2)}GB`;
+    }
+    return `${prefix}${(value * 100).toFixed(1)}%`;
 }
 
 export default function ExportPanel({ projectId }: ExportPanelProps) {
@@ -372,7 +478,10 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                     target_id: optimizationResults?.target_id,
                     candidate_id: selectedOptimization.id,
                     metrics: selectedOptimization.metrics,
-                    reasons: selectedOptimization.reasons
+                    reasons: selectedOptimization.reasons,
+                    metric_source: selectedOptimization.metric_source,
+                    metric_sources: selectedOptimization.metric_sources,
+                    measurement: selectedOptimization.measurement,
                 } : null
             });
             const runPayload: ExportRecord = {
@@ -821,49 +930,98 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                             </button>
                         </div>
                         <div className="optimization-candidates-grid">
-                            {optimizationResults.candidates.map((c) => (
-                                <div
-                                    key={c.id}
-                                    className={`optimization-card ${c.is_recommended ? 'recommended' : ''}`}
-                                >
-                                    {c.is_recommended && (
-                                        <div className="recommendation-badge">RECOMMENDED</div>
-                                    )}
-                                    <div className="serve-template-card__title">{c.name}</div>
-                                    <div className="optimization-metrics">
-                                        <div className="optimization-metric-item">
-                                            <span className="optimization-metric-label">Latency</span>
-                                            <span className="optimization-metric-value">{c.metrics.latency_ms}ms</span>
-                                        </div>
-                                        <div className="optimization-metric-item">
-                                            <span className="optimization-metric-label">Memory</span>
-                                            <span className="optimization-metric-value">{c.metrics.memory_gb}GB</span>
-                                        </div>
-                                        <div className="optimization-metric-item">
-                                            <span className="optimization-metric-label">Quality</span>
-                                            <span className="optimization-metric-value">
-                                                {(c.metrics.quality_score * 100).toFixed(1)}%
+                            {optimizationResults.candidates.map((c) => {
+                                const aggregateSource = candidateMetricSource(c);
+                                const aggregateHelp = candidateProvenanceText(c);
+                                const latencySource = metricSourceForKey(c, 'latency_ms');
+                                const memorySource = metricSourceForKey(c, 'memory_gb');
+                                const qualitySource = metricSourceForKey(c, 'quality_score');
+                                const sourceClassName = (source: MetricSource) => {
+                                    if (source === 'measured') return 'is-measured';
+                                    if (source === 'mixed') return 'is-mixed';
+                                    if (source === 'simulated') return 'is-simulated';
+                                    return 'is-estimated';
+                                };
+                                return (
+                                    <div
+                                        key={c.id}
+                                        className={`optimization-card ${c.is_recommended ? 'recommended' : ''}`}
+                                    >
+                                        {c.is_recommended && (
+                                            <div className="recommendation-badge">RECOMMENDED</div>
+                                        )}
+                                        <div className="optimization-card-header">
+                                            <div className="serve-template-card__title">{c.name}</div>
+                                            <span
+                                                className={`badge ${METRIC_SOURCE_BADGE_CLASS[aggregateSource]} optimization-source-badge`}
+                                                title={aggregateHelp}
+                                                aria-label={`${METRIC_SOURCE_LABEL[aggregateSource]} metrics`}
+                                            >
+                                                {METRIC_SOURCE_LABEL[aggregateSource]}
                                             </span>
                                         </div>
-                                    </div>
-                                    {c.reasons.length > 0 && (
-                                        <div className="optimization-reasons">
-                                            <ul>
-                                                {c.reasons.map((r, i) => (
-                                                    <li key={i}>{r}</li>
-                                                ))}
-                                            </ul>
+                                        <div className="optimization-metrics">
+                                            <div className="optimization-metric-item">
+                                                <span className="optimization-metric-label">Latency</span>
+                                                <span className="optimization-metric-value">
+                                                    {formatOptimizationMetricValue('latency_ms', c.metrics.latency_ms, latencySource)}
+                                                </span>
+                                                <span
+                                                    className={`optimization-metric-source ${sourceClassName(latencySource)}`}
+                                                    title={metricSourceHelpText(latencySource)}
+                                                >
+                                                    {METRIC_SOURCE_SHORT_LABEL[latencySource]}
+                                                </span>
+                                            </div>
+                                            <div className="optimization-metric-item">
+                                                <span className="optimization-metric-label">Memory</span>
+                                                <span className="optimization-metric-value">
+                                                    {formatOptimizationMetricValue('memory_gb', c.metrics.memory_gb, memorySource)}
+                                                </span>
+                                                <span
+                                                    className={`optimization-metric-source ${sourceClassName(memorySource)}`}
+                                                    title={metricSourceHelpText(memorySource)}
+                                                >
+                                                    {METRIC_SOURCE_SHORT_LABEL[memorySource]}
+                                                </span>
+                                            </div>
+                                            <div className="optimization-metric-item">
+                                                <span className="optimization-metric-label">Quality</span>
+                                                <span className="optimization-metric-value">
+                                                    {formatOptimizationMetricValue('quality_score', c.metrics.quality_score, qualitySource)}
+                                                </span>
+                                                <span
+                                                    className={`optimization-metric-source ${sourceClassName(qualitySource)}`}
+                                                    title={metricSourceHelpText(qualitySource)}
+                                                >
+                                                    {METRIC_SOURCE_SHORT_LABEL[qualitySource]}
+                                                </span>
+                                            </div>
                                         </div>
-                                    )}
-                                    <button
-                                        className="btn btn-secondary btn-sm"
-                                        style={{ marginTop: 'auto' }}
-                                        onClick={() => applyOptimization(c)}
-                                    >
-                                        Apply Settings
-                                    </button>
-                                </div>
-                            ))}
+                                        {aggregateSource !== 'measured' && (
+                                            <div className="optimization-provenance-note" title={aggregateHelp}>
+                                                {aggregateHelp}
+                                            </div>
+                                        )}
+                                        {c.reasons.length > 0 && (
+                                            <div className="optimization-reasons">
+                                                <ul>
+                                                    {c.reasons.map((r, i) => (
+                                                        <li key={i}>{r}</li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            style={{ marginTop: 'auto' }}
+                                            onClick={() => applyOptimization(c)}
+                                        >
+                                            Apply Settings
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 )}

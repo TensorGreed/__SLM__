@@ -402,6 +402,18 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    gap: 8px;
+}
+
+.plan-header-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.plan-provenance-badge {
+    white-space: nowrap;
 }
 
 .plan-header h4 {
@@ -425,6 +437,13 @@
     color: #1b3f75;
     padding-top: 8px;
     border-top: 1px solid #e8edf5;
+}
+
+.plan-estimate-note {
+    margin-top: 2px;
+    font-size: 0.74rem;
+    color: #5e7391;
+    line-height: 1.35;
 }
 
 .plan-labels {

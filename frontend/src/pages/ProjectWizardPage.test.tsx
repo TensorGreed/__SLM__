@@ -199,6 +199,114 @@ describe('ProjectWizardPage newbie autopilot', () => {
     expect(await screen.findByText('Model Ready')).toBeInTheDocument();
   });
 
+  it('renders estimate provenance badges and copy for measured/estimated/simulated plans', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url.includes('/training/autopilot/plan-v2')) {
+        return {
+          data: {
+            project_id: 1,
+            intent: 'support intent',
+            plans: [
+              {
+                profile: 'fastest',
+                title: 'Fastest',
+                description: 'Fastest profile',
+                estimate: {
+                  estimated_seconds: 120,
+                  estimated_cost: 0.6,
+                  unit: 'credits',
+                  metric_source: 'simulated',
+                  labels: { speed: 'High', quality: 'Medium', cost: 'Low' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+              {
+                profile: 'balanced',
+                title: 'Balanced',
+                description: 'Balanced profile',
+                estimate: {
+                  estimated_seconds: 420,
+                  estimated_cost: 2.5,
+                  unit: 'credits',
+                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+              {
+                profile: 'best_quality',
+                title: 'Best Quality',
+                description: 'Best quality profile',
+                estimate: {
+                  estimated_seconds: 900,
+                  estimated_cost: 5.5,
+                  unit: 'credits',
+                  metric_source: 'measured',
+                  labels: { speed: 'Low', quality: 'Highest', cost: 'High' },
+                },
+                preflight: { ok: true, errors: [], warnings: [] },
+              },
+            ],
+            recommended_profile: 'balanced',
+            guardrails: {
+              can_run: true,
+              blockers: [],
+              warnings: [],
+              one_click_fix_available: false,
+            },
+            dataset_readiness: {
+              ready: true,
+              prepared_row_count: 128,
+              blockers: [],
+              auto_fixes: [],
+            },
+            intent_clarification: {
+              required: false,
+              confidence_band: 'high',
+              rewrite_suggestions: [],
+            },
+          },
+        };
+      }
+      if (url.includes('/training/autopilot/one-click-run')) {
+        return {
+          data: {
+            project_id: 1,
+            experiment: {
+              id: 99,
+              name: 'Autopilot - Support Q&A Assistant',
+              status: 'pending',
+              base_model: 'microsoft/phi-2',
+            },
+            started: true,
+            start_result: { status: 'started' },
+            start_error: null,
+            applied_intent_rewrite: {
+              applied: false,
+              original_intent: null,
+              rewritten_intent: null,
+              source: null,
+            },
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ProjectWizardPage />);
+
+    await screen.findByText('vLLM Server');
+    await user.click(screen.getByRole('button', { name: 'Next: Describe Goal' }));
+    await user.type(screen.getByLabelText('Plain-language goal'), 'Summarize each support ticket into short answers.');
+    await user.click(screen.getByRole('button', { name: 'Build Safe Plan' }));
+
+    expect(await screen.findByText('Choose your path')).toBeInTheDocument();
+    expect(screen.getByText('Simulated')).toBeInTheDocument();
+    expect(screen.getByText('Measured')).toBeInTheDocument();
+    expect(screen.getByText(/simulated planning values, not measured from real runs/i)).toBeInTheDocument();
+    expect(screen.getByText(/heuristic estimates from dataset size and target profile/i)).toBeInTheDocument();
+  });
+
   it('applies suggested intent rewrite before one-click launch', async () => {
     apiMock.get.mockImplementation(async (url: string) => {
       if (url.includes('/targets/catalog')) {

@@ -193,4 +193,78 @@ describe('ExportPanel serve run flow', () => {
     });
     expect(await screen.findByText('stopping')).toBeInTheDocument();
   });
+
+  it('shows measured vs estimated provenance in optimization tradeoff cards', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url.includes('/export/optimize')) {
+        return {
+          data: {
+            project_id: 9,
+            target_id: 'runner.vllm',
+            candidates: [
+              {
+                id: 'c-measured',
+                name: 'HF + 4bit',
+                quantization: '4-bit',
+                runtime_template: 'huggingface',
+                metrics: {
+                  latency_ms: 18.2,
+                  memory_gb: 1.2,
+                  quality_score: 0.91,
+                },
+                is_recommended: true,
+                reasons: ['Measured probe run completed'],
+                metric_source: 'measured',
+                metric_sources: {
+                  latency_ms: 'measured',
+                  memory_gb: 'measured',
+                  quality_score: 'measured',
+                },
+                measurement: {
+                  mode: 'measured',
+                },
+              },
+              {
+                id: 'c-estimated',
+                name: 'GGUF + 4bit',
+                quantization: '4-bit',
+                runtime_template: 'gguf',
+                metrics: {
+                  latency_ms: 45,
+                  memory_gb: 0.88,
+                  quality_score: 0.84,
+                },
+                is_recommended: false,
+                reasons: ['Probe unavailable for GGUF on this host'],
+                metric_source: 'estimated',
+                metric_sources: {
+                  latency_ms: 'estimated',
+                  memory_gb: 'measured',
+                  quality_score: 'estimated',
+                },
+                measurement: {
+                  mode: 'estimated',
+                  fallback_reason: 'Runtime probe unavailable for this format.',
+                },
+              },
+            ],
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ExportPanel projectId={9} />);
+
+    const selectors = await screen.findAllByRole('combobox');
+    await user.selectOptions(selectors[0], '1');
+    await user.click(screen.getByRole('button', { name: 'Optimize for Target' }));
+
+    expect(await screen.findByText('Optimization Tradeoff Cards')).toBeInTheDocument();
+    expect(screen.getByLabelText('Measured metrics')).toBeInTheDocument();
+    expect(screen.getByLabelText('Estimated metrics')).toBeInTheDocument();
+    expect(screen.getByText('~45.0ms')).toBeInTheDocument();
+    expect(screen.getByText(/Runtime probe unavailable for this format\./i)).toBeInTheDocument();
+  });
 });
