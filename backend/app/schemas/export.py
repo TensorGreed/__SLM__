@@ -1,5 +1,6 @@
-from pydantic import BaseModel
-from typing import Any, List, Optional
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 class OptimizationRequest(BaseModel):
     target_id: str
@@ -16,9 +17,27 @@ class OptimizationCandidate(BaseModel):
     runtime_template: str
     metrics: OptimizationMetric
     is_recommended: bool = False
-    reasons: List[str] = []
+    reasons: list[str] = Field(default_factory=list)
+    metric_source: str = "estimated"
+    metric_sources: dict[str, str] = Field(default_factory=dict)
+    measurement: dict[str, Any] | None = None
+
+
+class OptimizationRunEvidence(BaseModel):
+    run_id: str
+    created_at: str
+    run_path: str
+    run_hash: str
+    prompt_set_id: str
+    prompt_set_hash: str
+    candidate_count: int
+    measured_candidate_count: int
+    estimated_candidate_count: int
+    recommended_candidate_id: str | None = None
+
 
 class OptimizationResponse(BaseModel):
     project_id: int
     target_id: str
-    candidates: List[OptimizationCandidate]
+    candidates: list[OptimizationCandidate]
+    optimization_run: OptimizationRunEvidence | None = None

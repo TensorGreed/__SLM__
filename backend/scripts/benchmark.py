@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,10 +77,17 @@ def _latency_summary(latencies_ms: list[float]) -> dict[str, float]:
     }
 
 
-def _load_prompts(prompt_file: str, samples: int) -> list[str]:
+def _prompt_set_hash(prompts: list[str]) -> str:
+    normalized = [str(item or "").strip() for item in prompts if str(item or "").strip()]
+    return hashlib.sha256("\n".join(normalized).encode("utf-8")).hexdigest()
+
+
+def _load_prompts(prompt_file: str, samples: int) -> tuple[list[str], dict[str, Any]]:
     prompts: list[str] = []
+    prompt_source = "default"
     path = Path(prompt_file).expanduser().resolve() if prompt_file else None
     if path and path.exists():
+        prompt_source = "file"
         if path.suffix.lower() == ".jsonl":
             for line in path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -100,9 +108,18 @@ def _load_prompts(prompt_file: str, samples: int) -> list[str]:
 
     if not prompts:
         prompts = DEFAULT_PROMPTS[:]
+        prompt_source = "default"
 
     sample_count = max(1, samples)
-    return [prompts[i % len(prompts)] for i in range(sample_count)]
+    expanded = [prompts[i % len(prompts)] for i in range(sample_count)]
+    prompt_set = {
+        "source": prompt_source,
+        "source_path": str(path) if path and path.exists() else None,
+        "prompt_count": len(prompts),
+        "sample_count": sample_count,
+        "prompt_set_hash": _prompt_set_hash(prompts),
+    }
+    return expanded, prompt_set
 
 
 def _summarize_generation_metrics(
@@ -312,7 +329,7 @@ def main() -> int:
         local_files = collect_files(local_model_path) if local_model_path.exists() else []
         total_bytes = sum(f.stat().st_size for f in local_files)
 
-        prompts = _load_prompts(args.prompt_file, sample_count)
+        prompts, prompt_set = _load_prompts(args.prompt_file, sample_count)
         runtime = _resolve_runtime(model_ref, args.runtime)
         if runtime == "transformers":
             bench = _benchmark_with_transformers(model_ref, prompts, warmup, max_new_tokens)
@@ -334,6 +351,7 @@ def main() -> int:
             "runtime": bench["runtime"],
             "metrics": bench["metrics"],
             "sample_outputs": bench["samples"],
+            "prompt_set": prompt_set,
         }
 
         out_path = Path(args.out).expanduser().resolve()

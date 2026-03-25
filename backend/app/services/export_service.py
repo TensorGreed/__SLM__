@@ -1,8 +1,11 @@
 """Export & runtime packaging service."""
 
+import asyncio
 import hashlib
 import json
+import re
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,13 +17,30 @@ from app.config import settings
 from app.models.export import Export, ExportFormat, ExportStatus
 from app.models.experiment import Experiment
 from app.models.project import Project
-from app.schemas.export import OptimizationCandidate, OptimizationMetric, OptimizationResponse
+from app.schemas.export import (
+    OptimizationCandidate,
+    OptimizationMetric,
+    OptimizationResponse,
+    OptimizationRunEvidence,
+)
 from app.services import target_profile_service
 from app.services.deployment_target_service import (
     build_deploy_target_plan,
     execute_deploy_target_plan,
     run_deployment_target_suite,
 )
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_BENCHMARK_SCRIPT = _BACKEND_DIR / "scripts" / "benchmark.py"
+_MODEL_WEIGHT_SUFFIXES = {".safetensors", ".bin", ".pt"}
+_OPTIMIZATION_PROMPT_SET_ID = "optimization.default.v1"
+_OPTIMIZATION_DEFAULT_PROMPTS: list[str] = [
+    "Summarize the key differences between supervised and unsupervised learning.",
+    "Write a short troubleshooting guide for a web service returning HTTP 503 errors.",
+    "Convert this requirement into a test case: user can reset password with email OTP.",
+    "Explain how quantization reduces model size and what tradeoffs it introduces.",
+    "Provide a concise answer: what is overfitting and how can we detect it?",
+]
 
 
 def _export_dir(project_id: int, export_id: int) -> Path:
@@ -51,6 +71,50 @@ def _project_dir(project_id: int) -> Path:
 
 def _sanitize_token(value: str) -> str:
     return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _canonical_json(payload: Any) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _hash_json_payload(payload: Any) -> str:
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _optimization_dir(project_id: int) -> Path:
+    directory = _project_dir(project_id) / "optimization"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _optimization_runs_dir(project_id: int) -> Path:
+    directory = _optimization_dir(project_id) / "runs"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _prompt_set_hash(prompts: list[str]) -> str:
+    normalized = [str(item or "").strip() for item in prompts if str(item or "").strip()]
+    blob = "\n".join(normalized).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _ensure_optimization_prompt_set(project_id: int) -> dict[str, Any]:
+    prompts_dir = _optimization_dir(project_id) / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = prompts_dir / f"{_OPTIMIZATION_PROMPT_SET_ID}.txt"
+    if not prompt_file.exists():
+        prompt_file.write_text(
+            "\n".join(_OPTIMIZATION_DEFAULT_PROMPTS) + "\n",
+            encoding="utf-8",
+        )
+    prompt_hash = _prompt_set_hash(_OPTIMIZATION_DEFAULT_PROMPTS)
+    return {
+        "prompt_set_id": _OPTIMIZATION_PROMPT_SET_ID,
+        "prompt_set_hash": prompt_hash,
+        "prompt_file_path": str(prompt_file),
+        "prompt_count": len(_OPTIMIZATION_DEFAULT_PROMPTS),
+    }
 
 
 def _matches_quantization(file_name: str, quantization: str | None) -> bool:
@@ -222,6 +286,205 @@ def _resolve_export_run_dir_from_export(export: Export) -> Path | None:
             if candidate.exists() and candidate.is_dir():
                 return candidate
     return None
+
+
+def _runtime_template_for_export_format(export_format: ExportFormat | str) -> str:
+    token = str(export_format.value if isinstance(export_format, ExportFormat) else export_format).strip().lower()
+    if token == "docker":
+        return "huggingface"
+    return token or "huggingface"
+
+
+def _build_optimization_artifact_identifier(candidate: dict[str, Any]) -> str:
+    artifact_path = Path(str(candidate.get("artifact_path") or candidate.get("model_ref") or "")).expanduser()
+    try:
+        artifact_token = artifact_path.resolve().as_posix()
+    except Exception:
+        artifact_token = artifact_path.as_posix()
+    payload = {
+        "artifact_path": artifact_token,
+        "runtime_template": str(candidate.get("runtime_template") or ""),
+        "quantization": str(candidate.get("quantization") or ""),
+        "size_bytes": int(candidate.get("size_bytes") or 0),
+        "file_count": int(candidate.get("file_count") or 0),
+    }
+    return _hash_json_payload(payload)[:24]
+
+
+def _persist_optimization_run(
+    *,
+    project_id: int,
+    target_id: str,
+    target_device: str,
+    preferred_formats: set[str],
+    candidates: list[OptimizationCandidate],
+    discovered_by_id: dict[str, dict[str, Any]],
+    prompt_set: dict[str, Any],
+) -> OptimizationRunEvidence:
+    run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    run_path = _optimization_runs_dir(project_id) / f"{run_id}.json"
+    created_at = datetime.now(timezone.utc).isoformat()
+    recommended_candidate_id = next(
+        (row.id for row in candidates if row.is_recommended),
+        None,
+    )
+
+    candidate_rows: list[dict[str, Any]] = []
+    measured_count = 0
+    estimated_count = 0
+    for row in candidates:
+        source_candidate = dict(discovered_by_id.get(str(row.id)) or {})
+        measurement = dict(row.measurement or {})
+        artifact_identifier = _build_optimization_artifact_identifier(
+            source_candidate if source_candidate else {
+                "artifact_path": measurement.get("artifact_path"),
+                "model_ref": measurement.get("model_ref"),
+                "runtime_template": row.runtime_template,
+                "quantization": row.quantization,
+                "size_bytes": measurement.get("model_size_bytes") or 0,
+                "file_count": measurement.get("file_count") or 0,
+            }
+        )
+        metric_source = str(row.metric_source or "estimated").strip().lower() or "estimated"
+        if metric_source == "measured":
+            measured_count += 1
+        else:
+            estimated_count += 1
+
+        candidate_rows.append(
+            {
+                "id": row.id,
+                "name": row.name,
+                "runtime_template": row.runtime_template,
+                "quantization": row.quantization,
+                "artifact_identifier": artifact_identifier,
+                "artifact_path": measurement.get("artifact_path") or source_candidate.get("artifact_path"),
+                "model_ref": measurement.get("model_ref") or source_candidate.get("model_ref"),
+                "metrics": row.metrics.model_dump(),
+                "metric_source": row.metric_source,
+                "metric_sources": dict(row.metric_sources or {}),
+                "measurement": measurement,
+                "is_recommended": bool(row.is_recommended),
+                "reasons": list(row.reasons or []),
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "schema": "slm.optimization-evidence/v1",
+        "run_id": run_id,
+        "created_at": created_at,
+        "project_id": project_id,
+        "target_id": target_id,
+        "target_device": target_device,
+        "preferred_formats": sorted(preferred_formats),
+        "prompt_set": dict(prompt_set),
+        "candidate_count": len(candidate_rows),
+        "measured_candidate_count": measured_count,
+        "estimated_candidate_count": estimated_count,
+        "recommended_candidate_id": recommended_candidate_id,
+        "candidates": candidate_rows,
+    }
+    payload["run_hash"] = _hash_json_payload(payload)
+    run_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    latest_pointer = _optimization_dir(project_id) / "latest_run.json"
+    latest_pointer.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "run_path": str(run_path),
+                "run_hash": payload["run_hash"],
+                "updated_at": created_at,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return OptimizationRunEvidence(
+        run_id=run_id,
+        created_at=created_at,
+        run_path=str(run_path),
+        run_hash=str(payload["run_hash"]),
+        prompt_set_id=str(prompt_set.get("prompt_set_id") or _OPTIMIZATION_PROMPT_SET_ID),
+        prompt_set_hash=str(prompt_set.get("prompt_set_hash") or ""),
+        candidate_count=len(candidate_rows),
+        measured_candidate_count=measured_count,
+        estimated_candidate_count=estimated_count,
+        recommended_candidate_id=recommended_candidate_id,
+    )
+
+
+def _load_latest_optimization_run(project_id: int) -> dict[str, Any] | None:
+    latest_pointer = _optimization_dir(project_id) / "latest_run.json"
+    if not latest_pointer.exists():
+        return None
+    try:
+        pointer = json.loads(latest_pointer.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    run_path_token = str(pointer.get("run_path") or "").strip()
+    if not run_path_token:
+        return None
+    run_path = Path(run_path_token).expanduser()
+    if not run_path.exists() or not run_path.is_file():
+        return None
+    try:
+        payload = json.loads(run_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    payload["_run_path"] = str(run_path)
+    return payload
+
+
+def _build_export_optimization_evidence(
+    *,
+    project_id: int,
+    export_format: ExportFormat,
+    quantization: str | None,
+) -> dict[str, Any] | None:
+    run = _load_latest_optimization_run(project_id)
+    if not isinstance(run, dict):
+        return None
+
+    candidates = [item for item in list(run.get("candidates") or []) if isinstance(item, dict)]
+    if not candidates:
+        return None
+
+    runtime_template = _runtime_template_for_export_format(export_format)
+    desired_quantization = _normalize_quantization_token(quantization)
+    selected = next(
+        (
+            item for item in candidates
+            if str(item.get("runtime_template") or "").strip().lower() == runtime_template
+            and _normalize_quantization_token(item.get("quantization")) == desired_quantization
+        ),
+        None,
+    )
+    if selected is None:
+        selected = next(
+            (
+                item for item in candidates
+                if str(item.get("runtime_template") or "").strip().lower() == runtime_template
+            ),
+            None,
+        )
+
+    return {
+        "schema": "slm.optimization-evidence.export/v1",
+        "run_id": run.get("run_id"),
+        "run_path": run.get("_run_path"),
+        "run_hash": run.get("run_hash"),
+        "created_at": run.get("created_at"),
+        "prompt_set_id": (run.get("prompt_set") or {}).get("prompt_set_id"),
+        "prompt_set_hash": (run.get("prompt_set") or {}).get("prompt_set_hash"),
+        "recommended_candidate_id": run.get("recommended_candidate_id"),
+        "candidate_count": run.get("candidate_count"),
+        "measured_candidate_count": run.get("measured_candidate_count"),
+        "estimated_candidate_count": run.get("estimated_candidate_count"),
+        "selected_candidate": selected,
+    }
 
 
 def _normalize_gate_policy(payload: Any) -> dict[str, Any]:
@@ -489,6 +752,13 @@ async def run_export(
             },
             "artifacts": artifacts,
         }
+        optimization_evidence = _build_export_optimization_evidence(
+            project_id=project_id,
+            export_format=export.export_format,
+            quantization=export.quantization,
+        )
+        if optimization_evidence is not None:
+            manifest["optimization_evidence"] = optimization_evidence
 
         deployment_report = run_deployment_target_suite(
             run_dir=run_dir,
@@ -1041,109 +1311,588 @@ if __name__ == "__main__":
 async def optimize_for_target(
     db: AsyncSession, project_id: int, target_id: str
 ) -> OptimizationResponse:
+    _ = db
     target = target_profile_service.get_target_by_id(target_id)
     if not target:
         raise ValueError(f"Target profile {target_id} not found")
 
-    # In a real implementation, we would look at available experiments for the project
-    # For now, let's generate some candidates based on the target's preferred formats.
-    candidates = []
+    discovered = _discover_optimizer_candidates(project_id=project_id)
+    if not discovered:
+        raise ValueError(
+            (
+                "No model artifacts were found for optimization. "
+                "Create at least one trained model (or compressed artifact) before running target optimization."
+            )
+        )
+    discovered_by_id = {
+        str(item["id"]): dict(item)
+        for item in discovered
+        if str(item.get("id") or "").strip()
+    }
 
-    # Try different combinations of formats and quantizations
-    formats = target.constraints.preferred_formats or ["huggingface"]
-    # If no preferred formats, default to common ones
-    if not formats:
-        formats = ["huggingface", "gguf"]
+    preferred_formats = {
+        str(item or "").strip().lower()
+        for item in list(target.constraints.preferred_formats or [])
+        if str(item or "").strip()
+    }
+    target_device = target_profile_service.resolve_target_device(target.id, fallback="laptop")
+    prompt_set = _ensure_optimization_prompt_set(project_id)
+    benchmark_probe_candidates = [
+        item
+        for item in sorted(
+            discovered,
+            key=lambda item: (
+                0 if item["runtime_template"] in preferred_formats else 1,
+                item["size_bytes"],
+            ),
+        )
+        if bool(item.get("probe_supported"))
+    ][:3]
+    benchmark_probe_ids = {str(item["id"]) for item in benchmark_probe_candidates}
 
-    quantizations = ["none", "8bit", "4bit", "awq", "gptq"]
+    candidates: list[OptimizationCandidate] = []
+    target_memory_budget_gb = _coerce_float_positive(target.constraints.min_vram_gb)
+    for candidate in discovered:
+        fallback_reason = ""
+        measured_report: dict[str, Any] | None = None
+        if str(candidate["id"]) in benchmark_probe_ids:
+            measured_report, fallback_reason = await _run_optimizer_benchmark_probe(
+                project_id=project_id,
+                candidate=candidate,
+            )
+        elif not bool(candidate.get("probe_supported")):
+            fallback_reason = (
+                f"Runtime probe is not available for format '{candidate['runtime_template']}'."
+            )
+        else:
+            fallback_reason = "Candidate skipped for runtime probe budget; metrics estimated from artifact profile."
 
-    for fmt in formats:
-        for quant in quantizations:
-            # Skip some combinations that might not make sense
-            if fmt == "gguf" and quant == "none":
-                continue
-            if fmt == "tensorrt" and quant == "none":
-                continue
+        if measured_report is not None:
+            metric, metric_source, metric_sources, measurement = _build_measured_candidate_metrics(
+                candidate=candidate,
+                report=measured_report,
+            )
+        else:
+            metric, metric_source, metric_sources, measurement = _build_estimated_candidate_metrics(
+                candidate=candidate,
+                target_device=target_device,
+                fallback_reason=fallback_reason or "Runtime probe did not complete.",
+            )
 
-            # Simulate metrics
-            metrics = _run_lightweight_benchmark(fmt, quant, target)
+        reasons: list[str] = []
+        if candidate["runtime_template"] in preferred_formats:
+            reasons.append("Matches target preferred runtime format.")
+        elif preferred_formats:
+            preferred_label = ", ".join(sorted(preferred_formats))
+            reasons.append(f"Not a preferred target format ({preferred_label}); kept for tradeoff comparison.")
 
-            # Check if it violates quality gate (mock gate: 0.7)
-            if metrics.quality_score < 0.7:
-                continue
+        if metric_source != "measured":
+            fallback_text = str(measurement.get("fallback_reason") or "").strip()
+            if fallback_text:
+                reasons.append(fallback_text)
+        else:
+            reasons.append("Latency and quality proxy measured from a live local benchmark probe.")
 
-            # Check if it fits in VRAM
-            if (
-                target.constraints.min_vram_gb
-                and metrics.memory_gb > target.constraints.min_vram_gb
-            ):
-                continue
-
-            reasons = []
-            candidates.append(
-                OptimizationCandidate(
-                    id=f"{fmt}-{quant}",
-                    name=f"{fmt.upper()} ({quant})",
-                    quantization=quant,
-                    runtime_template=fmt,
-                    metrics=metrics,
-                    reasons=reasons,
+        if (
+            target_memory_budget_gb is not None
+            and float(metric.memory_gb) > float(target_memory_budget_gb)
+        ):
+            reasons.append(
+                (
+                    f"Estimated memory footprint {metric.memory_gb:.3f} GB exceeds target baseline "
+                    f"{target_memory_budget_gb:.3f} GB."
                 )
             )
 
-    # Rank candidates (primarily by latency, then quality)
-    candidates.sort(key=lambda x: (x.metrics.latency_ms, -x.metrics.quality_score))
+        candidates.append(
+            OptimizationCandidate(
+                id=str(candidate["id"]),
+                name=str(candidate["name"]),
+                quantization=str(candidate["quantization"]),
+                runtime_template=str(candidate["runtime_template"]),
+                metrics=metric,
+                reasons=reasons,
+                metric_source=metric_source,
+                metric_sources=metric_sources,
+                measurement=measurement,
+            )
+        )
 
+    def _rank_key(row: OptimizationCandidate) -> tuple[float, float, float, float, float]:
+        format_penalty = 0.0 if row.runtime_template in preferred_formats else 1.0
+        memory_penalty = 0.0
+        if target_memory_budget_gb is not None and row.metrics.memory_gb > target_memory_budget_gb:
+            memory_penalty = 1.0
+        source_priority = {
+            "measured": 0.0,
+            "mixed": 0.5,
+            "estimated": 1.0,
+        }.get(str(row.metric_source).strip().lower(), 1.0)
+        return (
+            memory_penalty,
+            format_penalty,
+            source_priority,
+            float(row.metrics.latency_ms),
+            -float(row.metrics.quality_score),
+        )
+
+    candidates.sort(key=_rank_key)
     if candidates:
-        # The first one is the best recommendation
         candidates[0].is_recommended = True
-        candidates[0].reasons.append("Best latency/quality tradeoff for this target")
+        candidates[0].reasons.append("Best measured/estimated latency-quality tradeoff for this target.")
 
+    optimization_run = _persist_optimization_run(
+        project_id=project_id,
+        target_id=target_id,
+        target_device=target_device,
+        preferred_formats=preferred_formats,
+        candidates=candidates,
+        discovered_by_id=discovered_by_id,
+        prompt_set=prompt_set,
+    )
     return OptimizationResponse(
-        project_id=project_id, target_id=target_id, candidates=candidates
+        project_id=project_id,
+        target_id=target_id,
+        candidates=candidates,
+        optimization_run=optimization_run,
     )
 
 
-def _run_lightweight_benchmark(
-    fmt: str, quant: str, target: Any
-) -> OptimizationMetric:
-    # Simulated benchmark logic (The "lightweight benchmark harness")
-    base_latency = 100.0
-    base_memory = 8.0
-    base_quality = 0.95
+def _coerce_float_positive(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return float(parsed)
 
-    # Adjust based on quantization
-    if quant == "8bit":
-        latency_mult = 0.8
-        memory_mult = 0.55
-        quality_mult = 0.98
-    elif quant == "4bit":
-        latency_mult = 0.6
-        memory_mult = 0.35
-        quality_mult = 0.92
-    elif quant == "awq" or quant == "gptq":
-        latency_mult = 0.55
-        memory_mult = 0.35
-        quality_mult = 0.94
+
+def _artifact_size_bytes(path: Path) -> int:
+    if path.is_file():
+        return int(path.stat().st_size)
+    if path.is_dir():
+        return int(sum(item.stat().st_size for item in path.rglob("*") if item.is_file()))
+    return 0
+
+
+def _artifact_file_count(path: Path) -> int:
+    if path.is_file():
+        return 1
+    if path.is_dir():
+        return int(sum(1 for item in path.rglob("*") if item.is_file()))
+    return 0
+
+
+def _normalize_quantization_token(value: str | None) -> str:
+    token = str(value or "").strip().lower()
+    if not token:
+        return "none"
+    return token
+
+
+def _detect_quantization_from_name(name: str) -> str:
+    token = str(name or "").strip().lower()
+    if not token:
+        return "none"
+    patterns = (
+        (r"q(?:uantized[_-]?)?([248])(?:bit)?", "{bits}bit"),
+        (r"int([248])", "{bits}bit"),
+        (r"([248])bit", "{bits}bit"),
+    )
+    for pattern, template in patterns:
+        match = re.search(pattern, token)
+        if match:
+            bits = match.group(1)
+            return template.format(bits=bits)
+    if "awq" in token:
+        return "awq"
+    if "gptq" in token:
+        return "gptq"
+    if "fp16" in token or "f16" in token:
+        return "fp16"
+    return "none"
+
+
+def _candidate_id(*, format_token: str, model_ref: Path, quantization: str) -> str:
+    digest = hashlib.sha256(
+        f"{format_token}|{model_ref.resolve().as_posix()}|{quantization}".encode("utf-8")
+    ).hexdigest()[:12]
+    return f"{format_token}-{digest}"
+
+
+def _coerce_quality_hint_from_eval_loss(value: Any) -> float | None:
+    try:
+        eval_loss = float(value)
+    except (TypeError, ValueError):
+        return None
+    if eval_loss <= 0:
+        return None
+    score = 1.0 / (1.0 + eval_loss)
+    return round(max(0.0, min(score, 1.0)), 4)
+
+
+def _load_experiment_quality_hint(experiment_dir: Path) -> float | None:
+    report_path = experiment_dir / "training_report.json"
+    if report_path.exists() and report_path.is_file():
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        return _coerce_quality_hint_from_eval_loss(payload.get("final_eval_loss"))
+    return None
+
+
+def _discover_optimizer_candidates(project_id: int) -> list[dict[str, Any]]:
+    project_root = _project_dir(project_id)
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    experiments_root = project_root / "experiments"
+    if experiments_root.exists():
+        experiment_dirs = [
+            item for item in experiments_root.iterdir() if item.is_dir()
+        ]
+        experiment_dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        for experiment_dir in experiment_dirs:
+            model_dir = experiment_dir / "model"
+            if not model_dir.exists() or not model_dir.is_dir():
+                continue
+            config_path = model_dir / "config.json"
+            has_weights = any(
+                file_path.suffix.lower() in _MODEL_WEIGHT_SUFFIXES
+                for file_path in model_dir.rglob("*")
+                if file_path.is_file()
+            )
+            if not config_path.exists() or not has_weights:
+                continue
+            quantization = _detect_quantization_from_name(model_dir.name)
+            candidate_id = _candidate_id(
+                format_token="huggingface",
+                model_ref=model_dir,
+                quantization=quantization,
+            )
+            if candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            quality_hint = _load_experiment_quality_hint(experiment_dir)
+            size_bytes = _artifact_size_bytes(model_dir)
+            file_count = _artifact_file_count(model_dir)
+            candidates.append(
+                {
+                    "id": candidate_id,
+                    "name": f"HUGGINGFACE ({quantization})",
+                    "runtime_template": "huggingface",
+                    "quantization": quantization,
+                    "model_ref": model_dir,
+                    "artifact_path": model_dir,
+                    "size_bytes": size_bytes,
+                    "file_count": file_count,
+                    "probe_supported": True,
+                    "quality_hint": quality_hint,
+                    "source": "experiment_model_dir",
+                }
+            )
+
+    compressed_root = project_root / "compressed"
+    if compressed_root.exists():
+        compressed_files = [
+            item
+            for item in compressed_root.rglob("*")
+            if item.is_file() and item.suffix.lower() in {".gguf", ".onnx", ".engine", ".plan"}
+        ]
+        compressed_files.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        for artifact in compressed_files:
+            suffix = artifact.suffix.lower()
+            format_token = {
+                ".gguf": "gguf",
+                ".onnx": "onnx",
+                ".engine": "tensorrt",
+                ".plan": "tensorrt",
+            }.get(suffix)
+            if not format_token:
+                continue
+            quantization = _detect_quantization_from_name(artifact.name)
+            model_ref = artifact if format_token == "gguf" else artifact.parent
+            candidate_id = _candidate_id(
+                format_token=format_token,
+                model_ref=model_ref,
+                quantization=quantization,
+            )
+            if candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            size_target = artifact if artifact.is_file() else model_ref
+            size_bytes = _artifact_size_bytes(size_target)
+            file_count = _artifact_file_count(size_target)
+            candidates.append(
+                {
+                    "id": candidate_id,
+                    "name": f"{format_token.upper()} ({quantization})",
+                    "runtime_template": format_token,
+                    "quantization": quantization,
+                    "model_ref": model_ref,
+                    "artifact_path": artifact,
+                    "size_bytes": size_bytes,
+                    "file_count": file_count,
+                    "probe_supported": format_token in {"gguf"},
+                    "quality_hint": None,
+                    "source": "compressed_artifact",
+                }
+            )
+
+    return candidates
+
+
+async def _run_optimizer_benchmark_probe(
+    *,
+    project_id: int,
+    candidate: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str]:
+    if not bool(candidate.get("probe_supported")):
+        return None, (
+            f"Runtime probe is not available for format '{candidate.get('runtime_template')}'."
+        )
+    if not _BENCHMARK_SCRIPT.exists():
+        return None, "Benchmark script is not available on this runtime."
+
+    model_ref = Path(str(candidate.get("model_ref") or "")).expanduser()
+    if not model_ref.exists():
+        return None, f"Model artifact path for benchmark probe does not exist: {model_ref}"
+
+    optimization_dir = _project_dir(project_id) / "optimization" / "benchmarks"
+    optimization_dir.mkdir(parents=True, exist_ok=True)
+    report_path = optimization_dir / f"{candidate['id']}.json"
+    prompt_set = _ensure_optimization_prompt_set(project_id)
+    command = [
+        str(Path(sys.executable).expanduser()),
+        str(_BENCHMARK_SCRIPT),
+        "--project",
+        str(project_id),
+        "--model",
+        str(model_ref),
+        "--samples",
+        "2",
+        "--max-new-tokens",
+        "24",
+        "--warmup",
+        "0",
+        "--runtime",
+        "auto",
+        "--prompt-file",
+        str(prompt_set["prompt_file_path"]),
+        "--out",
+        str(report_path),
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except Exception as exc:
+        return None, f"Failed to start benchmark probe: {exc}"
+
+    timeout_seconds = max(30, min(int(settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS), 180))
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.communicate()
+        return None, f"Benchmark probe timed out after {timeout_seconds} seconds."
+
+    stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip() if stdout_bytes else ""
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip() if stderr_bytes else ""
+    if process.returncode != 0:
+        message = stderr_text or stdout_text or "benchmark probe failed"
+        return None, f"Benchmark probe failed: {message}"
+
+    if not report_path.exists():
+        return None, "Benchmark probe completed without generating a report."
+
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, f"Failed to parse benchmark report: {exc}"
+
+    payload["report_path"] = str(report_path)
+    payload["report_sha256"] = _sha256_file(report_path)
+    payload.setdefault("prompt_set", {})
+    if isinstance(payload.get("prompt_set"), dict):
+        payload["prompt_set"].setdefault("prompt_set_id", prompt_set["prompt_set_id"])
+        payload["prompt_set"].setdefault("prompt_set_hash", prompt_set["prompt_set_hash"])
+        payload["prompt_set"].setdefault("prompt_file_path", prompt_set["prompt_file_path"])
+        payload["prompt_set"].setdefault("prompt_count", prompt_set["prompt_count"])
+    if stdout_text:
+        payload["probe_stdout"] = stdout_text
+    return payload, ""
+
+
+def _derive_quality_proxy_from_probe(report: dict[str, Any]) -> float | None:
+    sample_rows = [item for item in list(report.get("sample_outputs") or []) if isinstance(item, dict)]
+    if not sample_rows:
+        return None
+
+    outputs = [str(item.get("output_preview") or "").strip() for item in sample_rows]
+    non_empty = [text for text in outputs if text]
+    non_empty_ratio = len(non_empty) / max(1, len(outputs))
+    avg_chars = sum(len(text) for text in non_empty) / max(1, len(non_empty))
+    length_score = min(1.0, avg_chars / 120.0)
+    unique_ratio = len({text.lower() for text in non_empty}) / max(1, len(non_empty))
+
+    score = (0.55 * non_empty_ratio) + (0.30 * length_score) + (0.15 * unique_ratio)
+    return round(max(0.0, min(score, 1.0)), 4)
+
+
+def _resolve_metric_source(metric_sources: dict[str, str]) -> str:
+    normalized = {
+        str(value or "").strip().lower()
+        for value in metric_sources.values()
+        if str(value or "").strip()
+    }
+    if normalized == {"measured"}:
+        return "measured"
+    if "measured" in normalized:
+        return "mixed"
+    return "estimated"
+
+
+def _estimate_latency_from_artifact(
+    *,
+    size_bytes: int,
+    runtime_template: str,
+    target_device: str,
+) -> float:
+    size_gb = max(float(size_bytes) / float(1024 ** 3), 0.001)
+    base_by_device = {
+        "mobile": 220.0,
+        "laptop": 130.0,
+        "server": 80.0,
+    }
+    runtime_factor = {
+        "huggingface": 1.0,
+        "gguf": 0.85 if target_device == "mobile" else 1.1,
+        "onnx": 0.9,
+        "tensorrt": 0.7,
+    }.get(runtime_template, 1.0)
+    base = base_by_device.get(target_device, 130.0)
+    latency = base * runtime_factor * (1.0 + min(size_gb, 24.0) * 0.35)
+    return round(max(latency, 1.0), 3)
+
+
+def _quantization_penalty(quantization: str) -> float:
+    token = _normalize_quantization_token(quantization)
+    penalty = {
+        "none": 0.0,
+        "fp16": 0.01,
+        "8bit": 0.03,
+        "4bit": 0.08,
+        "awq": 0.06,
+        "gptq": 0.07,
+    }.get(token, 0.05)
+    return float(penalty)
+
+
+def _build_measured_candidate_metrics(
+    *,
+    candidate: dict[str, Any],
+    report: dict[str, Any],
+) -> tuple[OptimizationMetric, str, dict[str, str], dict[str, Any]]:
+    latency_summary = dict((report.get("metrics") or {}).get("latency") or {})
+    latency_ms = _coerce_float_positive(latency_summary.get("p50_ms"))
+    if latency_ms is None:
+        latency_ms = _coerce_float_positive(latency_summary.get("avg_ms"))
+    if latency_ms is None:
+        latency_ms = _estimate_latency_from_artifact(
+            size_bytes=int(candidate["size_bytes"]),
+            runtime_template=str(candidate["runtime_template"]),
+            target_device="laptop",
+        )
+        latency_source = "estimated"
     else:
-        latency_mult = 1.0
-        memory_mult = 1.0
-        quality_mult = 1.0
+        latency_source = "measured"
 
-    # Adjust based on format/runtime
-    if fmt == "tensorrt":
-        latency_mult *= 0.6
-    elif fmt == "gguf":
-        # Usually slower than raw gpu but better on cpu
-        if target.id == "mobile_cpu":
-            latency_mult *= 0.4
+    model_size_bytes = int(report.get("model_size_bytes") or candidate["size_bytes"])
+    memory_gb = round(float(model_size_bytes) / float(1024 ** 3), 4)
+    memory_source = "measured"
+
+    quality_score = _derive_quality_proxy_from_probe(report)
+    if quality_score is None:
+        hint = candidate.get("quality_hint")
+        if isinstance(hint, (int, float)):
+            quality_score = round(max(0.0, min(float(hint), 1.0)), 4)
+            quality_source = "estimated"
         else:
-            latency_mult *= 1.2
-    elif fmt == "onnx":
-        latency_mult *= 0.85
+            quality_score = round(max(0.0, 0.72 - _quantization_penalty(str(candidate["quantization"]))), 4)
+            quality_source = "estimated"
+    else:
+        quality_source = "measured"
 
-    return OptimizationMetric(
-        latency_ms=round(base_latency * latency_mult, 2),
-        memory_gb=round(base_memory * memory_mult, 2),
-        quality_score=round(base_quality * quality_mult, 3),
+    metric = OptimizationMetric(
+        latency_ms=round(float(latency_ms), 3),
+        memory_gb=round(float(memory_gb), 4),
+        quality_score=round(float(quality_score), 4),
     )
+    metric_sources = {
+        "latency_ms": latency_source,
+        "memory_gb": memory_source,
+        "quality_score": quality_source,
+    }
+    measurement = {
+        "mode": "measured",
+        "source": str(candidate.get("source") or ""),
+        "model_ref": str(candidate.get("model_ref") or ""),
+        "artifact_path": str(candidate.get("artifact_path") or ""),
+        "report_path": report.get("report_path"),
+        "report_sha256": report.get("report_sha256"),
+        "runtime": report.get("runtime"),
+        "benchmark_samples": report.get("benchmark_samples"),
+        "latency_summary": latency_summary,
+        "prompt_set": report.get("prompt_set"),
+    }
+    return metric, _resolve_metric_source(metric_sources), metric_sources, measurement
+
+
+def _build_estimated_candidate_metrics(
+    *,
+    candidate: dict[str, Any],
+    target_device: str,
+    fallback_reason: str,
+) -> tuple[OptimizationMetric, str, dict[str, str], dict[str, Any]]:
+    size_bytes = int(candidate["size_bytes"])
+    memory_gb = round(float(size_bytes) / float(1024 ** 3), 4)
+    latency_ms = _estimate_latency_from_artifact(
+        size_bytes=size_bytes,
+        runtime_template=str(candidate["runtime_template"]),
+        target_device=target_device,
+    )
+    hint = candidate.get("quality_hint")
+    if isinstance(hint, (int, float)):
+        quality_score = round(max(0.0, min(float(hint), 1.0)) - _quantization_penalty(str(candidate["quantization"])), 4)
+        quality_score = round(max(0.0, min(quality_score, 1.0)), 4)
+        quality_source = "estimated"
+    else:
+        quality_score = round(max(0.0, 0.72 - _quantization_penalty(str(candidate["quantization"]))), 4)
+        quality_source = "estimated"
+
+    metric = OptimizationMetric(
+        latency_ms=round(float(latency_ms), 3),
+        memory_gb=round(float(memory_gb), 4),
+        quality_score=round(float(quality_score), 4),
+    )
+    metric_sources = {
+        "latency_ms": "estimated",
+        "memory_gb": "measured",
+        "quality_score": quality_source,
+    }
+    measurement = {
+        "mode": "estimated",
+        "source": str(candidate.get("source") or ""),
+        "model_ref": str(candidate.get("model_ref") or ""),
+        "artifact_path": str(candidate.get("artifact_path") or ""),
+        "fallback_reason": str(fallback_reason or "").strip() or "Runtime probe unavailable.",
+    }
+    return metric, _resolve_metric_source(metric_sources), metric_sources, measurement
