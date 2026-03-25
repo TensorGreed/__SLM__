@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from statistics import mean, median, pstdev
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +93,37 @@ _DEFAULT_PRESET: dict[str, Any] = {
     "keywords": (),
 }
 
+_PLAN_PROFILE_ALIASES: dict[str, str] = {
+    "fastest": "safe",
+    "best_quality": "max_quality",
+}
+
+_PLAN_PROFILES: set[str] = {"safe", "balanced", "max_quality"}
+
+_TARGET_BASE_TIME_PER_1K_ROWS: dict[str, float] = {
+    "mobile_cpu": 1200.0,
+    "browser_webgpu": 900.0,
+    "edge_gpu": 220.0,
+    "vllm_server": 60.0,
+}
+
+_PLAN_PROFILE_MULTIPLIER: dict[str, float] = {
+    "safe": 0.5,
+    "balanced": 1.0,
+    "max_quality": 2.0,
+}
+
+_COHORT_CONFIDENCE_WEIGHT: dict[str, float] = {
+    "target+profile+task": 1.0,
+    "target+profile": 0.9,
+    "profile+task": 0.82,
+    "target+task": 0.78,
+    "profile": 0.72,
+    "target": 0.66,
+    "global": 0.52,
+    "none": 0.3,
+}
+
 
 def _normalize_intent(intent: str) -> str:
     token = str(intent or "").strip().lower()
@@ -154,6 +186,172 @@ def _confidence_band(confidence: float) -> str:
     if value >= 0.6:
         return "medium"
     return "low"
+
+
+def _normalize_plan_profile(value: Any, *, default: str | None = None) -> str | None:
+    token = str(value or "").strip().lower()
+    if not token:
+        return default
+    token = _PLAN_PROFILE_ALIASES.get(token, token)
+    if token in _PLAN_PROFILES:
+        return token
+    return default
+
+
+def _normalize_task_profile(value: Any) -> str | None:
+    token = str(value or "").strip().lower()
+    if not token:
+        return None
+    alias = {
+        "chat_sft": "instruction_sft",
+        "instruction": "instruction_sft",
+        "qa_assistant": "qa",
+    }
+    return alias.get(token, token)
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _coerce_positive_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _heuristic_seconds_estimate(
+    *,
+    plan_profile: str,
+    target_profile_id: str,
+    dataset_size_rows: int,
+) -> int:
+    base_time_per_1k_rows = float(_TARGET_BASE_TIME_PER_1K_ROWS.get(target_profile_id, 300.0))
+    multiplier = float(_PLAN_PROFILE_MULTIPLIER.get(plan_profile, 1.0))
+    estimated_seconds = int(base_time_per_1k_rows * (max(1, int(dataset_size_rows)) / 1000.0) * multiplier)
+    return max(30, estimated_seconds)
+
+
+def _cohort_rows(
+    *,
+    rows: list[dict[str, Any]],
+    target_profile_id: str,
+    plan_profile: str,
+    task_profile: str | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    with_metric = [row for row in rows if _coerce_positive_float(row.get("seconds_per_1k_rows"))]
+    if not with_metric:
+        return "none", []
+
+    task_token = _normalize_task_profile(task_profile)
+    selectors: list[tuple[str, Any]] = []
+    if task_token:
+        selectors.extend(
+            [
+                (
+                    "target+profile+task",
+                    lambda row: (
+                        row.get("target_profile_id") == target_profile_id
+                        and row.get("plan_profile") == plan_profile
+                        and row.get("task_profile") == task_token
+                    ),
+                ),
+                (
+                    "target+profile",
+                    lambda row: (
+                        row.get("target_profile_id") == target_profile_id
+                        and row.get("plan_profile") == plan_profile
+                    ),
+                ),
+                (
+                    "profile+task",
+                    lambda row: (
+                        row.get("plan_profile") == plan_profile
+                        and row.get("task_profile") == task_token
+                    ),
+                ),
+                (
+                    "target+task",
+                    lambda row: (
+                        row.get("target_profile_id") == target_profile_id
+                        and row.get("task_profile") == task_token
+                    ),
+                ),
+            ]
+        )
+    selectors.extend(
+        [
+            (
+                "profile",
+                lambda row: row.get("plan_profile") == plan_profile,
+            ),
+            (
+                "target",
+                lambda row: row.get("target_profile_id") == target_profile_id,
+            ),
+            (
+                "global",
+                lambda row: True,
+            ),
+        ]
+    )
+
+    for label, selector in selectors:
+        subset = [row for row in with_metric if selector(row)]
+        if len(subset) >= 2:
+            return label, subset
+    for label, selector in selectors:
+        subset = [row for row in with_metric if selector(row)]
+        if subset:
+            return label, subset
+    return "none", []
+
+
+def _estimate_hourly_cost_usd(target_profile_id: str) -> tuple[float, str, dict[str, Any]]:
+    normalized_target = _normalize_target_profile(target_profile_id)
+    if normalized_target in {"mobile_cpu", "browser_webgpu"}:
+        return 0.0, "local_runtime", {"reason": "Target runs locally; cloud pricing is not applied."}
+
+    if normalized_target == "vllm_server":
+        try:
+            from app.services.cloud_burst_service import list_cloud_burst_catalog
+
+            catalog = dict(list_cloud_burst_catalog() or {})
+            gpu_rows = [item for item in list(catalog.get("gpu_skus") or []) if isinstance(item, dict)]
+            preferred = next(
+                (
+                    item
+                    for item in gpu_rows
+                    if str(item.get("gpu_sku") or "").strip().lower() == "a10g.24gb"
+                ),
+                gpu_rows[0] if gpu_rows else {},
+            )
+            hourly_map = dict(preferred.get("hourly_usd") or {})
+            rates = [float(value) for value in hourly_map.values() if _coerce_positive_float(value) is not None]
+            if rates:
+                hourly = round(sum(rates) / float(len(rates)), 4)
+                return hourly, "cloud_burst_catalog_avg", {
+                    "gpu_sku": str(preferred.get("gpu_sku") or "a10g.24gb"),
+                    "provider_count": len(rates),
+                }
+        except Exception:
+            pass
+        return 1.0, "fallback_server_heuristic", {"reason": "Cloud burst pricing catalog unavailable."}
+
+    if normalized_target == "edge_gpu":
+        return 0.15, "edge_gpu_heuristic", {"reason": "Estimated local edge-GPU operating cost."}
+
+    return 0.2, "generic_heuristic", {"reason": "No target-specific pricing available."}
 
 
 def _intent_rewrite_suggestions_for_task_profile(
@@ -420,50 +618,143 @@ def estimate_newbie_autopilot_run(
     plan_profile: str,
     target_profile_id: str,
     dataset_size_rows: int = 1000,
+    task_profile: str | None = None,
+    run_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Heuristic for training time and cost estimation."""
-    normalized_profile = str(plan_profile or "").strip().lower()
-    if normalized_profile == "fastest":
-        normalized_profile = "safe"
-    elif normalized_profile == "best_quality":
-        normalized_profile = "max_quality"
-    if normalized_profile not in {"safe", "balanced", "max_quality"}:
-        normalized_profile = "balanced"
+    """Estimate run time/cost with telemetry calibration and deterministic fallback."""
+    normalized_profile = _normalize_plan_profile(plan_profile, default="balanced") or "balanced"
+    normalized_target = _normalize_target_profile(target_profile_id)
+    normalized_task = _normalize_task_profile(task_profile)
+    safe_rows = max(1, int(dataset_size_rows))
 
-    # Base throughput seconds per 1k rows
-    base_time_per_1k_rows = 300.0  # seconds (5 mins)
-    if target_profile_id == "mobile_cpu":
-        base_time_per_1k_rows = 1200.0
-    elif target_profile_id == "vllm_server":
-        base_time_per_1k_rows = 60.0
+    heuristic_seconds = _heuristic_seconds_estimate(
+        plan_profile=normalized_profile,
+        target_profile_id=normalized_target,
+        dataset_size_rows=safe_rows,
+    )
 
-    # Profile modifiers
-    multiplier = 1.0
-    if normalized_profile == "safe":
-        multiplier = 0.5
-    elif normalized_profile == "max_quality":
-        multiplier = 2.0
+    normalized_history: list[dict[str, Any]] = []
+    for item in list(run_history or []):
+        if not isinstance(item, dict):
+            continue
+        duration_seconds = _coerce_positive_float(item.get("duration_seconds"))
+        if duration_seconds is None:
+            continue
+        row_dataset_rows = _coerce_positive_int(item.get("dataset_size_rows"))
+        seconds_per_1k_rows = None
+        if row_dataset_rows is not None:
+            seconds_per_1k_rows = round(duration_seconds * (1000.0 / float(row_dataset_rows)), 4)
+        normalized_history.append(
+            {
+                "duration_seconds": duration_seconds,
+                "dataset_size_rows": row_dataset_rows,
+                "seconds_per_1k_rows": seconds_per_1k_rows,
+                "plan_profile": _normalize_plan_profile(item.get("plan_profile"), default=None),
+                "target_profile_id": _normalize_target_profile(item.get("target_profile_id"))
+                if str(item.get("target_profile_id") or "").strip()
+                else None,
+                "task_profile": _normalize_task_profile(item.get("task_profile")),
+            }
+        )
 
-    estimated_seconds = int(base_time_per_1k_rows * (dataset_size_rows / 1000) * multiplier)
+    cohort, cohort_rows = _cohort_rows(
+        rows=normalized_history,
+        target_profile_id=normalized_target,
+        plan_profile=normalized_profile,
+        task_profile=normalized_task,
+    )
+    seconds_per_1k_samples = [
+        float(row.get("seconds_per_1k_rows"))
+        for row in cohort_rows
+        if _coerce_positive_float(row.get("seconds_per_1k_rows")) is not None
+    ]
+    sample_count = len(seconds_per_1k_samples)
 
-    # Cost in "credits" (fake currency)
-    cost_per_hour = 10.0
-    if target_profile_id == "vllm_server":
-        cost_per_hour = 50.0
-    elif target_profile_id == "mobile_cpu":
-        cost_per_hour = 0.0  # Local
+    metric_source = "estimated"
+    calibration_note = "Sparse telemetry for this context; using heuristic estimate."
+    estimated_seconds = int(heuristic_seconds)
+    p50_seconds_per_1k: float | None = None
+    variability_cv: float | None = None
 
-    estimated_cost = round((estimated_seconds / 3600.0) * cost_per_hour, 2)
+    if sample_count >= 2:
+        p50_seconds_per_1k = float(median(seconds_per_1k_samples))
+        estimated_seconds = int(round(p50_seconds_per_1k * (safe_rows / 1000.0)))
+        metric_source = "measured"
+        baseline = mean(seconds_per_1k_samples)
+        if baseline > 0:
+            variability_cv = float(pstdev(seconds_per_1k_samples) / baseline)
+        calibration_note = (
+            f"Calibrated from {sample_count} historical run(s) "
+            f"matched by {cohort} telemetry cohort."
+        )
+    elif sample_count == 1:
+        p50_seconds_per_1k = float(seconds_per_1k_samples[0])
+        telemetry_seconds = float(p50_seconds_per_1k * (safe_rows / 1000.0))
+        estimated_seconds = int(round((0.6 * telemetry_seconds) + (0.4 * heuristic_seconds)))
+        calibration_note = (
+            "Only one comparable historical run was found; estimate blends telemetry with heuristic fallback."
+        )
+
+    estimated_seconds = max(30, estimated_seconds)
+    cohort_weight = float(_COHORT_CONFIDENCE_WEIGHT.get(cohort, _COHORT_CONFIDENCE_WEIGHT["none"]))
+    if sample_count >= 2:
+        sample_score = min(1.0, sample_count / 8.0)
+        variance_score = 0.6 if variability_cv is None else max(0.1, min(1.0, 1.0 - variability_cv))
+        confidence_score = 0.25 + (0.4 * sample_score) + (0.25 * cohort_weight) + (0.1 * variance_score)
+    elif sample_count == 1:
+        confidence_score = 0.46 + (0.08 * cohort_weight)
+    else:
+        confidence_score = 0.33
+    confidence_score = round(max(0.05, min(confidence_score, 0.99)), 4)
+    confidence_band = _confidence_band(confidence_score)
+
+    hourly_rate_usd, pricing_source, pricing_meta = _estimate_hourly_cost_usd(normalized_target)
+    estimated_cost = round((estimated_seconds / 3600.0) * hourly_rate_usd, 4)
+    if estimated_cost < 0:
+        estimated_cost = 0.0
+    rounded_cost = round(estimated_cost, 2)
+
+    if hourly_rate_usd <= 0:
+        calibration_note = f"{calibration_note} Cost assumes local/non-billed execution."
+    elif pricing_source == "cloud_burst_catalog_avg":
+        calibration_note = (
+            f"{calibration_note} Cost uses cloud provider pricing averages "
+            f"({pricing_meta.get('gpu_sku')}, {pricing_meta.get('provider_count')} providers)."
+        )
+    else:
+        calibration_note = f"{calibration_note} Cost uses {pricing_source.replace('_', ' ')}."
+
+    speed_label = "Fast" if estimated_seconds <= 600 else ("Medium" if estimated_seconds <= 1800 else "Slow")
+    quality_label = "High" if normalized_profile == "max_quality" else ("Standard" if normalized_profile == "balanced" else "Good")
+    cost_label = "Low" if rounded_cost < 1.0 else ("Medium" if rounded_cost < 5.0 else "High")
 
     return {
-        "estimated_seconds": max(30, estimated_seconds),
-        "estimated_cost": estimated_cost,
-        "unit": "credits" if estimated_cost > 0 else "Local (Free)",
-        "confidence_score": 0.7,
+        "estimated_seconds": estimated_seconds,
+        "estimated_cost": rounded_cost,
+        "unit": "USD",
+        "confidence_score": confidence_score,
+        "confidence_band": confidence_band,
+        "metric_source": metric_source,
+        "source": metric_source,
+        "provenance": metric_source,
+        "note": calibration_note,
         "labels": {
-            "speed": "Fast" if normalized_profile == "safe" else "Medium",
-            "quality": "High" if normalized_profile == "max_quality" else "Standard",
-            "cost": "Low" if estimated_cost < 5.0 else "High",
+            "speed": speed_label,
+            "quality": quality_label,
+            "cost": cost_label,
+        },
+        "calibration": {
+            "cohort": cohort,
+            "sample_count": sample_count,
+            "seconds_per_1k_rows_p50": p50_seconds_per_1k,
+            "seconds_per_1k_rows_cv": round(variability_cv, 4) if variability_cv is not None else None,
+            "heuristic_seconds": int(heuristic_seconds),
+            "pricing_source": pricing_source,
+            "hourly_rate_usd": round(hourly_rate_usd, 4),
+            "target_profile_id": normalized_target,
+            "task_profile": normalized_task,
+            "plan_profile": normalized_profile,
+            "fallback_used": metric_source != "measured",
         },
     }
 

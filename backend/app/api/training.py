@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.dataset import DatasetType
-from app.models.experiment import Checkpoint, Experiment, TrainingMode
+from app.models.experiment import Checkpoint, Experiment, ExperimentStatus, TrainingMode
 from app.models.project import Project
 from app.schemas.training import ExperimentCreate, ExperimentResponse, TrainingConfig
 from app.services.dataset_service import (
@@ -413,6 +413,7 @@ class NewbieAutopilotEstimateRequest(BaseModel):
     )
     target_profile_id: str = Field(default="vllm_server", min_length=1, max_length=64)
     dataset_size_rows: int = Field(default=1000, ge=1)
+    task_profile: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class AutopilotPlanV2Response(BaseModel):
@@ -587,6 +588,110 @@ def _attempt_compatibility_auto_repair(
         )
 
     return model_id, dict(initial), None
+
+
+def _normalize_autopilot_task_profile(value: Any) -> str | None:
+    token = str(value or "").strip().lower()
+    if not token:
+        return None
+    alias = {
+        "chat_sft": "instruction_sft",
+        "instruction": "instruction_sft",
+        "qa_assistant": "qa",
+    }
+    return alias.get(token, token)
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _coerce_positive_float(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+async def _load_autopilot_run_history(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    fallback_target_profile_id: str | None = None,
+    limit: int = 300,
+) -> list[dict[str, object]]:
+    safe_limit = max(1, min(int(limit), 1000))
+    result = await db.execute(
+        select(Experiment).where(
+            Experiment.project_id == project_id,
+            Experiment.status == ExperimentStatus.COMPLETED,
+        ).order_by(Experiment.completed_at.desc()).limit(safe_limit)
+    )
+    experiments = result.scalars().all()
+    rows: list[dict[str, object]] = []
+    for exp in experiments:
+        started_at = exp.started_at
+        completed_at = exp.completed_at
+        if started_at is None or completed_at is None:
+            continue
+        duration_seconds = (completed_at - started_at).total_seconds()
+        if duration_seconds <= 0:
+            continue
+
+        config = dict(exp.config or {})
+        plan_profile = (
+            normalize_training_plan_profile(config.get("training_plan_profile"))
+            or normalize_training_plan_profile(config.get("plan_profile"))
+            or None
+        )
+        target_profile_id = (
+            str(config.get("target_profile_id") or "").strip().lower()
+            or str(fallback_target_profile_id or "").strip().lower()
+            or None
+        )
+        task_profile = _normalize_autopilot_task_profile(config.get("task_profile"))
+        if not task_profile:
+            task_type = str(config.get("task_type") or "").strip().lower()
+            if task_type == "classification":
+                task_profile = "classification"
+            elif task_type == "causal_lm":
+                task_profile = "instruction_sft"
+
+        dataset_size_rows = (
+            _coerce_positive_int(config.get("_autopilot_dataset_rows"))
+            or _coerce_positive_int(config.get("dataset_size_rows"))
+            or None
+        )
+
+        runtime = dict(config.get("_runtime") or {})
+        cost_usd = (
+            _coerce_positive_float(runtime.get("estimated_cost_usd"))
+            or _coerce_positive_float(runtime.get("cost_usd"))
+            or _coerce_positive_float(runtime.get("cloud_burst_quote_total_usd"))
+            or _coerce_positive_float(runtime.get("quote_total_usd"))
+            or None
+        )
+        rows.append(
+            {
+                "experiment_id": int(exp.id),
+                "plan_profile": plan_profile,
+                "target_profile_id": target_profile_id,
+                "task_profile": task_profile,
+                "dataset_size_rows": dataset_size_rows,
+                "duration_seconds": round(float(duration_seconds), 4),
+                "cost_usd": cost_usd,
+            }
+        )
+    return rows
 
 
 async def _attempt_autopilot_auto_process_raw_documents(
@@ -1038,8 +1143,9 @@ def _build_newbie_autopilot_plan(
     }
 
 
-def _build_newbie_autopilot_plan_v2(
+async def _build_newbie_autopilot_plan_v2(
     *,
+    db: AsyncSession,
     project_id: int,
     req: NewbieAutopilotIntentRequest,
 ) -> AutopilotPlanV2Response:
@@ -1055,6 +1161,11 @@ def _build_newbie_autopilot_plan_v2(
         available_vram_gb=req.available_vram_gb,
     )
     task_profile = str(plan_meta.get("task_profile") or "instruction_sft")
+    run_history = await _load_autopilot_run_history(
+        db,
+        project_id=project_id,
+        fallback_target_profile_id=req.target_profile_id,
+    )
 
     # 2. Get base model recommendation
     recommendation = recommend_training_base_models(
@@ -1109,15 +1220,24 @@ def _build_newbie_autopilot_plan_v2(
 
     # 5. Enrich suggestions with estimates and labels
     dataset_readiness = evaluate_newbie_autopilot_dataset_readiness(project_id=project_id)
-    dataset_rows = dataset_readiness.get("prepared_row_count", 1000)
+    dataset_rows = _coerce_positive_int(dataset_readiness.get("prepared_row_count")) or 1000
 
     enriched_plans = []
     for suggestion in preflight_plan.get("suggestions", []):
         profile = suggestion["profile"]
+        normalized_profile = normalize_training_plan_profile(profile) or "balanced"
+        config = dict(suggestion.get("config") or {})
+        config["training_plan_profile"] = normalized_profile
+        config["target_profile_id"] = str(req.target_profile_id or "vllm_server").strip() or "vllm_server"
+        config["task_profile"] = task_profile
+        config["_autopilot_dataset_rows"] = int(dataset_rows)
+        suggestion["config"] = config
         estimate = estimate_newbie_autopilot_run(
-            plan_profile=profile,
+            plan_profile=normalized_profile,
             target_profile_id=req.target_profile_id,
             dataset_size_rows=dataset_rows,
+            task_profile=task_profile,
+            run_history=run_history,
         )
         suggestion["estimate"] = estimate
         enriched_plans.append(suggestion)
@@ -1282,7 +1402,11 @@ async def resolve_training_autopilot_plan_v2(
     """Return three plan options (Fastest, Balanced, Best Quality) with cost/time estimates."""
     await _get_project_or_404(db, project_id)
     try:
-        return _build_newbie_autopilot_plan_v2(project_id=project_id, req=req)
+        return await _build_newbie_autopilot_plan_v2(
+            db=db,
+            project_id=project_id,
+            req=req,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -1296,12 +1420,19 @@ async def estimate_training_autopilot_run(
     """Estimate training time and cost for a selected plan profile and hardware."""
     await _get_project_or_404(db, project_id)
     plan_profile = normalize_training_plan_profile(req.plan_profile) or "balanced"
+    run_history = await _load_autopilot_run_history(
+        db,
+        project_id=project_id,
+        fallback_target_profile_id=req.target_profile_id,
+    )
     return {
         "project_id": project_id,
         "estimate": estimate_newbie_autopilot_run(
             plan_profile=plan_profile,
             target_profile_id=req.target_profile_id,
             dataset_size_rows=req.dataset_size_rows,
+            task_profile=req.task_profile,
+            run_history=run_history,
         ),
     }
 
@@ -1338,7 +1469,11 @@ async def run_training_autopilot_one_click(
 
     # Use v2 logic to get the right plan
     try:
-        plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
+        plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+            db=db,
+            project_id=project_id,
+            req=effective_req,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -1364,7 +1499,11 @@ async def run_training_autopilot_one_click(
             auto_prepare_data=req.auto_prepare_data,
         )
         try:
-            plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
+            plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+                db=db,
+                project_id=project_id,
+                req=effective_req,
+            )
         except ValueError as e:
             raise HTTPException(400, str(e))
         applied_intent_rewrite = {
@@ -1409,7 +1548,11 @@ async def run_training_autopilot_one_click(
         )
         if bool(auto_prepare_result.get("succeeded")):
             try:
-                plan_v2_resp = _build_newbie_autopilot_plan_v2(project_id=project_id, req=effective_req)
+                plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+                    db=db,
+                    project_id=project_id,
+                    req=effective_req,
+                )
             except ValueError as e:
                 raise HTTPException(400, str(e))
             plan_payload = plan_v2_resp.model_dump()
@@ -1451,7 +1594,22 @@ async def run_training_autopilot_one_click(
         ),
         plan_options[0],
     )
+    selected_profile = (
+        normalize_training_plan_profile(selected_plan.get("profile"))
+        or requested_profile
+        or "balanced"
+    )
     safe_config = dict(selected_plan.get("config") or {})
+    safe_config["training_plan_profile"] = selected_profile
+    safe_config["target_profile_id"] = str(req.target_profile_id or "vllm_server").strip() or "vllm_server"
+    if not str(safe_config.get("task_profile") or "").strip():
+        first_plan_cfg = dict(plan_options[0].get("config") or {})
+        safe_config["task_profile"] = str(first_plan_cfg.get("task_profile") or "instruction_sft").strip() or "instruction_sft"
+    safe_config["_autopilot_dataset_rows"] = (
+        _coerce_positive_int((plan_v2_resp.dataset_readiness or {}).get("prepared_row_count"))
+        or _coerce_positive_int(safe_config.get("_autopilot_dataset_rows"))
+        or 1000
+    )
     base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
     training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
     if training_mode_token == TrainingMode.DPO.value:
@@ -1461,11 +1619,6 @@ async def run_training_autopilot_one_click(
     else:
         training_mode = TrainingMode.SFT
 
-    selected_profile = (
-        normalize_training_plan_profile(selected_plan.get("profile"))
-        or requested_profile
-        or "balanced"
-    )
     suggested_name = str(selected_plan.get("title") or "").strip()
     if not suggested_name:
         suggested_name = f"Autopilot - {selected_profile.replace('_', ' ').title()}"
