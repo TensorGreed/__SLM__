@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import copy
+import importlib
+import inspect
+import threading
 from typing import Any
 
+from app.config import settings
 from app.services.capability_contract_service import SUPPORTED_TRAINING_TASK_TYPES
 from app.services.data_adapter_service import normalize_task_profile, task_profile_training_tasks
 from app.services.model_introspection_service import introspect_hf_model
 
 SUPPORTED_TARGET_DEVICES: tuple[str, ...] = ("mobile", "laptop", "server")
 SUPPORTED_PRIMARY_LANGUAGES: tuple[str, ...] = ("english", "multilingual", "coding")
+
+MODEL_CATALOG_REGISTRY_VERSION = "model_catalog.dynamic_registry/v1"
 
 _TARGET_DEVICE_ALIASES: dict[str, str] = {
     "phone": "mobile",
@@ -43,7 +50,7 @@ _DEFAULT_DEVICE_VRAM_BUDGET_GB: dict[str, float] = {
 
 _SUPPORTED_TRAINING_TASK_TYPES = set(SUPPORTED_TRAINING_TASK_TYPES)
 
-_MODEL_CATALOG: list[dict[str, Any]] = [
+_BUILTIN_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "model_id": "meta-llama/Llama-3.2-1B-Instruct",
         "family": "llama",
@@ -174,6 +181,394 @@ _MODEL_CATALOG: list[dict[str, Any]] = [
         ),
     },
 ]
+
+_MODEL_CATALOG_LOCK = threading.RLock()
+_MODEL_CATALOG_REGISTRY: dict[str, dict[str, Any]] = {}
+_MODEL_CATALOG_ORDER: list[str] = []
+_MODEL_CATALOG_INITIALIZED = False
+_MODEL_CATALOG_PLUGIN_MODULES_LOADED: set[str] = set()
+_MODEL_CATALOG_PLUGIN_LOAD_ERRORS: dict[str, str] = {}
+_MODEL_CATALOG_REGISTRATION_SOURCE_CONTEXT: str | None = None
+
+
+def _normalize_source_module(value: str | None) -> str:
+    token = str(value or "").strip()
+    return token or "custom"
+
+
+def _normalize_catalog_version(value: str | None, *, is_builtin: bool) -> str:
+    token = str(value or "").strip()
+    if token:
+        return token
+    return "builtin-v1" if is_builtin else "plugin-v1"
+
+
+def _coerce_positive_float(value: Any, *, precision: int = 2) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return round(parsed, precision)
+
+
+def _normalize_language_collection(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = []
+
+    items: list[str] = []
+    for raw in raw_items:
+        token = str(raw or "").strip().lower()
+        if not token:
+            continue
+        normalized = _PRIMARY_LANGUAGE_ALIASES.get(token, token)
+        if normalized not in SUPPORTED_PRIMARY_LANGUAGES:
+            continue
+        if normalized not in items:
+            items.append(normalized)
+    if not items:
+        items = ["english"]
+    return tuple(items)
+
+
+def _normalize_text_collection(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = []
+    items = [str(item).strip() for item in raw_items if str(item).strip()]
+    return tuple(items)
+
+
+def _coerce_model_entry_payload(
+    payload: dict[str, Any],
+    *,
+    source_module: str | None,
+    catalog_version: str | None,
+    is_builtin: bool,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Model catalog payload must be a mapping.")
+
+    data = dict(payload)
+    model_id = str(data.get("model_id") or "").strip()
+    if not model_id:
+        raise ValueError("model_id is required for model catalog entries.")
+
+    params_b = _coerce_positive_float(data.get("params_b"), precision=2)
+    if params_b is None:
+        raise ValueError(f"Model catalog entry '{model_id}' must define params_b > 0.")
+
+    min_vram = _coerce_positive_float(data.get("estimated_min_vram_gb"), precision=2)
+    if min_vram is None:
+        raise ValueError(
+            f"Model catalog entry '{model_id}' must define estimated_min_vram_gb > 0."
+        )
+
+    ideal_vram = _coerce_positive_float(data.get("estimated_ideal_vram_gb"), precision=2)
+    if ideal_vram is None:
+        ideal_vram = round(max(min_vram + 1.0, min_vram * 1.25), 2)
+
+    normalized_is_builtin = bool(data.get("is_builtin", is_builtin))
+    normalized_source = _normalize_source_module(
+        data.get("catalog_source")
+        or source_module
+        or _MODEL_CATALOG_REGISTRATION_SOURCE_CONTEXT
+        or ("builtin" if normalized_is_builtin else "custom")
+    )
+    normalized_version = _normalize_catalog_version(
+        data.get("catalog_version") or catalog_version,
+        is_builtin=normalized_is_builtin,
+    )
+
+    normalized: dict[str, Any] = {
+        "model_id": model_id,
+        "family": str(data.get("family") or "unknown").strip().lower() or "unknown",
+        "params_b": params_b,
+        "estimated_min_vram_gb": min_vram,
+        "estimated_ideal_vram_gb": max(min_vram, ideal_vram),
+        "preferred_chat_template": str(data.get("preferred_chat_template") or "llama3").strip() or "llama3",
+        "supported_languages": _normalize_language_collection(data.get("supported_languages")),
+        "strengths": _normalize_text_collection(data.get("strengths")),
+        "caveats": _normalize_text_collection(data.get("caveats")),
+        "catalog_source": normalized_source,
+        "catalog_version": normalized_version,
+        "is_builtin": normalized_is_builtin,
+    }
+
+    for key, value in data.items():
+        if key not in normalized:
+            normalized[key] = value
+    return normalized
+
+
+def _register_model_catalog_entry(entry: dict[str, Any]) -> None:
+    model_id = str(entry.get("model_id") or "").strip()
+    if not model_id:
+        raise ValueError("model_id is required for model catalog entries.")
+
+    if model_id not in _MODEL_CATALOG_ORDER:
+        _MODEL_CATALOG_ORDER.append(model_id)
+    _MODEL_CATALOG_REGISTRY[model_id] = entry
+
+
+def register_model_catalog_entry(
+    payload: dict[str, Any],
+    *,
+    source_module: str | None = None,
+    catalog_version: str | None = None,
+    is_builtin: bool = False,
+) -> None:
+    """Public SDK entry-point for registering a model catalog entry."""
+    entry = _coerce_model_entry_payload(
+        payload,
+        source_module=source_module,
+        catalog_version=catalog_version,
+        is_builtin=is_builtin,
+    )
+    with _MODEL_CATALOG_LOCK:
+        _register_model_catalog_entry(entry)
+
+
+def register_model_catalog_entries(
+    payloads: list[dict[str, Any]],
+    *,
+    source_module: str | None = None,
+    catalog_version: str | None = None,
+    is_builtin: bool = False,
+) -> int:
+    count = 0
+    for payload in list(payloads or []):
+        register_model_catalog_entry(
+            payload,
+            source_module=source_module,
+            catalog_version=catalog_version,
+            is_builtin=is_builtin,
+        )
+        count += 1
+    return count
+
+
+def _iter_model_catalog_payload(raw_payload: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_payload, dict):
+        rows: list[dict[str, Any]] = []
+        for key, value in raw_payload.items():
+            if not isinstance(value, dict):
+                continue
+            if not str(value.get("model_id") or "").strip():
+                value = {**value, "model_id": str(key)}
+            rows.append(value)
+        return rows
+    if isinstance(raw_payload, (list, tuple, set)):
+        return [item for item in list(raw_payload) if isinstance(item, dict)]
+    return []
+
+
+def _extract_module_model_catalog_entries(module: Any) -> list[dict[str, Any]]:
+    if hasattr(module, "get_model_catalog_entries") and callable(module.get_model_catalog_entries):
+        payload = module.get_model_catalog_entries()
+        return _iter_model_catalog_payload(payload)
+    return _iter_model_catalog_payload(getattr(module, "MODEL_CATALOG_ENTRIES", []))
+
+
+def _call_register_model_catalog_fn(module: Any, module_name: str) -> int:
+    register_fn = getattr(module, "register_model_catalog_entries", None)
+    if register_fn is None:
+        return 0
+    if not callable(register_fn):
+        raise ValueError(
+            f"Model catalog plugin module '{module_name}' has non-callable register_model_catalog_entries."
+        )
+
+    count = 0
+
+    def register(
+        entry_payload: dict[str, Any],
+        *,
+        catalog_version: str | None = None,
+    ) -> None:
+        nonlocal count
+        register_model_catalog_entry(
+            entry_payload,
+            source_module=module_name,
+            catalog_version=catalog_version,
+            is_builtin=False,
+        )
+        count += 1
+
+    signature = inspect.signature(register_fn)
+    if len(signature.parameters) == 0:
+        register_fn()
+    elif len(signature.parameters) == 1:
+        register_fn(register)
+    else:
+        register_fn(register, {"settings": settings})
+    return count
+
+
+def load_model_catalog_plugins(
+    module_paths: list[str],
+    *,
+    force_reload: bool = False,
+) -> dict[str, Any]:
+    """Load model catalog plugins and register entries into the dynamic registry."""
+    requested_modules = [str(item).strip() for item in list(module_paths or []) if str(item).strip()]
+    loaded_modules: list[str] = []
+    skipped_modules: list[str] = []
+    errors: dict[str, str] = {}
+
+    global _MODEL_CATALOG_REGISTRATION_SOURCE_CONTEXT
+    with _MODEL_CATALOG_LOCK:
+        for module_name in requested_modules:
+            if module_name in _MODEL_CATALOG_PLUGIN_MODULES_LOADED and not force_reload:
+                skipped_modules.append(module_name)
+                continue
+
+            try:
+                module = importlib.import_module(module_name)
+                if force_reload:
+                    module = importlib.reload(module)
+
+                registered_count = 0
+                prior_context = _MODEL_CATALOG_REGISTRATION_SOURCE_CONTEXT
+                _MODEL_CATALOG_REGISTRATION_SOURCE_CONTEXT = module_name
+                try:
+                    registered_count += _call_register_model_catalog_fn(module, module_name)
+                    for payload in _extract_module_model_catalog_entries(module):
+                        register_model_catalog_entry(
+                            payload,
+                            source_module=module_name,
+                            catalog_version=None,
+                            is_builtin=False,
+                        )
+                        registered_count += 1
+                finally:
+                    _MODEL_CATALOG_REGISTRATION_SOURCE_CONTEXT = prior_context
+
+                if registered_count == 0:
+                    raise ValueError(
+                        "No model catalog entries registered. Provide register_model_catalog_entries(...) or MODEL_CATALOG_ENTRIES/get_model_catalog_entries()."
+                    )
+
+                _MODEL_CATALOG_PLUGIN_MODULES_LOADED.add(module_name)
+                _MODEL_CATALOG_PLUGIN_LOAD_ERRORS.pop(module_name, None)
+                loaded_modules.append(module_name)
+            except Exception as exc:  # noqa: PERF203
+                message = str(exc)
+                _MODEL_CATALOG_PLUGIN_LOAD_ERRORS[module_name] = message
+                errors[module_name] = message
+
+    return {
+        "requested_modules": requested_modules,
+        "loaded_modules": sorted(set(loaded_modules)),
+        "skipped_modules": sorted(set(skipped_modules)),
+        "errors": errors,
+    }
+
+
+def load_model_catalog_plugins_from_settings(*, force_reload: bool = False) -> dict[str, Any]:
+    modules = [str(item).strip() for item in list(settings.MODEL_CATALOG_PLUGIN_MODULES or []) if str(item).strip()]
+    if not modules:
+        return {
+            "requested_modules": [],
+            "loaded_modules": [],
+            "skipped_modules": [],
+            "errors": {},
+        }
+    return load_model_catalog_plugins(modules, force_reload=force_reload)
+
+
+def clear_model_catalog_plugins() -> None:
+    global _MODEL_CATALOG_INITIALIZED
+    with _MODEL_CATALOG_LOCK:
+        _MODEL_CATALOG_REGISTRY.clear()
+        _MODEL_CATALOG_ORDER.clear()
+        _MODEL_CATALOG_PLUGIN_MODULES_LOADED.clear()
+        _MODEL_CATALOG_PLUGIN_LOAD_ERRORS.clear()
+        _MODEL_CATALOG_INITIALIZED = False
+
+
+def _model_catalog_metadata(*, entry_count: int | None = None) -> dict[str, Any]:
+    count = int(entry_count) if entry_count is not None else len(_MODEL_CATALOG_ORDER)
+    return {
+        "catalog_version": MODEL_CATALOG_REGISTRY_VERSION,
+        "entry_count": count,
+        "loaded_plugin_modules": sorted(_MODEL_CATALOG_PLUGIN_MODULES_LOADED),
+        "plugin_load_errors": copy.deepcopy(_MODEL_CATALOG_PLUGIN_LOAD_ERRORS),
+        "has_plugin_entries": any(
+            not bool(_MODEL_CATALOG_REGISTRY.get(model_id, {}).get("is_builtin"))
+            for model_id in _MODEL_CATALOG_ORDER
+        ),
+    }
+
+
+def model_catalog_plugin_status() -> dict[str, Any]:
+    _ensure_model_catalog_loaded()
+    with _MODEL_CATALOG_LOCK:
+        return {
+            "requested_modules": [
+                str(item).strip()
+                for item in list(settings.MODEL_CATALOG_PLUGIN_MODULES or [])
+                if str(item).strip()
+            ],
+            "loaded_modules": sorted(_MODEL_CATALOG_PLUGIN_MODULES_LOADED),
+            "failed_modules": copy.deepcopy(_MODEL_CATALOG_PLUGIN_LOAD_ERRORS),
+            "registered_entry_count": len(_MODEL_CATALOG_ORDER),
+        }
+
+
+def _register_builtin_model_catalog_entries() -> None:
+    for payload in _BUILTIN_MODEL_CATALOG:
+        entry = _coerce_model_entry_payload(
+            payload,
+            source_module="builtin",
+            catalog_version="builtin-v1",
+            is_builtin=True,
+        )
+        _register_model_catalog_entry(entry)
+
+
+def _ensure_model_catalog_loaded() -> None:
+    global _MODEL_CATALOG_INITIALIZED
+    if _MODEL_CATALOG_INITIALIZED:
+        return
+
+    with _MODEL_CATALOG_LOCK:
+        if _MODEL_CATALOG_INITIALIZED:
+            return
+        _MODEL_CATALOG_REGISTRY.clear()
+        _MODEL_CATALOG_ORDER.clear()
+        _MODEL_CATALOG_PLUGIN_MODULES_LOADED.clear()
+        _MODEL_CATALOG_PLUGIN_LOAD_ERRORS.clear()
+        _register_builtin_model_catalog_entries()
+        load_model_catalog_plugins_from_settings(force_reload=False)
+        _MODEL_CATALOG_INITIALIZED = True
+
+
+def list_model_catalog_entries() -> list[dict[str, Any]]:
+    _ensure_model_catalog_loaded()
+    with _MODEL_CATALOG_LOCK:
+        return [
+            copy.deepcopy(_MODEL_CATALOG_REGISTRY[model_id])
+            for model_id in _MODEL_CATALOG_ORDER
+            if model_id in _MODEL_CATALOG_REGISTRY
+        ]
+
+
+def list_model_catalog() -> dict[str, Any]:
+    entries = list_model_catalog_entries()
+    with _MODEL_CATALOG_LOCK:
+        return {
+            **_model_catalog_metadata(entry_count=len(entries)),
+            "models": entries,
+        }
 
 
 def _normalize_target_device(value: str | None) -> str:
@@ -350,12 +745,15 @@ def recommend_training_base_models(
     adaptive_model_bias: dict[str, float] | None = None,
     adaptive_bias_label: str | None = None,
 ) -> dict[str, Any]:
-    """Recommend base models from built-in catalog using hardware/task heuristics."""
+    """Recommend base models from catalog registry using hardware/task heuristics."""
     resolved_device = _normalize_target_device(target_device)
     resolved_language = _normalize_primary_language(primary_language)
     resolved_vram = _coerce_vram(available_vram_gb)
     resolved_top_k = _coerce_top_k(top_k)
     resolved_task_profile, suggested_task_type = _resolve_training_task(task_profile)
+
+    catalog_entries = list_model_catalog_entries()
+    catalog_meta = _model_catalog_metadata(entry_count=len(catalog_entries))
 
     bias_map: dict[str, float] = {}
     for raw_model_id, raw_bias in dict(adaptive_model_bias or {}).items():
@@ -372,7 +770,7 @@ def recommend_training_base_models(
 
     scored: list[tuple[float, dict[str, Any], list[str], float]] = []
     fits_vram_count = 0
-    for model in _MODEL_CATALOG:
+    for model in catalog_entries:
         score, reasons = _score_model(
             model=model,
             target_device=resolved_device,
@@ -429,9 +827,18 @@ def recommend_training_base_models(
                 "family": str(model.get("family") or "unknown"),
                 "params_b": round(params_b, 2),
                 "estimated_min_vram_gb": round(min_vram_gb, 2),
-                "estimated_ideal_vram_gb": round(float(model.get("estimated_ideal_vram_gb") or min_vram_gb), 2),
-                "introspection_estimated_min_vram_gb": round(introspection_min_vram, 2) if introspection_min_vram > 0 else None,
-                "introspection_estimated_ideal_vram_gb": round(introspection_ideal_vram, 2) if introspection_ideal_vram > 0 else None,
+                "estimated_ideal_vram_gb": round(
+                    float(model.get("estimated_ideal_vram_gb") or min_vram_gb), 2
+                ),
+                "catalog_source": str(model.get("catalog_source") or "builtin"),
+                "catalog_version": str(model.get("catalog_version") or "builtin-v1"),
+                "catalog_entry_is_builtin": bool(model.get("is_builtin", False)),
+                "introspection_estimated_min_vram_gb": (
+                    round(introspection_min_vram, 2) if introspection_min_vram > 0 else None
+                ),
+                "introspection_estimated_ideal_vram_gb": (
+                    round(introspection_ideal_vram, 2) if introspection_ideal_vram > 0 else None
+                ),
                 "supported_languages": list(model.get("supported_languages") or []),
                 "strengths": list(model.get("strengths") or []),
                 "caveats": list(model.get("caveats") or []),
@@ -473,9 +880,15 @@ def recommend_training_base_models(
         )
     if introspection_warnings:
         warnings.extend(introspection_warnings[:2])
+    if catalog_meta.get("plugin_load_errors"):
+        warnings.append(
+            "Some model catalog plugins failed to load; recommendations include built-in fallback entries."
+        )
 
     return {
         "catalog_strategy": "curated_defaults_with_introspection_v2",
+        "catalog_registry_strategy": "dynamic_registry_with_builtin_fallback_v1",
+        "catalog_metadata": catalog_meta,
         "request": {
             "target_device": resolved_device,
             "primary_language": resolved_language,

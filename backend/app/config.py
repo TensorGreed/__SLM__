@@ -132,6 +132,16 @@ class Settings(BaseSettings):
     # DATA_ADAPTER_PLUGIN_MODULES='["app.plugins.data_adapters.example_adapters"]'
     DATA_ADAPTER_PLUGIN_MODULES: list[str] = []
 
+    # ── Target Profile Catalog Plugins ──────────────────────────────────
+    # Example:
+    # TARGET_PROFILE_PLUGIN_MODULES='["app.plugins.target_profiles.acme_targets"]'
+    TARGET_PROFILE_PLUGIN_MODULES: list[str] = []
+
+    # ── Model Catalog Plugins ───────────────────────────────────────────
+    # Example:
+    # MODEL_CATALOG_PLUGIN_MODULES='["app.plugins.model_catalogs.acme_models"]'
+    MODEL_CATALOG_PLUGIN_MODULES: list[str] = []
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @field_validator("DEBUG", mode="before")

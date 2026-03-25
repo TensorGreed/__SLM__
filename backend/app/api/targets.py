@@ -10,8 +10,15 @@ class CompatibilityRequest(BaseModel):
     target_id: str
 
 @router.get("/catalog")
-async def get_target_catalog():
-    """List all available target hardware profiles."""
+async def get_target_catalog(
+    include_registry_meta: bool = Query(
+        default=False,
+        description="When true, include catalog-level metadata (plugin load status/version).",
+    )
+):
+    """List available target hardware profiles."""
+    if include_registry_meta:
+        return target_profile_service.list_target_catalog()
     return target_profile_service.list_targets()
 
 @router.post("/compatibility")

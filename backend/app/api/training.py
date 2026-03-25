@@ -60,6 +60,7 @@ from app.services.alignment_dataset_service import (
 )
 from app.services.model_selection_service import (
     introspect_training_base_model,
+    list_model_catalog,
     recommend_training_base_models,
 )
 from app.services.model_benchmark_service import benchmark_model_sweep
@@ -1996,6 +1997,22 @@ async def recommend_training_models(
                 "boosted_model_count": len(dict(benchmark_bias.get("bias_by_model") or {})),
             },
         },
+    }
+
+
+@router.get("/model-selection/catalog")
+async def get_model_selection_catalog(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Expose model catalog entries with source/version provenance metadata."""
+    project_result = await db.execute(select(Project.id).where(Project.id == project_id))
+    if project_result.scalar_one_or_none() is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    return {
+        "project_id": project_id,
+        **list_model_catalog(),
     }
 
 
