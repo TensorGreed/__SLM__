@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -525,6 +526,16 @@ def _attempt_compatibility_auto_repair(
     initial = check_compatibility(model_id, target_profile_id)
     if bool(initial.get("compatible", False)):
         return model_id, dict(initial), None
+    initial_reasons = [
+        str(item).strip()
+        for item in list(initial.get("reasons") or [])
+        if str(item).strip()
+    ]
+    initial_warnings = [
+        str(item).strip()
+        for item in list(initial.get("warnings") or [])
+        if str(item).strip()
+    ]
 
     base_params = _compat_params_b(initial)
     best_candidate_id = ""
@@ -569,6 +580,9 @@ def _attempt_compatibility_auto_repair(
                 "repaired_model_id": best_candidate_id,
                 "target_profile_id": target_profile_id,
                 "strategy": "nearest_compatible_recommendation",
+                "incompatibility_reasons": initial_reasons,
+                "incompatibility_warnings": initial_warnings,
+                "initial_vram_check": dict(initial.get("vram_check") or {}),
             },
         )
 
@@ -842,6 +856,72 @@ def _build_guardrail_unblock_actions(
     return deduped
 
 
+def _build_target_incompatibility_actions(
+    *,
+    project_id: int,
+    target_profile_id: str,
+    compatibility: dict[str, Any],
+) -> list[dict[str, str]]:
+    reasons = [
+        str(item).strip()
+        for item in list(compatibility.get("reasons") or [])
+        if str(item).strip()
+    ]
+    vram_status = str((compatibility.get("vram_check") or {}).get("status") or "").strip().lower()
+    actions: list[dict[str, str]] = []
+
+    if vram_status == "blocked" or any("vram" in reason.lower() for reason in reasons):
+        actions.append(
+            {
+                "id": "use_higher_memory_target",
+                "label": "Use higher-memory target",
+                "description": (
+                    f"Switch target profile from '{target_profile_id}' to a higher-memory option "
+                    "such as 'vllm_server'."
+                ),
+            }
+        )
+        actions.append(
+            {
+                "id": "choose_smaller_or_more_quantized_model",
+                "label": "Choose smaller/quantized base model",
+                "description": (
+                    "Pick a base model with lower estimated minimum VRAM or apply stronger quantization "
+                    "before training/export."
+                ),
+            }
+        )
+
+    actions.append(
+        {
+            "id": "review_target_compatibility_report",
+            "label": "Review compatibility report",
+            "description": "Inspect model metadata and target constraints to resolve incompatibility reasons.",
+        }
+    )
+    actions.append(
+        {
+            "id": "open_wizard_target_step",
+            "label": "Update target in wizard",
+            "description": f"Open /project/{project_id}/wizard and re-select target/base model pairing.",
+        }
+    )
+
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for action in actions:
+        label = str(action.get("label") or "").strip()
+        action_id = str(action.get("id") or "").strip()
+        if not label or not action_id:
+            continue
+        key = (action_id, label)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(action)
+    return deduped
+
+
 def _build_newbie_autopilot_plan(
     *,
     project_id: int,
@@ -1053,10 +1133,17 @@ def _build_newbie_autopilot_plan_v2(
         original_model_id = str(auto_repair.get("original_model_id") or "").strip()
         repaired_model_id = str(auto_repair.get("repaired_model_id") or "").strip()
         if original_model_id and repaired_model_id and original_model_id != repaired_model_id:
+            incompatibility_reasons = [
+                str(item).strip()
+                for item in list(auto_repair.get("incompatibility_reasons") or [])
+                if str(item).strip()
+            ]
+            reason_suffix = f" Reason: {incompatibility_reasons[0]}" if incompatibility_reasons else ""
             guardrail_warnings.append(
                 (
                     f"Base model '{original_model_id}' was incompatible with target "
                     f"'{req.target_profile_id}'. Autopilot switched to '{repaired_model_id}'."
+                    f"{reason_suffix}"
                 )
             )
 
@@ -3186,7 +3273,17 @@ async def start(
     compatibility = check_compatibility(exp.base_model, target_profile_id)
     if not bool(compatibility.get("compatible", False)):
         reasons = [str(item).strip() for item in list(compatibility.get("reasons") or []) if str(item).strip()]
-        actionable_fix = reasons[0] if reasons else "Choose a smaller base model or a less constrained target profile."
+        warnings = [str(item).strip() for item in list(compatibility.get("warnings") or []) if str(item).strip()]
+        unblock_actions = _build_target_incompatibility_actions(
+            project_id=project_id,
+            target_profile_id=target_profile_id,
+            compatibility=dict(compatibility),
+        )
+        actionable_fix = (
+            str(unblock_actions[0].get("description") or "").strip()
+            if unblock_actions
+            else (reasons[0] if reasons else "Choose a smaller base model or a less constrained target profile.")
+        )
         raise HTTPException(
             400,
             {
@@ -3200,6 +3297,10 @@ async def start(
                 "metadata": {
                     "target_profile_id": target_profile_id,
                     "reasons": reasons,
+                    "warnings": warnings,
+                    "vram_check": dict(compatibility.get("vram_check") or {}),
+                    "model_metadata": dict(compatibility.get("model_metadata") or {}),
+                    "unblock_actions": unblock_actions,
                 },
             },
         )

@@ -34,6 +34,46 @@ class Phase36TargetCompatibilityIntrospectionTests(unittest.TestCase):
         self.assertEqual(str(model_metadata.get("parameters_source") or ""), "introspection")
 
     @patch("app.services.target_profile_service.introspect_hf_model")
+    def test_check_compatibility_hard_blocks_clear_vram_over_target(self, mock_introspect):
+        mock_introspect.return_value = {
+            "model_id": "acme/edge-6b",
+            "resolved": True,
+            "source": "hf_config",
+            "params_estimate_b": 6.0,
+            "memory_profile": {"estimated_min_vram_gb": 7.4, "estimated_ideal_vram_gb": 10.0},
+            "architecture": "causal_lm",
+            "context_length": 4096,
+            "license": "apache-2.0",
+        }
+
+        payload = check_compatibility("acme/edge-6b", "edge_gpu")
+        self.assertFalse(bool(payload.get("compatible")), payload)
+        reasons = [str(item) for item in list(payload.get("reasons") or [])]
+        self.assertTrue(any("VRAM" in item and "exceeds target baseline" in item for item in reasons), reasons)
+        vram_check = dict(payload.get("vram_check") or {})
+        self.assertEqual(str(vram_check.get("status") or ""), "blocked", vram_check)
+
+    @patch("app.services.target_profile_service.introspect_hf_model")
+    def test_check_compatibility_warns_when_vram_estimate_is_unknown(self, mock_introspect):
+        mock_introspect.return_value = {
+            "model_id": "acme/custom-unknown",
+            "resolved": False,
+            "source": "none",
+            "params_estimate_b": None,
+            "memory_profile": {},
+            "architecture": "unknown",
+            "context_length": None,
+            "license": None,
+        }
+
+        payload = check_compatibility("acme/custom-unknown", "edge_gpu")
+        self.assertTrue(bool(payload.get("compatible")), payload)
+        warnings = [str(item) for item in list(payload.get("warnings") or [])]
+        self.assertTrue(any("Unable to estimate minimum VRAM" in item for item in warnings), warnings)
+        vram_check = dict(payload.get("vram_check") or {})
+        self.assertEqual(str(vram_check.get("status") or ""), "unknown", vram_check)
+
+    @patch("app.services.target_profile_service.introspect_hf_model")
     def test_check_compatibility_falls_back_to_name_hint(self, mock_introspect):
         mock_introspect.return_value = {
             "model_id": "acme/support-3b",

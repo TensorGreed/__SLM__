@@ -130,6 +130,15 @@ def _fallback_memory_from_params(params_b: float | None) -> float | None:
     return round(memory_gb, 2)
 
 
+def _vram_block_margin_gb(target_min_vram_gb: float) -> float:
+    # Keep a small uncertainty band so only clearly-over-baseline cases hard-block.
+    return round(max(0.5, float(target_min_vram_gb) * 0.1), 3)
+
+
+def _is_clearly_over_target_vram(*, estimated_min_vram_gb: float, target_min_vram_gb: float) -> bool:
+    return float(estimated_min_vram_gb) > float(target_min_vram_gb) + _vram_block_margin_gb(float(target_min_vram_gb))
+
+
 def _resolve_model_metadata(model_name: str) -> dict[str, Any]:
     introspection = introspect_hf_model(
         model_id=str(model_name or "").strip(),
@@ -205,18 +214,76 @@ def check_compatibility(model_name: str, target_id: str) -> dict[str, Any]:
             )
 
     min_target_vram = _coerce_positive_float(target.constraints.min_vram_gb)
-    if min_target_vram is not None and estimated_min_vram_gb is not None and estimated_min_vram_gb > min_target_vram:
-        warnings.append(
-            (
-                f"Estimated minimum VRAM ({estimated_min_vram_gb:g} GB) is above target baseline "
-                f"({min_target_vram:g} GB)."
+    vram_check: dict[str, Any] = {
+        "status": "not_applicable",
+        "target_min_vram_gb": min_target_vram,
+        "estimated_min_vram_gb": estimated_min_vram_gb,
+    }
+    if min_target_vram is not None:
+        if estimated_min_vram_gb is None:
+            warnings.append(
+                (
+                    "Unable to estimate minimum VRAM for this model; "
+                    f"VRAM compatibility check was skipped for target baseline ({min_target_vram:g} GB)."
+                )
             )
-        )
+            vram_check.update(
+                {
+                    "status": "unknown",
+                    "message": (
+                        "Estimated minimum VRAM is unavailable; compatibility is inferred from "
+                        "other constraints only."
+                    ),
+                }
+            )
+        else:
+            gap_gb = round(float(estimated_min_vram_gb) - float(min_target_vram), 3)
+            block_margin_gb = _vram_block_margin_gb(float(min_target_vram))
+            if _is_clearly_over_target_vram(
+                estimated_min_vram_gb=float(estimated_min_vram_gb),
+                target_min_vram_gb=float(min_target_vram),
+            ):
+                reasons.append(
+                    (
+                        f"Estimated minimum VRAM ({estimated_min_vram_gb:g} GB) exceeds target baseline "
+                        f"({min_target_vram:g} GB) by {gap_gb:g} GB."
+                    )
+                )
+                vram_check.update(
+                    {
+                        "status": "blocked",
+                        "gap_gb": gap_gb,
+                        "block_margin_gb": block_margin_gb,
+                    }
+                )
+            elif gap_gb > 0:
+                warnings.append(
+                    (
+                        f"Estimated minimum VRAM ({estimated_min_vram_gb:g} GB) is close to target baseline "
+                        f"({min_target_vram:g} GB); deployment may require tighter quantization/runtime tuning."
+                    )
+                )
+                vram_check.update(
+                    {
+                        "status": "warning",
+                        "gap_gb": gap_gb,
+                        "block_margin_gb": block_margin_gb,
+                    }
+                )
+            else:
+                vram_check.update(
+                    {
+                        "status": "pass",
+                        "gap_gb": gap_gb,
+                        "block_margin_gb": block_margin_gb,
+                    }
+                )
 
     return {
         "compatible": len(reasons) == 0,
         "reasons": reasons,
         "warnings": warnings,
+        "vram_check": vram_check,
         "target": target.model_dump(),
         "model_metadata": metadata,
     }
