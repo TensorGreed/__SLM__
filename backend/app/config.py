@@ -2,11 +2,15 @@
 
 from pathlib import Path
 from typing import Optional
-from pydantic import model_validator
+import warnings
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_BOOL_TRUE = {"1", "true", "t", "yes", "y", "on"}
+_BOOL_FALSE = {"0", "false", "f", "no", "n", "off"}
 
 
 class Settings(BaseSettings):
@@ -129,6 +133,33 @@ class Settings(BaseSettings):
     DATA_ADAPTER_PLUGIN_MODULES: list[str] = []
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def normalize_debug_bool(cls, value: object) -> bool:
+        """Harden DEBUG parsing so malformed ambient env values do not crash bootstrap."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token in _BOOL_TRUE:
+                return True
+            if token in _BOOL_FALSE:
+                return False
+            if not token:
+                return False
+
+        warnings.warn(
+            (
+                f"Invalid DEBUG value {value!r}; falling back to DEBUG=False. "
+                "Use one of: true/false, 1/0, yes/no, on/off."
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return False
 
     @model_validator(mode="after")
     def normalize_paths(self) -> "Settings":
