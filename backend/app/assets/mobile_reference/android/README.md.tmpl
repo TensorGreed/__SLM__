@@ -1,0 +1,22 @@
+# Android ExecuTorch Reference Bundle
+
+Base model: `{{BASE_MODEL}}`
+
+## Prerequisites
+- Android Studio Hedgehog+ (or newer)
+- Android SDK 34
+- JDK 17
+- Gradle 8+
+
+## Model Placement
+1. Copy model artifacts into `android/app/src/main/assets/models/`.
+2. Recommended primary artifact name: `model.bin`.
+3. Keep tokenizer/config files in the same `models/` directory when available.
+
+## Run Instructions
+1. Run: `bash scripts/run_android_app.sh`
+2. Open the `android/` folder in Android Studio if you prefer IDE setup.
+3. Launch the app on emulator/device and press Generate.
+
+## Smoke Inference
+Run: `bash scripts/run_smoke.sh "Hello from Android"`

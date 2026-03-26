@@ -1,0 +1,22 @@
+# iOS CoreML Reference Bundle
+
+Base model: `{{BASE_MODEL}}`
+
+## Prerequisites
+- macOS 14+
+- Xcode 15+
+- Swift 5.9+
+- Optional: `xcodegen` (auto-generates `.xcodeproj` from `ios/project.yml`)
+
+## Model Placement
+1. Copy your exported model into `ios/ModelAssets/model.mlmodelc/`.
+2. Keep tokenizer/config metadata beside the model when available.
+3. Optional fallback binary path: `ios/ModelAssets/model.bin`.
+
+## Run Instructions
+1. Run: `bash scripts/run_ios_app.sh`
+2. Open the generated `ios/SLMReference.xcodeproj` in Xcode.
+3. Build and run the `SLMReference` scheme on simulator/device.
+
+## Smoke Inference
+Run: `bash scripts/run_smoke.sh "Hello from iOS"`

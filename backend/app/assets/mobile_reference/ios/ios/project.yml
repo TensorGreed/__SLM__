@@ -1,0 +1,17 @@
+name: SLMReference
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    PRODUCT_BUNDLE_IDENTIFIER: com.example.slmreference
+    INFOPLIST_FILE: Info.plist
+targets:
+  SLMReference:
+    type: application
+    platform: iOS
+    sources:
+      - path: SLMReferenceApp.swift
+      - path: SLMRuntime.swift
