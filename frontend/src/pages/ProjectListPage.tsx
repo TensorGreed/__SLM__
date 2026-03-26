@@ -6,7 +6,12 @@ import ProjectCard from '../components/dashboard/ProjectCard';
 import EmptyState from '../components/shared/EmptyState';
 import Skeleton from '../components/shared/Skeleton';
 import api from '../api/client';
-import type { DomainPackSummary, DomainProfileSummary } from '../types';
+import type {
+    DomainPackSummary,
+    DomainProfileSummary,
+    StarterPackCatalogResponse,
+    StarterPackSummary,
+} from '../types';
 import './ProjectListPage.css';
 
 const STATUS_FILTERS = ['all', 'draft', 'active', 'completed'] as const;
@@ -24,8 +29,10 @@ export default function ProjectListPage() {
     const [newName, setNewName] = useState('');
     const [newDesc, setNewDesc] = useState('');
     const [newModel, setNewModel] = useState('');
+    const [newStarterPackId, setNewStarterPackId] = useState('');
     const [newDomainPackId, setNewDomainPackId] = useState('');
     const [newDomainProfileId, setNewDomainProfileId] = useState('');
+    const [starterPacks, setStarterPacks] = useState<StarterPackSummary[]>([]);
     const [domainPacks, setDomainPacks] = useState<DomainPackSummary[]>([]);
     const [domainProfiles, setDomainProfiles] = useState<DomainProfileSummary[]>([]);
 
@@ -35,6 +42,12 @@ export default function ProjectListPage() {
     useEffect(() => {
         fetchProjects();
     }, [fetchProjects]);
+
+    useEffect(() => {
+        api.get<StarterPackCatalogResponse>('/starter-packs/catalog')
+            .then((res) => setStarterPacks(res.data.starter_packs || []))
+            .catch(() => setStarterPacks([]));
+    }, []);
 
     useEffect(() => {
         api.get<{ packs: DomainPackSummary[] }>('/domain-packs')
@@ -50,12 +63,14 @@ export default function ProjectListPage() {
 
     const handleCreate = async () => {
         if (!newName.trim()) return;
+        const starterPackId = newStarterPackId.trim() ? newStarterPackId.trim() : null;
         const domainPackId = newDomainPackId ? Number(newDomainPackId) : null;
         const domainProfileId = newDomainProfileId ? Number(newDomainProfileId) : null;
         const project = await createProject(
             newName.trim(),
             newDesc.trim(),
             newModel.trim(),
+            starterPackId,
             domainPackId,
             domainProfileId,
         );
@@ -63,6 +78,7 @@ export default function ProjectListPage() {
         setNewName('');
         setNewDesc('');
         setNewModel('');
+        setNewStarterPackId('');
         setNewDomainPackId('');
         setNewDomainProfileId('');
         navigate(`/project/${project.id}`);
@@ -96,6 +112,7 @@ export default function ProjectListPage() {
             const query = searchQuery.toLowerCase();
             return project.name.toLowerCase().includes(query) || project.description?.toLowerCase().includes(query);
         });
+    const selectedStarterPack = starterPacks.find((pack) => pack.id === newStarterPackId) || null;
 
     return (
         <div className="main-content project-list-main">
@@ -200,6 +217,50 @@ export default function ProjectListPage() {
                                     onChange={(e) => setNewDesc(e.target.value)}
                                 />
                             </div>
+                            <div className="form-group">
+                                <label className="form-label">Starter Pack</label>
+                                <select
+                                    className="input"
+                                    value={newStarterPackId}
+                                    onChange={(e) => setNewStarterPackId(e.target.value)}
+                                >
+                                    <option value="">No starter pack</option>
+                                    {starterPacks.map((pack) => (
+                                        <option key={pack.id} value={pack.id}>
+                                            {pack.display_name} ({pack.id})
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="form-hint">
+                                    Optional domain defaults for model family, adapter profile, evaluation gates, and safety reminders.
+                                </div>
+                            </div>
+                            {selectedStarterPack && (
+                                <div className="project-list-starter-summary">
+                                    <div className="project-list-starter-title">
+                                        {selectedStarterPack.display_name}
+                                    </div>
+                                    <div className="project-list-starter-copy">
+                                        {selectedStarterPack.description}
+                                    </div>
+                                    <div className="project-list-starter-meta">
+                                        <span>Model families: {selectedStarterPack.recommended_model_families.join(', ') || 'n/a'}</span>
+                                        <span>Target default: {selectedStarterPack.target_profile_default}</span>
+                                        {selectedStarterPack.default_base_model_name && (
+                                            <span>Base model default: {selectedStarterPack.default_base_model_name}</span>
+                                        )}
+                                    </div>
+                                    {selectedStarterPack.safety_compliance_reminders.length > 0 && (
+                                        <div className="project-list-starter-reminders">
+                                            <strong>Safety reminders:</strong>{' '}
+                                            {selectedStarterPack.safety_compliance_reminders.join(' ')}
+                                        </div>
+                                    )}
+                                    <div className="form-hint">
+                                        Starter defaults apply when you leave Base Model and target settings on auto/default.
+                                    </div>
+                                </div>
+                            )}
                             <div className="form-group">
                                 <label className="form-label">Base Model</label>
                                 <input

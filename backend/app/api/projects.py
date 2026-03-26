@@ -1,5 +1,7 @@
 """Project CRUD API routes."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +34,7 @@ from app.services.nl2pipeline_service import magic_create_pipeline_recipe
 from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
 from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
+from app.services.starter_pack_service import get_starter_pack_by_id
 
 class MagicCreateRequest(BaseModel):
     prompt: str
@@ -88,6 +91,12 @@ async def create_project(
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"Project '{data.name}' already exists")
 
+    selected_starter_pack: dict[str, Any] | None = None
+    if data.starter_pack_id is not None:
+        selected_starter_pack = get_starter_pack_by_id(data.starter_pack_id)
+        if selected_starter_pack is None:
+            raise HTTPException(400, f"Starter pack '{data.starter_pack_id}' not found")
+
     resolved_domain_pack_id = data.domain_pack_id
     selected_pack: DomainPack | None = None
     if data.domain_pack_id is not None:
@@ -120,16 +129,48 @@ async def create_project(
                 resolved_domain_profile_id = default_profile.id
                 break
 
+    resolved_base_model_name = str(data.base_model_name or "").strip()
+    if not resolved_base_model_name and selected_starter_pack is not None:
+        resolved_base_model_name = (
+            str(selected_starter_pack.get("default_base_model_name") or "").strip()
+        )
+
+    model_fields_set = set(getattr(data, "model_fields_set", set()))
+    explicit_target = "target_profile_id" in model_fields_set and bool(
+        str(data.target_profile_id or "").strip()
+    )
+    resolved_target_profile_id = str(data.target_profile_id or "").strip() or "vllm_server"
+    if not explicit_target and selected_starter_pack is not None:
+        starter_target_profile = str(
+            selected_starter_pack.get("target_profile_default") or ""
+        ).strip()
+        if starter_target_profile:
+            resolved_target_profile_id = starter_target_profile
+
     project_payload = dict(
         name=data.name,
         description=data.description,
-        base_model_name=data.base_model_name,
+        base_model_name=resolved_base_model_name,
         domain_pack_id=resolved_domain_pack_id,
         domain_profile_id=resolved_domain_profile_id,
-        target_profile_id=data.target_profile_id or "vllm_server",
+        target_profile_id=resolved_target_profile_id,
     )
     if isinstance(data.gate_policy, dict):
         project_payload["gate_policy"] = dict(data.gate_policy)
+    elif selected_starter_pack is not None and isinstance(
+        selected_starter_pack.get("evaluation_gate_defaults"), dict
+    ):
+        project_payload["gate_policy"] = dict(
+            selected_starter_pack.get("evaluation_gate_defaults") or {}
+        )
+
+    if selected_starter_pack is not None and isinstance(
+        selected_starter_pack.get("adapter_task_defaults"), dict
+    ):
+        project_payload["dataset_adapter_preset"] = dict(
+            selected_starter_pack.get("adapter_task_defaults") or {}
+        )
+
     if isinstance(data.budget_settings, dict):
         project_payload["budget_settings"] = dict(data.budget_settings)
     project = Project(**project_payload)

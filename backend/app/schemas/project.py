@@ -12,6 +12,7 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     base_model_name: str = ""
+    starter_pack_id: str | None = None
     domain_pack_id: int | None = None
     domain_profile_id: int | None = None
     target_profile_id: str | None = "vllm_server"

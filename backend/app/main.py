@@ -37,12 +37,14 @@ from app.api.domain_packs import router as domain_packs_router
 from app.api.domain_profiles import router as domain_profiles_router
 from app.api.artifacts import router as artifacts_router
 from app.api.targets import router as targets_router
+from app.api.starter_packs import router as starter_packs_router
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
 from app.services.data_adapter_service import load_data_adapter_plugins_from_settings
 from app.services.model_selection_service import load_model_catalog_plugins_from_settings
 from app.services.runtime_settings_service import apply_persisted_runtime_overrides
+from app.services.starter_pack_service import load_starter_pack_plugins_from_settings
 from app.services.target_profile_service import load_target_profile_plugins_from_settings
 from app.exceptions import SLMError
 from fastapi.responses import JSONResponse
@@ -143,6 +145,7 @@ async def lifespan(app: FastAPI):
     load_data_adapter_plugins_from_settings()
     load_target_profile_plugins_from_settings()
     load_model_catalog_plugins_from_settings()
+    load_starter_pack_plugins_from_settings()
     await init_db()
     await ensure_bootstrap_auth()
     async with async_session_factory() as db:
@@ -194,6 +197,7 @@ app.include_router(domain_packs_router, prefix="/api", dependencies=API_DEPENDEN
 app.include_router(domain_profiles_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(artifacts_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(targets_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(starter_packs_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

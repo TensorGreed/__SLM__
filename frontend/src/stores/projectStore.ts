@@ -19,6 +19,7 @@ interface ProjectState {
         name: string,
         description?: string,
         baseModel?: string,
+        starterPackId?: string | null,
         domainPackId?: number | null,
         domainProfileId?: number | null,
     ) => Promise<Project>;
@@ -55,6 +56,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         name,
         description = '',
         baseModel = '',
+        starterPackId = null,
         domainPackId = null,
         domainProfileId = null,
     ) => {
@@ -62,6 +64,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
             name,
             description,
             base_model_name: baseModel,
+            starter_pack_id: starterPackId,
             domain_pack_id: domainPackId,
             domain_profile_id: domainProfileId,
         });

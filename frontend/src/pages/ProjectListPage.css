@@ -73,6 +73,44 @@
     font-size: 0.9rem;
 }
 
+.project-list-starter-summary {
+    background: #f3f7ff;
+    border: 1px solid #c8d8f6;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: var(--space-md);
+}
+
+.project-list-starter-title {
+    font-weight: 700;
+    color: #17315a;
+    margin-bottom: 4px;
+}
+
+.project-list-starter-copy {
+    color: #35537d;
+    font-size: 0.88rem;
+    margin-bottom: 8px;
+}
+
+.project-list-starter-meta {
+    display: grid;
+    gap: 4px;
+    color: #17315a;
+    font-size: 0.8rem;
+    margin-bottom: 8px;
+}
+
+.project-list-starter-reminders {
+    color: #4a2d00;
+    font-size: 0.82rem;
+    background: #fff7e8;
+    border: 1px solid #f2d8a6;
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+
 @media (max-width: 760px) {
     .project-list-top-actions {
         width: 100%;

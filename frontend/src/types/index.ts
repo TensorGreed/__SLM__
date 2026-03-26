@@ -558,6 +558,32 @@ export interface DomainPackResponse extends DomainPackSummary {
     contract: Record<string, unknown>;
 }
 
+export interface StarterPackSummary {
+    id: string;
+    display_name: string;
+    description: string;
+    domain: string;
+    recommended_model_families: string[];
+    recommended_models: string[];
+    default_base_model_name: string | null;
+    adapter_task_defaults: Record<string, unknown>;
+    evaluation_gate_defaults: Record<string, unknown>;
+    safety_compliance_reminders: string[];
+    target_profile_default: string;
+    catalog_source: string;
+    catalog_version: string;
+    is_builtin: boolean;
+}
+
+export interface StarterPackCatalogResponse {
+    catalog_version: string;
+    pack_count: number;
+    loaded_plugin_modules: string[];
+    plugin_load_errors: Record<string, string>;
+    has_plugin_packs: boolean;
+    starter_packs: StarterPackSummary[];
+}
+
 /* ── Display Tabs ───────────────────────────────────────────────────── */
 export const PIPELINE_TABS = [
     { key: 'data', label: 'Data', icon: '📂', stage: 'ingestion' },

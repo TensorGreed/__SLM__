@@ -142,6 +142,11 @@ class Settings(BaseSettings):
     # MODEL_CATALOG_PLUGIN_MODULES='["app.plugins.model_catalogs.acme_models"]'
     MODEL_CATALOG_PLUGIN_MODULES: list[str] = []
 
+    # ── Starter Pack Catalog Plugins ────────────────────────────────────
+    # Example:
+    # STARTER_PACK_PLUGIN_MODULES='["app.plugins.starter_packs.acme_domain_starters"]'
+    STARTER_PACK_PLUGIN_MODULES: list[str] = []
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @field_validator("DEBUG", mode="before")
