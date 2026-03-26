@@ -3,10 +3,13 @@
 import asyncio
 import hashlib
 import json
+import os
+import platform
 import re
 import shutil
 import sys
 from datetime import datetime, timezone
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,7 @@ from app.models.experiment import Experiment
 from app.models.project import Project
 from app.schemas.export import (
     OptimizationCandidate,
+    OptimizationMatrixRunResponse,
     OptimizationMetric,
     OptimizationResponse,
     OptimizationRunEvidence,
@@ -91,6 +95,88 @@ def _optimization_runs_dir(project_id: int) -> Path:
     directory = _optimization_dir(project_id) / "runs"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def _optimization_matrix_runs_dir(project_id: int) -> Path:
+    directory = _optimization_dir(project_id) / "matrix_runs"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _optimization_matrix_latest_pointer(project_id: int) -> Path:
+    return _optimization_dir(project_id) / "latest_matrix_run.json"
+
+
+def _safe_package_version(package_name: str) -> str | None:
+    try:
+        return str(importlib_metadata.version(package_name))
+    except Exception:
+        return None
+
+
+def _runtime_gpu_fingerprint() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "available": False,
+        "provider": "none",
+        "count": 0,
+        "devices": [],
+        "cuda_version": None,
+    }
+    try:
+        import torch  # type: ignore
+
+        payload["provider"] = "torch"
+        payload["torch_version"] = str(getattr(torch, "__version__", "") or "")
+        if bool(torch.cuda.is_available()):
+            device_count = int(torch.cuda.device_count())
+            payload["available"] = True
+            payload["count"] = device_count
+            payload["devices"] = [
+                str(torch.cuda.get_device_name(idx))
+                for idx in range(device_count)
+            ]
+            payload["cuda_version"] = str(getattr(torch.version, "cuda", "") or "")
+    except Exception as exc:  # pragma: no cover - environment dependent
+        payload["provider"] = "unknown"
+        payload["error"] = str(exc)
+    return payload
+
+
+def _runtime_fingerprint() -> dict[str, Any]:
+    toolchain = {
+        "benchmark_script_path": str(_BENCHMARK_SCRIPT),
+        "benchmark_script_exists": bool(_BENCHMARK_SCRIPT.exists()),
+        "torch_version": _safe_package_version("torch"),
+        "transformers_version": _safe_package_version("transformers"),
+        "onnxruntime_version": _safe_package_version("onnxruntime"),
+        "optimum_version": _safe_package_version("optimum"),
+        "llama_cpp_python_version": _safe_package_version("llama-cpp-python"),
+    }
+    gpu = _runtime_gpu_fingerprint()
+    return {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "python": {
+            "version": str(sys.version).strip(),
+            "implementation": str(platform.python_implementation()),
+            "executable": str(Path(sys.executable).expanduser()),
+        },
+        "host": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "cpu_count": int(os.cpu_count() or 0),
+        },
+        "gpu": gpu,
+        "toolchain": toolchain,
+        "python_version": str(sys.version).strip(),
+        "python_executable": str(Path(sys.executable).expanduser()),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "benchmark_script_path": toolchain["benchmark_script_path"],
+        "benchmark_script_exists": bool(toolchain["benchmark_script_exists"]),
+        "external_command_timeout_seconds": int(settings.EXTERNAL_COMMAND_TIMEOUT_SECONDS),
+    }
 
 
 def _prompt_set_hash(prompts: list[str]) -> str:
@@ -331,6 +417,7 @@ def _persist_optimization_run(
 
     candidate_rows: list[dict[str, Any]] = []
     measured_count = 0
+    mixed_count = 0
     estimated_count = 0
     for row in candidates:
         source_candidate = dict(discovered_by_id.get(str(row.id)) or {})
@@ -348,6 +435,9 @@ def _persist_optimization_run(
         metric_source = str(row.metric_source or "estimated").strip().lower() or "estimated"
         if metric_source == "measured":
             measured_count += 1
+        elif metric_source == "mixed":
+            mixed_count += 1
+            estimated_count += 1
         else:
             estimated_count += 1
 
@@ -364,6 +454,7 @@ def _persist_optimization_run(
                 "metric_source": row.metric_source,
                 "metric_sources": dict(row.metric_sources or {}),
                 "measurement": measurement,
+                "confidence": dict(row.confidence or {}),
                 "is_recommended": bool(row.is_recommended),
                 "reasons": list(row.reasons or []),
             }
@@ -381,6 +472,7 @@ def _persist_optimization_run(
         "candidate_count": len(candidate_rows),
         "measured_candidate_count": measured_count,
         "estimated_candidate_count": estimated_count,
+        "mixed_candidate_count": mixed_count,
         "recommended_candidate_id": recommended_candidate_id,
         "candidates": candidate_rows,
     }
@@ -411,6 +503,7 @@ def _persist_optimization_run(
         candidate_count=len(candidate_rows),
         measured_candidate_count=measured_count,
         estimated_candidate_count=estimated_count,
+        mixed_candidate_count=mixed_count,
         recommended_candidate_id=recommended_candidate_id,
     )
 
@@ -483,6 +576,7 @@ def _build_export_optimization_evidence(
         "candidate_count": run.get("candidate_count"),
         "measured_candidate_count": run.get("measured_candidate_count"),
         "estimated_candidate_count": run.get("estimated_candidate_count"),
+        "mixed_candidate_count": run.get("mixed_candidate_count"),
         "selected_candidate": selected,
     }
 
@@ -1308,58 +1402,81 @@ if __name__ == "__main__":
 '''
 
 
-async def optimize_for_target(
-    db: AsyncSession, project_id: int, target_id: str
-) -> OptimizationResponse:
-    _ = db
+def _resolve_optimizer_target_context(target_id: str) -> dict[str, Any]:
     target = target_profile_service.get_target_by_id(target_id)
     if not target:
         raise ValueError(f"Target profile {target_id} not found")
-
-    discovered = _discover_optimizer_candidates(project_id=project_id)
-    if not discovered:
-        raise ValueError(
-            (
-                "No model artifacts were found for optimization. "
-                "Create at least one trained model (or compressed artifact) before running target optimization."
-            )
-        )
-    discovered_by_id = {
-        str(item["id"]): dict(item)
-        for item in discovered
-        if str(item.get("id") or "").strip()
-    }
-
     preferred_formats = {
         str(item or "").strip().lower()
         for item in list(target.constraints.preferred_formats or [])
         if str(item or "").strip()
     }
     target_device = target_profile_service.resolve_target_device(target.id, fallback="laptop")
-    prompt_set = _ensure_optimization_prompt_set(project_id)
-    benchmark_probe_candidates = [
+    target_memory_budget_gb = _coerce_float_positive(target.constraints.min_vram_gb)
+    return {
+        "target": target,
+        "preferred_formats": preferred_formats,
+        "target_device": target_device,
+        "target_memory_budget_gb": target_memory_budget_gb,
+    }
+
+
+def _select_probe_candidate_ids(
+    *,
+    discovered: list[dict[str, Any]],
+    preferred_formats: set[str],
+    max_probe_candidates: int,
+) -> set[str]:
+    limit = max(1, int(max_probe_candidates))
+    rows = [
         item
         for item in sorted(
             discovered,
             key=lambda item: (
                 0 if item["runtime_template"] in preferred_formats else 1,
                 item["size_bytes"],
+                str(item["id"]),
             ),
         )
         if bool(item.get("probe_supported"))
-    ][:3]
-    benchmark_probe_ids = {str(item["id"]) for item in benchmark_probe_candidates}
+    ][:limit]
+    return {str(item["id"]) for item in rows}
+
+
+async def _evaluate_optimizer_candidates_for_target(
+    *,
+    project_id: int,
+    target_id: str,
+    discovered: list[dict[str, Any]],
+    max_probe_candidates: int = 3,
+    probe_cache: dict[str, tuple[dict[str, Any] | None, str]] | None = None,
+) -> dict[str, Any]:
+    context = _resolve_optimizer_target_context(target_id)
+    preferred_formats = set(context["preferred_formats"])
+    target_device = str(context["target_device"])
+    target_memory_budget_gb = _coerce_float_positive(context.get("target_memory_budget_gb"))
+    benchmark_probe_ids = _select_probe_candidate_ids(
+        discovered=discovered,
+        preferred_formats=preferred_formats,
+        max_probe_candidates=max_probe_candidates,
+    )
+    local_probe_cache = probe_cache if probe_cache is not None else {}
 
     candidates: list[OptimizationCandidate] = []
-    target_memory_budget_gb = _coerce_float_positive(target.constraints.min_vram_gb)
     for candidate in discovered:
+        candidate_id = str(candidate["id"])
         fallback_reason = ""
         measured_report: dict[str, Any] | None = None
-        if str(candidate["id"]) in benchmark_probe_ids:
-            measured_report, fallback_reason = await _run_optimizer_benchmark_probe(
-                project_id=project_id,
-                candidate=candidate,
-            )
+        if candidate_id in benchmark_probe_ids:
+            cached = local_probe_cache.get(candidate_id)
+            if cached is None:
+                measured_report, fallback_reason = await _run_optimizer_benchmark_probe(
+                    project_id=project_id,
+                    candidate=candidate,
+                )
+                local_probe_cache[candidate_id] = (measured_report, fallback_reason)
+            else:
+                measured_report, fallback_reason = cached
         elif not bool(candidate.get("probe_supported")):
             fallback_reason = (
                 f"Runtime probe is not available for format '{candidate['runtime_template']}'."
@@ -1378,6 +1495,9 @@ async def optimize_for_target(
                 target_device=target_device,
                 fallback_reason=fallback_reason or "Runtime probe did not complete.",
             )
+        confidence = _metric_confidence(metric_source, metric_sources)
+        measurement = dict(measurement or {})
+        measurement["confidence"] = dict(confidence)
 
         reasons: list[str] = []
         if candidate["runtime_template"] in preferred_formats:
@@ -1390,6 +1510,9 @@ async def optimize_for_target(
             fallback_text = str(measurement.get("fallback_reason") or "").strip()
             if fallback_text:
                 reasons.append(fallback_text)
+            remediation_hint = str(measurement.get("fallback_remediation_hint") or "").strip()
+            if remediation_hint:
+                reasons.append(f"Remediation: {remediation_hint}")
         else:
             reasons.append("Latency and quality proxy measured from a live local benchmark probe.")
 
@@ -1406,7 +1529,7 @@ async def optimize_for_target(
 
         candidates.append(
             OptimizationCandidate(
-                id=str(candidate["id"]),
+                id=candidate_id,
                 name=str(candidate["name"]),
                 quantization=str(candidate["quantization"]),
                 runtime_template=str(candidate["runtime_template"]),
@@ -1415,37 +1538,113 @@ async def optimize_for_target(
                 metric_source=metric_source,
                 metric_sources=metric_sources,
                 measurement=measurement,
+                confidence=confidence,
             )
         )
 
-    def _rank_key(row: OptimizationCandidate) -> tuple[float, float, float, float, float]:
-        format_penalty = 0.0 if row.runtime_template in preferred_formats else 1.0
-        memory_penalty = 0.0
-        if target_memory_budget_gb is not None and row.metrics.memory_gb > target_memory_budget_gb:
-            memory_penalty = 1.0
-        source_priority = {
-            "measured": 0.0,
-            "mixed": 0.5,
-            "estimated": 1.0,
-        }.get(str(row.metric_source).strip().lower(), 1.0)
-        return (
-            memory_penalty,
-            format_penalty,
-            source_priority,
-            float(row.metrics.latency_ms),
-            -float(row.metrics.quality_score),
+    candidates.sort(
+        key=lambda row: _optimization_rank_key(
+            candidate=row,
+            preferred_formats=preferred_formats,
+            target_memory_budget_gb=target_memory_budget_gb,
         )
-
-    candidates.sort(key=_rank_key)
+    )
     if candidates:
         candidates[0].is_recommended = True
         candidates[0].reasons.append("Best measured/estimated latency-quality tradeoff for this target.")
 
+    source_counts = {"measured": 0, "mixed": 0, "estimated": 0}
+    for row in candidates:
+        token = str(row.metric_source or "estimated").strip().lower() or "estimated"
+        if token in source_counts:
+            source_counts[token] += 1
+        else:
+            source_counts["estimated"] += 1
+
+    return {
+        "target_id": target_id,
+        "target_device": target_device,
+        "preferred_formats": preferred_formats,
+        "target_memory_budget_gb": target_memory_budget_gb,
+        "probe_candidate_ids": sorted(benchmark_probe_ids),
+        "candidates": candidates,
+        "source_counts": source_counts,
+        "probe_cache": local_probe_cache,
+    }
+
+
+def _matrix_run_path(project_id: int, run_id: str) -> Path:
+    return _optimization_matrix_runs_dir(project_id) / f"{run_id}.json"
+
+
+def _persist_matrix_run_payload(project_id: int, payload: dict[str, Any]) -> Path:
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("Matrix run payload missing run_id.")
+    run_path = _matrix_run_path(project_id, run_id)
+    payload["run_hash"] = _hash_json_payload(payload)
+    run_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    pointer = {
+        "run_id": run_id,
+        "run_path": str(run_path),
+        "run_hash": str(payload.get("run_hash") or ""),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _optimization_matrix_latest_pointer(project_id).write_text(
+        json.dumps(pointer, indent=2),
+        encoding="utf-8",
+    )
+    return run_path
+
+
+def _load_matrix_run_payload(project_id: int, run_id: str) -> dict[str, Any]:
+    token = str(run_id or "").strip()
+    if not token:
+        raise ValueError("run_id is required.")
+    path = _matrix_run_path(project_id, token)
+    if not path.exists() or not path.is_file():
+        raise ValueError(f"Optimization matrix run '{token}' not found.")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Failed to parse optimization matrix run '{token}': {exc}") from exc
+    payload["_run_path"] = str(path)
+    return payload
+
+
+async def optimize_for_target(
+    db: AsyncSession, project_id: int, target_id: str
+) -> OptimizationResponse:
+    _ = db
+    discovered = _discover_optimizer_candidates(project_id=project_id)
+    if not discovered:
+        raise ValueError(
+            (
+                "No model artifacts were found for optimization. "
+                "Create at least one trained model (or compressed artifact) before running target optimization."
+            )
+        )
+    discovered_by_id = {
+        str(item["id"]): dict(item)
+        for item in discovered
+        if str(item.get("id") or "").strip()
+    }
+    prompt_set = _ensure_optimization_prompt_set(project_id)
+    eval_payload = await _evaluate_optimizer_candidates_for_target(
+        project_id=project_id,
+        target_id=target_id,
+        discovered=discovered,
+        max_probe_candidates=3,
+        probe_cache={},
+    )
+    candidates = list(eval_payload["candidates"])
+
     optimization_run = _persist_optimization_run(
         project_id=project_id,
         target_id=target_id,
-        target_device=target_device,
-        preferred_formats=preferred_formats,
+        target_device=str(eval_payload["target_device"]),
+        preferred_formats=set(eval_payload["preferred_formats"]),
         candidates=candidates,
         discovered_by_id=discovered_by_id,
         prompt_set=prompt_set,
@@ -1456,6 +1655,223 @@ async def optimize_for_target(
         candidates=candidates,
         optimization_run=optimization_run,
     )
+
+
+async def start_optimization_matrix_run(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    target_ids: list[str] | None = None,
+    max_probe_candidates_per_target: int = 3,
+) -> OptimizationMatrixRunResponse:
+    _ = db
+    discovered = _discover_optimizer_candidates(project_id=project_id)
+    if not discovered:
+        raise ValueError(
+            (
+                "No model artifacts were found for optimization. "
+                "Create at least one trained model (or compressed artifact) before running matrix optimization."
+            )
+        )
+    discovered_by_id = {
+        str(item["id"]): dict(item)
+        for item in discovered
+        if str(item.get("id") or "").strip()
+    }
+    available_targets = [row for row in target_profile_service.list_targets() if str(row.id or "").strip()]
+    available_ids = [str(row.id).strip().lower() for row in available_targets]
+    requested_ids = [
+        str(item or "").strip().lower()
+        for item in list(target_ids or [])
+        if str(item or "").strip()
+    ]
+    resolved_target_ids = requested_ids or available_ids
+    if not resolved_target_ids:
+        raise ValueError("No target profiles are available for matrix optimization.")
+    missing = [item for item in resolved_target_ids if item not in available_ids]
+    if missing:
+        raise ValueError(f"Unknown target profile(s) for matrix optimization: {', '.join(sorted(set(missing)))}")
+
+    prompt_set = _ensure_optimization_prompt_set(project_id)
+    run_id = f"matrix-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+    started_at = datetime.now(timezone.utc).isoformat()
+    run_payload: dict[str, Any] = {
+        "schema": "slm.optimization-matrix/v1",
+        "run_id": run_id,
+        "project_id": project_id,
+        "status": "running",
+        "started_at": started_at,
+        "completed_at": None,
+        "target_ids": list(resolved_target_ids),
+        "prompt_set": dict(prompt_set),
+        "runtime_fingerprint": _runtime_fingerprint(),
+        "summary": {},
+        "targets": [],
+        "error": None,
+    }
+    _persist_matrix_run_payload(project_id, dict(run_payload))
+
+    probe_cache: dict[str, tuple[dict[str, Any] | None, str]] = {}
+    target_rows: list[dict[str, Any]] = []
+    measured_total = 0
+    mixed_total = 0
+    estimated_total = 0
+    candidate_eval_total = 0
+    try:
+        for target_id in resolved_target_ids:
+            eval_payload = await _evaluate_optimizer_candidates_for_target(
+                project_id=project_id,
+                target_id=target_id,
+                discovered=discovered,
+                max_probe_candidates=max_probe_candidates_per_target,
+                probe_cache=probe_cache,
+            )
+            probe_cache = dict(eval_payload.get("probe_cache") or {})
+            candidates = [row for row in list(eval_payload.get("candidates") or []) if isinstance(row, OptimizationCandidate)]
+            source_counts = dict(eval_payload.get("source_counts") or {})
+            measured_total += int(source_counts.get("measured") or 0)
+            mixed_total += int(source_counts.get("mixed") or 0)
+            estimated_total += int(source_counts.get("estimated") or 0)
+            candidate_eval_total += len(candidates)
+
+            serialized_candidates: list[dict[str, Any]] = []
+            for rank, row in enumerate(candidates, start=1):
+                source_candidate = dict(discovered_by_id.get(str(row.id)) or {})
+                measurement = dict(row.measurement or {})
+                artifact_identifier = _build_optimization_artifact_identifier(
+                    source_candidate if source_candidate else {
+                        "artifact_path": measurement.get("artifact_path"),
+                        "model_ref": measurement.get("model_ref"),
+                        "runtime_template": row.runtime_template,
+                        "quantization": row.quantization,
+                        "size_bytes": measurement.get("model_size_bytes") or 0,
+                        "file_count": measurement.get("file_count") or 0,
+                    }
+                )
+                rank_score = _optimization_rank_key(
+                    candidate=row,
+                    preferred_formats=set(eval_payload["preferred_formats"]),
+                    target_memory_budget_gb=_coerce_float_positive(eval_payload.get("target_memory_budget_gb")),
+                )
+                serialized_candidates.append(
+                    {
+                        "rank": rank,
+                        "rank_score": list(rank_score),
+                        "id": row.id,
+                        "name": row.name,
+                        "runtime_template": row.runtime_template,
+                        "quantization": row.quantization,
+                        "artifact_identifier": artifact_identifier,
+                        "metrics": row.metrics.model_dump(),
+                        "metric_source": row.metric_source,
+                        "metric_sources": dict(row.metric_sources or {}),
+                        "measurement": measurement,
+                        "confidence": dict(row.confidence or {}),
+                        "is_recommended": bool(row.is_recommended),
+                        "reasons": list(row.reasons or []),
+                    }
+                )
+
+            target_rows.append(
+                {
+                    "target_id": target_id,
+                    "target_device": eval_payload["target_device"],
+                    "preferred_formats": sorted(set(eval_payload["preferred_formats"])),
+                    "target_memory_budget_gb": eval_payload["target_memory_budget_gb"],
+                    "probe_candidate_ids": list(eval_payload["probe_candidate_ids"]),
+                    "candidate_count": len(serialized_candidates),
+                    "measured_candidate_count": int(source_counts.get("measured") or 0),
+                    "mixed_candidate_count": int(source_counts.get("mixed") or 0),
+                    "estimated_candidate_count": int(source_counts.get("estimated") or 0),
+                    "recommended_candidate_id": next(
+                        (row["id"] for row in serialized_candidates if bool(row.get("is_recommended"))),
+                        None,
+                    ),
+                    "candidates": serialized_candidates,
+                }
+            )
+        run_payload["status"] = "completed"
+        run_payload["completed_at"] = datetime.now(timezone.utc).isoformat()
+        run_payload["targets"] = target_rows
+        run_payload["summary"] = {
+            "target_count": len(target_rows),
+            "candidate_evaluation_count": candidate_eval_total,
+            "measured_candidate_count": measured_total,
+            "mixed_candidate_count": mixed_total,
+            "estimated_candidate_count": estimated_total,
+            "max_probe_candidates_per_target": int(max_probe_candidates_per_target),
+        }
+        run_payload["error"] = None
+    except Exception as exc:
+        run_payload["status"] = "failed"
+        run_payload["completed_at"] = datetime.now(timezone.utc).isoformat()
+        run_payload["targets"] = target_rows
+        run_payload["summary"] = {
+            "target_count": len(target_rows),
+            "candidate_evaluation_count": candidate_eval_total,
+            "measured_candidate_count": measured_total,
+            "mixed_candidate_count": mixed_total,
+            "estimated_candidate_count": estimated_total,
+            "max_probe_candidates_per_target": int(max_probe_candidates_per_target),
+        }
+        run_payload["error"] = str(exc)
+    run_path = _persist_matrix_run_payload(project_id, run_payload)
+    result_payload = dict(run_payload)
+    result_payload["run_path"] = str(run_path)
+    return OptimizationMatrixRunResponse(**result_payload)
+
+
+def get_optimization_matrix_run(
+    *,
+    project_id: int,
+    run_id: str,
+) -> OptimizationMatrixRunResponse:
+    payload = _load_matrix_run_payload(project_id, run_id)
+    payload["run_path"] = str(payload.get("_run_path") or "")
+    return OptimizationMatrixRunResponse(**payload)
+
+
+def get_optimization_matrix_recommendations(
+    *,
+    project_id: int,
+    run_id: str,
+    target_id: str | None = None,
+    top_k: int = 3,
+) -> dict[str, Any]:
+    payload = _load_matrix_run_payload(project_id, run_id)
+    targets = [item for item in list(payload.get("targets") or []) if isinstance(item, dict)]
+    target_token = str(target_id or "").strip().lower()
+    if target_token:
+        targets = [item for item in targets if str(item.get("target_id") or "").strip().lower() == target_token]
+        if not targets:
+            raise ValueError(
+                f"Target '{target_token}' was not evaluated in matrix run '{run_id}'."
+            )
+    safe_top_k = max(1, int(top_k))
+    by_target: list[dict[str, Any]] = []
+    for row in targets:
+        candidates = [item for item in list(row.get("candidates") or []) if isinstance(item, dict)]
+        candidates.sort(
+            key=lambda item: (
+                int(item.get("rank") or 10_000),
+                str(item.get("id") or ""),
+            )
+        )
+        by_target.append(
+            {
+                "target_id": str(row.get("target_id") or ""),
+                "target_device": str(row.get("target_device") or ""),
+                "recommended_candidate_id": row.get("recommended_candidate_id"),
+                "recommendations": candidates[:safe_top_k],
+            }
+        )
+    return {
+        "project_id": project_id,
+        "run_id": str(payload.get("run_id") or run_id),
+        "status": str(payload.get("status") or "unknown"),
+        "target_id": target_token or None,
+        "recommendations_by_target": by_target,
+    }
 
 
 def _coerce_float_positive(value: Any) -> float | None:
@@ -1760,6 +2176,82 @@ def _resolve_metric_source(metric_sources: dict[str, str]) -> str:
     return "estimated"
 
 
+def _metric_confidence(metric_source: str, metric_sources: dict[str, str]) -> dict[str, Any]:
+    source_token = str(metric_source or "").strip().lower()
+    base_score = {
+        "measured": 0.92,
+        "mixed": 0.68,
+        "estimated": 0.42,
+    }.get(source_token, 0.4)
+
+    measured_ratio = 0.0
+    if metric_sources:
+        normalized = [
+            str(value or "").strip().lower()
+            for value in metric_sources.values()
+            if str(value or "").strip()
+        ]
+        if normalized:
+            measured_ratio = sum(1 for item in normalized if item == "measured") / float(len(normalized))
+            base_score = max(base_score, 0.45 + (0.45 * measured_ratio))
+
+    score = round(max(0.05, min(base_score, 0.99)), 4)
+    if score >= 0.8:
+        band = "high"
+    elif score >= 0.6:
+        band = "medium"
+    else:
+        band = "low"
+    return {
+        "score": score,
+        "band": band,
+        "measured_ratio": round(measured_ratio, 4),
+    }
+
+
+def _fallback_remediation_hint(fallback_reason: str) -> str:
+    token = str(fallback_reason or "").strip().lower()
+    if not token:
+        return "Install benchmark runtime dependencies and rerun optimization."
+    if "not available for format" in token:
+        return (
+            "Generate a probe-supported artifact format (for example GGUF/HuggingFace) "
+            "or add runtime support for this format."
+        )
+    if "timed out" in token:
+        return "Increase EXTERNAL_COMMAND_TIMEOUT_SECONDS or use a smaller artifact for probing."
+    if "failed to start" in token or "failed" in token:
+        return "Verify benchmark dependencies and local runtime health, then rerun optimization."
+    if "skipped for runtime probe budget" in token:
+        return "Increase max_probe_candidates_per_target in matrix runs to probe more candidates."
+    return "Resolve benchmark probe availability and rerun optimization for measured metrics."
+
+
+def _optimization_rank_key(
+    *,
+    candidate: OptimizationCandidate,
+    preferred_formats: set[str],
+    target_memory_budget_gb: float | None,
+) -> tuple[float, float, float, float, float, str]:
+    format_penalty = 0.0 if candidate.runtime_template in preferred_formats else 1.0
+    memory_penalty = 0.0
+    if target_memory_budget_gb is not None and candidate.metrics.memory_gb > target_memory_budget_gb:
+        memory_penalty = 1.0
+    source_priority = {
+        "measured": 0.0,
+        "mixed": 0.5,
+        "estimated": 1.0,
+    }.get(str(candidate.metric_source).strip().lower(), 1.0)
+    return (
+        memory_penalty,
+        format_penalty,
+        source_priority,
+        float(candidate.metrics.latency_ms),
+        -float(candidate.metrics.quality_score),
+        str(candidate.id),
+    )
+
+
 def _estimate_latency_from_artifact(
     *,
     size_bytes: int,
@@ -1888,11 +2380,13 @@ def _build_estimated_candidate_metrics(
         "memory_gb": "measured",
         "quality_score": quality_source,
     }
+    normalized_reason = str(fallback_reason or "").strip() or "Runtime probe unavailable."
     measurement = {
         "mode": "estimated",
         "source": str(candidate.get("source") or ""),
         "model_ref": str(candidate.get("model_ref") or ""),
         "artifact_path": str(candidate.get("artifact_path") or ""),
-        "fallback_reason": str(fallback_reason or "").strip() or "Runtime probe unavailable.",
+        "fallback_reason": normalized_reason,
+        "fallback_remediation_hint": _fallback_remediation_hint(normalized_reason),
     }
     return metric, _resolve_metric_source(metric_sources), metric_sources, measurement

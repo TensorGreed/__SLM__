@@ -35,3 +35,8 @@ data/models/
 .DS_Store
 roadmap*.*
 SprintPlan_25March.txt
+scripts/
+.vscode/
+.github/agents/
+.github/copilot-instructions.md
+sprintPlan.md

@@ -454,6 +454,28 @@ def run_train(args: argparse.Namespace, client: ApiClient) -> int:
         "intent_rewrite": args.intent_rewrite or None,
     }
 
+    if bool(args.autopilot_v2) or bool(args.dry_run):
+        payload.update(
+            {
+                "dry_run": bool(args.dry_run),
+                "allow_target_fallback": not bool(args.no_target_fallback),
+                "allow_profile_autotune": not bool(args.no_profile_autotune),
+                "plan_profile": args.plan_profile,
+            }
+        )
+        result = client.request(
+            "POST",
+            f"/projects/{args.project_id}/training/autopilot/v2/orchestrate",
+            json_body=payload,
+        )
+        _print_autopilot_v2_decision_log(result)
+        _print_json(result)
+        guardrails = dict(result.get("guardrails") or {})
+        if bool(args.dry_run):
+            return 0 if bool(guardrails.get("can_run", False)) else 1
+        started = bool(result.get("started", False))
+        return 0 if started else 1
+
     result = client.request(
         "POST",
         f"/projects/{args.project_id}/training/autopilot/one-click-run",
@@ -462,6 +484,23 @@ def run_train(args: argparse.Namespace, client: ApiClient) -> int:
     _print_json(result)
     started = bool(result.get("started", False))
     return 0 if started else 1
+
+
+def _print_autopilot_v2_decision_log(payload: dict[str, Any]) -> None:
+    rows = [row for row in list(payload.get("decision_log") or []) if isinstance(row, dict)]
+    if not rows:
+        return
+    print("Autopilot v2 Decision Log:")
+    for idx, row in enumerate(rows, start=1):
+        step = str(row.get("step") or f"step_{idx}").strip() or f"step_{idx}"
+        status = str(row.get("status") or "info").strip().upper() or "INFO"
+        summary = str(row.get("summary") or "").strip()
+        changed = bool(row.get("changed"))
+        suffix = " (changed)" if changed else ""
+        if summary:
+            print(f"{idx:02d}. [{status}] {step}{suffix}: {summary}")
+        else:
+            print(f"{idx:02d}. [{status}] {step}{suffix}")
 
 
 def run_export(args: argparse.Namespace, client: ApiClient) -> int:
@@ -874,6 +913,32 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--description", default="")
     train_parser.add_argument("--intent-rewrite", default="")
     train_parser.add_argument("--no-auto-rewrite", action="store_true")
+    train_parser.add_argument(
+        "--autopilot-v2",
+        action="store_true",
+        help="Use autopilot v2 orchestration (readiness + auto-repair + decision log).",
+    )
+    train_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Use autopilot v2 dry-run mode (no experiment is started).",
+    )
+    train_parser.add_argument(
+        "--plan-profile",
+        default="balanced",
+        choices=["safe", "balanced", "max_quality", "fastest", "best_quality"],
+        help="Preferred training plan profile for autopilot selection.",
+    )
+    train_parser.add_argument(
+        "--no-target-fallback",
+        action="store_true",
+        help="Disable automatic target-profile fallback during autopilot v2 orchestration.",
+    )
+    train_parser.add_argument(
+        "--no-profile-autotune",
+        action="store_true",
+        help="Disable automatic profile tuning to the first runnable preflight plan.",
+    )
     train_parser.set_defaults(func=run_train)
 
     export_parser = subparsers.add_parser("export", help="Create and run an export job")

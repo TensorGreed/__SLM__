@@ -116,8 +116,11 @@ from app.services.newbie_autopilot_service import (
     estimate_newbie_autopilot_run,
     resolve_newbie_autopilot_intent,
 )
+from app.services.readiness_service import get_project_readiness
 from app.services.target_profile_service import (
     check_compatibility,
+    get_target_by_id,
+    list_targets,
     resolve_target_device,
 )
 from app.services.capability_contract_service import build_training_capability_contract
@@ -428,6 +431,31 @@ class AutopilotPlanV2Response(BaseModel):
     dataset_readiness: dict[str, object]
     intent_clarification: dict[str, object]
     target_compatibility: dict[str, object] | None = None
+
+
+class AutopilotV2OrchestrationRequest(NewbieAutopilotOneClickRequest):
+    dry_run: bool = True
+    allow_target_fallback: bool = True
+    allow_profile_autotune: bool = True
+
+
+class AutopilotV2OrchestrationResponse(BaseModel):
+    project_id: int
+    dry_run: bool
+    strict_mode: bool
+    intent: str
+    effective_target_profile_id: str
+    resolved_target_device: str
+    selected_profile: str | None = None
+    guardrails: dict[str, object] = Field(default_factory=dict)
+    readiness: dict[str, object] = Field(default_factory=dict)
+    decision_log: list[dict[str, object]] = Field(default_factory=list)
+    repairs: dict[str, object] = Field(default_factory=dict)
+    plan_v2: dict[str, object] = Field(default_factory=dict)
+    experiment: dict[str, object] | None = None
+    started: bool = False
+    start_result: dict[str, object] | None = None
+    start_error: str | None = None
 
 
 def _sse_json(payload: dict) -> str:
@@ -1026,6 +1054,775 @@ def _build_target_incompatibility_actions(
         seen.add(key)
         deduped.append(action)
     return deduped
+
+
+def _append_autopilot_decision(
+    decision_log: list[dict[str, object]],
+    *,
+    step: str,
+    status: str,
+    summary: str,
+    changed: bool = False,
+    safe: bool = True,
+    why: str | None = None,
+    before: dict[str, object] | None = None,
+    after: dict[str, object] | None = None,
+    blocker: bool = False,
+    fixes: list[dict[str, object]] | None = None,
+    metadata: dict[str, object] | None = None,
+) -> None:
+    entry: dict[str, object] = {
+        "step": str(step or "").strip() or "unknown_step",
+        "status": str(status or "").strip() or "info",
+        "summary": str(summary or "").strip() or "Autopilot step updated.",
+        "changed": bool(changed),
+        "safe": bool(safe),
+        "blocker": bool(blocker),
+    }
+    if why:
+        entry["why"] = str(why).strip()
+    if before:
+        entry["before"] = dict(before)
+    if after:
+        entry["after"] = dict(after)
+    if fixes:
+        entry["fixes"] = [dict(item) for item in fixes if isinstance(item, dict)]
+    if metadata:
+        entry["metadata"] = dict(metadata)
+    decision_log.append(entry)
+
+
+def _choose_target_fallback_id(current_target_profile_id: str) -> str | None:
+    current = str(current_target_profile_id or "").strip().lower() or "vllm_server"
+    preferred = ("vllm_server", "edge_gpu", "mobile_cpu", "browser_webgpu")
+    for target_id in preferred:
+        if target_id == current:
+            continue
+        if get_target_by_id(target_id) is not None:
+            return target_id
+    for row in list_targets():
+        candidate = str(getattr(row, "id", "") or "").strip().lower()
+        if candidate and candidate != current:
+            return candidate
+    return None
+
+
+def _has_target_incompatibility_blocker(
+    *,
+    guardrails: dict[str, object],
+    compatibility: dict[str, object] | None,
+) -> bool:
+    reason_codes = {
+        str(item).strip().upper()
+        for item in list(guardrails.get("reason_codes") or [])
+        if str(item).strip()
+    }
+    if "TARGET_INCOMPATIBLE" in reason_codes:
+        return True
+    if isinstance(compatibility, dict) and not bool(compatibility.get("compatible", False)):
+        return True
+    blockers = [
+        str(item).strip().lower()
+        for item in list(guardrails.get("blockers") or [])
+        if str(item).strip()
+    ]
+    return any("compatib" in item or ("target" in item and "vram" in item) for item in blockers)
+
+
+def _first_runnable_plan(plans: list[dict[str, object]]) -> dict[str, object] | None:
+    for plan in plans:
+        preflight = dict(plan.get("preflight") or {})
+        if bool(preflight.get("ok", False)):
+            return plan
+    return None
+
+
+def _plan_profile_token(value: Any, *, default: str = "balanced") -> str:
+    return normalize_training_plan_profile(value) or str(default or "balanced")
+
+
+def _contains_simulation_guardrail_signal(guardrails: dict[str, object]) -> bool:
+    combined = [
+        str(item).strip().lower()
+        for item in (
+            list(guardrails.get("blockers") or [])
+            + list(guardrails.get("warnings") or [])
+        )
+        if str(item).strip()
+    ]
+    for message in combined:
+        if "simulate" in message or "simulated" in message or "stub" in message:
+            return True
+    return False
+
+
+async def _orchestrate_newbie_autopilot_v2(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    req: AutopilotV2OrchestrationRequest,
+) -> AutopilotV2OrchestrationResponse:
+    await _get_project_or_404(db, project_id)
+
+    decision_log: list[dict[str, object]] = []
+    strict_mode = bool(settings.STRICT_EXECUTION_MODE)
+    _append_autopilot_decision(
+        decision_log,
+        step="strict_mode_policy",
+        status="active" if strict_mode else "inactive",
+        summary=(
+            "Strict execution mode is enabled; simulated/stub fallback paths are blocked."
+            if strict_mode
+            else "Strict execution mode is disabled; safe local automation is permitted."
+        ),
+        safe=True,
+        metadata={"strict_mode": strict_mode},
+    )
+
+    readiness = await get_project_readiness(project_id)
+    readiness_status = str(readiness.get("status") or "unknown").strip().lower() or "unknown"
+    _append_autopilot_decision(
+        decision_log,
+        step="runtime_readiness",
+        status=readiness_status,
+        summary=(
+            "Runtime readiness checks completed."
+            if readiness_status in {"pass", "warn"}
+            else "Runtime readiness has failing checks."
+        ),
+        blocker=readiness_status == "fail",
+        fixes=[
+            {
+                "label": str(item.get("name") or item.get("id") or "Check readiness item"),
+                "description": str(item.get("fix") or item.get("message") or "").strip(),
+            }
+            for item in list(readiness.get("checks") or [])
+            if isinstance(item, dict) and str(item.get("fix") or "").strip()
+        ],
+        metadata={"status": readiness_status},
+    )
+
+    effective_intent = str(req.intent or "").strip()
+    effective_target_profile_id = str(req.target_profile_id or "vllm_server").strip().lower() or "vllm_server"
+    resolved_target_device = _resolve_autopilot_target_device(
+        target_profile_id=effective_target_profile_id,
+        target_device=req.target_device,
+    )
+    requested_profile = _plan_profile_token(req.plan_profile, default="balanced")
+    selected_profile = requested_profile
+
+    repairs: dict[str, object] = {
+        "intent_rewrite": {
+            "applied": False,
+            "original_intent": effective_intent,
+            "rewritten_intent": None,
+            "source": None,
+        },
+        "dataset_auto_prepare": None,
+        "target_fallback": {
+            "applied": False,
+            "from_target_profile_id": effective_target_profile_id,
+            "to_target_profile_id": None,
+            "reason": None,
+        },
+        "profile_autotune": {
+            "applied": False,
+            "from_profile": requested_profile,
+            "to_profile": requested_profile,
+            "reason": None,
+        },
+    }
+
+    effective_req = NewbieAutopilotIntentRequest(
+        intent=effective_intent,
+        target_profile_id=effective_target_profile_id,
+        target_device=resolved_target_device,
+        primary_language=req.primary_language,
+        available_vram_gb=req.available_vram_gb,
+        base_model=req.base_model,
+        auto_prepare_data=req.auto_prepare_data,
+    )
+
+    try:
+        plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+            db=db,
+            project_id=project_id,
+            req=effective_req,
+        )
+    except HTTPException as exc:
+        detail_payload = dict(exc.detail or {}) if isinstance(exc.detail, dict) else {}
+        message = str(
+            detail_payload.get("message")
+            or detail_payload.get("detail")
+            or exc.detail
+            or "Autopilot planning failed."
+        ).strip() or "Autopilot planning failed."
+        actionable_fix = str(
+            detail_payload.get("actionable_fix")
+            or "Review runtime readiness and training configuration, then retry."
+        ).strip()
+        reason_code = str(detail_payload.get("error_code") or "TRAINING_PREFLIGHT_FAILED").strip() or "TRAINING_PREFLIGHT_FAILED"
+        unblock_actions = [
+            {
+                "reason_code": reason_code,
+                "label": "Resolve planning blocker",
+                "description": actionable_fix,
+                "one_click_available": False,
+            }
+        ]
+        guardrails = {
+            "can_run": False,
+            "blockers": [message],
+            "warnings": [],
+            "reason_codes": _dedupe_preserve([reason_code, "STRICT_EXECUTION_MODE" if strict_mode else ""]),
+            "unblock_actions": unblock_actions,
+            "one_click_fix_available": False,
+        }
+        _append_autopilot_decision(
+            decision_log,
+            step="initial_planning",
+            status="blocked",
+            summary="Autopilot planning failed before repairs could run.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why=message,
+            fixes=unblock_actions,
+            metadata={"error_code": reason_code},
+        )
+        _append_autopilot_decision(
+            decision_log,
+            step="final_guardrails",
+            status="blocked",
+            summary="Autopilot stopped because planning prerequisites are not satisfied.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why=message,
+            fixes=unblock_actions,
+        )
+        return AutopilotV2OrchestrationResponse(
+            project_id=project_id,
+            dry_run=bool(req.dry_run),
+            strict_mode=strict_mode,
+            intent=effective_intent,
+            effective_target_profile_id=effective_target_profile_id,
+            resolved_target_device=resolved_target_device,
+            selected_profile=selected_profile,
+            guardrails=guardrails,
+            readiness=dict(readiness or {}),
+            decision_log=decision_log,
+            repairs=repairs,
+            plan_v2={},
+            experiment=None,
+            started=False,
+            start_result=None,
+            start_error=f"Autopilot blocked run: {message}",
+        )
+    _append_autopilot_decision(
+        decision_log,
+        step="initial_planning",
+        status="completed",
+        summary="Built initial autopilot plan v2 with guardrail diagnostics.",
+        safe=True,
+        metadata={
+            "requested_profile": requested_profile,
+            "can_run": bool((plan_v2_resp.guardrails or {}).get("can_run", False)),
+        },
+    )
+
+    rewrite_intent = str(req.intent_rewrite or "").strip()
+    rewrite_source = "request.intent_rewrite"
+    if not rewrite_intent and bool(req.auto_apply_rewrite):
+        clarification = dict(plan_v2_resp.intent_clarification or {})
+        rewrite_rows = [item for item in list(clarification.get("rewrite_suggestions") or []) if isinstance(item, dict)]
+        if rewrite_rows:
+            top = dict(rewrite_rows[0])
+            rewrite_intent = str(top.get("rewritten_intent") or "").strip()
+            rewrite_source = str(top.get("id") or "intent_clarification.rewrite_suggestions[0]")
+
+    if rewrite_intent and rewrite_intent.lower() != effective_intent.lower():
+        previous_intent = effective_intent
+        effective_intent = rewrite_intent
+        repairs["intent_rewrite"] = {
+            "applied": True,
+            "original_intent": previous_intent,
+            "rewritten_intent": effective_intent,
+            "source": rewrite_source,
+        }
+        effective_req = NewbieAutopilotIntentRequest(
+            intent=effective_intent,
+            target_profile_id=effective_target_profile_id,
+            target_device=resolved_target_device,
+            primary_language=req.primary_language,
+            available_vram_gb=req.available_vram_gb,
+            base_model=req.base_model,
+            auto_prepare_data=req.auto_prepare_data,
+        )
+        plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+            db=db,
+            project_id=project_id,
+            req=effective_req,
+        )
+        _append_autopilot_decision(
+            decision_log,
+            step="intent_rewrite",
+            status="applied",
+            summary="Applied intent rewrite suggestion and rebuilt autopilot plan.",
+            changed=True,
+            safe=True,
+            why="Clarifies task output for higher confidence planning.",
+            before={"intent": previous_intent},
+            after={"intent": effective_intent},
+        )
+    else:
+        _append_autopilot_decision(
+            decision_log,
+            step="intent_rewrite",
+            status="skipped",
+            summary="Intent rewrite was not required.",
+            safe=True,
+        )
+
+    launch_guardrails = dict(plan_v2_resp.guardrails or {})
+    blockers = [
+        str(item).strip()
+        for item in list(launch_guardrails.get("blockers") or [])
+        if str(item).strip()
+    ]
+    can_run = bool(launch_guardrails.get("can_run", False))
+    auto_prepare_result: dict[str, object] | None = None
+
+    if (
+        not can_run
+        and bool(req.auto_prepare_data)
+        and _has_dataset_guardrail_blocker(blockers)
+    ):
+        plan_options_for_hint = [dict(item) for item in list(plan_v2_resp.plans or []) if isinstance(item, dict)]
+        selected_plan_for_hint = next(
+            (
+                p
+                for p in plan_options_for_hint
+                if _plan_profile_token(p.get("profile"), default="balanced") == requested_profile
+            ),
+            plan_options_for_hint[0] if plan_options_for_hint else {},
+        )
+        config_hint = dict(selected_plan_for_hint.get("config") or {})
+        task_profile_hint = str(config_hint.get("task_profile") or "").strip() or None
+        auto_prepare_result = await _attempt_autopilot_auto_prepare_data(
+            db=db,
+            project_id=project_id,
+            task_profile=task_profile_hint,
+        )
+        repairs["dataset_auto_prepare"] = dict(auto_prepare_result)
+        if bool(auto_prepare_result.get("succeeded")):
+            plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+                db=db,
+                project_id=project_id,
+                req=effective_req,
+            )
+            launch_guardrails = dict(plan_v2_resp.guardrails or {})
+            can_run = bool(launch_guardrails.get("can_run", False))
+            blockers = [
+                str(item).strip()
+                for item in list(launch_guardrails.get("blockers") or [])
+                if str(item).strip()
+            ]
+            _append_autopilot_decision(
+                decision_log,
+                step="dataset_auto_prepare",
+                status="applied",
+                summary="Automatically prepared dataset artifacts and rebuilt plan.",
+                changed=True,
+                safe=True,
+                why="Dataset readiness blockers were detected.",
+                metadata={
+                    "method": str(auto_prepare_result.get("method") or ""),
+                    "succeeded": True,
+                },
+            )
+        else:
+            _append_autopilot_decision(
+                decision_log,
+                step="dataset_auto_prepare",
+                status="failed",
+                summary="Automatic dataset preparation did not resolve dataset blockers.",
+                changed=False,
+                safe=True,
+                blocker=True,
+                why=str(auto_prepare_result.get("error") or "Dataset auto-prepare failed."),
+            )
+    else:
+        _append_autopilot_decision(
+            decision_log,
+            step="dataset_auto_prepare",
+            status="skipped",
+            summary="Dataset auto-prepare was not required.",
+            safe=True,
+        )
+
+    compatibility = dict(plan_v2_resp.target_compatibility or {})
+    if (
+        not can_run
+        and bool(req.allow_target_fallback)
+        and _has_target_incompatibility_blocker(
+            guardrails=launch_guardrails,
+            compatibility=compatibility,
+        )
+    ):
+        fallback_target_id = _choose_target_fallback_id(effective_target_profile_id)
+        if fallback_target_id:
+            fallback_req = NewbieAutopilotIntentRequest(
+                intent=effective_intent,
+                target_profile_id=fallback_target_id,
+                target_device=req.target_device,
+                primary_language=req.primary_language,
+                available_vram_gb=req.available_vram_gb,
+                base_model=req.base_model,
+                auto_prepare_data=req.auto_prepare_data,
+            )
+            fallback_plan_v2 = await _build_newbie_autopilot_plan_v2(
+                db=db,
+                project_id=project_id,
+                req=fallback_req,
+            )
+            fallback_guardrails = dict(fallback_plan_v2.guardrails or {})
+            fallback_can_run = bool(fallback_guardrails.get("can_run", False))
+            if fallback_can_run:
+                previous_target = effective_target_profile_id
+                effective_target_profile_id = fallback_target_id
+                resolved_target_device = _resolve_autopilot_target_device(
+                    target_profile_id=effective_target_profile_id,
+                    target_device=req.target_device,
+                )
+                effective_req = fallback_req
+                plan_v2_resp = fallback_plan_v2
+                launch_guardrails = fallback_guardrails
+                can_run = fallback_can_run
+                blockers = [
+                    str(item).strip()
+                    for item in list(launch_guardrails.get("blockers") or [])
+                    if str(item).strip()
+                ]
+                repairs["target_fallback"] = {
+                    "applied": True,
+                    "from_target_profile_id": previous_target,
+                    "to_target_profile_id": effective_target_profile_id,
+                    "reason": "Target incompatibility persisted after safe model repair.",
+                }
+                _append_autopilot_decision(
+                    decision_log,
+                    step="target_fallback",
+                    status="applied",
+                    summary="Switched to a fallback target profile and rebuilt plan.",
+                    changed=True,
+                    safe=True,
+                    why="Initial target constraints blocked a runnable plan.",
+                    before={"target_profile_id": previous_target},
+                    after={"target_profile_id": effective_target_profile_id},
+                )
+            else:
+                _append_autopilot_decision(
+                    decision_log,
+                    step="target_fallback",
+                    status="skipped",
+                    summary="Fallback target profile did not produce a runnable plan.",
+                    changed=False,
+                    safe=True,
+                    why=f"Candidate target '{fallback_target_id}' is still blocked.",
+                )
+        else:
+            _append_autopilot_decision(
+                decision_log,
+                step="target_fallback",
+                status="skipped",
+                summary="No fallback target profile was available.",
+                changed=False,
+                safe=True,
+            )
+    else:
+        _append_autopilot_decision(
+            decision_log,
+            step="target_fallback",
+            status="skipped",
+            summary="Target fallback was not required.",
+            safe=True,
+        )
+
+    plan_options = [dict(item) for item in list(plan_v2_resp.plans or []) if isinstance(item, dict)]
+    requested_plan = next(
+        (plan for plan in plan_options if _plan_profile_token(plan.get("profile")) == requested_profile),
+        None,
+    )
+    selected_plan = requested_plan or (plan_options[0] if plan_options else None)
+    if (
+        bool(req.allow_profile_autotune)
+        and selected_plan is not None
+        and not bool(dict(selected_plan.get("preflight") or {}).get("ok", False))
+    ):
+        runnable = _first_runnable_plan(plan_options)
+        if runnable is not None:
+            previous_profile = _plan_profile_token(selected_plan.get("profile"))
+            selected_plan = dict(runnable)
+            selected_profile = _plan_profile_token(selected_plan.get("profile"))
+            repairs["profile_autotune"] = {
+                "applied": True,
+                "from_profile": previous_profile,
+                "to_profile": selected_profile,
+                "reason": "Requested profile failed preflight; switched to a runnable profile.",
+            }
+            _append_autopilot_decision(
+                decision_log,
+                step="profile_autotune",
+                status="applied",
+                summary="Switched plan profile to the first preflight-passing option.",
+                changed=True,
+                safe=True,
+                why="Requested profile failed preflight checks.",
+                before={"profile": previous_profile},
+                after={"profile": selected_profile},
+            )
+        else:
+            _append_autopilot_decision(
+                decision_log,
+                step="profile_autotune",
+                status="blocked",
+                summary="No runnable preflight profile is available for automatic tuning.",
+                changed=False,
+                safe=True,
+                blocker=True,
+            )
+    else:
+        selected_profile = _plan_profile_token(
+            (selected_plan or {}).get("profile"),
+            default=requested_profile,
+        )
+        _append_autopilot_decision(
+            decision_log,
+            step="profile_autotune",
+            status="skipped",
+            summary="Requested profile is already usable or profile autotune is disabled.",
+            safe=True,
+        )
+
+    strict_simulation_conflict = bool(
+        _contains_simulation_guardrail_signal(launch_guardrails)
+        or str(settings.TRAINING_BACKEND or "").strip().lower() == "simulate"
+    )
+    if strict_mode and strict_simulation_conflict:
+        reason_codes = [
+            str(item).strip()
+            for item in list(launch_guardrails.get("reason_codes") or [])
+            if str(item).strip()
+        ]
+        if "STRICT_EXECUTION_MODE" not in reason_codes:
+            reason_codes.append("STRICT_EXECUTION_MODE")
+        launch_guardrails["reason_codes"] = _dedupe_preserve(reason_codes)
+        launch_guardrails["can_run"] = False
+        can_run = False
+        _append_autopilot_decision(
+            decision_log,
+            step="strict_mode_guardrail",
+            status="blocked",
+            summary="Strict mode blocked simulated/stub fallback behavior.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why="Provide live runtime dependencies or disable strict mode for demo-only workflows.",
+        )
+
+    launch_guardrails = dict(plan_v2_resp.guardrails or {}) | {
+        "can_run": bool(can_run),
+        "blockers": [
+            str(item).strip()
+            for item in list((plan_v2_resp.guardrails or {}).get("blockers") or [])
+            if str(item).strip()
+        ],
+        "warnings": [
+            str(item).strip()
+            for item in list((plan_v2_resp.guardrails or {}).get("warnings") or [])
+            if str(item).strip()
+        ],
+        "reason_codes": _dedupe_preserve(
+            [
+                str(item).strip()
+                for item in list((plan_v2_resp.guardrails or {}).get("reason_codes") or [])
+                if str(item).strip()
+            ]
+        ),
+    }
+    strict_simulation_conflict = bool(
+        _contains_simulation_guardrail_signal(launch_guardrails)
+        or str(settings.TRAINING_BACKEND or "").strip().lower() == "simulate"
+    )
+    if strict_mode and strict_simulation_conflict:
+        reason_codes = [str(item).strip() for item in list(launch_guardrails.get("reason_codes") or []) if str(item).strip()]
+        launch_guardrails["reason_codes"] = _dedupe_preserve(reason_codes + ["STRICT_EXECUTION_MODE"])
+        launch_guardrails["can_run"] = False
+        can_run = False
+
+    blockers = [
+        str(item).strip()
+        for item in list(launch_guardrails.get("blockers") or [])
+        if str(item).strip()
+    ]
+    if not can_run:
+        _append_autopilot_decision(
+            decision_log,
+            step="final_guardrails",
+            status="blocked",
+            summary="Autopilot stopped after safe repairs because blockers remain.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why=blockers[0] if blockers else "Guardrails did not pass.",
+            fixes=[item for item in list(launch_guardrails.get("unblock_actions") or []) if isinstance(item, dict)],
+        )
+    else:
+        _append_autopilot_decision(
+            decision_log,
+            step="final_guardrails",
+            status="ready",
+            summary="Autopilot guardrails passed after orchestration.",
+            changed=True,
+            safe=True,
+        )
+
+    plan_payload = plan_v2_resp.model_dump()
+    if req.dry_run:
+        return AutopilotV2OrchestrationResponse(
+            project_id=project_id,
+            dry_run=True,
+            strict_mode=strict_mode,
+            intent=effective_intent,
+            effective_target_profile_id=effective_target_profile_id,
+            resolved_target_device=resolved_target_device,
+            selected_profile=selected_profile,
+            guardrails=launch_guardrails,
+            readiness=dict(readiness or {}),
+            decision_log=decision_log,
+            repairs=repairs,
+            plan_v2=plan_payload,
+            experiment=None,
+            started=False,
+            start_result=None,
+            start_error=None if can_run else f"Autopilot blocked run: {blockers[0] if blockers else 'Unknown blocker.'}",
+        )
+
+    if not can_run:
+        return AutopilotV2OrchestrationResponse(
+            project_id=project_id,
+            dry_run=False,
+            strict_mode=strict_mode,
+            intent=effective_intent,
+            effective_target_profile_id=effective_target_profile_id,
+            resolved_target_device=resolved_target_device,
+            selected_profile=selected_profile,
+            guardrails=launch_guardrails,
+            readiness=dict(readiness or {}),
+            decision_log=decision_log,
+            repairs=repairs,
+            plan_v2=plan_payload,
+            experiment=None,
+            started=False,
+            start_result=None,
+            start_error=f"Autopilot blocked run: {blockers[0] if blockers else 'Unknown blocker.'}",
+        )
+
+    selected_plan_final = next(
+        (
+            plan
+            for plan in plan_options
+            if _plan_profile_token(plan.get("profile"), default=selected_profile) == selected_profile
+        ),
+        _first_runnable_plan(plan_options) or (plan_options[0] if plan_options else None),
+    )
+    if selected_plan_final is None:
+        raise HTTPException(400, "Autopilot could not select a runnable plan.")
+
+    safe_config = dict(selected_plan_final.get("config") or {})
+    safe_config["training_plan_profile"] = selected_profile
+    safe_config["target_profile_id"] = effective_target_profile_id
+    if not str(safe_config.get("task_profile") or "").strip():
+        first_plan_cfg = dict(plan_options[0].get("config") or {}) if plan_options else {}
+        safe_config["task_profile"] = str(first_plan_cfg.get("task_profile") or "instruction_sft").strip() or "instruction_sft"
+    safe_config["_autopilot_dataset_rows"] = (
+        _coerce_positive_int((plan_v2_resp.dataset_readiness or {}).get("prepared_row_count"))
+        or _coerce_positive_int(safe_config.get("_autopilot_dataset_rows"))
+        or 1000
+    )
+    base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
+    training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
+    if training_mode_token == TrainingMode.DPO.value:
+        training_mode = TrainingMode.DPO
+    elif training_mode_token == TrainingMode.ORPO.value:
+        training_mode = TrainingMode.ORPO
+    else:
+        training_mode = TrainingMode.SFT
+
+    suggested_name = str(selected_plan_final.get("title") or "").strip()
+    if not suggested_name:
+        suggested_name = f"Autopilot - {selected_profile.replace('_', ' ').title()}"
+    run_name = str(req.run_name or "").strip() or suggested_name or "Autopilot Run"
+    description = str(req.description or "").strip() or f"Autopilot v2 run from intent: {effective_intent[:120]}"
+
+    exp = await create_experiment(
+        db,
+        project_id,
+        run_name,
+        base_model,
+        safe_config,
+        description,
+        training_mode,
+    )
+    experiment_payload = ExperimentResponse.model_validate(exp).model_dump()
+    started = False
+    start_result: dict[str, object] | None = None
+    start_error = ""
+    try:
+        start_result = await start_training(db, project_id, exp.id)
+        started = True
+        _append_autopilot_decision(
+            decision_log,
+            step="start_training",
+            status="completed",
+            summary="Created experiment and started training successfully.",
+            changed=True,
+            safe=True,
+            metadata={"experiment_id": int(exp.id)},
+        )
+    except ValueError as exc:
+        start_error = str(exc)
+        _append_autopilot_decision(
+            decision_log,
+            step="start_training",
+            status="failed",
+            summary="Experiment was created, but training start failed.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why=start_error,
+            metadata={"experiment_id": int(exp.id)},
+        )
+
+    return AutopilotV2OrchestrationResponse(
+        project_id=project_id,
+        dry_run=False,
+        strict_mode=strict_mode,
+        intent=effective_intent,
+        effective_target_profile_id=effective_target_profile_id,
+        resolved_target_device=resolved_target_device,
+        selected_profile=selected_profile,
+        guardrails=launch_guardrails,
+        readiness=dict(readiness or {}),
+        decision_log=decision_log,
+        repairs=repairs,
+        plan_v2=plan_payload,
+        experiment=experiment_payload,
+        started=started,
+        start_result=start_result,
+        start_error=start_error or None,
+    )
 
 
 def _build_newbie_autopilot_plan(
@@ -1661,6 +2458,43 @@ async def run_training_autopilot_one_click(
         "auto_prepare": auto_prepare_result,
         "plan_v2": plan_payload,
     }
+
+
+@router.post("/autopilot/v2/orchestrate", response_model=AutopilotV2OrchestrationResponse)
+async def orchestrate_training_autopilot_v2(
+    project_id: int,
+    req: AutopilotV2OrchestrationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run autopilot orchestration with safe auto-repairs and optional dry-run mode."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return await _orchestrate_newbie_autopilot_v2(
+            db=db,
+            project_id=project_id,
+            req=req,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/autopilot/v2/orchestrate/run", response_model=AutopilotV2OrchestrationResponse)
+async def run_training_autopilot_v2(
+    project_id: int,
+    req: AutopilotV2OrchestrationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run autopilot orchestration and launch training when guardrails pass."""
+    await _get_project_or_404(db, project_id)
+    try:
+        execute_req = req.model_copy(update={"dry_run": False})
+        return await _orchestrate_newbie_autopilot_v2(
+            db=db,
+            project_id=project_id,
+            req=execute_req,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/cloud-burst/catalog")

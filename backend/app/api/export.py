@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.export import ExportFormat
-from app.schemas.export import OptimizationRequest, OptimizationResponse
+from app.schemas.export import (
+    OptimizationMatrixRunResponse,
+    OptimizationMatrixStartRequest,
+    OptimizationRequest,
+    OptimizationResponse,
+)
 from app.services.deployment_target_service import (
     default_deployment_targets_for_format,
     list_deployment_targets,
@@ -15,9 +20,12 @@ from app.services.export_service import (
     build_export_deploy_plan,
     create_export,
     execute_export_deploy_plan,
+    get_optimization_matrix_recommendations,
+    get_optimization_matrix_run,
     list_exports,
     optimize_for_target,
     run_export,
+    start_optimization_matrix_run,
     validate_export_deployment,
 )
 from app.services.serve_runtime_service import (
@@ -245,6 +253,62 @@ async def optimize(
         return await optimize_for_target(db, project_id, req.target_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/optimize/matrix/start", response_model=OptimizationMatrixRunResponse)
+async def optimize_matrix_start(
+    project_id: int,
+    req: OptimizationMatrixStartRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a benchmark matrix run across candidates x target profiles."""
+    payload = req or OptimizationMatrixStartRequest()
+    try:
+        return await start_optimization_matrix_run(
+            db,
+            project_id=project_id,
+            target_ids=payload.target_ids,
+            max_probe_candidates_per_target=payload.max_probe_candidates_per_target,
+        )
+    except ValueError as e:
+        detail = str(e)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code, detail)
+
+
+@router.get("/optimize/matrix/{run_id}", response_model=OptimizationMatrixRunResponse)
+async def optimize_matrix_status(
+    project_id: int,
+    run_id: str,
+):
+    """Fetch benchmark matrix run metadata and status."""
+    try:
+        return get_optimization_matrix_run(project_id=project_id, run_id=run_id)
+    except ValueError as e:
+        detail = str(e)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code, detail)
+
+
+@router.get("/optimize/matrix/{run_id}/recommendations")
+async def optimize_matrix_recommendations(
+    project_id: int,
+    run_id: str,
+    target_id: str | None = None,
+    top_k: int = 3,
+):
+    """Fetch ranked optimization recommendations from a matrix run."""
+    try:
+        return get_optimization_matrix_recommendations(
+            project_id=project_id,
+            run_id=run_id,
+            target_id=target_id,
+            top_k=top_k,
+        )
+    except ValueError as e:
+        detail = str(e)
+        status_code = 404 if ("not found" in detail.lower() or "was not evaluated" in detail.lower()) else 400
+        raise HTTPException(status_code, detail)
 
 
 @router.get("/list")
