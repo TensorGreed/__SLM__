@@ -60,3 +60,30 @@ class RegressionComparisonResponse(BaseModel):
     finetuned_metrics: dict
     improvements: dict
     regressions: dict
+
+
+class RemediationPlanGenerateRequest(BaseModel):
+    experiment_id: int
+    evaluation_result_id: int | None = None
+    max_failures: int = Field(default=200, ge=1, le=1000)
+
+
+class RemediationPlanIndexEntry(BaseModel):
+    plan_id: str
+    artifact_id: int
+    artifact_key: str
+    artifact_version: int
+    created_at: str | None = None
+    experiment_id: int | None = None
+    evaluation_result_id: int | None = None
+    eval_type: str | None = None
+    dataset_name: str | None = None
+    root_causes: list[str] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
+    uri: str | None = None
+
+
+class RemediationPlanIndexResponse(BaseModel):
+    project_id: int
+    count: int
+    plans: list[RemediationPlanIndexEntry] = Field(default_factory=list)

@@ -109,7 +109,85 @@ interface AutopilotIntentResolveResponse {
   target_compatibility?: AutopilotTargetCompatibility | null;
 }
 
-interface AutopilotOneClickRunResponse extends AutopilotIntentResolveResponse {
+interface AutopilotDecisionLogEntry {
+  step?: string;
+  status?: string;
+  summary?: string;
+  changed?: boolean;
+  safe?: boolean;
+  blocker?: boolean;
+  why?: string | null;
+  fixes?: Array<{
+    label?: string;
+    description?: string;
+    reason_code?: string;
+    one_click_available?: boolean;
+  }>;
+}
+
+interface AutopilotV2OrchestrationResponse {
+  project_id: number;
+  dry_run: boolean;
+  strict_mode: boolean;
+  intent: string;
+  effective_target_profile_id: string;
+  resolved_target_device: string;
+  selected_profile?: string | null;
+  guardrails?: AutopilotLaunchGuardrails & {
+    reason_codes?: string[];
+    unblock_actions?: Array<{
+      label?: string;
+      description?: string;
+      reason_code?: string;
+      one_click_available?: boolean;
+    }>;
+  };
+  readiness?: {
+    status?: string;
+    checks?: Array<{
+      name?: string;
+      id?: string;
+      message?: string;
+      fix?: string;
+      status?: string;
+    }>;
+  };
+  decision_log?: AutopilotDecisionLogEntry[];
+  repairs?: {
+    intent_rewrite?: {
+      applied?: boolean;
+      original_intent?: string | null;
+      rewritten_intent?: string | null;
+      source?: string | null;
+    };
+    dataset_auto_prepare?: {
+      attempted?: boolean;
+      succeeded?: boolean;
+      method?: string | null;
+      error?: string | null;
+      raw_documents?: {
+        attempted?: boolean;
+        accepted_before?: number;
+        pending_before?: number;
+        accepted_after?: number;
+        processed_count?: number;
+        failed_count?: number;
+      } | null;
+    } | null;
+    target_fallback?: {
+      applied?: boolean;
+      from_target_profile_id?: string | null;
+      to_target_profile_id?: string | null;
+      reason?: string | null;
+    };
+    profile_autotune?: {
+      applied?: boolean;
+      from_profile?: string | null;
+      to_profile?: string | null;
+      reason?: string | null;
+    };
+  };
+  plan_v2?: AutopilotIntentResolveResponse;
   experiment?: {
     id?: number;
     name?: string;
@@ -120,26 +198,6 @@ interface AutopilotOneClickRunResponse extends AutopilotIntentResolveResponse {
   started?: boolean;
   start_result?: Record<string, unknown> | null;
   start_error?: string | null;
-  applied_intent_rewrite?: {
-    applied?: boolean;
-    original_intent?: string | null;
-    rewritten_intent?: string | null;
-    source?: string | null;
-  } | null;
-  auto_prepare?: {
-    attempted?: boolean;
-    succeeded?: boolean;
-    method?: string | null;
-    error?: string | null;
-    raw_documents?: {
-      attempted?: boolean;
-      accepted_before?: number;
-      pending_before?: number;
-      accepted_after?: number;
-      processed_count?: number;
-      failed_count?: number;
-    } | null;
-  } | null;
 }
 
 interface ExperimentStatusResponse {
@@ -252,6 +310,20 @@ function planEstimateHelpText(plan: AutopilotPlan, source: PlanEstimateSource): 
   return `${base}${confidenceText}${note ? ` ${note}` : ''}`.trim();
 }
 
+function decisionStatusClass(status: unknown): string {
+  const token = String(status || '').trim().toLowerCase();
+  if (token === 'ready' || token === 'completed' || token === 'applied' || token === 'active') return 'badge-success';
+  if (token === 'blocked' || token === 'failed') return 'badge-error';
+  if (token === 'skipped' || token === 'inactive') return 'badge-warning';
+  return 'badge-info';
+}
+
+function decisionStepLabel(step: unknown): string {
+  const token = String(step || '').trim();
+  if (!token) return 'step';
+  return token.replace(/_/g, ' ');
+}
+
 export default function ProjectWizardPage() {
   const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
   const navigate = useNavigate();
@@ -271,10 +343,11 @@ export default function ProjectWizardPage() {
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState('');
   const [planResponse, setPlanResponse] = useState<AutopilotIntentResolveResponse | null>(null);
+  const [planOrchestrationResponse, setPlanOrchestrationResponse] = useState<AutopilotV2OrchestrationResponse | null>(null);
 
   const [launchLoading, setLaunchLoading] = useState(false);
   const [launchError, setLaunchError] = useState('');
-  const [launchResponse, setLaunchResponse] = useState<AutopilotOneClickRunResponse | null>(null);
+  const [launchResponse, setLaunchResponse] = useState<AutopilotV2OrchestrationResponse | null>(null);
 
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState('');
@@ -339,9 +412,10 @@ export default function ProjectWizardPage() {
   const latestStatus = String(statusResponse?.status || launchResponse?.experiment?.status || '').toLowerCase();
   const clarificationRequired = Boolean(planResponse?.intent_clarification?.required);
   const hasSelectedRewrite = selectedIntentRewrite.trim().length >= 3;
-  const launchGuardrailsPass = planResponse?.guardrails?.can_run !== false;
-  const guardrailBlockers = Array.isArray(planResponse?.guardrails?.blockers)
-    ? planResponse?.guardrails?.blockers || []
+  const resolvedGuardrails = planOrchestrationResponse?.guardrails || planResponse?.guardrails;
+  const launchGuardrailsPass = resolvedGuardrails?.can_run !== false;
+  const guardrailBlockers = Array.isArray(resolvedGuardrails?.blockers)
+    ? resolvedGuardrails?.blockers || []
     : [];
   const canLaunchWithAutoPrep = !launchGuardrailsPass && guardrailBlockers.length > 0 && guardrailBlockers.every((blocker) => {
     const token = String(blocker || '').toLowerCase();
@@ -352,6 +426,13 @@ export default function ProjectWizardPage() {
   });
   const canLaunchFromPlan = (launchGuardrailsPass || canLaunchWithAutoPrep)
     && (!clarificationRequired || acknowledgeIntentClarification || hasSelectedRewrite);
+
+  const decisionLogRows = Array.isArray(planOrchestrationResponse?.decision_log)
+    ? planOrchestrationResponse?.decision_log || []
+    : [];
+  const launchDecisionLog = Array.isArray(launchResponse?.decision_log)
+    ? launchResponse?.decision_log || []
+    : [];
 
   const fetchIngestionStats = useCallback(async () => {
     try {
@@ -595,8 +676,8 @@ export default function ProjectWizardPage() {
       setSelectedIntentRewrite('');
     }
     try {
-      const res = await api.post<AutopilotIntentResolveResponse>(
-        `/projects/${projectId}/training/autopilot/plan-v2`,
+      const res = await api.post<AutopilotV2OrchestrationResponse>(
+        `/projects/${projectId}/training/autopilot/v2/orchestrate`,
         {
           intent: trimmedIntent,
           target_profile_id: targetProfileId,
@@ -604,14 +685,39 @@ export default function ProjectWizardPage() {
           primary_language: 'english',
           available_vram_gb: Number.isFinite(parsedVram) && parsedVram > 0 ? parsedVram : undefined,
           base_model: baseModelOverride.trim() || undefined,
+          auto_prepare_data: true,
+          auto_apply_rewrite: true,
+          intent_rewrite: hasSelectedRewrite ? selectedIntentRewrite.trim() : undefined,
+          plan_profile: selectedProfile,
+          dry_run: true,
         },
       );
-      setPlanResponse(res.data || null);
-      if (res.data?.recommended_profile) {
-        setSelectedProfile(res.data.recommended_profile);
+      const payload = res.data || null;
+      setPlanOrchestrationResponse(payload);
+      const planPayload = payload?.plan_v2 || null;
+      const mergedPlan: AutopilotIntentResolveResponse | null = planPayload
+        ? {
+          ...planPayload,
+          project_id: Number(planPayload.project_id || payload?.project_id || projectId),
+          intent: String(planPayload.intent || payload?.intent || trimmedIntent),
+          resolved_target_device: String(
+            planPayload.resolved_target_device
+            || payload?.resolved_target_device
+            || resolvedTargetDevice,
+          ),
+          guardrails: payload?.guardrails || planPayload.guardrails,
+        }
+        : null;
+      setPlanResponse(mergedPlan);
+      if (payload?.selected_profile) {
+        setSelectedProfile(payload.selected_profile);
+      } else if (mergedPlan?.recommended_profile) {
+        setSelectedProfile(mergedPlan.recommended_profile);
       }
+      setLaunchResponse(null);
       setCurrentStep(3);
     } catch (err: any) {
+      setPlanOrchestrationResponse(null);
       setPlanResponse(null);
       setPlanError(err?.response?.data?.detail || 'Failed to resolve an autopilot plan.');
     } finally {
@@ -629,8 +735,8 @@ export default function ProjectWizardPage() {
     setLaunchLoading(true);
     setLaunchError('');
     try {
-      const res = await api.post<AutopilotOneClickRunResponse>(
-        `/projects/${projectId}/training/autopilot/one-click-run`,
+      const res = await api.post<AutopilotV2OrchestrationResponse>(
+        `/projects/${projectId}/training/autopilot/v2/orchestrate/run`,
         {
           intent: trimmedIntent,
           target_profile_id: targetProfileId,
@@ -638,18 +744,36 @@ export default function ProjectWizardPage() {
           primary_language: 'english',
           available_vram_gb: Number.isFinite(parsedVram) && parsedVram > 0 ? parsedVram : undefined,
           base_model: baseModelOverride.trim() || undefined,
+          auto_prepare_data: true,
           auto_apply_rewrite: true,
           intent_rewrite: hasSelectedRewrite ? selectedIntentRewrite.trim() : undefined,
           run_name: runNameOverride.trim() || undefined,
           plan_profile: selectedProfile,
+          dry_run: false,
         },
       );
       const payload = res.data || null;
       setLaunchResponse(payload);
-      if (payload?.started) {
-        setCurrentStep(4);
-      } else {
-        setLaunchError(String(payload?.start_error || 'Autopilot created a run, but could not start training.'));
+      setPlanOrchestrationResponse(payload);
+      const planPayload = payload?.plan_v2 || null;
+      if (planPayload) {
+        setPlanResponse({
+          ...planPayload,
+          guardrails: payload?.guardrails || planPayload.guardrails,
+          intent: String(planPayload.intent || payload?.intent || trimmedIntent),
+          resolved_target_device: String(
+            planPayload.resolved_target_device
+            || payload?.resolved_target_device
+            || resolvedTargetDevice,
+          ),
+        });
+      }
+      if (payload?.selected_profile) {
+        setSelectedProfile(payload.selected_profile);
+      }
+      setCurrentStep(4);
+      if (!payload?.started) {
+        setLaunchError(String(payload?.start_error || 'Autopilot completed orchestration, but training did not start.'));
       }
     } catch (err: any) {
       setLaunchResponse(null);
@@ -979,6 +1103,42 @@ export default function ProjectWizardPage() {
                 )}
               </div>
 
+              {planOrchestrationResponse && (
+                <div className={`wizard-upload-box ${planOrchestrationResponse.strict_mode ? 'wizard-warning' : ''}`}>
+                  <div>
+                    <strong>Autopilot v2 mode:</strong>
+                    {' '}
+                    {planOrchestrationResponse.strict_mode ? 'Strict mode enabled' : 'Standard mode'}
+                  </div>
+                  <div>
+                    Effective target profile:
+                    {' '}
+                    {planOrchestrationResponse.effective_target_profile_id}
+                  </div>
+                </div>
+              )}
+
+              {planOrchestrationResponse?.readiness && (
+                <div className="wizard-upload-box">
+                  <div>
+                    <strong>Runtime readiness:</strong>
+                    {' '}
+                    {String(planOrchestrationResponse.readiness.status || 'unknown').toUpperCase()}
+                  </div>
+                  {Array.isArray(planOrchestrationResponse.readiness.checks)
+                    && planOrchestrationResponse.readiness.checks.length > 0 && (
+                      <ul className="wizard-filter-list">
+                        {planOrchestrationResponse.readiness.checks.slice(0, 4).map((check) => (
+                          <li key={String(check.id || check.name || 'readiness-check')}>
+                            {check.name || check.id || 'check'}
+                            {check.fix ? `: ${check.fix}` : check.message ? `: ${check.message}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                </div>
+              )}
+
               <div className="autopilot-plan-grid">
                 {(planResponse?.plans || []).map((plan) => {
                   const estimateSource = planEstimateSource(plan);
@@ -1134,12 +1294,12 @@ export default function ProjectWizardPage() {
                 </div>
               )}
 
-              {Array.isArray(planResponse?.guardrails?.warnings)
-                && planResponse?.guardrails?.warnings?.length > 0 && (
+              {Array.isArray(resolvedGuardrails?.warnings)
+                && resolvedGuardrails?.warnings?.length > 0 && (
                   <div className="wizard-upload-box wizard-warning">
                     <strong>Launch warnings</strong>
                     <ul className="wizard-filter-list">
-                      {planResponse.guardrails.warnings.slice(0, 5).map((warning) => (
+                      {(resolvedGuardrails?.warnings || []).slice(0, 5).map((warning) => (
                         <li key={warning}>{warning}</li>
                       ))}
                     </ul>
@@ -1172,6 +1332,37 @@ export default function ProjectWizardPage() {
                     </div>
                   </div>
                 )}
+
+              {decisionLogRows.length > 0 && (
+                <div className="wizard-upload-box">
+                  <strong>Autopilot decision log</strong>
+                  <div className="wizard-decision-log">
+                    {decisionLogRows.map((entry, idx) => (
+                      <div key={`${entry.step || 'step'}-${idx}`} className="wizard-decision-entry">
+                        <div className="wizard-decision-header">
+                          <span>{decisionStepLabel(entry.step)}</span>
+                          <span className={`badge ${decisionStatusClass(entry.status)}`}>
+                            {String(entry.status || 'unknown').toUpperCase()}
+                          </span>
+                        </div>
+                        <div>{entry.summary || 'No summary available.'}</div>
+                        {entry.why && (
+                          <div className="wizard-muted">Why: {entry.why}</div>
+                        )}
+                        {Array.isArray(entry.fixes) && entry.fixes.length > 0 && (
+                          <ul className="wizard-filter-list">
+                            {entry.fixes.slice(0, 2).map((fix, fixIdx) => (
+                              <li key={`${entry.step || idx}-fix-${fixIdx}`}>
+                                {fix.label || 'Fix'}{fix.description ? `: ${fix.description}` : ''}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="wizard-actions wizard-actions-bottom">
               <button className="btn btn-secondary" onClick={() => setCurrentStep(2)}>Back</button>
@@ -1194,7 +1385,7 @@ export default function ProjectWizardPage() {
         {currentStep === 4 && (
           <section className="wizard-section">
             <h3>Launch Result</h3>
-            <p className="wizard-muted">We created your experiment and attempted to start training.</p>
+            <p className="wizard-muted">Autopilot v2 orchestration completed and attempted training launch.</p>
             <div className="wizard-panel">
               <div>
                 <strong>Experiment:</strong>
@@ -1205,11 +1396,16 @@ export default function ProjectWizardPage() {
               </div>
               <div><strong>Status:</strong> {launchResponse?.experiment?.status || '-'}</div>
               <div><strong>Started:</strong> {launchResponse?.started ? 'yes' : 'no'}</div>
-              {launchResponse?.applied_intent_rewrite?.applied && (
+              <div>
+                <strong>Effective target:</strong>
+                {' '}
+                {launchResponse?.effective_target_profile_id || targetProfileId}
+              </div>
+              {launchResponse?.repairs?.intent_rewrite?.applied && (
                 <div>
                   <strong>Applied intent rewrite:</strong>
                   {' '}
-                  {String(launchResponse?.applied_intent_rewrite?.rewritten_intent || '')}
+                  {String(launchResponse?.repairs?.intent_rewrite?.rewritten_intent || '')}
                 </div>
               )}
               {(launchError || launchResponse?.start_error) && (
@@ -1217,17 +1413,53 @@ export default function ProjectWizardPage() {
                   {launchError || launchResponse?.start_error}
                 </div>
               )}
-              {launchResponse?.auto_prepare?.attempted && (
+              {launchResponse?.repairs?.dataset_auto_prepare?.attempted && (
                 <div>
                   <strong>Auto data prep:</strong>
                   {' '}
-                  {launchResponse.auto_prepare.succeeded ? 'applied' : 'not applied'}
-                  {launchResponse.auto_prepare.method ? ` (${launchResponse.auto_prepare.method})` : ''}
-                  {launchResponse.auto_prepare.raw_documents && (
+                  {launchResponse.repairs.dataset_auto_prepare.succeeded ? 'applied' : 'not applied'}
+                  {launchResponse.repairs.dataset_auto_prepare.method
+                    ? ` (${launchResponse.repairs.dataset_auto_prepare.method})`
+                    : ''}
+                  {launchResponse.repairs.dataset_auto_prepare.raw_documents && (
                     <span>
-                      {` · docs processed ${Number(launchResponse.auto_prepare.raw_documents.processed_count || 0)} (accepted: ${Number(launchResponse.auto_prepare.raw_documents.accepted_after || 0)})`}
+                      {` · docs processed ${Number(launchResponse.repairs.dataset_auto_prepare.raw_documents.processed_count || 0)} (accepted: ${Number(launchResponse.repairs.dataset_auto_prepare.raw_documents.accepted_after || 0)})`}
                     </span>
                   )}
+                </div>
+              )}
+              {launchResponse?.repairs?.target_fallback?.applied && (
+                <div>
+                  <strong>Target fallback:</strong>
+                  {' '}
+                  {launchResponse.repairs.target_fallback.from_target_profile_id}
+                  {' -> '}
+                  {launchResponse.repairs.target_fallback.to_target_profile_id}
+                </div>
+              )}
+              {launchResponse?.repairs?.profile_autotune?.applied && (
+                <div>
+                  <strong>Profile auto-tune:</strong>
+                  {' '}
+                  {launchResponse.repairs.profile_autotune.from_profile}
+                  {' -> '}
+                  {launchResponse.repairs.profile_autotune.to_profile}
+                </div>
+              )}
+              {launchDecisionLog.length > 0 && (
+                <div className="wizard-decision-log" style={{ marginTop: 10 }}>
+                  {launchDecisionLog.map((entry, idx) => (
+                    <div key={`${entry.step || 'step'}-${idx}`} className="wizard-decision-entry">
+                      <div className="wizard-decision-header">
+                        <span>{decisionStepLabel(entry.step)}</span>
+                        <span className={`badge ${decisionStatusClass(entry.status)}`}>
+                          {String(entry.status || 'unknown').toUpperCase()}
+                        </span>
+                      </div>
+                      <div>{entry.summary || 'No summary available.'}</div>
+                      {entry.why && <div className="wizard-muted">Why: {entry.why}</div>}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

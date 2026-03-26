@@ -36,74 +36,147 @@ describe('ProjectWizardPage newbie autopilot', () => {
     apiMock.put.mockResolvedValue({ data: {} });
 
     apiMock.post.mockImplementation(async (url: string) => {
-      if (url.includes('/training/autopilot/plan-v2')) {
+      if (url.includes('/training/autopilot/v2/orchestrate') && !url.includes('/run')) {
         return {
           data: {
             project_id: 1,
+            dry_run: true,
+            strict_mode: false,
             intent: 'support intent',
-            plans: [
-              {
-                profile: 'fastest',
-                title: 'Fastest',
-                description: 'Fastest profile',
-                estimate: {
-                  estimated_seconds: 240,
-                  estimated_cost: 1.2,
-                  unit: 'credits',
-                  labels: { speed: 'High', quality: 'Medium', cost: 'Low' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-              {
-                profile: 'balanced',
-                title: 'Balanced',
-                description: 'Balanced profile',
-                estimate: {
-                  estimated_seconds: 420,
-                  estimated_cost: 2.5,
-                  unit: 'credits',
-                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-              {
-                profile: 'best_quality',
-                title: 'Best Quality',
-                description: 'Best quality profile',
-                estimate: {
-                  estimated_seconds: 900,
-                  estimated_cost: 5.5,
-                  unit: 'credits',
-                  labels: { speed: 'Low', quality: 'Highest', cost: 'High' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-            ],
-            recommended_profile: 'balanced',
+            effective_target_profile_id: 'vllm_server',
+            resolved_target_device: 'server',
+            selected_profile: 'balanced',
             guardrails: {
               can_run: true,
               blockers: [],
               warnings: [],
               one_click_fix_available: false,
             },
-            dataset_readiness: {
-              ready: true,
-              prepared_row_count: 128,
-              blockers: [],
-              auto_fixes: [],
+            readiness: {
+              status: 'pass',
+              checks: [],
             },
-            intent_clarification: {
-              required: false,
-              confidence_band: 'high',
-              rewrite_suggestions: [],
+            decision_log: [
+              { step: 'initial_planning', status: 'completed', summary: 'Built initial plan.' },
+              { step: 'final_guardrails', status: 'ready', summary: 'Guardrails passed.' },
+            ],
+            repairs: {},
+            plan_v2: {
+              project_id: 1,
+              intent: 'support intent',
+              plans: [
+                {
+                  profile: 'fastest',
+                  title: 'Fastest',
+                  description: 'Fastest profile',
+                  estimate: {
+                    estimated_seconds: 240,
+                    estimated_cost: 1.2,
+                    unit: 'credits',
+                    labels: { speed: 'High', quality: 'Medium', cost: 'Low' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+                {
+                  profile: 'balanced',
+                  title: 'Balanced',
+                  description: 'Balanced profile',
+                  estimate: {
+                    estimated_seconds: 420,
+                    estimated_cost: 2.5,
+                    unit: 'credits',
+                    labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+                {
+                  profile: 'best_quality',
+                  title: 'Best Quality',
+                  description: 'Best quality profile',
+                  estimate: {
+                    estimated_seconds: 900,
+                    estimated_cost: 5.5,
+                    unit: 'credits',
+                    labels: { speed: 'Low', quality: 'Highest', cost: 'High' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+              ],
+              recommended_profile: 'balanced',
+              guardrails: {
+                can_run: true,
+                blockers: [],
+                warnings: [],
+                one_click_fix_available: false,
+              },
+              dataset_readiness: {
+                ready: true,
+                prepared_row_count: 128,
+                blockers: [],
+                auto_fixes: [],
+              },
+              intent_clarification: {
+                required: false,
+                confidence_band: 'high',
+                rewrite_suggestions: [],
+              },
             },
+            experiment: null,
+            started: false,
+            start_result: null,
+            start_error: null,
           },
         };
       }
-      if (url.includes('/training/autopilot/one-click-run')) {
+      if (url.includes('/training/autopilot/v2/orchestrate/run')) {
         return {
           data: {
             project_id: 1,
+            dry_run: false,
+            strict_mode: false,
+            intent: 'support intent',
+            effective_target_profile_id: 'vllm_server',
+            resolved_target_device: 'server',
+            selected_profile: 'balanced',
+            guardrails: {
+              can_run: true,
+              blockers: [],
+              warnings: [],
+              one_click_fix_available: false,
+            },
+            readiness: {
+              status: 'pass',
+              checks: [],
+            },
+            decision_log: [
+              { step: 'initial_planning', status: 'completed', summary: 'Built initial plan.' },
+              { step: 'start_training', status: 'completed', summary: 'Training started.' },
+            ],
+            repairs: {
+              intent_rewrite: { applied: false },
+            },
+            plan_v2: {
+              project_id: 1,
+              intent: 'support intent',
+              plans: [],
+              recommended_profile: 'balanced',
+              guardrails: {
+                can_run: true,
+                blockers: [],
+                warnings: [],
+              },
+              dataset_readiness: {
+                ready: true,
+                prepared_row_count: 128,
+                blockers: [],
+                auto_fixes: [],
+              },
+              intent_clarification: {
+                required: false,
+                confidence_band: 'high',
+                rewrite_suggestions: [],
+              },
+            },
             experiment: {
               id: 99,
               name: 'Autopilot - Support Q&A Assistant',
@@ -113,12 +186,6 @@ describe('ProjectWizardPage newbie autopilot', () => {
             started: true,
             start_result: { status: 'started' },
             start_error: null,
-            applied_intent_rewrite: {
-              applied: false,
-              original_intent: null,
-              rewritten_intent: null,
-              source: null,
-            },
           },
         };
       }
@@ -189,7 +256,7 @@ describe('ProjectWizardPage newbie autopilot', () => {
 
     await waitFor(() => {
       expect(apiMock.post).toHaveBeenCalledWith(
-        '/projects/1/training/autopilot/one-click-run',
+        '/projects/1/training/autopilot/v2/orchestrate/run',
         expect.objectContaining({
           target_profile_id: 'vllm_server',
           plan_profile: 'balanced',
@@ -201,76 +268,121 @@ describe('ProjectWizardPage newbie autopilot', () => {
 
   it('renders estimate provenance badges and copy for measured/estimated/simulated plans', async () => {
     apiMock.post.mockImplementation(async (url: string) => {
-      if (url.includes('/training/autopilot/plan-v2')) {
+      if (url.includes('/training/autopilot/v2/orchestrate') && !url.includes('/run')) {
         return {
           data: {
             project_id: 1,
+            dry_run: true,
+            strict_mode: false,
             intent: 'support intent',
-            plans: [
-              {
-                profile: 'fastest',
-                title: 'Fastest',
-                description: 'Fastest profile',
-                estimate: {
-                  estimated_seconds: 120,
-                  estimated_cost: 0.6,
-                  unit: 'credits',
-                  metric_source: 'simulated',
-                  labels: { speed: 'High', quality: 'Medium', cost: 'Low' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-              {
-                profile: 'balanced',
-                title: 'Balanced',
-                description: 'Balanced profile',
-                estimate: {
-                  estimated_seconds: 420,
-                  estimated_cost: 2.5,
-                  unit: 'credits',
-                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-              {
-                profile: 'best_quality',
-                title: 'Best Quality',
-                description: 'Best quality profile',
-                estimate: {
-                  estimated_seconds: 900,
-                  estimated_cost: 5.5,
-                  unit: 'credits',
-                  metric_source: 'measured',
-                  labels: { speed: 'Low', quality: 'Highest', cost: 'High' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-            ],
-            recommended_profile: 'balanced',
+            effective_target_profile_id: 'vllm_server',
+            resolved_target_device: 'server',
+            selected_profile: 'balanced',
             guardrails: {
               can_run: true,
               blockers: [],
               warnings: [],
               one_click_fix_available: false,
             },
-            dataset_readiness: {
-              ready: true,
-              prepared_row_count: 128,
-              blockers: [],
-              auto_fixes: [],
+            readiness: {
+              status: 'pass',
+              checks: [],
             },
-            intent_clarification: {
-              required: false,
-              confidence_band: 'high',
-              rewrite_suggestions: [],
+            decision_log: [
+              { step: 'initial_planning', status: 'completed', summary: 'Built initial plan.' },
+            ],
+            repairs: {},
+            plan_v2: {
+              project_id: 1,
+              intent: 'support intent',
+              plans: [
+                {
+                  profile: 'fastest',
+                  title: 'Fastest',
+                  description: 'Fastest profile',
+                  estimate: {
+                    estimated_seconds: 120,
+                    estimated_cost: 0.6,
+                    unit: 'credits',
+                    metric_source: 'simulated',
+                    labels: { speed: 'High', quality: 'Medium', cost: 'Low' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+                {
+                  profile: 'balanced',
+                  title: 'Balanced',
+                  description: 'Balanced profile',
+                  estimate: {
+                    estimated_seconds: 420,
+                    estimated_cost: 2.5,
+                    unit: 'credits',
+                    labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+                {
+                  profile: 'best_quality',
+                  title: 'Best Quality',
+                  description: 'Best quality profile',
+                  estimate: {
+                    estimated_seconds: 900,
+                    estimated_cost: 5.5,
+                    unit: 'credits',
+                    metric_source: 'measured',
+                    labels: { speed: 'Low', quality: 'Highest', cost: 'High' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
+              ],
+              recommended_profile: 'balanced',
+              guardrails: {
+                can_run: true,
+                blockers: [],
+                warnings: [],
+                one_click_fix_available: false,
+              },
+              dataset_readiness: {
+                ready: true,
+                prepared_row_count: 128,
+                blockers: [],
+                auto_fixes: [],
+              },
+              intent_clarification: {
+                required: false,
+                confidence_band: 'high',
+                rewrite_suggestions: [],
+              },
             },
+            started: false,
+            start_result: null,
+            start_error: null,
           },
         };
       }
-      if (url.includes('/training/autopilot/one-click-run')) {
+      if (url.includes('/training/autopilot/v2/orchestrate/run')) {
         return {
           data: {
             project_id: 1,
+            dry_run: false,
+            strict_mode: false,
+            intent: 'support intent',
+            effective_target_profile_id: 'vllm_server',
+            resolved_target_device: 'server',
+            selected_profile: 'balanced',
+            guardrails: { can_run: true, blockers: [], warnings: [] },
+            readiness: { status: 'pass', checks: [] },
+            decision_log: [],
+            repairs: { intent_rewrite: { applied: false } },
+            plan_v2: {
+              project_id: 1,
+              intent: 'support intent',
+              plans: [],
+              recommended_profile: 'balanced',
+              guardrails: { can_run: true, blockers: [], warnings: [] },
+              dataset_readiness: { ready: true, blockers: [], auto_fixes: [] },
+              intent_clarification: { required: false, rewrite_suggestions: [] },
+            },
             experiment: {
               id: 99,
               name: 'Autopilot - Support Q&A Assistant',
@@ -280,12 +392,6 @@ describe('ProjectWizardPage newbie autopilot', () => {
             started: true,
             start_result: { status: 'started' },
             start_error: null,
-            applied_intent_rewrite: {
-              applied: false,
-              original_intent: null,
-              rewritten_intent: null,
-              source: null,
-            },
           },
         };
       }
@@ -309,64 +415,93 @@ describe('ProjectWizardPage newbie autopilot', () => {
 
   it('shows blocked launch messaging and disables one-click run when guardrails fail', async () => {
     apiMock.post.mockImplementation(async (url: string) => {
-      if (url.includes('/training/autopilot/plan-v2')) {
+      if (url.includes('/training/autopilot/v2/orchestrate') && !url.includes('/run')) {
         return {
           data: {
             project_id: 1,
+            dry_run: true,
+            strict_mode: false,
             intent: 'blocked intent',
-            plans: [
-              {
-                profile: 'balanced',
-                title: 'Balanced',
-                description: 'Balanced profile',
-                estimate: {
-                  estimated_seconds: 420,
-                  estimated_cost: 2.5,
-                  unit: 'credits',
-                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-            ],
-            recommended_profile: 'balanced',
+            effective_target_profile_id: 'edge_gpu',
+            resolved_target_device: 'laptop',
+            selected_profile: 'balanced',
             guardrails: {
               can_run: false,
               blockers: ['VRAM incompatibility with selected target profile.'],
               warnings: ['Target compatibility check failed.'],
               one_click_fix_available: false,
             },
-            dataset_readiness: {
-              ready: true,
-              prepared_row_count: 128,
-              blockers: [],
-              auto_fixes: [],
-            },
-            target_compatibility: {
-              compatible: false,
-              reasons: [
-                'Estimated minimum VRAM (7.6 GB) exceeds target baseline (4 GB) by 3.6 GB.',
+            readiness: { status: 'warn', checks: [] },
+            decision_log: [
+              {
+                step: 'final_guardrails',
+                status: 'blocked',
+                summary: 'Autopilot stopped after safe repairs because blockers remain.',
+                fixes: [{ label: 'Choose larger target', description: 'Switch to server profile.' }],
+              },
+            ],
+            repairs: {},
+            plan_v2: {
+              project_id: 1,
+              intent: 'blocked intent',
+              plans: [
+                {
+                  profile: 'balanced',
+                  title: 'Balanced',
+                  description: 'Balanced profile',
+                  estimate: {
+                    estimated_seconds: 420,
+                    estimated_cost: 2.5,
+                    unit: 'credits',
+                    labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                  },
+                  preflight: { ok: true, errors: [], warnings: [] },
+                },
               ],
-              warnings: [],
-              target: {
-                id: 'edge_gpu',
-                name: 'Edge GPU (NVIDIA Jetson/Desktop)',
+              recommended_profile: 'balanced',
+              guardrails: {
+                can_run: false,
+                blockers: ['VRAM incompatibility with selected target profile.'],
+                warnings: ['Target compatibility check failed.'],
+                one_click_fix_available: false,
               },
-              model_metadata: {
-                model_id: 'microsoft/phi-2',
-                parameters_billions: 6.0,
-                estimated_min_vram_gb: 7.6,
-                source: 'hf_config',
+              dataset_readiness: {
+                ready: true,
+                prepared_row_count: 128,
+                blockers: [],
+                auto_fixes: [],
+              },
+              target_compatibility: {
+                compatible: false,
+                reasons: [
+                  'Estimated minimum VRAM (7.6 GB) exceeds target baseline (4 GB) by 3.6 GB.',
+                ],
+                warnings: [],
+                target: {
+                  id: 'edge_gpu',
+                  name: 'Edge GPU (NVIDIA Jetson/Desktop)',
+                },
+                model_metadata: {
+                  model_id: 'microsoft/phi-2',
+                  parameters_billions: 6.0,
+                  estimated_min_vram_gb: 7.6,
+                  source: 'hf_config',
+                },
+              },
+              intent_clarification: {
+                required: false,
+                confidence_band: 'high',
+                rewrite_suggestions: [],
               },
             },
-            intent_clarification: {
-              required: false,
-              confidence_band: 'high',
-              rewrite_suggestions: [],
-            },
+            experiment: null,
+            started: false,
+            start_result: null,
+            start_error: 'Autopilot blocked run: VRAM incompatibility with selected target profile.',
           },
         };
       }
-      if (url.includes('/training/autopilot/one-click-run')) {
+      if (url.includes('/training/autopilot/v2/orchestrate/run')) {
         return {
           data: {
             started: true,
@@ -394,7 +529,7 @@ describe('ProjectWizardPage newbie autopilot', () => {
     const launchButton = screen.getByRole('button', { name: 'One-Click Run' });
     expect(launchButton).toBeDisabled();
     expect(
-      apiMock.post.mock.calls.some(([url]) => String(url).includes('/training/autopilot/one-click-run')),
+      apiMock.post.mock.calls.some(([url]) => String(url).includes('/training/autopilot/v2/orchestrate/run')),
     ).toBe(false);
   });
 
@@ -428,11 +563,85 @@ describe('ProjectWizardPage newbie autopilot', () => {
     });
 
     apiMock.post.mockImplementation(async (url: string, payload?: any) => {
-      if (url.includes('/training/autopilot/plan-v2')) {
+      if (url.includes('/training/autopilot/v2/orchestrate') && !url.includes('/run')) {
         const rawIntent = String(payload?.intent || '').toLowerCase();
         if (rawIntent.includes('summarize each support ticket')) {
           return {
             data: {
+              project_id: 1,
+              dry_run: true,
+              strict_mode: false,
+              intent: String(payload?.intent || ''),
+              effective_target_profile_id: 'vllm_server',
+              resolved_target_device: 'server',
+              selected_profile: 'balanced',
+              guardrails: {
+                can_run: true,
+                blockers: [],
+                warnings: [],
+              },
+              readiness: { status: 'pass', checks: [] },
+              decision_log: [{ step: 'initial_planning', status: 'completed', summary: 'Plan generated.' }],
+              repairs: {},
+              plan_v2: {
+                project_id: 1,
+                intent: String(payload?.intent || ''),
+                plans: [
+                  {
+                    profile: 'balanced',
+                    title: 'Balanced',
+                    description: 'Balanced profile',
+                    estimate: {
+                      estimated_seconds: 420,
+                      estimated_cost: 2.5,
+                      unit: 'credits',
+                      labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
+                    },
+                    preflight: { ok: true, errors: [], warnings: [] },
+                  },
+                ],
+                recommended_profile: 'balanced',
+                intent_clarification: {
+                  required: false,
+                  confidence_band: 'high',
+                  questions: [],
+                  suggested_intent_examples: [],
+                  rewrite_suggestions: [],
+                },
+                guardrails: {
+                  can_run: true,
+                  blockers: [],
+                  warnings: [],
+                },
+                dataset_readiness: {
+                  ready: true,
+                  prepared_row_count: 24,
+                  blockers: [],
+                  auto_fixes: [],
+                },
+              },
+              started: false,
+            },
+          };
+        }
+        return {
+          data: {
+            project_id: 1,
+            dry_run: true,
+            strict_mode: false,
+            intent: String(payload?.intent || ''),
+            effective_target_profile_id: 'vllm_server',
+            resolved_target_device: 'server',
+            selected_profile: 'balanced',
+            guardrails: {
+              can_run: true,
+              blockers: [],
+              warnings: ['Intent clarification recommended.'],
+            },
+            readiness: { status: 'pass', checks: [] },
+            decision_log: [{ step: 'intent_rewrite', status: 'skipped', summary: 'Waiting for rewrite.' }],
+            repairs: {},
+            plan_v2: {
               project_id: 1,
               intent: String(payload?.intent || ''),
               plans: [
@@ -451,16 +660,25 @@ describe('ProjectWizardPage newbie autopilot', () => {
               ],
               recommended_profile: 'balanced',
               intent_clarification: {
-                required: false,
-                confidence_band: 'high',
-                questions: [],
-                suggested_intent_examples: [],
-                rewrite_suggestions: [],
+                required: true,
+                confidence_band: 'low',
+                reason: 'intent confidence is low; intent text is very short',
+                questions: ['What exact output should the model produce?'],
+                suggested_intent_examples: ['Summarize support tickets into 3 bullet points and next actions.'],
+                rewrite_suggestions: [
+                  {
+                    id: 'rewrite.summarization.support',
+                    label: 'Ticket summary with actions',
+                    rewritten_intent: 'Summarize each support ticket into 3 bullet points and next actions.',
+                    reason: 'Defines expected output format.',
+                    recommended: true,
+                  },
+                ],
               },
               guardrails: {
                 can_run: true,
                 blockers: [],
-                warnings: [],
+                warnings: ['Intent clarification recommended.'],
               },
               dataset_readiness: {
                 ready: true,
@@ -469,62 +687,41 @@ describe('ProjectWizardPage newbie autopilot', () => {
                 auto_fixes: [],
               },
             },
-          };
-        }
-        return {
-          data: {
-            project_id: 1,
-            intent: String(payload?.intent || ''),
-            plans: [
-              {
-                profile: 'balanced',
-                title: 'Balanced',
-                description: 'Balanced profile',
-                estimate: {
-                  estimated_seconds: 420,
-                  estimated_cost: 2.5,
-                  unit: 'credits',
-                  labels: { speed: 'Medium', quality: 'High', cost: 'Medium' },
-                },
-                preflight: { ok: true, errors: [], warnings: [] },
-              },
-            ],
-            recommended_profile: 'balanced',
-            intent_clarification: {
-              required: true,
-              confidence_band: 'low',
-              reason: 'intent confidence is low; intent text is very short',
-              questions: ['What exact output should the model produce?'],
-              suggested_intent_examples: ['Summarize support tickets into 3 bullet points and next actions.'],
-              rewrite_suggestions: [
-                {
-                  id: 'rewrite.summarization.support',
-                  label: 'Ticket summary with actions',
-                  rewritten_intent: 'Summarize each support ticket into 3 bullet points and next actions.',
-                  reason: 'Defines expected output format.',
-                  recommended: true,
-                },
-              ],
-            },
-            guardrails: {
-              can_run: true,
-              blockers: [],
-              warnings: ['Intent clarification recommended.'],
-            },
-            dataset_readiness: {
-              ready: true,
-              prepared_row_count: 24,
-              blockers: [],
-              auto_fixes: [],
-            },
+            started: false,
           },
         };
       }
 
-      if (url.includes('/training/autopilot/one-click-run')) {
+      if (url.includes('/training/autopilot/v2/orchestrate/run')) {
         return {
           data: {
             project_id: 1,
+            dry_run: false,
+            strict_mode: false,
+            intent: 'help',
+            effective_target_profile_id: 'vllm_server',
+            resolved_target_device: 'server',
+            selected_profile: 'balanced',
+            guardrails: { can_run: true, blockers: [], warnings: [] },
+            readiness: { status: 'pass', checks: [] },
+            decision_log: [{ step: 'intent_rewrite', status: 'applied', summary: 'Applied rewrite.' }],
+            repairs: {
+              intent_rewrite: {
+                applied: true,
+                original_intent: 'help',
+                rewritten_intent: String(payload?.intent_rewrite || ''),
+                source: 'request.intent_rewrite',
+              },
+            },
+            plan_v2: {
+              project_id: 1,
+              intent: 'help',
+              plans: [],
+              recommended_profile: 'balanced',
+              guardrails: { can_run: true, blockers: [], warnings: [] },
+              dataset_readiness: { ready: true, blockers: [], auto_fixes: [] },
+              intent_clarification: { required: false, rewrite_suggestions: [] },
+            },
             experiment: {
               id: 101,
               name: 'Autopilot - Summarization Assistant',
@@ -534,12 +731,6 @@ describe('ProjectWizardPage newbie autopilot', () => {
             started: true,
             start_result: { status: 'started' },
             start_error: null,
-            applied_intent_rewrite: {
-              applied: true,
-              original_intent: 'help',
-              rewritten_intent: String(payload?.intent_rewrite || ''),
-              source: 'request.intent_rewrite',
-            },
           },
         };
       }
@@ -560,9 +751,10 @@ describe('ProjectWizardPage newbie autopilot', () => {
 
     await waitFor(() => {
       expect(apiMock.post).toHaveBeenCalledWith(
-        '/projects/1/training/autopilot/plan-v2',
+        '/projects/1/training/autopilot/v2/orchestrate',
         expect.objectContaining({
           intent: 'Summarize each support ticket into 3 bullet points and next actions.',
+          dry_run: true,
         }),
       );
     });
@@ -571,10 +763,11 @@ describe('ProjectWizardPage newbie autopilot', () => {
 
     await waitFor(() => {
       expect(apiMock.post).toHaveBeenCalledWith(
-        '/projects/1/training/autopilot/one-click-run',
+        '/projects/1/training/autopilot/v2/orchestrate/run',
         expect.objectContaining({
           auto_apply_rewrite: true,
           intent_rewrite: 'Summarize each support ticket into 3 bullet points and next actions.',
+          dry_run: false,
         }),
       );
     });

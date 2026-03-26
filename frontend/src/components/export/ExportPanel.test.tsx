@@ -267,4 +267,234 @@ describe('ExportPanel serve run flow', () => {
     expect(screen.getByText('~45.0ms')).toBeInTheDocument();
     expect(screen.getByText(/Runtime probe unavailable for this format\./i)).toBeInTheDocument();
   });
+
+  it('renders benchmark matrix recommendations with measured and estimated provenance', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url.includes('/export/optimize/matrix/start')) {
+        return {
+          data: {
+            run_id: 'matrix-1',
+            project_id: 9,
+            status: 'completed',
+            target_ids: ['runner.vllm'],
+            runtime_fingerprint: {
+              gpu: 'RTX 4090',
+              toolchain: 'torch-2.4',
+            },
+            summary: {
+              target_count: 1,
+              candidate_evaluation_count: 2,
+              measured_candidate_count: 1,
+              mixed_candidate_count: 0,
+              estimated_candidate_count: 1,
+            },
+            targets: [
+              {
+                target_id: 'runner.vllm',
+                target_device: 'server',
+                candidate_count: 2,
+                measured_candidate_count: 1,
+                mixed_candidate_count: 0,
+                estimated_candidate_count: 1,
+                recommended_candidate_id: 'c-measured',
+              },
+            ],
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.includes('/training/experiments')) {
+        return { data: [{ id: 1, name: 'exp-1', status: 'completed' }] };
+      }
+      if (url.includes('/export/list')) {
+        return { data: [] };
+      }
+      if (url.includes('/registry/models')) {
+        return { data: { models: [] } };
+      }
+      if (url.includes('/export/deployment-targets')) {
+        return {
+          data: {
+            default_target_ids: ['runner.vllm'],
+            targets: [
+              {
+                target_id: 'runner.vllm',
+                kind: 'runner',
+                display_name: 'vLLM',
+                description: 'OpenAI-compatible runtime',
+                compatible: true,
+                smoke_supported: true,
+              },
+            ],
+          },
+        };
+      }
+      if (url.includes('/export/optimize/matrix/matrix-1/recommendations')) {
+        return {
+          data: {
+            project_id: 9,
+            run_id: 'matrix-1',
+            status: 'completed',
+            recommendations_by_target: [
+              {
+                target_id: 'runner.vllm',
+                target_device: 'server',
+                recommended_candidate_id: 'c-measured',
+                recommendations: [
+                  {
+                    rank: 1,
+                    id: 'c-measured',
+                    name: 'HF 4-bit',
+                    runtime_template: 'huggingface',
+                    quantization: '4-bit',
+                    metrics: { latency_ms: 14.2, memory_gb: 1.1, quality_score: 0.93 },
+                    metric_source: 'measured',
+                    metric_sources: {
+                      latency_ms: 'measured',
+                      memory_gb: 'measured',
+                      quality_score: 'measured',
+                    },
+                    confidence: { score: 0.97 },
+                    measurement: { mode: 'measured' },
+                    reasons: ['Probe completed'],
+                  },
+                  {
+                    rank: 2,
+                    id: 'c-est',
+                    name: 'GGUF q4',
+                    runtime_template: 'gguf',
+                    quantization: '4-bit',
+                    metrics: { latency_ms: 26.1, memory_gb: 0.9, quality_score: 0.87 },
+                    metric_source: 'estimated',
+                    metric_sources: {
+                      latency_ms: 'estimated',
+                      memory_gb: 'estimated',
+                      quality_score: 'estimated',
+                    },
+                    confidence: { score: 0.63 },
+                    measurement: {
+                      mode: 'estimated',
+                      fallback_reason: 'Probe runtime unavailable.',
+                      remediation_hint: 'Install runtime probes and rerun matrix.',
+                    },
+                    reasons: ['Fallback estimate'],
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ExportPanel projectId={9} />);
+
+    const selectors = await screen.findAllByRole('combobox');
+    await user.selectOptions(selectors[0], '1');
+    await user.click(screen.getByRole('button', { name: 'Run Benchmark Matrix' }));
+
+    expect(await screen.findByText('Benchmark Matrix Run')).toBeInTheDocument();
+    expect(await screen.findByText('TOP RANK')).toBeInTheDocument();
+    expect(await screen.findByText(/Probe runtime unavailable\./i)).toBeInTheDocument();
+    expect(await screen.findByText(/Remediation: Install runtime probes and rerun matrix\./i)).toBeInTheDocument();
+  });
+
+  it('shows mobile sdk smoke validation details in deploy plan', async () => {
+    apiMock.get.mockImplementation(async (url: string) => {
+      if (url.includes('/training/experiments')) {
+        return { data: [{ id: 1, name: 'exp-1', status: 'completed' }] };
+      }
+      if (url.includes('/export/list')) {
+        return {
+          data: [
+            {
+              id: 1,
+              export_format: 'gguf',
+              quantization: '4-bit',
+              status: 'completed',
+              output_path: '/tmp/export-1',
+              file_size_bytes: 1024,
+              created_at: '2026-03-26T00:00:00Z',
+            },
+          ],
+        };
+      }
+      if (url.includes('/registry/models')) {
+        return { data: { models: [] } };
+      }
+      if (url.includes('/export/deployment-targets')) {
+        return {
+          data: {
+            default_target_ids: ['runner.vllm'],
+            targets: [
+              {
+                target_id: 'runner.vllm',
+                kind: 'runner',
+                display_name: 'vLLM',
+                description: 'OpenAI-compatible runtime',
+                compatible: true,
+                smoke_supported: true,
+              },
+            ],
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url.includes('/export/1/deploy-as-api')) {
+        return {
+          data: {
+            target_id: 'sdk.apple_coreml_stub',
+            target_kind: 'sdk',
+            display_name: 'Apple CoreML Reference App',
+            summary: 'Mobile SDK runnable reference bundle generated.',
+            steps: ['step 1', 'step 2'],
+            sdk_artifact: {
+              zip_path: '/tmp/mobile/reference_app.zip',
+              readme_path: '/tmp/mobile/README.md',
+              entrypoint_path: '/tmp/mobile/ios_app/main.swift',
+              runtime_path: '/tmp/mobile/ios_app/runtime_config.json',
+              model_placement_paths: ['ios_app/Models/model.mlmodelc'],
+              run_commands: ['xcodebuild -scheme ReferenceApp'],
+              smoke_commands: ['./scripts/smoke.sh'],
+              smoke_validation: {
+                smoke_passed: true,
+                warnings: ['Use release build for perf.'],
+                errors: [],
+                checks: [
+                  {
+                    check_id: 'entrypoint_exists',
+                    status: 'pass',
+                    message: 'Entrypoint found',
+                  },
+                ],
+              },
+            },
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ExportPanel projectId={9} />);
+
+    const selectors = await screen.findAllByRole('combobox');
+    await user.selectOptions(selectors[3], 'sdk.apple_coreml_stub');
+
+    await user.click(await screen.findByText('GGUF'));
+    await user.click(screen.getByRole('button', { name: 'Deploy / SDK Plan' }));
+
+    expect(await screen.findByText('Smoke Validation')).toBeInTheDocument();
+    expect(await screen.findByText('PASS')).toBeInTheDocument();
+    expect(await screen.findByText(/ios_app\/Models\/model\.mlmodelc/i)).toBeInTheDocument();
+    expect(await screen.findByText(/xcodebuild -scheme ReferenceApp/i)).toBeInTheDocument();
+  });
 });

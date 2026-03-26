@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.project import Project
-from app.schemas.evaluation import EvalResultResponse, LLMJudgeRequest
+from app.schemas.evaluation import (
+    EvalResultResponse,
+    LLMJudgeRequest,
+    RemediationPlanGenerateRequest,
+    RemediationPlanIndexResponse,
+)
 from app.services.evaluation_pack_service import (
     DEFAULT_EVALUATION_PACK_ID,
     DOMAIN_PROFILE_EVAL_PACK_ID,
@@ -25,6 +30,12 @@ from app.services.evaluation_service import (
     get_eval_results,
     run_evaluation,
     run_heldout_evaluation,
+)
+from app.services.evaluation_remediation_service import (
+    RemediationPlanBlockedError,
+    generate_remediation_plan,
+    get_remediation_plan,
+    list_remediation_plan_index,
 )
 from app.services.serve_runtime_service import list_serve_runs
 
@@ -370,3 +381,69 @@ async def safety_scorecard(
         return await generate_safety_scorecard(db, project_id, experiment_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/remediation-plans/generate", status_code=201)
+async def generate_eval_remediation_plan(
+    project_id: int,
+    req: RemediationPlanGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate and persist a remediation plan from evaluation failures."""
+    try:
+        return await generate_remediation_plan(
+            db,
+            project_id=project_id,
+            experiment_id=req.experiment_id,
+            evaluation_result_id=req.evaluation_result_id,
+            max_failures=req.max_failures,
+        )
+    except RemediationPlanBlockedError as e:
+        raise HTTPException(e.status_code, e.detail)
+    except ValueError as e:
+        detail = str(e)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code, detail)
+
+
+@router.get("/remediation-plans", response_model=RemediationPlanIndexResponse)
+async def list_eval_remediation_plans(
+    project_id: int,
+    experiment_id: int | None = None,
+    evaluation_result_id: int | None = None,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """List persisted remediation plans for project/experiment/evaluation scopes."""
+    try:
+        plans = await list_remediation_plan_index(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            evaluation_result_id=evaluation_result_id,
+            limit=limit,
+        )
+        return RemediationPlanIndexResponse(
+            project_id=project_id,
+            count=len(plans),
+            plans=plans,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/remediation-plans/{plan_id}")
+async def get_eval_remediation_plan(
+    project_id: int,
+    plan_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch a previously generated remediation plan by plan id."""
+    payload = await get_remediation_plan(
+        db,
+        project_id=project_id,
+        plan_id=plan_id,
+    )
+    if payload is None:
+        raise HTTPException(404, f"Remediation plan '{plan_id}' not found in project {project_id}")
+    return payload

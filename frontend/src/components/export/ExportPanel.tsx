@@ -156,7 +156,24 @@ interface DeployPlanResponse {
         zip_path?: string;
         readme_path?: string;
         entrypoint_path?: string;
+        runtime_path?: string;
+        bundle_files?: string[];
+        model_placement_paths?: string[];
+        run_commands?: string[];
+        smoke_commands?: string[];
+        smoke_validation?: {
+            smoke_passed?: boolean;
+            errors?: string[];
+            warnings?: string[];
+            checks?: Array<{
+                check_id?: string;
+                status?: string;
+                message?: string;
+            }>;
+        };
     };
+    run_commands?: string[];
+    smoke_commands?: string[];
 }
 
 interface DeployExecutionDetails {
@@ -207,6 +224,89 @@ interface OptimizationResponse {
     candidates: OptimizationCandidate[];
 }
 
+interface OptimizationMatrixCandidate {
+    rank?: number;
+    rank_score?: number[];
+    id: string;
+    name: string;
+    quantization: string;
+    runtime_template: string;
+    artifact_identifier?: string;
+    metrics: OptimizationMetric;
+    metric_source?: string;
+    metric_sources?: Partial<Record<OptimizationMetricKey, string>>;
+    measurement?: {
+        mode?: string;
+        fallback_reason?: string;
+        remediation_hint?: string;
+        [key: string]: unknown;
+    } | null;
+    confidence?: {
+        score?: number;
+        level?: string;
+        [key: string]: unknown;
+    } | null;
+    is_recommended?: boolean;
+    reasons?: string[];
+}
+
+interface OptimizationMatrixTargetResult {
+    target_id: string;
+    target_device?: string;
+    candidate_count?: number;
+    measured_candidate_count?: number;
+    mixed_candidate_count?: number;
+    estimated_candidate_count?: number;
+    recommended_candidate_id?: string | null;
+    candidates?: OptimizationMatrixCandidate[];
+}
+
+interface OptimizationMatrixRunResponse {
+    run_id: string;
+    project_id: number;
+    status: string;
+    run_hash?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    target_ids: string[];
+    prompt_set?: {
+        prompt_set_id?: string;
+        prompt_set_hash?: string;
+        [key: string]: unknown;
+    };
+    runtime_fingerprint?: {
+        cpu?: string;
+        gpu?: string;
+        toolchain?: string;
+        python_version?: string;
+        [key: string]: unknown;
+    };
+    summary?: {
+        target_count?: number;
+        candidate_evaluation_count?: number;
+        measured_candidate_count?: number;
+        mixed_candidate_count?: number;
+        estimated_candidate_count?: number;
+        max_probe_candidates_per_target?: number;
+        [key: string]: unknown;
+    };
+    targets?: OptimizationMatrixTargetResult[];
+    error?: string | null;
+}
+
+interface OptimizationMatrixRecommendationsResponse {
+    project_id: number;
+    run_id: string;
+    status: string;
+    target_id?: string | null;
+    recommendations_by_target: Array<{
+        target_id: string;
+        target_device?: string;
+        recommended_candidate_id?: string | null;
+        recommendations: OptimizationMatrixCandidate[];
+    }>;
+}
+
 function toErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
         const detail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -250,7 +350,7 @@ function normalizeMetricSource(value: unknown): MetricSource | null {
     return 'estimated';
 }
 
-function candidateMetricSource(candidate: OptimizationCandidate): MetricSource {
+function candidateMetricSource(candidate: OptimizationCandidate | OptimizationMatrixCandidate): MetricSource {
     const explicit = normalizeMetricSource(candidate.metric_source);
     if (explicit) return explicit;
     const modeSource = normalizeMetricSource(candidate.measurement?.mode);
@@ -258,7 +358,7 @@ function candidateMetricSource(candidate: OptimizationCandidate): MetricSource {
     return 'estimated';
 }
 
-function metricSourceForKey(candidate: OptimizationCandidate, key: OptimizationMetricKey): MetricSource {
+function metricSourceForKey(candidate: OptimizationCandidate | OptimizationMatrixCandidate, key: OptimizationMetricKey): MetricSource {
     const perMetric = normalizeMetricSource(candidate.metric_sources?.[key]);
     if (perMetric) return perMetric;
     const aggregate = candidateMetricSource(candidate);
@@ -279,7 +379,7 @@ function metricSourceHelpText(source: MetricSource): string {
     return 'Estimated from artifact profile/heuristics because probe data is unavailable.';
 }
 
-function candidateProvenanceText(candidate: OptimizationCandidate): string {
+function candidateProvenanceText(candidate: OptimizationCandidate | OptimizationMatrixCandidate): string {
     const source = candidateMetricSource(candidate);
     const fallbackReason = String(candidate.measurement?.fallback_reason || '').trim();
     if (source === 'measured') {
@@ -358,6 +458,13 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
     const [optimizationResults, setOptimizationResults] = useState<OptimizationResponse | null>(null);
     const [selectedOptimization, setSelectedOptimization] = useState<OptimizationCandidate | null>(null);
     const [isOptimizing, setIsOptimizing] = useState(false);
+    const [matrixRun, setMatrixRun] = useState<OptimizationMatrixRunResponse | null>(null);
+    const [isRunningMatrix, setIsRunningMatrix] = useState(false);
+    const [isRefreshingMatrix, setIsRefreshingMatrix] = useState(false);
+    const [matrixTargetId, setMatrixTargetId] = useState('');
+    const [matrixTopK, setMatrixTopK] = useState(3);
+    const [matrixRecommendations, setMatrixRecommendations] = useState<OptimizationMatrixRecommendationsResponse | null>(null);
+    const [isLoadingMatrixRecommendations, setIsLoadingMatrixRecommendations] = useState(false);
 
     const refreshAll = async () => {
         setIsLoading(true);
@@ -394,6 +501,10 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         setDeployManagedApiToken('');
         setOptimizationResults(null);
         setSelectedOptimization(null);
+        setMatrixRun(null);
+        setMatrixRecommendations(null);
+        setMatrixTargetId('');
+        setMatrixTopK(3);
         void refreshAll();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
@@ -670,10 +781,96 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
         }
     };
 
-    const applyOptimization = (candidate: OptimizationCandidate) => {
+    const handleStartOptimizationMatrix = async () => {
+        const targets = selectedDeploymentTargets.length > 0 ? selectedDeploymentTargets : deploymentTargets.map((item) => item.target_id);
+        if (targets.length === 0) {
+            setErrorMessage('Select at least one deployment target before running matrix benchmark.');
+            return;
+        }
+        setIsRunningMatrix(true);
+        setErrorMessage('');
+        setMatrixRecommendations(null);
+        try {
+            const res = await api.post<OptimizationMatrixRunResponse>(
+                `/projects/${projectId}/export/optimize/matrix/start`,
+                {
+                    target_ids: targets,
+                    max_probe_candidates_per_target: 3,
+                },
+            );
+            const payload = res.data || null;
+            setMatrixRun(payload);
+            const firstTarget = String(payload?.targets?.[0]?.target_id || targets[0] || '').trim();
+            setMatrixTargetId(firstTarget);
+            setStatusMessage(`Optimization matrix run ${payload?.run_id || ''} ${payload?.status || 'started'}.`);
+            if (payload?.run_id) {
+                await handleLoadMatrixRecommendations(payload.run_id, firstTarget);
+            }
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+        } finally {
+            setIsRunningMatrix(false);
+        }
+    };
+
+    const handleRefreshOptimizationMatrix = async () => {
+        const runId = String(matrixRun?.run_id || '').trim();
+        if (!runId) return;
+        setIsRefreshingMatrix(true);
+        setErrorMessage('');
+        try {
+            const res = await api.get<OptimizationMatrixRunResponse>(
+                `/projects/${projectId}/export/optimize/matrix/${encodeURIComponent(runId)}`,
+            );
+            const payload = res.data || null;
+            setMatrixRun(payload);
+            setStatusMessage(`Refreshed matrix run ${runId}.`);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+        } finally {
+            setIsRefreshingMatrix(false);
+        }
+    };
+
+    const handleLoadMatrixRecommendations = async (runIdOverride?: string, targetOverride?: string) => {
+        const runId = String(runIdOverride || matrixRun?.run_id || '').trim();
+        if (!runId) return;
+        const selectedTarget = String(targetOverride || matrixTargetId || '').trim();
+        setIsLoadingMatrixRecommendations(true);
+        setErrorMessage('');
+        try {
+            const res = await api.get<OptimizationMatrixRecommendationsResponse>(
+                `/projects/${projectId}/export/optimize/matrix/${encodeURIComponent(runId)}/recommendations`,
+                {
+                    params: {
+                        target_id: selectedTarget || undefined,
+                        top_k: Math.max(1, Math.min(5, Math.floor(matrixTopK || 3))),
+                    },
+                },
+            );
+            setMatrixRecommendations(res.data || null);
+        } catch (err) {
+            setErrorMessage(toErrorMessage(err));
+        } finally {
+            setIsLoadingMatrixRecommendations(false);
+        }
+    };
+
+    const applyOptimization = (candidate: OptimizationCandidate | OptimizationMatrixCandidate) => {
         setFormat(candidate.runtime_template);
         setQuantization(candidate.quantization);
-        setSelectedOptimization(candidate);
+        setSelectedOptimization({
+            id: candidate.id,
+            name: candidate.name,
+            quantization: candidate.quantization,
+            runtime_template: candidate.runtime_template,
+            metrics: candidate.metrics,
+            is_recommended: Boolean(candidate.is_recommended),
+            reasons: Array.isArray(candidate.reasons) ? candidate.reasons : [],
+            metric_source: candidate.metric_source,
+            metric_sources: candidate.metric_sources,
+            measurement: candidate.measurement,
+        });
         setStatusMessage(`Applied ${candidate.name} settings.`);
     };
 
@@ -1026,6 +1223,221 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                     </div>
                 )}
 
+                {matrixRun && (
+                    <div className="optimization-results optimization-matrix-results">
+                        <div className="export-target-panel-header">
+                            <div>
+                                <div className="export-target-panel-title">Benchmark Matrix Run</div>
+                                <div className="export-target-panel-subtitle">
+                                    Run {matrixRun.run_id} • {matrixRun.status}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <span className={`badge ${runStatusColor(matrixRun.status)}`}>{matrixRun.status}</span>
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => void handleRefreshOptimizationMatrix()}
+                                    disabled={isRefreshingMatrix}
+                                >
+                                    {isRefreshingMatrix ? 'Refreshing...' : 'Refresh'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="optimization-matrix-summary">
+                            <div className="optimization-matrix-chip">
+                                <span>Targets</span>
+                                <strong>{Number(matrixRun.summary?.target_count || matrixRun.targets?.length || 0)}</strong>
+                            </div>
+                            <div className="optimization-matrix-chip">
+                                <span>Candidates</span>
+                                <strong>{Number(matrixRun.summary?.candidate_evaluation_count || 0)}</strong>
+                            </div>
+                            <div className="optimization-matrix-chip">
+                                <span>Measured</span>
+                                <strong>{Number(matrixRun.summary?.measured_candidate_count || 0)}</strong>
+                            </div>
+                            <div className="optimization-matrix-chip">
+                                <span>Estimated</span>
+                                <strong>{Number(matrixRun.summary?.estimated_candidate_count || 0)}</strong>
+                            </div>
+                            <div className="optimization-matrix-chip">
+                                <span>Runtime Fingerprint</span>
+                                <strong>
+                                    {String(
+                                        matrixRun.runtime_fingerprint?.gpu
+                                        || matrixRun.runtime_fingerprint?.cpu
+                                        || matrixRun.runtime_fingerprint?.toolchain
+                                        || 'unknown',
+                                    )}
+                                </strong>
+                            </div>
+                        </div>
+
+                        <div className="optimization-matrix-controls">
+                            <div className="form-group">
+                                <label className="form-label">Target</label>
+                                <select
+                                    className="input"
+                                    value={matrixTargetId}
+                                    onChange={(e) => setMatrixTargetId(e.target.value)}
+                                >
+                                    {(matrixRun.targets || []).map((target) => (
+                                        <option key={target.target_id} value={target.target_id}>
+                                            {target.target_id}
+                                            {target.target_device ? ` (${target.target_device})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Top K</label>
+                                <input
+                                    className="input"
+                                    type="number"
+                                    min={1}
+                                    max={5}
+                                    value={matrixTopK}
+                                    onChange={(e) => setMatrixTopK(Number(e.target.value))}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">Recommendations</label>
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={() => void handleLoadMatrixRecommendations()}
+                                    disabled={isLoadingMatrixRecommendations}
+                                >
+                                    {isLoadingMatrixRecommendations ? 'Loading...' : 'Load Recommendations'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {(matrixRun.targets || []).length > 0 && (
+                            <div className="table-container" style={{ maxHeight: 240 }}>
+                                <table className="docs-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Target</th>
+                                            <th>Candidates</th>
+                                            <th>Measured</th>
+                                            <th>Mixed</th>
+                                            <th>Estimated</th>
+                                            <th>Recommended</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(matrixRun.targets || []).map((target) => (
+                                            <tr key={target.target_id}>
+                                                <td>{target.target_id}</td>
+                                                <td>{Number(target.candidate_count || 0)}</td>
+                                                <td>{Number(target.measured_candidate_count || 0)}</td>
+                                                <td>{Number(target.mixed_candidate_count || 0)}</td>
+                                                <td>{Number(target.estimated_candidate_count || 0)}</td>
+                                                <td>{target.recommended_candidate_id || '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {matrixRecommendations && (
+                            <div className="optimization-matrix-recommendations">
+                                {matrixRecommendations.recommendations_by_target.map((row) => (
+                                    <div key={row.target_id} className="optimization-matrix-recommendation-target">
+                                        <div className="export-target-panel-header">
+                                            <div>
+                                                <div className="export-target-panel-title">
+                                                    Recommendations • {row.target_id}
+                                                </div>
+                                                <div className="export-target-panel-subtitle">
+                                                    {row.target_device || 'unknown device'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="optimization-candidates-grid">
+                                            {(row.recommendations || []).map((candidate) => {
+                                                const aggregateSource = candidateMetricSource(candidate);
+                                                const aggregateHelp = candidateProvenanceText(candidate);
+                                                const latencySource = metricSourceForKey(candidate, 'latency_ms');
+                                                const memorySource = metricSourceForKey(candidate, 'memory_gb');
+                                                const qualitySource = metricSourceForKey(candidate, 'quality_score');
+                                                const confidenceScore = Number(candidate.confidence?.score);
+                                                return (
+                                                    <div
+                                                        key={`${row.target_id}-${candidate.id}`}
+                                                        className={`optimization-card ${
+                                                            candidate.id === row.recommended_candidate_id ? 'recommended' : ''
+                                                        }`}
+                                                    >
+                                                        {candidate.id === row.recommended_candidate_id && (
+                                                            <div className="recommendation-badge">TOP RANK</div>
+                                                        )}
+                                                        <div className="optimization-card-header">
+                                                            <div className="serve-template-card__title">
+                                                                #{candidate.rank || '—'} {candidate.name}
+                                                            </div>
+                                                            <span
+                                                                className={`badge ${METRIC_SOURCE_BADGE_CLASS[aggregateSource]} optimization-source-badge`}
+                                                                title={aggregateHelp}
+                                                            >
+                                                                {METRIC_SOURCE_LABEL[aggregateSource]}
+                                                            </span>
+                                                        </div>
+                                                        <div className="optimization-metrics">
+                                                            <div className="optimization-metric-item">
+                                                                <span className="optimization-metric-label">Latency</span>
+                                                                <span className="optimization-metric-value">
+                                                                    {formatOptimizationMetricValue('latency_ms', candidate.metrics.latency_ms, latencySource)}
+                                                                </span>
+                                                            </div>
+                                                            <div className="optimization-metric-item">
+                                                                <span className="optimization-metric-label">Memory</span>
+                                                                <span className="optimization-metric-value">
+                                                                    {formatOptimizationMetricValue('memory_gb', candidate.metrics.memory_gb, memorySource)}
+                                                                </span>
+                                                            </div>
+                                                            <div className="optimization-metric-item">
+                                                                <span className="optimization-metric-label">Quality</span>
+                                                                <span className="optimization-metric-value">
+                                                                    {formatOptimizationMetricValue('quality_score', candidate.metrics.quality_score, qualitySource)}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        {Number.isFinite(confidenceScore) && (
+                                                            <div className="optimization-provenance-note">
+                                                                Confidence {(confidenceScore * 100).toFixed(0)}%
+                                                            </div>
+                                                        )}
+                                                        {candidate.measurement?.fallback_reason && (
+                                                            <div className="optimization-provenance-note">
+                                                                {String(candidate.measurement.fallback_reason)}
+                                                            </div>
+                                                        )}
+                                                        {candidate.measurement?.remediation_hint && (
+                                                            <div className="optimization-provenance-note">
+                                                                Remediation: {String(candidate.measurement.remediation_hint)}
+                                                            </div>
+                                                        )}
+                                                        <button
+                                                            className="btn btn-secondary btn-sm"
+                                                            style={{ marginTop: 'auto' }}
+                                                            onClick={() => applyOptimization(candidate)}
+                                                        >
+                                                            Apply Settings
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 <div style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
                     <label className="form-label">Deploy / SDK Plan Target</label>
                     <select className="input" value={deployTargetId} onChange={(e) => setDeployTargetId(e.target.value)}>
@@ -1050,6 +1462,13 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                         disabled={!selectedExp || isOptimizing || selectedDeploymentTargets.length === 0}
                     >
                         {isOptimizing ? 'Optimizing...' : 'Optimize for Target'}
+                    </button>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={() => void handleStartOptimizationMatrix()}
+                        disabled={!selectedExp || isRunningMatrix || selectedDeploymentTargets.length === 0}
+                    >
+                        {isRunningMatrix ? 'Running Matrix...' : 'Run Benchmark Matrix'}
                     </button>
                     <button className="btn btn-secondary" onClick={() => void handleRegisterModel()} disabled={!selectedExp || isLoading}>
                         Register Selected Model
@@ -1572,6 +1991,102 @@ export default function ExportPanel({ projectId }: ExportPanelProps) {
                                 </button>
                             </div>
                         </div>
+                    )}
+                    {deployPlan.sdk_artifact && (
+                        <>
+                            {deployPlan.sdk_artifact.readme_path && (
+                                <div className="serve-template-block">
+                                    <div className="serve-template-block__label">Bundle README</div>
+                                    <code>{deployPlan.sdk_artifact.readme_path}</code>
+                                </div>
+                            )}
+                            {deployPlan.sdk_artifact.entrypoint_path && (
+                                <div className="serve-template-block">
+                                    <div className="serve-template-block__label">Entrypoint</div>
+                                    <code>{deployPlan.sdk_artifact.entrypoint_path}</code>
+                                </div>
+                            )}
+                            {deployPlan.sdk_artifact.runtime_path && (
+                                <div className="serve-template-block">
+                                    <div className="serve-template-block__label">Runtime Config</div>
+                                    <code>{deployPlan.sdk_artifact.runtime_path}</code>
+                                </div>
+                            )}
+                            {Array.isArray(deployPlan.sdk_artifact.model_placement_paths)
+                                && deployPlan.sdk_artifact.model_placement_paths.length > 0 && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Model Placement Paths</div>
+                                        <ul className="export-inline-list">
+                                            {deployPlan.sdk_artifact.model_placement_paths.map((path) => (
+                                                <li key={path}><code>{path}</code></li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            {Array.isArray(deployPlan.sdk_artifact.run_commands)
+                                && deployPlan.sdk_artifact.run_commands.length > 0 && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Run Commands</div>
+                                        <pre className="serve-template-code">{deployPlan.sdk_artifact.run_commands.join('\n')}</pre>
+                                    </div>
+                                )}
+                            {Array.isArray(deployPlan.sdk_artifact.smoke_commands)
+                                && deployPlan.sdk_artifact.smoke_commands.length > 0 && (
+                                    <div className="serve-template-block">
+                                        <div className="serve-template-block__label">Smoke Commands</div>
+                                        <pre className="serve-template-code">{deployPlan.sdk_artifact.smoke_commands.join('\n')}</pre>
+                                    </div>
+                                )}
+                            {deployPlan.sdk_artifact.smoke_validation && (
+                                <div className="serve-template-block">
+                                    <div className="serve-template-block__label">Smoke Validation</div>
+                                    <div>
+                                        <span className={`badge ${deployPlan.sdk_artifact.smoke_validation.smoke_passed ? 'badge-success' : 'badge-error'}`}>
+                                            {deployPlan.sdk_artifact.smoke_validation.smoke_passed ? 'PASS' : 'FAIL'}
+                                        </span>
+                                    </div>
+                                    {Array.isArray(deployPlan.sdk_artifact.smoke_validation.errors)
+                                        && deployPlan.sdk_artifact.smoke_validation.errors.length > 0 && (
+                                            <ul className="export-inline-list export-inline-list-error">
+                                                {deployPlan.sdk_artifact.smoke_validation.errors.map((error) => (
+                                                    <li key={error}>{error}</li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    {Array.isArray(deployPlan.sdk_artifact.smoke_validation.warnings)
+                                        && deployPlan.sdk_artifact.smoke_validation.warnings.length > 0 && (
+                                            <ul className="export-inline-list">
+                                                {deployPlan.sdk_artifact.smoke_validation.warnings.map((warning) => (
+                                                    <li key={warning}>{warning}</li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    {Array.isArray(deployPlan.sdk_artifact.smoke_validation.checks)
+                                        && deployPlan.sdk_artifact.smoke_validation.checks.length > 0 && (
+                                            <div className="table-container" style={{ maxHeight: 220 }}>
+                                                <table className="docs-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Check</th>
+                                                            <th>Status</th>
+                                                            <th>Message</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {deployPlan.sdk_artifact.smoke_validation.checks.map((check, idx) => (
+                                                            <tr key={`${check.check_id || 'check'}-${idx}`}>
+                                                                <td>{check.check_id || 'check'}</td>
+                                                                <td>{check.status || 'unknown'}</td>
+                                                                <td>{check.message || '—'}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                </div>
+                            )}
+                        </>
                     )}
                     {deployExecution?.execution && (
                         <div className="serve-template-block">

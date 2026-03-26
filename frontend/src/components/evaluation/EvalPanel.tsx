@@ -135,13 +135,107 @@ interface GateReport {
     };
 }
 
+interface RemediationPlanGenerateRequest {
+    experiment_id: number;
+    evaluation_result_id?: number;
+    max_failures: number;
+}
+
+interface RemediationPlanIndexEntry {
+    plan_id: string;
+    created_at?: string | null;
+    experiment_id?: number | null;
+    evaluation_result_id?: number | null;
+    eval_type?: string | null;
+    dataset_name?: string | null;
+    root_causes?: string[];
+    summary?: {
+        total_failures_analyzed?: number | null;
+        cluster_count?: number | null;
+        recommendation_count?: number | null;
+        dominant_root_cause?: string | null;
+    };
+}
+
+interface RemediationPlanIndexResponse {
+    project_id: number;
+    count: number;
+    plans: RemediationPlanIndexEntry[];
+}
+
+interface RemediationPlanCluster {
+    cluster_id?: string;
+    root_cause?: string;
+    error_type?: string;
+    slice?: string;
+    failure_count?: number;
+    confidence?: number;
+}
+
+interface RemediationPlanRecommendation {
+    recommendation_id?: string;
+    root_cause?: string;
+    title?: string;
+    confidence?: number;
+    rationale?: string;
+    expected_impact?: {
+        metric?: string;
+        estimated_delta?: number | null;
+        confidence?: number | null;
+        horizon?: string | null;
+    };
+    data_operations?: Array<string | { action?: string; description?: string }>;
+    training_config_changes?: Array<string | { key?: string; from?: unknown; to?: unknown; reason?: string }>;
+}
+
+interface RemediationPlanDetail {
+    plan_id: string;
+    created_at?: string | null;
+    source_evaluation?: {
+        id?: number;
+        eval_type?: string;
+        dataset_name?: string;
+        pass_rate?: number | null;
+    };
+    summary?: {
+        total_failures_analyzed?: number | null;
+        cluster_count?: number | null;
+        recommendation_count?: number | null;
+        dominant_root_cause?: string | null;
+    };
+    clusters?: RemediationPlanCluster[];
+    recommendations?: RemediationPlanRecommendation[];
+    analysis_evidence?: {
+        failures_analyzed?: number;
+    };
+}
+
 const AUTO_PACK_VALUE = '__auto__';
 
 function getErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
-        const maybeDetail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+        const maybeDetail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
         if (typeof maybeDetail === 'string' && maybeDetail.trim()) {
             return maybeDetail;
+        }
+        if (typeof maybeDetail === 'object' && maybeDetail !== null) {
+            const detail = maybeDetail as {
+                message?: unknown;
+                actionable_fix?: unknown;
+                error_code?: unknown;
+            };
+            const message = typeof detail.message === 'string' ? detail.message.trim() : '';
+            const actionableFix = typeof detail.actionable_fix === 'string' ? detail.actionable_fix.trim() : '';
+            if (message && actionableFix) {
+                return `${message} ${actionableFix}`;
+            }
+            if (message) {
+                return message;
+            }
+            const errorCode = typeof detail.error_code === 'string' ? detail.error_code.trim() : '';
+            if (errorCode) {
+                return errorCode;
+            }
         }
     }
     if (error instanceof Error) {
@@ -190,6 +284,15 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [gateReport, setGateReport] = useState<GateReport | null>(null);
     const [isLoadingGateReport, setIsLoadingGateReport] = useState(false);
     const [gateErrorMessage, setGateErrorMessage] = useState<string | null>(null);
+    const [remediationPlans, setRemediationPlans] = useState<RemediationPlanIndexEntry[]>([]);
+    const [selectedRemediationPlanId, setSelectedRemediationPlanId] = useState('');
+    const [selectedRemediationEvalResultId, setSelectedRemediationEvalResultId] = useState('');
+    const [remediationPlan, setRemediationPlan] = useState<RemediationPlanDetail | null>(null);
+    const [isLoadingRemediationPlans, setIsLoadingRemediationPlans] = useState(false);
+    const [isLoadingRemediationPlan, setIsLoadingRemediationPlan] = useState(false);
+    const [isGeneratingRemediationPlan, setIsGeneratingRemediationPlan] = useState(false);
+    const [remediationErrorMessage, setRemediationErrorMessage] = useState<string | null>(null);
+    const [remediationMaxFailures, setRemediationMaxFailures] = useState(200);
 
     useEffect(() => {
         setSelectedExp(null);
@@ -204,6 +307,12 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         setActivePackSource('default');
         setGateReport(null);
         setShowRunForm(false);
+        setRemediationPlans([]);
+        setSelectedRemediationPlanId('');
+        setSelectedRemediationEvalResultId('');
+        setRemediationPlan(null);
+        setRemediationErrorMessage(null);
+        setRemediationMaxFailures(200);
         setLocalServeRuns([]);
         setSelectedLocalServeRunId('auto');
         setLocalServeAutoStart(false);
@@ -296,6 +405,60 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         }
     };
 
+    const loadRemediationPlan = async (planId: string) => {
+        const token = String(planId || '').trim();
+        if (!token) {
+            setRemediationPlan(null);
+            setSelectedRemediationPlanId('');
+            return;
+        }
+        setIsLoadingRemediationPlan(true);
+        setRemediationErrorMessage(null);
+        try {
+            const res = await api.get<RemediationPlanDetail>(
+                `/projects/${projectId}/evaluation/remediation-plans/${encodeURIComponent(token)}`,
+            );
+            setRemediationPlan(res.data || null);
+            setSelectedRemediationPlanId(token);
+        } catch (error) {
+            setRemediationPlan(null);
+            setRemediationErrorMessage(getErrorMessage(error));
+        } finally {
+            setIsLoadingRemediationPlan(false);
+        }
+    };
+
+    const loadRemediationPlans = async (expId: number) => {
+        setIsLoadingRemediationPlans(true);
+        setRemediationErrorMessage(null);
+        try {
+            const res = await api.get<RemediationPlanIndexResponse>(
+                `/projects/${projectId}/evaluation/remediation-plans`,
+                {
+                    params: { experiment_id: expId, limit: 30 },
+                },
+            );
+            const plans = Array.isArray(res.data?.plans) ? res.data.plans : [];
+            setRemediationPlans(plans);
+            if (plans.length === 0) {
+                setSelectedRemediationPlanId('');
+                setRemediationPlan(null);
+                return;
+            }
+            const preferredPlanId = String(selectedRemediationPlanId || '').trim();
+            const nextPlan = plans.find((item) => item.plan_id === preferredPlanId) || plans[0];
+            if (nextPlan?.plan_id) {
+                await loadRemediationPlan(nextPlan.plan_id);
+            }
+        } catch (error) {
+            setRemediationPlans([]);
+            setRemediationPlan(null);
+            setRemediationErrorMessage(getErrorMessage(error));
+        } finally {
+            setIsLoadingRemediationPlans(false);
+        }
+    };
+
     useEffect(() => {
         void loadPackState();
     }, [projectId]);
@@ -360,8 +523,55 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         setSelectedExp(expId);
         try {
             await Promise.all([listResults(expId), loadGateReport(expId)]);
+            void loadRemediationPlans(expId);
         } catch (error) {
             setErrorMessage(getErrorMessage(error));
+        }
+    };
+
+    useEffect(() => {
+        if (!selectedExp) {
+            return;
+        }
+        if (!evalResults.length) {
+            setSelectedRemediationEvalResultId('');
+            return;
+        }
+        const selectedToken = String(selectedRemediationEvalResultId || '').trim();
+        const hasSelected = evalResults.some((row) => String(row.id) === selectedToken);
+        if (hasSelected) {
+            return;
+        }
+        setSelectedRemediationEvalResultId(String(evalResults[0].id));
+    }, [evalResults, selectedExp, selectedRemediationEvalResultId]);
+
+    const generateRemediationPlan = async () => {
+        if (!selectedExp) {
+            return;
+        }
+        setIsGeneratingRemediationPlan(true);
+        setRemediationErrorMessage(null);
+        try {
+            const payload: RemediationPlanGenerateRequest = {
+                experiment_id: selectedExp,
+                max_failures: Math.max(1, Math.min(1000, Math.floor(remediationMaxFailures || 200))),
+            };
+            const evalResultId = Number.parseInt(String(selectedRemediationEvalResultId || '').trim(), 10);
+            if (Number.isFinite(evalResultId) && evalResultId > 0) {
+                payload.evaluation_result_id = evalResultId;
+            }
+            const res = await api.post<RemediationPlanDetail>(
+                `/projects/${projectId}/evaluation/remediation-plans/generate`,
+                payload,
+            );
+            const detail = res.data || null;
+            setRemediationPlan(detail);
+            setSelectedRemediationPlanId(String(detail?.plan_id || ''));
+            await loadRemediationPlans(selectedExp);
+        } catch (error) {
+            setRemediationErrorMessage(getErrorMessage(error));
+        } finally {
+            setIsGeneratingRemediationPlan(false);
         }
     };
 
@@ -491,6 +701,49 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             ? { className: 'badge-success', label: 'PASS' }
             : { className: 'badge-error', label: 'FAIL' };
     }, [gateReport]);
+
+    const remediationDataOps = (recommendation: RemediationPlanRecommendation): string[] => {
+        const rows: string[] = [];
+        for (const item of recommendation.data_operations || []) {
+            if (typeof item === 'string' && item.trim()) {
+                rows.push(item.trim());
+                continue;
+            }
+            if (typeof item === 'object' && item !== null) {
+                const action = String((item as { action?: unknown }).action || '').trim();
+                const description = String((item as { description?: unknown }).description || '').trim();
+                if (action && description) {
+                    rows.push(`${action}: ${description}`);
+                } else if (description) {
+                    rows.push(description);
+                } else if (action) {
+                    rows.push(action);
+                }
+            }
+        }
+        return rows;
+    };
+
+    const remediationTrainingChanges = (recommendation: RemediationPlanRecommendation): string[] => {
+        const rows: string[] = [];
+        for (const item of recommendation.training_config_changes || []) {
+            if (typeof item === 'string' && item.trim()) {
+                rows.push(item.trim());
+                continue;
+            }
+            if (typeof item === 'object' && item !== null) {
+                const key = String((item as { key?: unknown }).key || '').trim();
+                const from = (item as { from?: unknown }).from;
+                const to = (item as { to?: unknown }).to;
+                const reason = String((item as { reason?: unknown }).reason || '').trim();
+                const base = key
+                    ? `${key}: ${String(from ?? 'current')} -> ${String(to ?? 'recommended')}`
+                    : reason || 'Adjust training configuration';
+                rows.push(reason ? `${base} (${reason})` : base);
+            }
+        }
+        return rows;
+    };
 
     const onPackPreferenceSelect = (value: string) => {
         const nextPackId = value === AUTO_PACK_VALUE ? null : value;
@@ -653,6 +906,219 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         </>
                     ) : (
                         <div className="eval-pack-note">Select an experiment to compute gate checks.</div>
+                    )}
+                </div>
+            )}
+
+            {selectedExp && (
+                <div className="card eval-pack-card">
+                    <div className="eval-pack-header">
+                        <div>
+                            <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 4 }}>
+                                Closed-Loop Remediation Planner
+                            </h3>
+                            <p className="eval-pack-subtitle">
+                                Turn evaluation failures into concrete data and training fixes.
+                            </p>
+                        </div>
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => {
+                                if (selectedExp) {
+                                    void loadRemediationPlans(selectedExp);
+                                }
+                            }}
+                            disabled={isLoadingRemediationPlans || isLoadingRemediationPlan}
+                        >
+                            {isLoadingRemediationPlans ? 'Refreshing...' : 'Refresh Plans'}
+                        </button>
+                    </div>
+
+                    <div className="eval-remediation-controls">
+                        <div className="form-group">
+                            <label className="form-label">Evaluation Result Scope</label>
+                            <select
+                                className="input"
+                                value={selectedRemediationEvalResultId}
+                                onChange={(e) => setSelectedRemediationEvalResultId(e.target.value)}
+                            >
+                                <option value="">Auto (latest available result)</option>
+                                {evalResults.map((result) => (
+                                    <option key={result.id} value={result.id}>
+                                        #{result.id} • {result.dataset_name} • {result.eval_type}
+                                        {' '}
+                                        {result.pass_rate == null ? '' : `(${(result.pass_rate * 100).toFixed(1)}%)`}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Failures to Analyze</label>
+                            <input
+                                className="input"
+                                type="number"
+                                min={1}
+                                max={1000}
+                                value={remediationMaxFailures}
+                                onChange={(e) => setRemediationMaxFailures(Number(e.target.value))}
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label">Generate Plan</label>
+                            <button
+                                className="btn btn-primary"
+                                onClick={() => void generateRemediationPlan()}
+                                disabled={isGeneratingRemediationPlan || !selectedExp}
+                            >
+                                {isGeneratingRemediationPlan ? 'Generating...' : 'Generate Remediation Plan'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {remediationErrorMessage && (
+                        <div className="eval-pack-error">{remediationErrorMessage}</div>
+                    )}
+
+                    {isLoadingRemediationPlans ? (
+                        <div className="eval-pack-note">Loading remediation plans...</div>
+                    ) : remediationPlans.length === 0 ? (
+                        <div className="eval-pack-note">
+                            No remediation plans generated yet for this experiment.
+                        </div>
+                    ) : (
+                        <div className="eval-remediation-plan-list">
+                            {remediationPlans.map((plan) => (
+                                <button
+                                    key={plan.plan_id}
+                                    className={`btn btn-sm ${selectedRemediationPlanId === plan.plan_id ? 'btn-primary' : 'btn-secondary'}`}
+                                    onClick={() => void loadRemediationPlan(plan.plan_id)}
+                                >
+                                    {plan.eval_type || 'evaluation'} • {plan.dataset_name || 'dataset'}
+                                    {typeof plan.summary?.recommendation_count === 'number'
+                                        ? ` • ${plan.summary.recommendation_count} actions`
+                                        : ''}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {isLoadingRemediationPlan && (
+                        <div className="eval-pack-note">Loading plan details...</div>
+                    )}
+
+                    {!isLoadingRemediationPlan && remediationPlan && (
+                        <div className="eval-remediation-details">
+                            <div className="eval-remediation-summary">
+                                <div>
+                                    <span>Plan</span>
+                                    <strong>{remediationPlan.plan_id}</strong>
+                                </div>
+                                <div>
+                                    <span>Failures Analyzed</span>
+                                    <strong>{Number(remediationPlan.summary?.total_failures_analyzed || remediationPlan.analysis_evidence?.failures_analyzed || 0)}</strong>
+                                </div>
+                                <div>
+                                    <span>Dominant Root Cause</span>
+                                    <strong>{String(remediationPlan.summary?.dominant_root_cause || 'unknown').replace(/_/g, ' ')}</strong>
+                                </div>
+                                <div>
+                                    <span>Created</span>
+                                    <strong>
+                                        {remediationPlan.created_at
+                                            ? new Date(remediationPlan.created_at).toLocaleString()
+                                            : '—'}
+                                    </strong>
+                                </div>
+                            </div>
+
+                            {Array.isArray(remediationPlan.clusters) && remediationPlan.clusters.length > 0 && (
+                                <div className="table-container eval-gate-table">
+                                    <table className="docs-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Root Cause</th>
+                                                <th>Slice</th>
+                                                <th>Failures</th>
+                                                <th>Confidence</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {remediationPlan.clusters.map((cluster, idx) => (
+                                                <tr key={`${cluster.cluster_id || cluster.root_cause || 'cluster'}-${idx}`}>
+                                                    <td>{String(cluster.root_cause || cluster.error_type || 'unknown').replace(/_/g, ' ')}</td>
+                                                    <td>{cluster.slice || 'general'}</td>
+                                                    <td>{Number(cluster.failure_count || 0)}</td>
+                                                    <td>
+                                                        {typeof cluster.confidence === 'number'
+                                                            ? `${(cluster.confidence * 100).toFixed(0)}%`
+                                                            : '—'}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {Array.isArray(remediationPlan.recommendations) && remediationPlan.recommendations.length > 0 && (
+                                <div className="eval-remediation-recommendations">
+                                    {remediationPlan.recommendations.map((recommendation, idx) => {
+                                        const dataOps = remediationDataOps(recommendation);
+                                        const trainingChanges = remediationTrainingChanges(recommendation);
+                                        return (
+                                            <div
+                                                key={`${recommendation.recommendation_id || recommendation.title || 'recommendation'}-${idx}`}
+                                                className="eval-remediation-recommendation-card"
+                                            >
+                                                <div className="eval-remediation-recommendation-header">
+                                                    <strong>{recommendation.title || 'Remediation action'}</strong>
+                                                    <span className="badge badge-info">
+                                                        {String(recommendation.root_cause || 'coverage_gap').replace(/_/g, ' ')}
+                                                    </span>
+                                                </div>
+                                                {typeof recommendation.confidence === 'number' && (
+                                                    <div className="eval-pack-note">
+                                                        Confidence {(recommendation.confidence * 100).toFixed(0)}%
+                                                    </div>
+                                                )}
+                                                {recommendation.rationale && (
+                                                    <div className="eval-remediation-rationale">{recommendation.rationale}</div>
+                                                )}
+                                                {dataOps.length > 0 && (
+                                                    <div>
+                                                        <div className="eval-remediation-list-title">Data Operations</div>
+                                                        <ul className="eval-remediation-list">
+                                                            {dataOps.map((item) => <li key={item}>{item}</li>)}
+                                                        </ul>
+                                                    </div>
+                                                )}
+                                                {trainingChanges.length > 0 && (
+                                                    <div>
+                                                        <div className="eval-remediation-list-title">Training Config Changes</div>
+                                                        <ul className="eval-remediation-list">
+                                                            {trainingChanges.map((item) => <li key={item}>{item}</li>)}
+                                                        </ul>
+                                                    </div>
+                                                )}
+                                                {recommendation.expected_impact && (
+                                                    <div className="eval-pack-note">
+                                                        Expected impact:
+                                                        {' '}
+                                                        {recommendation.expected_impact.metric || 'score'}
+                                                        {typeof recommendation.expected_impact.estimated_delta === 'number'
+                                                            ? ` +${recommendation.expected_impact.estimated_delta.toFixed(3)}`
+                                                            : ''}
+                                                        {recommendation.expected_impact.horizon
+                                                            ? ` (${recommendation.expected_impact.horizon})`
+                                                            : ''}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
