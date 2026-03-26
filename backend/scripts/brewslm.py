@@ -545,6 +545,13 @@ def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
     return 0 if status == "pass" else 1
 
 
+def _format_float(value: Any, *, precision: int = 3) -> str:
+    try:
+        return f"{float(value):.{precision}f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
 def run_optimize(args: argparse.Namespace, client: ApiClient) -> int:
     payload = {
         "target_id": _normalize_target(args.target),
@@ -560,15 +567,48 @@ def run_optimize(args: argparse.Namespace, client: ApiClient) -> int:
         print("No optimization candidates found.")
         return 1
 
+    run_meta = dict(result.get("optimization_run") or {})
+    measured_count = int(run_meta.get("measured_candidate_count") or 0) if run_meta else 0
+    estimated_count = int(run_meta.get("estimated_candidate_count") or 0) if run_meta else 0
+
     print(f"Inference Optimization Results for Target: {result.get('target_id')}")
-    print(f"{'ID':<20} {'Name':<25} {'Latency (ms)':<15} {'Memory (GB)':<15} {'Quality':<10} {'Recommended'}")
-    print("-" * 100)
+    if run_meta:
+        print(
+            "Evidence Run: "
+            f"{run_meta.get('run_id')} "
+            f"(measured={measured_count}, estimated={estimated_count})"
+        )
+    print(
+        "Metric Source: MEASURED=live probe, MIXED=partial probe + estimates, "
+        "ESTIMATED=artifact/profile estimate."
+    )
+    if measured_count == 0:
+        print(
+            "Tip: all candidates are estimated. Install benchmark runtime dependencies "
+            "or run 'brewslm doctor --project <id>' to identify blockers."
+        )
+    print(
+        f"{'ID':<18} {'Name':<24} {'Source':<10} {'Latency (ms)':<13} "
+        f"{'Memory (GB)':<12} {'Quality':<10} {'Recommended'}"
+    )
+    print("-" * 120)
     for c in candidates:
         m = c.get("metrics", {})
+        source = str(c.get("metric_source") or "estimated").strip().lower() or "estimated"
+        source_label = source.upper()
         rec = "★ YES" if c.get("is_recommended") else ""
+        candidate_id = str(c.get("id") or "")[:18]
+        candidate_name = str(c.get("name") or "")[:24]
         print(
-            f"{c.get('id'):<20} {c.get('name'):<25} {m.get('latency_ms'):<15} {m.get('memory_gb'):<15} {m.get('quality_score'):<10} {rec}"
+            f"{candidate_id:<18} {candidate_name:<24} {source_label:<10} "
+            f"{_format_float(m.get('latency_ms'), precision=3):<13} "
+            f"{_format_float(m.get('memory_gb'), precision=4):<12} "
+            f"{_format_float(m.get('quality_score'), precision=4):<10} {rec}"
         )
+        measurement = c.get("measurement") or {}
+        fallback_reason = str(measurement.get("fallback_reason") or "").strip()
+        if source != "measured" and fallback_reason:
+            print(f"  note: {fallback_reason}")
 
     return 0
 
@@ -864,7 +904,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.set_defaults(func=run_doctor)
 
     optimize_parser = subparsers.add_parser(
-        "optimize", help="Search for optimal quantization + runtime combinations"
+        "optimize",
+        help="Rank export candidates with measured vs estimated metrics",
+        description=(
+            "Evaluate project artifacts for a deployment target and print metric provenance "
+            "(measured, mixed, or estimated) for each candidate."
+        ),
     )
     optimize_parser.add_argument(
         "--project", "--project-id", dest="project_id", type=int, required=True
@@ -872,7 +917,7 @@ def build_parser() -> argparse.ArgumentParser:
     optimize_parser.add_argument(
         "--target",
         required=True,
-        help="Target deployment profile (e.g., mobile_cpu, edge_gpu)",
+        help="Target profile id or alias (for example: mobile_cpu, edge_gpu, vllm_server).",
     )
     optimize_parser.set_defaults(func=run_optimize)
 

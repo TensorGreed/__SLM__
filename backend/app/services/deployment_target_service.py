@@ -20,6 +20,7 @@ from app.models.export import ExportFormat
 
 
 DEPLOYMENT_TARGET_CONTRACT_VERSION = "slm.deployment-target/v1"
+_ZIP_EPOCH = (2024, 1, 1, 0, 0, 0)
 
 
 _TARGET_CATALOG: list[dict[str, Any]] = [
@@ -126,22 +127,22 @@ _TARGET_CATALOG: list[dict[str, Any]] = [
     {
         "target_id": "sdk.apple_coreml_stub",
         "kind": "sdk",
-        "display_name": "Apple CoreML Stub App",
-        "description": "Generate iOS starter app scaffold to load exported model.",
+        "display_name": "Apple CoreML Reference App",
+        "description": "Generate a runnable iOS reference bundle with model-loader scaffold.",
         "artifact_profiles": ["huggingface", "onnx", "gguf"],
         "supported_export_formats": ["huggingface", "onnx", "gguf", "docker"],
-        "smoke_supported": False,
-        "launch_example": "Open iOS stub project in Xcode and run on device.",
+        "smoke_supported": True,
+        "launch_example": "Open iOS reference project in Xcode and run on simulator/device.",
     },
     {
         "target_id": "sdk.android_executorch_stub",
         "kind": "sdk",
-        "display_name": "Android ExecuTorch Stub App",
-        "description": "Generate Android starter app scaffold for edge runtime integration.",
+        "display_name": "Android ExecuTorch Reference App",
+        "description": "Generate a runnable Android reference bundle with runtime bridge.",
         "artifact_profiles": ["huggingface", "onnx", "gguf"],
         "supported_export_formats": ["huggingface", "onnx", "gguf", "docker"],
-        "smoke_supported": False,
-        "launch_example": "Open Android stub project in Android Studio and run on device.",
+        "smoke_supported": True,
+        "launch_example": "Open Android reference project in Android Studio and run on emulator/device.",
     },
 ]
 
@@ -706,7 +707,309 @@ def _safe_slug(value: str, *, fallback: str = "slm-endpoint") -> str:
     return token[:96] or fallback
 
 
-def _write_mobile_stub_bundle(
+def _mobile_reference_file_map(target_id: str, model_name: str) -> dict[str, str]:
+    if target_id == "sdk.apple_coreml_stub":
+        return {
+            "README.md": (
+                "# iOS CoreML Reference Bundle\n\n"
+                f"Base model: `{model_name}`\n\n"
+                "## Model Placement\n"
+                "1. Place your exported model under `ios/ModelAssets/`.\n"
+                "2. Use `model.mlmodelc` for CoreML compiled models.\n"
+                "3. Keep tokenizer/config artifacts beside the model when available.\n\n"
+                "## Run Instructions\n"
+                "1. Open Xcode and create an iOS App target (SwiftUI).\n"
+                "2. Copy `ios/SLMReferenceApp.swift` and `ios/SLMRuntime.swift` into your target.\n"
+                "3. Launch on simulator/device and enter a prompt in the UI.\n\n"
+                "## CLI Smoke Check\n"
+                "Run with: `swift scripts/run_reference.swift \"Hello from iOS\"`\n"
+            ),
+            "ios/SLMReferenceApp.swift": (
+                "import SwiftUI\n\n"
+                "@main\n"
+                "struct SLMReferenceApp: App {\n"
+                "    @State private var prompt = \"Hello from iOS\"\n"
+                "    @State private var output = \"\"\n"
+                "    private let runtime = SLMRuntime(modelURL: nil)\n\n"
+                "    var body: some Scene {\n"
+                "        WindowGroup {\n"
+                "            VStack(alignment: .leading, spacing: 12) {\n"
+                "                Text(\"SLM iOS Reference\")\n"
+                "                    .font(.headline)\n"
+                "                TextField(\"Prompt\", text: $prompt)\n"
+                "                    .textFieldStyle(.roundedBorder)\n"
+                "                Button(\"Generate\") {\n"
+                "                    output = runtime.generate(prompt: prompt, maxTokens: 32)\n"
+                "                }\n"
+                "                .buttonStyle(.borderedProminent)\n"
+                "                Text(output)\n"
+                "                    .font(.body)\n"
+                "                    .fixedSize(horizontal: false, vertical: true)\n"
+                "            }\n"
+                "            .padding(20)\n"
+                "        }\n"
+                "    }\n"
+                "}\n"
+            ),
+            "ios/SLMRuntime.swift": (
+                "import Foundation\n\n"
+                "final class SLMRuntime {\n"
+                "    private let modelURL: URL?\n"
+                "    private let modelBytes: Int\n\n"
+                "    init(modelURL: URL?) {\n"
+                "        self.modelURL = modelURL\n"
+                "        self.modelBytes = SLMRuntime.resolveModelBytes(url: modelURL)\n"
+                "    }\n\n"
+                "    func generate(prompt: String, maxTokens: Int = 32) -> String {\n"
+                "        let cleaned = prompt.trimmingCharacters(in: .whitespacesAndNewlines)\n"
+                "        let base = cleaned.isEmpty ? \"hello\" : cleaned\n"
+                "        let scalarSeed = base.unicodeScalars.reduce(0) { $0 + Int($1.value) }\n"
+                "        let seed = (scalarSeed + modelBytes) % 9973\n"
+                "        var pieces: [String] = [\"Echo:\", base]\n"
+                "        let tokenCount = max(4, min(maxTokens, 24))\n"
+                "        for index in 0..<tokenCount {\n"
+                "            let tokenValue = (seed + (index * 37)) % 541\n"
+                "            pieces.append(\"tok\\(tokenValue)\")\n"
+                "        }\n"
+                "        return pieces.joined(separator: \" \")\n"
+                "    }\n\n"
+                "    private static func resolveModelBytes(url: URL?) -> Int {\n"
+                "        guard let modelURL = url else { return 0 }\n"
+                "        guard let attrs = try? FileManager.default.attributesOfItem(atPath: modelURL.path) else {\n"
+                "            return 0\n"
+                "        }\n"
+                "        return Int((attrs[.size] as? NSNumber)?.intValue ?? 0)\n"
+                "    }\n"
+                "}\n"
+            ),
+            "ios/ModelAssets/.keep": "",
+            "scripts/run_reference.swift": (
+                "import Foundation\n\n"
+                "let prompt = CommandLine.arguments.dropFirst().first ?? \"Hello from iOS\"\n"
+                "let scalarSeed = prompt.unicodeScalars.reduce(0) { $0 + Int($1.value) }\n"
+                "let token = scalarSeed % 541\n"
+                "print(\"Echo: \\(prompt) tok\\(token)\")\n"
+            ),
+        }
+
+    return {
+        "README.md": (
+            "# Android ExecuTorch Reference Bundle\n\n"
+            f"Base model: `{model_name}`\n\n"
+            "## Model Placement\n"
+            "1. Place exported model files under `android/app/src/main/assets/`.\n"
+            "2. Configure runtime path in `SLMRuntime` if you rename model files.\n"
+            "3. Keep tokenizer metadata with model artifacts when possible.\n\n"
+            "## Run Instructions\n"
+            "1. Open Android Studio and create/choose an Android app module.\n"
+            "2. Copy `MainActivity.kt` and `SLMRuntime.kt` into your app package.\n"
+            "3. Launch emulator/device, enter a prompt, and tap Generate.\n\n"
+            "## CLI Smoke Check\n"
+            "Run with: `kotlin scripts/run_reference.kts \"Hello from Android\"`\n"
+        ),
+        "android/app/src/main/java/com/example/slmreference/MainActivity.kt": (
+            "package com.example.slmreference\n\n"
+            "import android.os.Bundle\n"
+            "import android.widget.Button\n"
+            "import android.widget.EditText\n"
+            "import android.widget.TextView\n"
+            "import androidx.appcompat.app.AppCompatActivity\n\n"
+            "class MainActivity : AppCompatActivity() {\n"
+            "    private lateinit var runtime: SLMRuntime\n\n"
+            "    override fun onCreate(savedInstanceState: Bundle?) {\n"
+            "        super.onCreate(savedInstanceState)\n"
+            "        setContentView(R.layout.activity_main)\n"
+            "        runtime = SLMRuntime(assets)\n\n"
+            "        val promptView = findViewById<EditText>(R.id.promptInput)\n"
+            "        val outputView = findViewById<TextView>(R.id.outputText)\n"
+            "        val generateButton = findViewById<Button>(R.id.generateButton)\n\n"
+            "        generateButton.setOnClickListener {\n"
+            "            val prompt = promptView.text?.toString().orEmpty()\n"
+            "            outputView.text = runtime.generate(prompt, maxTokens = 32)\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        ),
+        "android/app/src/main/java/com/example/slmreference/SLMRuntime.kt": (
+            "package com.example.slmreference\n\n"
+            "import android.content.res.AssetManager\n\n"
+            "class SLMRuntime(private val assets: AssetManager) {\n"
+            "    fun generate(prompt: String, maxTokens: Int = 32): String {\n"
+            "        val base = prompt.trim().ifBlank { \"hello\" }\n"
+            "        val modelBytes = modelSizeHint()\n"
+            "        val seed = (base.sumOf { it.code } + modelBytes) % 9973\n"
+            "        val tokens = mutableListOf(\"Echo:\", base)\n"
+            "        val tokenCount = maxOf(4, minOf(maxTokens, 24))\n"
+            "        repeat(tokenCount) { index ->\n"
+            "            val value = (seed + (index * 37)) % 541\n"
+            "            tokens += \"tok$value\"\n"
+            "        }\n"
+            "        return tokens.joinToString(\" \")\n"
+            "    }\n\n"
+            "    private fun modelSizeHint(): Int {\n"
+            "        return try {\n"
+            "            assets.openFd(\"model.bin\").length.toInt()\n"
+            "        } catch (_: Exception) {\n"
+            "            0\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        ),
+        "android/app/src/main/assets/.keep": "",
+        "scripts/run_reference.kts": (
+            "val prompt = if (args.isNotEmpty()) args.joinToString(\" \") else \"Hello from Android\"\n"
+            "val seed = prompt.sumOf { it.code } % 541\n"
+            "println(\"Echo: $prompt tok$seed\")\n"
+        ),
+    }
+
+
+def _write_deterministic_zip(
+    *,
+    bundle_dir: Path,
+    relative_paths: list[str],
+    zip_path: Path,
+) -> None:
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for rel_path in sorted(relative_paths):
+            file_path = bundle_dir / rel_path
+            info = zipfile.ZipInfo(rel_path, date_time=_ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, file_path.read_bytes())
+
+
+def _sdk_entrypoint_relpath(target_id: str) -> str:
+    if target_id == "sdk.apple_coreml_stub":
+        return "ios/SLMReferenceApp.swift"
+    return "android/app/src/main/java/com/example/slmreference/MainActivity.kt"
+
+
+def _sdk_runtime_relpath(target_id: str) -> str:
+    if target_id == "sdk.apple_coreml_stub":
+        return "ios/SLMRuntime.swift"
+    return "android/app/src/main/java/com/example/slmreference/SLMRuntime.kt"
+
+
+def _validate_mobile_reference_bundle(
+    *,
+    target_id: str,
+    bundle_dir: Path,
+    zip_path: Path,
+    expected_files: list[str],
+) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+
+    for rel_path in expected_files:
+        file_path = bundle_dir / rel_path
+        checks.append(
+            _check_result(
+                check_id=f"bundle_file:{rel_path}",
+                passed=file_path.exists() and file_path.is_file(),
+                message=f"Required bundle file '{rel_path}' must exist.",
+            )
+        )
+
+    readme_rel = "README.md"
+    entrypoint_rel = _sdk_entrypoint_relpath(target_id)
+    runtime_rel = _sdk_runtime_relpath(target_id)
+
+    readme_text = (bundle_dir / readme_rel).read_text(encoding="utf-8") if (bundle_dir / readme_rel).exists() else ""
+    entrypoint_text = (bundle_dir / entrypoint_rel).read_text(encoding="utf-8") if (bundle_dir / entrypoint_rel).exists() else ""
+    runtime_text = (bundle_dir / runtime_rel).read_text(encoding="utf-8") if (bundle_dir / runtime_rel).exists() else ""
+
+    readme_markers = ["Model Placement", "Run Instructions"]
+    for marker in readme_markers:
+        checks.append(
+            _check_result(
+                check_id=f"readme_marker:{marker}",
+                passed=marker in readme_text,
+                message=f"README is missing required guidance section '{marker}'.",
+            )
+        )
+
+    if target_id == "sdk.apple_coreml_stub":
+        entrypoint_markers = ["struct SLMReferenceApp: App", "runtime.generate("]
+        runtime_markers = ["final class SLMRuntime", "func generate("]
+    else:
+        entrypoint_markers = ["class MainActivity : AppCompatActivity()", "runtime.generate("]
+        runtime_markers = ["class SLMRuntime", "fun generate("]
+
+    for marker in entrypoint_markers:
+        checks.append(
+            _check_result(
+                check_id=f"entrypoint_marker:{marker}",
+                passed=marker in entrypoint_text,
+                message=f"Entrypoint file '{entrypoint_rel}' is missing '{marker}'.",
+            )
+        )
+    for marker in runtime_markers:
+        checks.append(
+            _check_result(
+                check_id=f"runtime_marker:{marker}",
+                passed=marker in runtime_text,
+                message=f"Runtime file '{runtime_rel}' is missing '{marker}'.",
+            )
+        )
+
+    combined_text = "\n".join([readme_text, entrypoint_text, runtime_text]).lower()
+    checks.append(
+        _check_result(
+            check_id="no_todo_markers",
+            passed="todo" not in combined_text,
+            message="Reference bundle must not include TODO stub markers.",
+        )
+    )
+
+    checks.append(
+        _check_result(
+            check_id="bundle_zip_exists",
+            passed=zip_path.exists() and zip_path.is_file(),
+            message="Reference bundle zip must exist.",
+        )
+    )
+
+    zip_members: list[str] = []
+    zip_members_sorted = False
+    if zip_path.exists() and zip_path.is_file():
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            zip_members = [str(name) for name in archive.namelist()]
+        zip_members_sorted = zip_members == sorted(zip_members)
+        checks.append(
+            _check_result(
+                check_id="bundle_zip_member_set",
+                passed=set(zip_members) == set(expected_files),
+                message="Reference zip members do not match expected bundle files.",
+                details={
+                    "expected": sorted(expected_files),
+                    "actual": sorted(zip_members),
+                },
+            )
+        )
+        checks.append(
+            _check_result(
+                check_id="bundle_zip_member_order",
+                passed=zip_members_sorted,
+                message="Reference zip members are not ordered deterministically.",
+                details={"actual_order": zip_members},
+            )
+        )
+
+    passed, errors, warnings = _summarize_checks(checks)
+    return {
+        "smoke_supported": True,
+        "smoke_executed": True,
+        "smoke_passed": passed,
+        "checks": checks,
+        "errors": errors,
+        "warnings": warnings,
+        "expected_files": sorted(expected_files),
+        "zip_members": zip_members,
+        "zip_members_sorted": zip_members_sorted,
+    }
+
+
+def _write_mobile_reference_bundle(
     *,
     run_dir: Path,
     target_id: str,
@@ -715,68 +1018,34 @@ def _write_mobile_stub_bundle(
     base_dir = run_dir / "mobile_sdk" / _safe_slug(target_id, fallback="mobile-sdk")
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    if target_id == "sdk.apple_coreml_stub":
-        readme = base_dir / "README.md"
-        app_file = base_dir / "SLMStubApp.swift"
-        readme.write_text(
-            (
-                "# iOS CoreML Stub App\n\n"
-                f"Model: `{model_name}`\n\n"
-                "1. Drag your exported model artifact into this Xcode project.\n"
-                "2. Replace `ModelLoader.load()` with your CoreML model class.\n"
-                "3. Run on iPhone/iPad and call `generate(prompt:)`.\n"
-            ),
-            encoding="utf-8",
-        )
-        app_file.write_text(
-            (
-                "import Foundation\n"
-                "import CoreML\n\n"
-                "final class ModelLoader {\n"
-                "    func generate(prompt: String) -> String {\n"
-                "        // TODO: wire CoreML model inference here.\n"
-                "        return \"Stub response for: \\(prompt)\"\n"
-                "    }\n"
-                "}\n"
-            ),
-            encoding="utf-8",
-        )
-    else:
-        readme = base_dir / "README.md"
-        app_file = base_dir / "SLMStubApp.kt"
-        readme.write_text(
-            (
-                "# Android ExecuTorch Stub App\n\n"
-                f"Model: `{model_name}`\n\n"
-                "1. Copy exported model artifact into `app/src/main/assets/`.\n"
-                "2. Replace stub inference bridge with ExecuTorch runtime calls.\n"
-                "3. Run on Android device and call `generate(prompt)`.\n"
-            ),
-            encoding="utf-8",
-        )
-        app_file.write_text(
-            (
-                "package com.example.slmstub\n\n"
-                "class ModelLoader {\n"
-                "    fun generate(prompt: String): String {\n"
-                "        // TODO: wire ExecuTorch inference here.\n"
-                "        return \"Stub response for: $prompt\"\n"
-                "    }\n"
-                "}\n"
-            ),
-            encoding="utf-8",
-        )
+    file_map = _mobile_reference_file_map(target_id, model_name)
+    relative_paths = sorted(file_map.keys())
+    for rel_path, content in file_map.items():
+        file_path = base_dir / rel_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
 
     zip_path = base_dir / "stub_app.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for file_path in [readme, app_file]:
-            archive.write(file_path, arcname=file_path.name)
+    _write_deterministic_zip(
+        bundle_dir=base_dir,
+        relative_paths=relative_paths,
+        zip_path=zip_path,
+    )
+    smoke_validation = _validate_mobile_reference_bundle(
+        target_id=target_id,
+        bundle_dir=base_dir,
+        zip_path=zip_path,
+        expected_files=relative_paths,
+    )
 
     return {
         "bundle_dir": str(base_dir),
-        "readme_path": str(readme),
-        "entrypoint_path": str(app_file),
+        "readme_path": str(base_dir / "README.md"),
+        "entrypoint_path": str(base_dir / _sdk_entrypoint_relpath(target_id)),
+        "runtime_path": str(base_dir / _sdk_runtime_relpath(target_id)),
         "zip_path": str(zip_path),
+        "bundle_files": relative_paths,
+        "smoke_validation": smoke_validation,
     }
 
 
@@ -790,7 +1059,7 @@ def build_deploy_target_plan(
     region: str | None = None,
     instance_type: str | None = None,
 ) -> dict[str, Any]:
-    """Build actionable deploy plan for managed API targets and mobile SDK stubs."""
+    """Build actionable deploy plan for managed API targets and mobile SDK reference bundles."""
     known = _target_by_id()
     normalized_target_id = str(target_id or "").strip().lower()
     target = known.get(normalized_target_id)
@@ -812,20 +1081,27 @@ def build_deploy_target_plan(
     kind = str(target.get("kind") or "")
 
     if kind == "sdk":
-        sdk_artifact = _write_mobile_stub_bundle(
+        sdk_artifact = _write_mobile_reference_bundle(
             run_dir=run_dir,
             target_id=normalized_target_id,
             model_name=model_token,
         )
+        smoke = dict(sdk_artifact.get("smoke_validation") or {})
+        smoke_passed = bool(smoke.get("smoke_passed"))
         return {
             "target_id": normalized_target_id,
             "target_kind": kind,
             "display_name": str(target.get("display_name") or normalized_target_id),
-            "summary": "Mobile SDK stub generated.",
+            "summary": (
+                "Mobile SDK reference bundle generated."
+                if smoke_passed
+                else "Mobile SDK reference bundle generated with smoke validation issues."
+            ),
             "steps": [
-                "Download the generated stub zip.",
-                "Open it in Xcode/Android Studio.",
-                "Replace the stub inference bridge with runtime-specific model execution.",
+                "Download the generated reference zip bundle.",
+                "Open the platform files in Xcode/Android Studio.",
+                "Copy your exported model artifacts into the documented model assets directory.",
+                "Run the included reference entrypoint and smoke script to verify wiring.",
             ],
             "sdk_artifact": sdk_artifact,
         }

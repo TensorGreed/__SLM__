@@ -209,7 +209,23 @@ npm run dev
 
 With backend running, visit: `http://localhost:8000/docs`
 
-### 6. Synthetic Generation with Ollama
+### 6. Reality Check: Measured vs Estimated vs Simulated
+
+Before you trust a number, check how it was produced:
+
+- `measured`: produced from a live runtime command/probe.
+- `estimated`: produced from artifact metadata or heuristic fallback when a live probe cannot run.
+- `simulated`: produced by demo/stub runtime paths.
+
+For export optimization specifically (`POST /api/projects/{project_id}/export/optimize`):
+
+- each candidate includes `metric_source`, `metric_sources`, and `measurement`.
+- `measurement.fallback_reason` explains why estimated fallback was used.
+- `optimization_run` includes measured vs estimated candidate counts for reproducibility.
+
+When strict execution is enabled (`STRICT_EXECUTION_MODE=true`), simulated/stub paths are blocked and API responses return actionable fixes instead of silently falling back.
+
+### 7. Synthetic Generation with Ollama
 
 Use these defaults in the **Synthetic** tab:
 
@@ -361,6 +377,10 @@ Pipeline recipe endpoints:
 Export deployment endpoints:
 - `GET /api/projects/{project_id}/export/deployment-targets`
 - `POST /api/projects/{project_id}/export/{export_id}/deployment-validate`
+- `POST /api/projects/{project_id}/export/optimize`
+  - evaluates real candidate artifacts discovered in the project (`experiments` and `compressed` outputs)
+  - returns per-candidate provenance via `metric_source`, `metric_sources`, and `measurement`
+  - includes explicit fallback reasons when estimates are used (`measurement.fallback_reason`)
 - `POST /api/projects/{project_id}/export/{export_id}/run` accepts optional:
   - `deployment_targets` (target ids like `exporter.huggingface`, `runner.vllm`, `runner.ollama`)
   - `run_smoke_tests` (default `true`)
@@ -572,7 +592,17 @@ Examples:
 ./brewslm preflight --project 1 --task causal_lm
 ./brewslm train --project 1 --autopilot --one-click --intent "Build a legal Q&A assistant" --base-model Qwen/Qwen2.5-1.5B-Instruct
 ./brewslm export --project 1 --format huggingface --target vllm
+./brewslm optimize --project 1 --target mobile_cpu
+./brewslm doctor --project 1
 ```
+
+`brewslm optimize` now prints a `Source` column:
+
+- `MEASURED`: live benchmark probe result.
+- `MIXED`: partially measured (some metrics estimated).
+- `ESTIMATED`: no live probe result for that candidate.
+
+For estimated rows, CLI output includes a `note:` line with the fallback reason to avoid presenting inferred values as measured facts.
 
 Auth:
 
@@ -590,6 +620,21 @@ Auth:
 - Model registry governance with promotion gating and regression checks
 - Domain pack + profile-driven runtime defaults and policy gates
 - Project-level encrypted secret storage for connectors/providers
+
+## Troubleshooting: Strict Mode and Fallbacks
+
+1. Symptom: API returns `STRICT_EXECUTION_VIOLATION`.
+   Why it happens: `STRICT_EXECUTION_MODE=true` and the request would have needed a simulated/stub fallback.
+   What to do: either provide the missing runtime/tooling/dependency, or disable strict mode for local demo workflows.
+2. Symptom: all `optimize` candidates are `ESTIMATED`.
+   Why it happens: benchmark probe is unavailable, failed, timed out, unsupported for that format, or skipped by probe budget.
+   What to do: inspect `measurement.fallback_reason` per candidate and run `./brewslm doctor --project <id>` to fix environment blockers.
+3. Symptom: training start returns `TARGET_INCOMPATIBLE`.
+   Why it happens: model-target compatibility check failed (for example VRAM over target baseline).
+   What to do: read `detail.metadata.unblock_actions` in the error payload and apply one of the listed fixes (smaller model, stronger quantization, or less constrained target).
+4. Symptom: remote ingestion falls back or fails.
+   Why it happens: live provider call failed and fallback policy/strict mode prevented recovery.
+   What to do: verify provider credentials/connectivity first; if this is a demo run, set `ALLOW_SIMULATED_INGESTION_FALLBACK=true` with strict mode disabled.
 
 ---
 
@@ -652,6 +697,10 @@ Common backend env vars (see `backend/.env.example`):
 - `LLAMA_CPP_QUANTIZE_BIN`
 - `ONNX_EXPORT_TASK`
 - `PYTHON_EXECUTABLE`
+
+### Process runtime controls
+
+- `STRICT_EXECUTION_MODE`
 - `EXTERNAL_COMMAND_TIMEOUT_SECONDS`
 
 ### Domain hook plugins

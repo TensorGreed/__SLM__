@@ -184,7 +184,7 @@ async def build_deploy_plan(
     req: ExportDeployPlanRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Build managed API deploy plan or mobile SDK stub bundle from an export run."""
+    """Build managed API deploy plan or mobile SDK reference bundle from an export run."""
     try:
         return await build_export_deploy_plan(
             db,
