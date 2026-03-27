@@ -734,7 +734,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             ))}
           </select>
         </div>
-        <div className="form-group" style={{ alignSelf: 'end' }}>
+        <div className="form-group playground-form-group--action">
           <button className="btn btn-secondary" onClick={applyPromptPreset} disabled={!selectedPreset}>
             Insert Preset Prompt
           </button>
@@ -847,7 +847,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       </div>
 
       <div className="playground-settings">
-        <div className="form-group" style={{ flex: 1 }}>
+        <div className="form-group playground-form-group--grow">
           <label className="form-label">RAG Compare Query</label>
           <input
             className="input"
@@ -856,7 +856,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             placeholder="Ask a question to compare base vs fine-tuned with retrieved snippets"
           />
         </div>
-        <div className="form-group" style={{ alignSelf: 'end' }}>
+        <div className="form-group playground-form-group--action">
           <button className="btn btn-secondary" type="button" onClick={() => void runRagCompare()} disabled={ragLoading || !ragQuery.trim()}>
             {ragLoading ? 'Comparing...' : 'Run RAG Compare'}
           </button>
@@ -864,15 +864,15 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       </div>
       {ragError && <div className="playground-error">{ragError}</div>}
       {ragResult && (
-        <div className="playground-settings" style={{ alignItems: 'stretch' }}>
-          <div className="form-group" style={{ flex: 1 }}>
+        <div className="playground-settings playground-settings--stretch">
+          <div className="form-group playground-form-group--grow">
             <label className="form-label">
               Base Model
               {ragResult.base?.model_name ? ` (${ragResult.base.model_name})` : ''}
             </label>
             <textarea className="input playground-system" value={String(ragResult.base?.reply || '')} readOnly />
           </div>
-          <div className="form-group" style={{ flex: 1 }}>
+          <div className="form-group playground-form-group--grow">
             <label className="form-label">
               Fine-Tuned Model
               {ragResult.tuned?.model_name ? ` (${ragResult.tuned.model_name})` : ''}
@@ -922,7 +922,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       <div className="playground-settings">
         <div className="form-group">
           <label className="form-label">Response Feedback</label>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="playground-feedback-actions">
             <button
               className={`btn btn-secondary btn-sm ${feedbackRating === 1 ? 'active' : ''}`}
               type="button"
@@ -965,7 +965,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             placeholder="Optional annotation for future DPO/ORPO dataset curation."
           />
         </div>
-        <div className="form-group" style={{ alignSelf: 'end' }}>
+        <div className="form-group playground-form-group--action">
           <button className="btn btn-secondary" type="button" onClick={() => void saveFeedback()} disabled={feedbackSaving}>
             {feedbackSaving ? 'Saving...' : 'Save Feedback Log'}
           </button>
