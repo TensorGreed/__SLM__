@@ -38,6 +38,8 @@ interface RuntimeSettingsResponse {
 }
 
 export default function TopBar({ title, subtitle, actions, withSidebar = false }: TopBarProps) {
+    const docsUrl =
+        (String(import.meta.env.VITE_DOCS_URL || '').trim() || 'http://localhost:3001/docs/getting-started/quickstart');
     const menuRef = useRef<HTMLDivElement | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
     const [profileOpen, setProfileOpen] = useState(false);
@@ -171,9 +173,16 @@ export default function TopBar({ title, subtitle, actions, withSidebar = false }
                 </div>
                 <div className="topbar-actions">
                     {actions}
-                    <button className="topbar-icon-btn" title="Help">
+                    <a
+                        className="topbar-icon-btn topbar-icon-btn--link"
+                        title="Help"
+                        href={docsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Open BrewSLM documentation"
+                    >
                         <CircleHelp size={16} />
-                    </button>
+                    </a>
                     <button className="topbar-icon-btn" title="Notifications">
                         <Bell size={16} />
                     </button>

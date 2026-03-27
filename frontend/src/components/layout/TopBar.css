@@ -65,6 +65,10 @@
     cursor: pointer;
 }
 
+.topbar-icon-btn--link {
+    text-decoration: none;
+}
+
 .topbar-icon-btn:hover {
     border-color: #b7c6df;
     color: #1e3a6d;
