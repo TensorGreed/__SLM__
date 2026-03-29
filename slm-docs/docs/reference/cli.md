@@ -24,6 +24,25 @@ BrewSLM includes a CLI wrapper (`./brewslm`) for common operations.
 ./brewslm export --project 1 --format huggingface --target vllm
 ```
 
+## Beginner Bootstrap
+
+```bash
+./brewslm project bootstrap \
+  --name "Support FAQ Assistant" \
+  --brief "Build a support assistant that answers FAQ questions from ticket history." \
+  --sample-input "How do I reset my password?" \
+  --sample-output '{"answer":"Use the account reset flow."}' \
+  --target edge_gpu \
+  --create-project
+```
+
+## Blueprint Inspect
+
+```bash
+./brewslm project blueprint show --project 1 --latest
+./brewslm project blueprint diff --project 1 --from-version 1 --to-version 2
+```
+
 ## Useful Tips
 
 - Run the same command with small data first.

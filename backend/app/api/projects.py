@@ -24,6 +24,7 @@ from app.schemas.project import (
     ProjectStatsResponse,
     ProjectUpdate,
 )
+from app.schemas.domain_blueprint import DomainBlueprintAnalyzeRequest, DomainBlueprintContract
 from pydantic import BaseModel
 from app.security import get_request_principal, upsert_project_membership
 from app.services.domain_pack_service import assign_project_domain_pack, get_domain_pack
@@ -35,6 +36,12 @@ from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
 from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
 from app.services.starter_pack_service import get_starter_pack_by_id
+from app.services.domain_blueprint_service import (
+    DomainBlueprintValidationError,
+    analyze_domain_brief,
+    apply_domain_blueprint_revision,
+    save_domain_blueprint_revision,
+)
 
 class MagicCreateRequest(BaseModel):
     prompt: str
@@ -154,6 +161,7 @@ async def create_project(
         domain_pack_id=resolved_domain_pack_id,
         domain_profile_id=resolved_domain_profile_id,
         target_profile_id=resolved_target_profile_id,
+        beginner_mode=bool(data.beginner_mode),
     )
     if isinstance(data.gate_policy, dict):
         project_payload["gate_policy"] = dict(data.gate_policy)
@@ -186,6 +194,80 @@ async def create_project(
             user_id=principal.user_id,
             role=ProjectRole.OWNER,
         )
+
+    should_create_blueprint = bool(isinstance(data.domain_blueprint, dict) or str(data.brief_text or "").strip())
+    if should_create_blueprint:
+        created_by_user_id = getattr(principal, "user_id", None)
+        if isinstance(data.domain_blueprint, dict):
+            try:
+                blueprint = DomainBlueprintContract.model_validate(data.domain_blueprint)
+            except Exception as e:
+                raise HTTPException(
+                    400,
+                    {
+                        "error_code": "DOMAIN_BLUEPRINT_PARSE_FAILED",
+                        "message": "Invalid domain_blueprint payload.",
+                        "detail": str(e),
+                    },
+                )
+            analysis_metadata = {
+                "source": "project_create_payload",
+                "brief_text": str(data.brief_text or "").strip(),
+            }
+            brief_text = str(data.brief_text or "").strip()
+        else:
+            analysis_input = DomainBlueprintAnalyzeRequest(
+                brief_text=str(data.brief_text or "").strip() or str(data.description or "").strip() or data.name,
+                sample_inputs=list(data.sample_inputs or []),
+                sample_outputs=list(data.sample_outputs or []),
+                deployment_target=resolved_target_profile_id,
+            )
+            analysis = await analyze_domain_brief(analysis_input, project_id=project.id)
+            blueprint = analysis.blueprint
+            analysis_metadata = {
+                "source": "analyze_from_project_create",
+                "guidance": analysis.guidance.model_dump(mode="json"),
+                "llm_enrichment": analysis.llm_enrichment,
+                "validation": analysis.validation.model_dump(mode="json"),
+            }
+            if not analysis.validation.ok:
+                raise HTTPException(
+                    400,
+                    {
+                        "error_code": "DOMAIN_BLUEPRINT_VALIDATION_FAILED",
+                        "message": "Domain blueprint validation failed during project bootstrap.",
+                        "validation": analysis.validation.model_dump(mode="json"),
+                    },
+                )
+            brief_text = analysis_input.brief_text
+
+        try:
+            revision = await save_domain_blueprint_revision(
+                db=db,
+                project_id=project.id,
+                blueprint=blueprint,
+                source="project_bootstrap",
+                brief_text=brief_text,
+                analysis_metadata=analysis_metadata,
+                created_by_user_id=created_by_user_id,
+            )
+            project, _ = await apply_domain_blueprint_revision(
+                db=db,
+                project_id=project.id,
+                version=revision.version,
+                adopt_project_description=True,
+                adopt_target_profile=True,
+                set_beginner_mode=True,
+            )
+        except DomainBlueprintValidationError as e:
+            raise HTTPException(
+                400,
+                {
+                    "error_code": "DOMAIN_BLUEPRINT_VALIDATION_FAILED",
+                    "message": "Domain blueprint is contradictory or incomplete.",
+                    "validation": e.validation.model_dump(mode="json"),
+                },
+            )
 
     return ProjectResponse.model_validate(project)
 

@@ -53,6 +53,7 @@ class Base(DeclarativeBase):
 BASE_REQUIRED_TABLES = {
     "domain_packs",
     "domain_profiles",
+    "domain_blueprints",
     "projects",
     "artifact_records",
     "workflow_runs",
@@ -75,6 +76,51 @@ AUTH_REQUIRED_TABLES = {
     "project_memberships",
     "audit_logs",
 }
+
+CRITICAL_COLUMN_REQUIREMENTS: dict[str, set[str]] = {
+    "projects": {
+        "beginner_mode",
+        "active_domain_blueprint_version",
+    },
+}
+
+
+def _list_missing_columns(sync_conn, requirements: dict[str, set[str]]) -> list[str]:
+    """Return missing required columns as dotted table.column strings."""
+    inspector = inspect(sync_conn)
+    table_names = set(inspector.get_table_names())
+    missing: list[str] = []
+    for table_name, required_columns in requirements.items():
+        if table_name not in table_names:
+            continue
+        existing_columns = {
+            str(column.get("name"))
+            for column in inspector.get_columns(table_name)
+            if column.get("name")
+        }
+        for column_name in sorted(required_columns):
+            if column_name not in existing_columns:
+                missing.append(f"{table_name}.{column_name}")
+    return missing
+
+
+def _repair_sqlite_schema_drift(sync_conn) -> list[str]:
+    """Apply additive SQLite repairs for known legacy-schema drift."""
+    if sync_conn.dialect.name != "sqlite":
+        return []
+
+    repair_sql: dict[str, str] = {
+        "projects.beginner_mode": "ALTER TABLE projects ADD COLUMN beginner_mode BOOLEAN NOT NULL DEFAULT 0",
+        "projects.active_domain_blueprint_version": "ALTER TABLE projects ADD COLUMN active_domain_blueprint_version INTEGER",
+    }
+    existing = set(_list_missing_columns(sync_conn, CRITICAL_COLUMN_REQUIREMENTS))
+    applied: list[str] = []
+    for key, statement in repair_sql.items():
+        if key not in existing:
+            continue
+        sync_conn.execute(text(statement))
+        applied.append(key)
+    return applied
 
 
 def _assert_alembic_head(sync_conn) -> None:
@@ -148,6 +194,23 @@ async def init_db() -> None:
     if should_autocreate:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            if is_sqlite:
+                await conn.run_sync(_repair_sqlite_schema_drift)
+            missing_columns = await conn.run_sync(
+                lambda sync_conn: _list_missing_columns(sync_conn, CRITICAL_COLUMN_REQUIREMENTS)
+            )
+            if missing_columns:
+                if is_sqlite:
+                    raise RuntimeError(
+                        "SQLite schema is missing required columns after compatibility repair: "
+                        f"{', '.join(sorted(missing_columns))}. "
+                        "Recreate the SQLite database or run migrations manually."
+                    )
+                raise RuntimeError(
+                    "Database schema is missing required columns after auto-create bootstrap: "
+                    f"{', '.join(sorted(missing_columns))}. "
+                    "Run Alembic migrations before starting the API."
+                )
         return
 
     required_tables = set(BASE_REQUIRED_TABLES)
@@ -163,6 +226,17 @@ async def init_db() -> None:
             "Database schema is missing required tables: "
             f"{', '.join(missing)}. Run migrations before starting the API "
             "(or set DB_AUTO_CREATE=true for local/dev bootstrap only)."
+        )
+
+    async with engine.begin() as conn:
+        missing_columns = await conn.run_sync(
+            lambda sync_conn: _list_missing_columns(sync_conn, CRITICAL_COLUMN_REQUIREMENTS)
+        )
+    if missing_columns:
+        raise RuntimeError(
+            "Database schema is missing required columns: "
+            f"{', '.join(sorted(missing_columns))}. "
+            "Run Alembic migrations before starting the API."
         )
 
     async with engine.begin() as conn:

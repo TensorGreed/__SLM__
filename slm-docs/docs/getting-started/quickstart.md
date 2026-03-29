@@ -54,8 +54,20 @@ celery -A app.celery_app worker -l info
 ## 5) Verify System Health
 
 - Backend API docs: `http://localhost:8000/docs`
-- Create one project from UI.
+- Create one project from UI using **Beginner Mode**.
 - Confirm you can open Project Wizard, Training, and Export tabs.
+
+Optional CLI bootstrap flow:
+
+```bash
+./brewslm project bootstrap \
+  --name "Quickstart Support Assistant" \
+  --brief "Build a support assistant that answers FAQ questions from ticket history." \
+  --sample-input "How do I reset my password?" \
+  --sample-output '{"answer":"Use the account reset flow."}' \
+  --target edge_gpu \
+  --create-project
+```
 
 ## 6) Start Docs Site (for Help button)
 

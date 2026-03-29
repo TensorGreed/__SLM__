@@ -41,6 +41,9 @@ export interface Project {
     base_model_name: string | null;
     domain_pack_id: number | null;
     domain_profile_id: number | null;
+    target_profile_id?: string | null;
+    beginner_mode?: boolean;
+    active_domain_blueprint_version?: number | null;
     created_at: string;
     updated_at: string;
 }

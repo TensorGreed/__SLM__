@@ -2,6 +2,15 @@ import { create } from 'zustand';
 import api from '../api/client';
 import type { Project, PipelineStatusResponse, TabKey } from '../types';
 
+interface CreateProjectOptions {
+    beginnerMode?: boolean;
+    briefText?: string;
+    sampleInputs?: string[];
+    sampleOutputs?: string[];
+    domainBlueprint?: Record<string, unknown> | null;
+    targetProfileId?: string | null;
+}
+
 interface ProjectState {
     // Project list
     projects: Project[];
@@ -22,6 +31,7 @@ interface ProjectState {
         starterPackId?: string | null,
         domainPackId?: number | null,
         domainProfileId?: number | null,
+        options?: CreateProjectOptions,
     ) => Promise<Project>;
     fetchProject: (id: number) => Promise<void>;
     deleteProject: (id: number) => Promise<void>;
@@ -59,6 +69,7 @@ export const useProjectStore = create<ProjectState>((set) => ({
         starterPackId = null,
         domainPackId = null,
         domainProfileId = null,
+        options = {},
     ) => {
         const res = await api.post('/projects', {
             name,
@@ -67,6 +78,12 @@ export const useProjectStore = create<ProjectState>((set) => ({
             starter_pack_id: starterPackId,
             domain_pack_id: domainPackId,
             domain_profile_id: domainProfileId,
+            beginner_mode: Boolean(options.beginnerMode),
+            brief_text: options.briefText || null,
+            sample_inputs: options.sampleInputs || [],
+            sample_outputs: options.sampleOutputs || [],
+            domain_blueprint: options.domainBlueprint || null,
+            target_profile_id: options.targetProfileId || null,
         });
         const project = res.data;
         set((state) => ({

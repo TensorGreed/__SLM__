@@ -17,6 +17,9 @@ This is a practical map of core API areas.
 
 - `GET /api/domain-packs`
 - `GET /api/domain-profiles`
+- `POST /api/domain-blueprints/analyze`
+- `POST /api/projects/{id}/domain-blueprints`
+- `POST /api/projects/{id}/domain-blueprints/{version}/apply`
 - `GET /api/projects/{id}/domain-runtime`
 
 ## Training

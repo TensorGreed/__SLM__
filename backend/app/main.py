@@ -35,6 +35,7 @@ from app.api.registry import router as registry_router
 from app.api.secrets import router as secrets_router
 from app.api.domain_packs import router as domain_packs_router
 from app.api.domain_profiles import router as domain_profiles_router
+from app.api.domain_blueprints import router as domain_blueprints_router
 from app.api.artifacts import router as artifacts_router
 from app.api.targets import router as targets_router
 from app.api.starter_packs import router as starter_packs_router
@@ -195,6 +196,7 @@ app.include_router(registry_router, prefix="/api", dependencies=API_DEPENDENCIES
 app.include_router(secrets_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(domain_packs_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(domain_profiles_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(domain_blueprints_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(artifacts_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(targets_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(starter_packs_router, prefix="/api", dependencies=API_DEPENDENCIES)

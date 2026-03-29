@@ -7,6 +7,7 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -193,6 +194,51 @@ def _load_json_object_file(path_value: str, *, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} file must contain a JSON object")
     return payload
+
+
+def _load_text_file(path_value: str, *, label: str) -> str:
+    token = str(path_value or "").strip()
+    if not token:
+        return ""
+    path = Path(token).expanduser()
+    if not path.exists():
+        raise ValueError(f"{label} file not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"{label} must be a file: {path}")
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for raw in values:
+        token = _normalize_text(raw)
+        if not token:
+            continue
+        marker = token.lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        cleaned.append(token)
+    return cleaned
+
+
+def _parse_line_list(value: str) -> list[str]:
+    token = str(value or "").strip()
+    if not token:
+        return []
+    return [item.strip() for item in token.splitlines() if item.strip()]
+
+
+def _derive_project_name_from_brief(brief_text: str) -> str:
+    words = [item for item in re.split(r"[^a-zA-Z0-9]+", str(brief_text or "").strip()) if item]
+    if not words:
+        return "Beginner Mode Project"
+    return " ".join(words[:6])[:80].strip() or "Beginner Mode Project"
 
 
 def _quickstart_base_candidates() -> list[Path]:
@@ -653,6 +699,106 @@ def run_optimize(args: argparse.Namespace, client: ApiClient) -> int:
 
 
 def run_project(args: argparse.Namespace, client: ApiClient) -> int:
+    if args.subcommand == "bootstrap":
+        brief_text = _normalize_text(args.brief)
+        if args.brief_file:
+            file_brief = _load_text_file(args.brief_file, label="brief")
+            brief_text = f"{brief_text}\n{file_brief}".strip() if brief_text else file_brief
+        if not brief_text:
+            raise ValueError("Provide --brief or --brief-file for project bootstrap.")
+
+        sample_inputs = _dedupe_preserve_order(
+            list(args.sample_input or []) + _parse_line_list(_load_text_file(args.sample_inputs_file, label="sample-inputs"))
+        )
+        sample_outputs = _dedupe_preserve_order(
+            list(args.sample_output or []) + _parse_line_list(_load_text_file(args.sample_outputs_file, label="sample-outputs"))
+        )
+        risk_constraints = _dedupe_preserve_order(list(args.risk_note or []))
+
+        analysis_payload: dict[str, Any] = {
+            "brief_text": brief_text,
+            "sample_inputs": sample_inputs,
+            "sample_outputs": sample_outputs,
+            "risk_constraints": risk_constraints,
+            "deployment_target": args.target or None,
+            "llm_enrich": not bool(args.no_llm_enrich),
+        }
+        analyzed = client.request("POST", "/domain-blueprints/analyze", json_body=analysis_payload)
+
+        output: dict[str, Any] = {
+            "analysis": analyzed,
+        }
+
+        if args.create_project:
+            project_name = _normalize_text(args.name) or _derive_project_name_from_brief(brief_text)
+            create_payload: dict[str, Any] = {
+                "name": project_name,
+                "description": _normalize_text(args.description),
+                "base_model_name": _normalize_text(args.base_model),
+                "beginner_mode": True,
+                "brief_text": brief_text,
+                "sample_inputs": sample_inputs,
+                "sample_outputs": sample_outputs,
+                "domain_blueprint": dict(analyzed.get("blueprint") or {}),
+            }
+            target_profile_id = _normalize_text(args.target_profile_id)
+            if target_profile_id:
+                create_payload["target_profile_id"] = target_profile_id
+            created = client.request("POST", "/projects", json_body=create_payload)
+            output["project"] = created
+            output["mode"] = "create_project"
+        else:
+            if args.project_id is None:
+                raise ValueError("Provide --project when not using --create-project.")
+            save_payload = {
+                "blueprint": dict(analyzed.get("blueprint") or {}),
+                "source": "cli.bootstrap",
+                "brief_text": brief_text,
+                "analysis_metadata": {
+                    "guidance": analyzed.get("guidance") or {},
+                    "validation": analyzed.get("validation") or {},
+                    "llm_enrichment": analyzed.get("llm_enrichment") or {},
+                },
+                "apply_immediately": bool(args.apply),
+            }
+            saved = client.request(
+                "POST",
+                f"/projects/{args.project_id}/domain-blueprints",
+                json_body=save_payload,
+            )
+            output["project_id"] = int(args.project_id)
+            output["saved_revision"] = saved
+            output["mode"] = "save_revision"
+
+        _print_json(output)
+        return 0
+
+    if args.subcommand == "blueprint":
+        pid = getattr(args, "project_id", None)
+        if pid is None:
+            raise ValueError("Project ID is required for blueprint commands.")
+        if args.blueprint_subcommand == "show":
+            if bool(args.latest):
+                payload = client.request("GET", f"/projects/{pid}/domain-blueprints/latest")
+            elif args.version is not None:
+                payload = client.request("GET", f"/projects/{pid}/domain-blueprints/{int(args.version)}")
+            else:
+                payload = client.request("GET", f"/projects/{pid}/domain-blueprints")
+            _print_json(payload)
+            return 0
+        if args.blueprint_subcommand == "diff":
+            payload = client.request(
+                "GET",
+                f"/projects/{pid}/domain-blueprints/diff",
+                params={
+                    "from_version": int(args.from_version),
+                    "to_version": int(args.to_version),
+                },
+            )
+            _print_json(payload)
+            return 0
+        raise ValueError(f"Unsupported blueprint subcommand '{args.blueprint_subcommand}'.")
+
     if args.subcommand == "create":
         template_payload: dict[str, Any] = {}
         template_id = ""
@@ -731,6 +877,8 @@ def run_project(args: argparse.Namespace, client: ApiClient) -> int:
             budget["auto_cancel"] = args.auto_cancel.lower() == "true"
         client.request("PUT", f"/projects/{pid}", json_body={"budget_settings": budget})
         print(f"Updated budget settings for project {pid}")
+    else:
+        raise ValueError(f"Unsupported project subcommand '{args.subcommand}'.")
     return 0
 
 
@@ -834,6 +982,66 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Inline JSON object overriding budget settings",
     )
+
+    p_bootstrap = project_sub.add_parser(
+        "bootstrap",
+        help="Analyze a plain-English brief and bootstrap a Domain Blueprint workflow.",
+    )
+    p_bootstrap.add_argument("--name", default="", help="Project name (optional with --create-project)")
+    p_bootstrap.add_argument("--description", default="", help="Project description override")
+    p_bootstrap.add_argument("--base-model", default="", help="Optional base model override for project creation")
+    p_bootstrap.add_argument("--project", "--project-id", dest="project_id", type=int, default=None)
+    p_bootstrap.add_argument("--brief", default="", help="Plain-English brief text")
+    p_bootstrap.add_argument("--brief-file", default="", help="Path to plain-text brief file")
+    p_bootstrap.add_argument(
+        "--sample-input",
+        action="append",
+        default=[],
+        help="Representative sample input (repeatable)",
+    )
+    p_bootstrap.add_argument(
+        "--sample-output",
+        action="append",
+        default=[],
+        help="Representative sample output (repeatable)",
+    )
+    p_bootstrap.add_argument("--sample-inputs-file", default="", help="Path to newline-delimited sample inputs")
+    p_bootstrap.add_argument("--sample-outputs-file", default="", help="Path to newline-delimited sample outputs")
+    p_bootstrap.add_argument(
+        "--risk-note",
+        action="append",
+        default=[],
+        help="Safety/compliance note (repeatable)",
+    )
+    p_bootstrap.add_argument(
+        "--target",
+        default="",
+        help="Deployment target hint for blueprint analysis (for example edge_gpu, mobile_cpu, vllm_server).",
+    )
+    p_bootstrap.add_argument(
+        "--target-profile-id",
+        default="",
+        help="Project target profile id when using --create-project.",
+    )
+    p_bootstrap.add_argument("--create-project", action="store_true", help="Create a new project from analyzed blueprint")
+    p_bootstrap.add_argument("--apply", action="store_true", help="Apply saved blueprint when targeting existing project")
+    p_bootstrap.add_argument("--no-llm-enrich", action="store_true", help="Force deterministic-only analysis path")
+
+    p_blueprint = project_sub.add_parser(
+        "blueprint",
+        help="Inspect project Domain Blueprint revisions.",
+    )
+    p_blueprint_sub = p_blueprint.add_subparsers(dest="blueprint_subcommand", required=True)
+
+    p_blueprint_show = p_blueprint_sub.add_parser("show", help="Show latest/list/specific blueprint revision")
+    p_blueprint_show.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    p_blueprint_show.add_argument("--version", type=int, default=None, help="Specific version to fetch")
+    p_blueprint_show.add_argument("--latest", action="store_true", help="Fetch latest revision")
+
+    p_blueprint_diff = p_blueprint_sub.add_parser("diff", help="Diff two blueprint revisions")
+    p_blueprint_diff.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    p_blueprint_diff.add_argument("--from-version", type=int, required=True)
+    p_blueprint_diff.add_argument("--to-version", type=int, required=True)
 
     p_budget_set = project_sub.add_parser("budget-set", help="Update project budget policy")
     p_budget_set.add_argument("--id", "--project-id", dest="project_id", type=int, required=True)

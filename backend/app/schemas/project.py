@@ -1,6 +1,7 @@
 """Pydantic schemas for Project CRUD and pipeline operations."""
 
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.models.project import PipelineStage, ProjectStatus
@@ -18,6 +19,11 @@ class ProjectCreate(BaseModel):
     target_profile_id: str | None = "vllm_server"
     gate_policy: dict | None = None
     budget_settings: dict | None = None
+    beginner_mode: bool = False
+    brief_text: str | None = None
+    sample_inputs: list[str] = Field(default_factory=list)
+    sample_outputs: list[str] = Field(default_factory=list)
+    domain_blueprint: dict[str, Any] | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -31,6 +37,8 @@ class ProjectUpdate(BaseModel):
     target_profile_id: str | None = None
     gate_policy: dict | None = None
     budget_settings: dict | None = None
+    beginner_mode: bool | None = None
+    active_domain_blueprint_version: int | None = None
 
 
 class ProjectDomainPackAssignRequest(BaseModel):
@@ -56,6 +64,8 @@ class ProjectResponse(BaseModel):
     target_profile_id: str | None = None
     gate_policy: dict | None = None
     budget_settings: dict | None = None
+    beginner_mode: bool = False
+    active_domain_blueprint_version: int | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     TEACHER_MODEL_API_URL: str = ""
     TEACHER_MODEL_API_KEY: str = ""
     ALLOW_SYNTHETIC_DEMO_FALLBACK: bool = False
+    DOMAIN_BLUEPRINT_ENABLE_LLM_ENRICHMENT: bool = False
 
     # ── Judge Model (for evaluation) ────────────────────────────────────
     JUDGE_MODEL_API_URL: str = ""

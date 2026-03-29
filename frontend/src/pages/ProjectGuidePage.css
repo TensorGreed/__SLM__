@@ -56,6 +56,29 @@
     color: var(--text-secondary);
 }
 
+.project-guide-beginner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-lg);
+    flex-wrap: wrap;
+    border-color: #c7d7f5;
+    background: linear-gradient(135deg, #f6f9ff, #eef4ff);
+}
+
+.project-guide-beginner h4 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    color: #16335f;
+}
+
+.project-guide-beginner p {
+    margin-top: 6px;
+    color: #35537d;
+    max-width: 760px;
+    font-size: var(--font-size-sm);
+}
+
 .project-guide-steps {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));

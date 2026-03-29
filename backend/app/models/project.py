@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -70,6 +70,10 @@ class Project(Base):
         String(128),
         default=None,
     )
+    beginner_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    active_domain_blueprint_version: Mapped[int | None] = mapped_column(
+        default=None,
+    )
     dataset_adapter_preset: Mapped[dict | None] = mapped_column(
         JSON,
         default=dict,
@@ -103,6 +107,11 @@ class Project(Base):
     experiments = relationship("Experiment", back_populates="project", cascade="all, delete-orphan")
     domain_pack = relationship("DomainPack", back_populates="projects")
     domain_profile = relationship("DomainProfile", back_populates="projects")
+    domain_blueprints = relationship(
+        "DomainBlueprintRevision",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Project {self.id}: {self.name} [{self.pipeline_stage.value}]>"

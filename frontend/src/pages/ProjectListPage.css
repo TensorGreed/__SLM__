@@ -111,6 +111,166 @@
     margin-bottom: 8px;
 }
 
+.project-list-create-modal {
+    max-width: 720px;
+}
+
+.project-list-create-modal--wide {
+    max-width: 1080px;
+}
+
+.project-list-mode-toggle {
+    display: inline-flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    background: #eef4ff;
+    border: 1px solid #c8d8f6;
+    border-radius: 999px;
+    padding: 4px;
+}
+
+.project-list-mode-pill {
+    border: none;
+    background: transparent;
+    color: #35537d;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.4rem 0.72rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.project-list-mode-pill.active {
+    background: #ffffff;
+    color: #17315a;
+    box-shadow: 0 1px 4px rgba(23, 49, 90, 0.08);
+}
+
+.project-list-beginner-body {
+    display: grid;
+    gap: 12px;
+}
+
+.project-list-beginner-steps {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.project-list-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.project-list-blueprint-review {
+    display: grid;
+    gap: 12px;
+}
+
+.project-list-blueprint-panels {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.project-list-blueprint-panel {
+    border: 1px solid #c8d8f6;
+    border-radius: 12px;
+    background: #f8fbff;
+    padding: 12px;
+}
+
+.project-list-blueprint-panel--full {
+    background: #f5f8ff;
+}
+
+.project-list-blueprint-panel h3 {
+    color: #17315a;
+    margin-bottom: 8px;
+    font-size: 0.95rem;
+}
+
+.project-list-blueprint-panel h4 {
+    color: #1f3f70;
+    margin-top: 10px;
+    margin-bottom: 6px;
+    font-size: 0.82rem;
+}
+
+.project-list-blueprint-panel p,
+.project-list-blueprint-panel li {
+    color: #35537d;
+    font-size: 0.83rem;
+}
+
+.project-list-blueprint-panel ul {
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+}
+
+.project-list-blueprint-kv {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 0.82rem;
+    color: #35537d;
+}
+
+.project-list-blueprint-kv strong {
+    color: #17315a;
+}
+
+.project-list-blueprint-schema pre {
+    background: #0b1b39;
+    color: #d4e1ff;
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.74rem;
+    line-height: 1.45;
+    overflow: auto;
+    max-height: 220px;
+}
+
+.project-list-glossary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.project-list-glossary-card {
+    border: 1px solid #d6e3fb;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 10px;
+}
+
+.project-list-glossary-card h4 {
+    margin: 0 0 6px 0;
+    color: #17315a;
+    font-size: 0.85rem;
+}
+
+.project-list-glossary-card p {
+    margin: 0 0 8px 0;
+    color: #35537d;
+    font-size: 0.8rem;
+}
+
+.project-list-analyze-error {
+    border: 1px solid #f3c2c8;
+    background: #fff3f5;
+    color: #b42332;
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.82rem;
+}
+
 @media (max-width: 760px) {
     .project-list-top-actions {
         width: 100%;
@@ -130,5 +290,14 @@
 
     .project-grid {
         grid-template-columns: 1fr;
+    }
+
+    .project-list-grid-2,
+    .project-list-blueprint-panels {
+        grid-template-columns: 1fr;
+    }
+
+    .project-list-create-modal--wide {
+        max-width: 680px;
     }
 }
