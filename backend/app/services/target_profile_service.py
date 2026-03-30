@@ -476,10 +476,10 @@ def _is_clearly_over_target_vram(*, estimated_min_vram_gb: float, target_min_vra
     return float(estimated_min_vram_gb) > float(target_min_vram_gb) + _vram_block_margin_gb(float(target_min_vram_gb))
 
 
-def _resolve_model_metadata(model_name: str) -> dict[str, Any]:
+def _resolve_model_metadata(model_name: str, *, allow_network: bool = True) -> dict[str, Any]:
     introspection = introspect_hf_model(
         model_id=str(model_name or "").strip(),
-        allow_network=True,
+        allow_network=allow_network,
         timeout_seconds=1.8,
     )
     params_b = _coerce_positive_float(introspection.get("params_estimate_b"))
@@ -514,7 +514,7 @@ def _resolve_model_metadata(model_name: str) -> dict[str, Any]:
     }
 
 
-def check_compatibility(model_name: str, target_id: str) -> dict[str, Any]:
+def check_compatibility(model_name: str, target_id: str, *, allow_network: bool = True) -> dict[str, Any]:
     target = get_target_by_id(target_id)
     if not target:
         return {
@@ -523,10 +523,10 @@ def check_compatibility(model_name: str, target_id: str) -> dict[str, Any]:
             "reasons": ["Target profile not found."],
             "warnings": [],
             "target": None,
-            "model_metadata": _resolve_model_metadata(model_name),
+            "model_metadata": _resolve_model_metadata(model_name, allow_network=allow_network),
         }
 
-    metadata = _resolve_model_metadata(model_name)
+    metadata = _resolve_model_metadata(model_name, allow_network=allow_network)
     parameters_billions = _coerce_positive_float(metadata.get("parameters_billions"))
     estimated_min_vram_gb = _coerce_positive_float(metadata.get("estimated_min_vram_gb"))
 
@@ -626,8 +626,8 @@ def check_compatibility(model_name: str, target_id: str) -> dict[str, Any]:
     }
 
 
-def estimate_metrics(model_name: str, target_id: str) -> dict[str, Any]:
-    metadata = _resolve_model_metadata(model_name)
+def estimate_metrics(model_name: str, target_id: str, *, allow_network: bool = True) -> dict[str, Any]:
+    metadata = _resolve_model_metadata(model_name, allow_network=allow_network)
     params_b = _coerce_positive_float(metadata.get("parameters_billions")) or 7.0
     memory_gb = _coerce_positive_float(metadata.get("estimated_min_vram_gb")) or _fallback_memory_from_params(params_b) or 5.9
 

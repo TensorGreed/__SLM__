@@ -6,7 +6,11 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Getting Started',
-      items: ['getting-started/quickstart', 'getting-started/first-project'],
+      items: [
+        'getting-started/quickstart',
+        'getting-started/first-project',
+        'getting-started/model-family-guide',
+      ],
     },
     {
       type: 'category',
@@ -28,7 +32,12 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Reference',
-      items: ['reference/cli', 'reference/api-surface', 'reference/glossary'],
+      items: [
+        'reference/cli',
+        'reference/api-surface',
+        'reference/model-compatibility-matrix',
+        'reference/glossary',
+      ],
     },
   ],
 };

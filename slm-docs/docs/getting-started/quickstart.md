@@ -69,6 +69,14 @@ Optional CLI bootstrap flow:
   --create-project
 ```
 
+Optional universal model registry flow:
+
+```bash
+./brewslm models import --catalog-id "meta-llama/Llama-3.2-1B-Instruct" --json
+./brewslm models recommend --project 1 --limit 5 --json
+./brewslm models validate --project 1 --model 1 --json
+```
+
 ## 6) Start Docs Site (for Help button)
 
 ```bash

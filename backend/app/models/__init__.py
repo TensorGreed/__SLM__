@@ -4,6 +4,7 @@ from app.models.experiment import Experiment, Checkpoint, EvalResult
 from app.models.export import Export
 from app.models.auth import User, ApiKey, ProjectMembership, AuditLog
 from app.models.registry import ModelRegistryEntry
+from app.models.base_model_registry import BaseModelRegistryEntry, BaseModelSourceType
 from app.models.secret import ProjectSecret
 from app.models.domain_pack import DomainPack
 from app.models.domain_profile import DomainProfile
@@ -26,6 +27,8 @@ __all__ = [
     "ProjectMembership",
     "AuditLog",
     "ModelRegistryEntry",
+    "BaseModelRegistryEntry",
+    "BaseModelSourceType",
     "ProjectSecret",
     "DomainPack",
     "DomainProfile",

@@ -92,6 +92,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
     const isRecipesRoute = location.pathname === `/project/${projectId}/recipes`;
     const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
+    const isModelsRoute = location.pathname === `/project/${projectId}/models`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
@@ -100,7 +101,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     const isWizardRoute = location.pathname === `/project/${projectId}/wizard`;
 
     const routeRailKey: RailKey = useMemo(() => {
-        if (isTrainingConfigRoute || isPipelineTrainingRoute) return 'training';
+        if (isTrainingConfigRoute || isPipelineTrainingRoute || isModelsRoute) return 'training';
         if (isPlaygroundRoute) return 'playground';
         if (isWorkflowRoute || isRecipesRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
@@ -109,6 +110,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     }, [
         isTrainingConfigRoute,
         isPipelineTrainingRoute,
+        isModelsRoute,
         isPlaygroundRoute,
         isWorkflowRoute,
         isRecipesRoute,
@@ -308,6 +310,13 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                             >
                                 <Settings2 size={15} />
                                 <span className="nav-label">Configurations</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isModelsRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/models`)}
+                            >
+                                <Boxes size={15} />
+                                <span className="nav-label">Base Model Registry</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}

@@ -936,6 +936,189 @@ def run_dataset(args: argparse.Namespace, client: ApiClient) -> int:
     return 0
 
 
+def run_models(args: argparse.Namespace, client: ApiClient) -> int:
+    subcommand = str(getattr(args, "models_subcommand", "") or "").strip().lower()
+    as_json = bool(getattr(args, "json", False))
+
+    if subcommand == "import":
+        source_tokens = [
+            ("huggingface", _normalize_text(getattr(args, "hf_id", ""))),
+            ("local_path", _normalize_text(getattr(args, "path", ""))),
+            ("catalog", _normalize_text(getattr(args, "catalog_id", ""))),
+        ]
+        selected = [(kind, ref) for kind, ref in source_tokens if ref]
+        if len(selected) != 1:
+            raise ValueError("Provide exactly one source selector: --hf-id, --path, or --catalog-id.")
+        source_type, source_ref = selected[0]
+        payload = {
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "allow_network": bool(getattr(args, "allow_network", False)),
+            "overwrite": not bool(getattr(args, "no_overwrite", False)),
+        }
+        resp = client.request("POST", "/models/import", json_body=payload)
+        if as_json:
+            _print_json(resp)
+            return 0
+        model = dict(resp.get("model") or {})
+        print(f"Imported model: {model.get('display_name') or model.get('model_key')}")
+        print(f"Model Key: {model.get('model_key')}")
+        print(f"Architecture: {model.get('architecture') or 'unknown'}")
+        print(f"Tasks: {', '.join(list(model.get('supported_task_families') or [])[:6]) or 'n/a'}")
+        return 0
+
+    if subcommand == "refresh":
+        model_token = _normalize_text(getattr(args, "model", ""))
+        if not model_token:
+            raise ValueError("--model is required for models refresh.")
+        payload: dict[str, Any] = {
+            "allow_network": bool(getattr(args, "allow_network", False)),
+        }
+        if model_token.isdigit():
+            payload["model_id"] = int(model_token)
+        else:
+            payload["model_key"] = model_token
+        resp = client.request("POST", "/models/refresh", json_body=payload)
+        if as_json:
+            _print_json(resp)
+            return 0
+        model = dict(resp.get("model") or {})
+        print(f"Refreshed model: {model.get('display_name') or model.get('model_key')}")
+        print(f"Refresh Count: {model.get('refresh_count')}")
+        return 0
+
+    if subcommand == "list":
+        params: dict[str, Any] = {}
+        for key, arg_name in (
+            ("family", "family"),
+            ("license", "license"),
+            ("hardware_fit", "hardware_fit"),
+            ("min_context_length", "min_context_length"),
+            ("max_params_b", "max_params_b"),
+            ("training_mode", "training_mode"),
+            ("search", "search"),
+        ):
+            value = getattr(args, arg_name, None)
+            if value is None:
+                continue
+            token = str(value).strip() if isinstance(value, str) else value
+            if token in {"", None}:
+                continue
+            params[key] = token
+        resp = client.request("GET", "/models", params=params)
+        if as_json:
+            _print_json(resp)
+            return 0
+        rows = [item for item in list(resp.get("models") or []) if isinstance(item, dict)]
+        print(f"Registered Models: {len(rows)}")
+        if not rows:
+            print("No model records found.")
+            return 0
+        print(f"{'ID':<6} {'Key':<46} {'Family':<14} {'Arch':<14} {'Ctx':<8} {'PEFT'}")
+        print("-" * 98)
+        for row in rows[:50]:
+            rid = str(row.get("id") or "")
+            key = str(row.get("model_key") or "")[:46]
+            family = str(row.get("model_family") or "unknown")[:14]
+            arch = str(row.get("architecture") or "unknown")[:14]
+            ctx = str(row.get("context_length") or "n/a")[:8]
+            peft = "yes" if bool(row.get("peft_support")) else "no"
+            print(f"{rid:<6} {key:<46} {family:<14} {arch:<14} {ctx:<8} {peft}")
+        return 0
+
+    if subcommand == "recommend":
+        project_id = int(getattr(args, "project_id", 0) or 0)
+        if project_id <= 0:
+            raise ValueError("--project is required for models recommend.")
+        params = {
+            "limit": int(getattr(args, "limit", 10) or 10),
+            "include_incompatible": bool(getattr(args, "include_incompatible", False)),
+            "allow_network": bool(getattr(args, "allow_network", False)),
+        }
+        for key, arg_name in (
+            ("family", "family"),
+            ("license", "license"),
+            ("hardware_fit", "hardware_fit"),
+            ("min_context_length", "min_context_length"),
+            ("max_params_b", "max_params_b"),
+            ("training_mode", "training_mode"),
+            ("search", "search"),
+            ("target_profile_id", "target"),
+            ("runtime_id", "runtime_id"),
+            ("dataset_adapter_id", "adapter_id"),
+        ):
+            value = getattr(args, arg_name, None)
+            if value is None:
+                continue
+            token = str(value).strip() if isinstance(value, str) else value
+            if token in {"", None}:
+                continue
+            params[key] = token
+        resp = client.request("GET", f"/projects/{project_id}/models/compatible", params=params)
+        if as_json:
+            _print_json(resp)
+            return 0
+        rows = [item for item in list(resp.get("models") or []) if isinstance(item, dict)]
+        print(f"Project {project_id} Compatible Models: {len(rows)}")
+        if not rows:
+            print("No compatible models found.")
+            return 1
+        for idx, item in enumerate(rows[:20], start=1):
+            model = dict(item.get("model") or {})
+            score = float(item.get("compatibility_score") or 0.0)
+            print(f"{idx}. {model.get('display_name') or model.get('model_key')} (score={score:.3f})")
+            rec_reasons = [str(r.get("message") or "") for r in list(item.get("why_recommended") or []) if isinstance(r, dict)]
+            risk_reasons = [str(r.get("message") or "") for r in list(item.get("why_risky") or []) if isinstance(r, dict)]
+            if rec_reasons:
+                print(f"   Why recommended: {rec_reasons[0]}")
+            if risk_reasons:
+                print(f"   Why risky: {risk_reasons[0]}")
+        return 0
+
+    if subcommand == "validate":
+        project_id = int(getattr(args, "project_id", 0) or 0)
+        model_token = _normalize_text(getattr(args, "model", ""))
+        if project_id <= 0:
+            raise ValueError("--project is required for models validate.")
+        if not model_token:
+            raise ValueError("--model is required for models validate.")
+        payload: dict[str, Any] = {
+            "allow_network": bool(getattr(args, "allow_network", False)),
+            "dataset_adapter_id": _normalize_text(getattr(args, "adapter_id", "")) or None,
+            "runtime_id": _normalize_text(getattr(args, "runtime_id", "")) or None,
+            "target_profile_id": _normalize_text(getattr(args, "target", "")) or None,
+        }
+        if model_token.isdigit():
+            payload["model_id"] = int(model_token)
+        else:
+            payload["model_key"] = model_token
+        resp = client.request("POST", f"/projects/{project_id}/models/validate", json_body=payload)
+        if as_json:
+            _print_json(resp)
+            return 0
+        compatible = bool(resp.get("compatible"))
+        score = float(resp.get("compatibility_score") or 0.0)
+        print(f"Model Compatibility: {'PASS' if compatible else 'BLOCKED'} (score={score:.3f})")
+        risky = [
+            item for item in list(resp.get("why_risky") or [])
+            if isinstance(item, dict)
+        ]
+        if risky:
+            print("Risks:")
+            for item in risky[:5]:
+                sev = str(item.get("severity") or "warning").upper()
+                msg = str(item.get("message") or "")
+                print(f"- [{sev}] {msg}")
+        actions = [str(item) for item in list(resp.get("recommended_next_actions") or []) if str(item).strip()]
+        if actions:
+            print("Recommended Actions:")
+            for action in actions[:5]:
+                print(f"- {action}")
+        return 0 if compatible else 1
+
+    raise ValueError(f"Unsupported models subcommand '{subcommand}'.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
@@ -1071,6 +1254,70 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dataset_import.set_defaults(process=True)
     dataset_parser.set_defaults(func=run_dataset)
+
+    models_parser = subparsers.add_parser(
+        "models",
+        help="Universal base model registry and compatibility commands",
+    )
+    models_sub = models_parser.add_subparsers(dest="models_subcommand", required=True)
+
+    models_import = models_sub.add_parser("import", help="Import model metadata into universal registry")
+    models_import.add_argument("--hf-id", default="", help="Hugging Face model id")
+    models_import.add_argument("--path", default="", help="Local model directory/config path")
+    models_import.add_argument("--catalog-id", default="", help="Internal catalog model id")
+    models_import.add_argument("--allow-network", action="store_true", help="Allow network metadata enrichment")
+    models_import.add_argument("--no-overwrite", action="store_true", help="Do not overwrite an existing model_key")
+    models_import.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    models_refresh = models_sub.add_parser("refresh", help="Refresh imported model metadata")
+    models_refresh.add_argument("--model", required=True, help="Model id or model_key")
+    models_refresh.add_argument("--allow-network", action="store_true", help="Allow network metadata refresh")
+    models_refresh.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    models_list = models_sub.add_parser("list", help="List imported base models")
+    models_list.add_argument("--family", default="", help="Family filter")
+    models_list.add_argument("--license", default="", help="License token filter")
+    models_list.add_argument(
+        "--hardware-fit",
+        default="",
+        help="Hardware fit filter (mobile, laptop, server)",
+    )
+    models_list.add_argument("--min-context-length", type=int, default=None)
+    models_list.add_argument("--max-params-b", type=float, default=None)
+    models_list.add_argument("--training-mode", default="", help="Training mode filter")
+    models_list.add_argument("--search", default="", help="Free-text search")
+    models_list.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    models_recommend = models_sub.add_parser("recommend", help="List project-compatible base models")
+    models_recommend.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    models_recommend.add_argument("--limit", type=int, default=10)
+    models_recommend.add_argument("--include-incompatible", action="store_true")
+    models_recommend.add_argument("--family", default="", help="Family filter")
+    models_recommend.add_argument("--license", default="", help="License token filter")
+    models_recommend.add_argument(
+        "--hardware-fit",
+        default="",
+        help="Hardware fit filter (mobile, laptop, server)",
+    )
+    models_recommend.add_argument("--min-context-length", type=int, default=None)
+    models_recommend.add_argument("--max-params-b", type=float, default=None)
+    models_recommend.add_argument("--training-mode", default="", help="Training mode filter")
+    models_recommend.add_argument("--search", default="", help="Free-text search")
+    models_recommend.add_argument("--target", default="", help="Override project target profile id")
+    models_recommend.add_argument("--runtime-id", default="", help="Override runtime id")
+    models_recommend.add_argument("--adapter-id", default="", help="Override dataset adapter id")
+    models_recommend.add_argument("--allow-network", action="store_true", help="Allow network checks")
+    models_recommend.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    models_validate = models_sub.add_parser("validate", help="Validate one model against project compatibility")
+    models_validate.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    models_validate.add_argument("--model", required=True, help="Model id or model_key")
+    models_validate.add_argument("--target", default="", help="Override target profile id")
+    models_validate.add_argument("--runtime-id", default="", help="Override runtime id")
+    models_validate.add_argument("--adapter-id", default="", help="Override dataset adapter id")
+    models_validate.add_argument("--allow-network", action="store_true", help="Allow network checks")
+    models_validate.add_argument("--json", action="store_true", help="Emit JSON output")
+    models_parser.set_defaults(func=run_models)
 
     ingest_parser = subparsers.add_parser("ingest", help="Import remote dataset (HF/Kaggle/URL)")
     ingest_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)

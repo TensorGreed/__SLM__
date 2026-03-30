@@ -52,6 +52,12 @@ If blocked, read the blocker message carefully. BrewSLM usually gives:
 - severity (warning vs blocker)
 - concrete fixes
 
+Before launching training, open **Base Model Registry** (Training rail) and:
+
+- filter by family/license/context/training mode,
+- click **Validate For Project** to inspect compatibility reason codes,
+- review tokenizer/chat-template warnings.
+
 ## Step 4: Evaluate
 
 Run evaluation before exporting.

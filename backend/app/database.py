@@ -66,6 +66,7 @@ BASE_REQUIRED_TABLES = {
     "eval_results",
     "exports",
     "model_registry_entries",
+    "base_model_registry_entries",
     "project_secrets",
     "playground_sessions",
 }

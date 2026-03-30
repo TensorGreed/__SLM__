@@ -28,6 +28,16 @@ This is a practical map of core API areas.
 - `GET /api/projects/{id}/training/model-selection/catalog`
 - `POST /api/projects/{id}/training/model-selection/recommend`
 
+## Universal Base Model Registry
+
+- `POST /api/models/import`
+- `POST /api/models/refresh`
+- `GET /api/models`
+- `GET /api/models/{model_id}`
+- `POST /api/projects/{id}/models/validate`
+- `GET /api/projects/{id}/models/compatible`
+- `POST /api/projects/{id}/models/explain`
+
 ## Evaluation
 
 - `POST /api/projects/{id}/evaluation/run`
