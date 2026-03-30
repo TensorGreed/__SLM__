@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
         'getting-started/quickstart',
         'getting-started/first-project',
         'getting-started/model-family-guide',
+        'getting-started/adapter-studio-examples',
       ],
     },
     {

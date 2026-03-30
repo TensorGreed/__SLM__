@@ -60,6 +60,7 @@ BASE_REQUIRED_TABLES = {
     "workflow_run_nodes",
     "datasets",
     "dataset_versions",
+    "dataset_adapter_definitions",
     "raw_documents",
     "experiments",
     "checkpoints",

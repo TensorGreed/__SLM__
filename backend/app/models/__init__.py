@@ -1,5 +1,6 @@
 from app.models.project import Project
 from app.models.dataset import Dataset, DatasetVersion, RawDocument
+from app.models.dataset_adapter_definition import DatasetAdapterDefinition
 from app.models.experiment import Experiment, Checkpoint, EvalResult
 from app.models.export import Export
 from app.models.auth import User, ApiKey, ProjectMembership, AuditLog
@@ -18,6 +19,7 @@ __all__ = [
     "Dataset",
     "DatasetVersion",
     "RawDocument",
+    "DatasetAdapterDefinition",
     "Experiment",
     "Checkpoint",
     "EvalResult",

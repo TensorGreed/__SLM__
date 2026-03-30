@@ -12,6 +12,7 @@ import ProjectPlaygroundPage from './pages/ProjectPlaygroundPage';
 import ProjectGuidePage from './pages/ProjectGuidePage';
 import ProjectWizardPage from './pages/ProjectWizardPage';
 import ProjectModelsPage from './pages/ProjectModelsPage';
+import ProjectAdapterStudioPage from './pages/ProjectAdapterStudioPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -42,6 +43,7 @@ function App() {
               <Route path="recipes" element={<ProjectRecipesPage />} />
               <Route path="training-config" element={<ProjectTrainingConfigPage />} />
               <Route path="models" element={<ProjectModelsPage />} />
+              <Route path="adapter-studio" element={<ProjectAdapterStudioPage />} />
               <Route path="playground" element={<ProjectPlaygroundPage />} />
             </Route>
           </>

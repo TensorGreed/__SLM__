@@ -40,6 +40,7 @@ from app.api.artifacts import router as artifacts_router
 from app.api.targets import router as targets_router
 from app.api.starter_packs import router as starter_packs_router
 from app.api.models import router as base_models_router
+from app.api.adapter_studio import router as adapter_studio_router
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
@@ -202,6 +203,7 @@ app.include_router(artifacts_router, prefix="/api", dependencies=API_DEPENDENCIE
 app.include_router(targets_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(starter_packs_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(base_models_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(adapter_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

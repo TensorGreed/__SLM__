@@ -38,6 +38,16 @@ This is a practical map of core API areas.
 - `GET /api/projects/{id}/models/compatible`
 - `POST /api/projects/{id}/models/explain`
 
+## Dataset Structure Explorer and Adapter Studio
+
+- `POST /api/projects/{id}/adapter-studio/profile`
+- `POST /api/projects/{id}/adapter-studio/infer`
+- `POST /api/projects/{id}/adapter-studio/preview`
+- `POST /api/projects/{id}/adapter-studio/validate`
+- `POST /api/projects/{id}/adapter-studio/adapters`
+- `GET /api/projects/{id}/adapter-studio/adapters`
+- `POST /api/projects/{id}/adapter-studio/adapters/{name}/versions/{version}/export`
+
 ## Evaluation
 
 - `POST /api/projects/{id}/evaluation/run`

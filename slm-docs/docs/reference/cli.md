@@ -53,6 +53,16 @@ BrewSLM includes a CLI wrapper (`./brewslm`) for common operations.
 ./brewslm models validate --project 1 --model 1 --json
 ```
 
+## Dataset Structure Explorer and Adapter Studio
+
+```bash
+./brewslm dataset profile --project 1 --source-type csv --source-ref ./data/train.csv --json
+./brewslm adapter infer --project 1 --source-type jsonl --source-ref ./data/chat.jsonl --json
+./brewslm adapter preview --project 1 --source-type jsonl --source-ref ./data/chat.jsonl --adapter-id auto --json
+./brewslm adapter validate --project 1 --source-type jsonl --source-ref ./data/chat.jsonl --adapter-id auto --json
+./brewslm adapter export --project 1 --adapter-name support_adapter --version 2 --json
+```
+
 ## Useful Tips
 
 - Run the same command with small data first.

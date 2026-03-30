@@ -883,57 +883,212 @@ def run_project(args: argparse.Namespace, client: ApiClient) -> int:
 
 
 def run_dataset(args: argparse.Namespace, client: ApiClient) -> int:
-    if args.subcommand != "import":
-        raise ValueError(f"Unsupported dataset subcommand '{args.subcommand}'.")
+    subcommand = str(getattr(args, "subcommand", "") or "").strip().lower()
+    if subcommand == "import":
+        sample_token = str(args.sample or "").strip()
+        file_token = str(args.file or "").strip()
+        if bool(sample_token) == bool(file_token):
+            raise ValueError("Provide exactly one of --sample or --file.")
 
-    sample_token = str(args.sample or "").strip()
-    file_token = str(args.file or "").strip()
-    if bool(sample_token) == bool(file_token):
-        raise ValueError("Provide exactly one of --sample or --file.")
+        sample_id = ""
+        source_label = str(args.source or "").strip()
+        input_path: Path
+        if sample_token:
+            sample_id, input_path = _resolve_sample_dataset(sample_token)
+            if not source_label:
+                source_label = f"quickstart:{sample_id}"
+        else:
+            input_path = _resolve_local_input_file(file_token, label="dataset")
+            if not source_label:
+                source_label = "upload"
 
-    sample_id = ""
-    source_label = str(args.source or "").strip()
-    input_path: Path
-    if sample_token:
-        sample_id, input_path = _resolve_sample_dataset(sample_token)
-        if not source_label:
-            source_label = f"quickstart:{sample_id}"
-    else:
-        input_path = _resolve_local_input_file(file_token, label="dataset")
-        if not source_label:
-            source_label = "upload"
+        uploaded = client.upload_file(
+            f"/projects/{args.project_id}/ingestion/upload",
+            file_path=input_path,
+            form_fields={
+                "source": source_label,
+                "sensitivity": args.sensitivity,
+                "license_info": args.license_info,
+            },
+        )
 
-    uploaded = client.upload_file(
-        f"/projects/{args.project_id}/ingestion/upload",
-        file_path=input_path,
-        form_fields={
-            "source": source_label,
-            "sensitivity": args.sensitivity,
-            "license_info": args.license_info,
-        },
+        output: dict[str, Any] = {
+            "upload": uploaded,
+            "input_file": str(input_path),
+            "sample": sample_id or None,
+        }
+
+        if args.process:
+            document_id = int(uploaded.get("id") or 0)
+            if document_id <= 0:
+                raise RuntimeError("Upload response missing document id; cannot process document.")
+            processed = client.request(
+                "POST",
+                f"/projects/{args.project_id}/ingestion/documents/{document_id}/process",
+            )
+            output["process"] = processed
+            status = str(processed.get("status") or "").strip().lower()
+            _print_json(output)
+            return 0 if status in {"accepted", "completed", "done"} else 1
+
+        _print_json(output)
+        return 0
+
+    if subcommand == "profile":
+        project_id = int(getattr(args, "project_id", 0) or 0)
+        if project_id <= 0:
+            raise ValueError("--project is required for dataset profile.")
+        source: dict[str, Any] = {
+            "source_type": _normalize_text(getattr(args, "source_type", "")) or "project_dataset",
+        }
+        if _normalize_text(getattr(args, "source_ref", "")):
+            source["source_ref"] = _normalize_text(getattr(args, "source_ref", ""))
+        if _normalize_text(getattr(args, "dataset_type", "")):
+            source["dataset_type"] = _normalize_text(getattr(args, "dataset_type", ""))
+        if _normalize_text(getattr(args, "split", "")):
+            source["split"] = _normalize_text(getattr(args, "split", ""))
+        document_id = getattr(args, "document_id", None)
+        if document_id is not None:
+            source["document_id"] = int(document_id)
+        payload = {
+            "source": source,
+            "sample_size": int(getattr(args, "sample_size", 500) or 500),
+        }
+        resp = client.request(
+            "POST",
+            f"/projects/{project_id}/adapter-studio/profile",
+            json_body=payload,
+        )
+        if bool(getattr(args, "json", False)):
+            _print_json(resp)
+            return 0
+        schema = dict(resp.get("schema") or {})
+        print(f"Sampled Rows: {resp.get('sampled_rows')}")
+        print(f"Field Count: {schema.get('field_count')}")
+        hints = list((resp.get("dataset_characteristics") or {}).get("task_shape_hints") or [])
+        if hints:
+            print(f"Task Shape Hints: {', '.join(hints)}")
+        sensitive = list((resp.get("dataset_characteristics") or {}).get("potential_sensitive_columns") or [])
+        if sensitive:
+            print(f"Sensitive Columns: {', '.join(sensitive[:10])}")
+        return 0
+
+    raise ValueError(f"Unsupported dataset subcommand '{subcommand}'.")
+
+
+def run_adapter(args: argparse.Namespace, client: ApiClient) -> int:
+    subcommand = str(getattr(args, "adapter_subcommand", "") or "").strip().lower()
+    as_json = bool(getattr(args, "json", False))
+    project_id = int(getattr(args, "project_id", 0) or 0)
+    if project_id <= 0:
+        raise ValueError("--project is required.")
+
+    source: dict[str, Any] = {
+        "source_type": _normalize_text(getattr(args, "source_type", "")) or "project_dataset",
+    }
+    if _normalize_text(getattr(args, "source_ref", "")):
+        source["source_ref"] = _normalize_text(getattr(args, "source_ref", ""))
+    if _normalize_text(getattr(args, "dataset_type", "")):
+        source["dataset_type"] = _normalize_text(getattr(args, "dataset_type", ""))
+    if _normalize_text(getattr(args, "split", "")):
+        source["split"] = _normalize_text(getattr(args, "split", ""))
+    document_id = getattr(args, "document_id", None)
+    if document_id is not None:
+        source["document_id"] = int(document_id)
+
+    field_mapping_payload = _parse_json_object(
+        _normalize_text(getattr(args, "field_mapping", "")),
+        label="field-mapping",
+    )
+    adapter_config_payload = _parse_json_object(
+        _normalize_text(getattr(args, "adapter_config", "")),
+        label="adapter-config",
     )
 
-    output: dict[str, Any] = {
-        "upload": uploaded,
-        "input_file": str(input_path),
-        "sample": sample_id or None,
-    }
+    if subcommand == "infer":
+        payload = {
+            "source": source,
+            "sample_size": int(getattr(args, "sample_size", 400) or 400),
+            "task_profile": _normalize_text(getattr(args, "task_profile", "")) or None,
+        }
+        resp = client.request("POST", f"/projects/{project_id}/adapter-studio/infer", json_body=payload)
+        if as_json:
+            _print_json(resp)
+            return 0
+        inference = dict(resp.get("inference") or {})
+        print(f"Resolved Adapter: {inference.get('resolved_adapter_id')}")
+        print(f"Task Profile: {inference.get('resolved_task_profile') or 'n/a'}")
+        print(f"Confidence: {inference.get('confidence')}")
+        drop = dict(inference.get("drop_analysis") or {})
+        print(f"Drop Rate: {round(float(drop.get('drop_rate') or 0.0) * 100, 2)}%")
+        return 0
 
-    if args.process:
-        document_id = int(uploaded.get("id") or 0)
-        if document_id <= 0:
-            raise RuntimeError("Upload response missing document id; cannot process document.")
-        processed = client.request(
+    if subcommand == "preview":
+        payload = {
+            "source": source,
+            "adapter_id": _normalize_text(getattr(args, "adapter_id", "")) or "auto",
+            "field_mapping": field_mapping_payload,
+            "adapter_config": adapter_config_payload,
+            "task_profile": _normalize_text(getattr(args, "task_profile", "")) or None,
+            "sample_size": int(getattr(args, "sample_size", 300) or 300),
+            "preview_limit": int(getattr(args, "preview_limit", 25) or 25),
+        }
+        resp = client.request("POST", f"/projects/{project_id}/adapter-studio/preview", json_body=payload)
+        if as_json:
+            _print_json(resp)
+            return 0
+        preview = dict(resp.get("preview") or {})
+        print(f"Resolved Adapter: {preview.get('resolved_adapter_id')}")
+        print(f"Sampled: {preview.get('sampled_records')}  Mapped: {preview.get('mapped_records')}  Dropped: {preview.get('dropped_records')}")
+        return 0
+
+    if subcommand == "validate":
+        payload = {
+            "source": source,
+            "adapter_id": _normalize_text(getattr(args, "adapter_id", "")) or "auto",
+            "field_mapping": field_mapping_payload,
+            "adapter_config": adapter_config_payload,
+            "task_profile": _normalize_text(getattr(args, "task_profile", "")) or None,
+            "sample_size": int(getattr(args, "sample_size", 300) or 300),
+            "preview_limit": int(getattr(args, "preview_limit", 25) or 25),
+        }
+        resp = client.request("POST", f"/projects/{project_id}/adapter-studio/validate", json_body=payload)
+        if as_json:
+            _print_json(resp)
+            return 0
+        status = str(resp.get("status") or "").strip().upper()
+        print(f"Validation Status: {status}")
+        reason_codes = [str(item) for item in list(resp.get("reason_codes") or []) if str(item).strip()]
+        if reason_codes:
+            print(f"Reason Codes: {', '.join(reason_codes)}")
+        actions = [str(item) for item in list(resp.get("recommended_next_actions") or []) if str(item).strip()]
+        if actions:
+            print("Recommended Actions:")
+            for item in actions[:6]:
+                print(f"- {item}")
+        return 0 if str(resp.get("status") or "").strip().lower() == "pass" else 1
+
+    if subcommand == "export":
+        adapter_name = _normalize_text(getattr(args, "adapter_name", ""))
+        version = int(getattr(args, "version", 0) or 0)
+        if not adapter_name or version <= 0:
+            raise ValueError("--adapter-name and --version are required for adapter export.")
+        payload = {"export_dir": _normalize_text(getattr(args, "export_dir", "")) or None}
+        resp = client.request(
             "POST",
-            f"/projects/{args.project_id}/ingestion/documents/{document_id}/process",
+            f"/projects/{project_id}/adapter-studio/adapters/{adapter_name}/versions/{version}/export",
+            json_body=payload,
         )
-        output["process"] = processed
-        status = str(processed.get("status") or "").strip().lower()
-        _print_json(output)
-        return 0 if status in {"accepted", "completed", "done"} else 1
+        if as_json:
+            _print_json(resp)
+            return 0
+        written = dict(resp.get("written_files") or {})
+        print(f"Exported adapter scaffold: {adapter_name} v{version}")
+        print(f"Template JSON: {written.get('template_json')}")
+        print(f"Plugin Python: {written.get('plugin_python')}")
+        return 0
 
-    _print_json(output)
-    return 0
+    raise ValueError(f"Unsupported adapter subcommand '{subcommand}'.")
 
 
 def run_models(args: argparse.Namespace, client: ApiClient) -> int:
@@ -1253,7 +1408,76 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip immediate document processing after upload",
     )
     dataset_import.set_defaults(process=True)
+
+    dataset_profile = dataset_sub.add_parser("profile", help="Profile dataset structure and sensitive columns")
+    dataset_profile.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    dataset_profile.add_argument(
+        "--source-type",
+        default="project_dataset",
+        help=(
+            "Source type: project_dataset, csv, tsv, json, jsonl, parquet, huggingface, "
+            "sql_snapshot, document_corpus, chunk_corpus, chat_transcripts, pairwise_preference"
+        ),
+    )
+    dataset_profile.add_argument("--source-ref", default="", help="Source path/ref (required for non-project_dataset)")
+    dataset_profile.add_argument("--dataset-type", default="raw", help="Project dataset type when source-type=project_dataset")
+    dataset_profile.add_argument("--document-id", type=int, default=None, help="Optional raw document id for project_dataset")
+    dataset_profile.add_argument("--split", default="", help="Dataset split (Hugging Face only)")
+    dataset_profile.add_argument("--sample-size", type=int, default=500)
+    dataset_profile.add_argument("--json", action="store_true", help="Emit JSON output")
     dataset_parser.set_defaults(func=run_dataset)
+
+    adapter_parser = subparsers.add_parser("adapter", help="Dataset Adapter Studio workflows")
+    adapter_sub = adapter_parser.add_subparsers(dest="adapter_subcommand", required=True)
+
+    adapter_infer = adapter_sub.add_parser("infer", help="Infer adapter definition from source structure")
+    adapter_infer.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    adapter_infer.add_argument("--source-type", default="project_dataset")
+    adapter_infer.add_argument("--source-ref", default="")
+    adapter_infer.add_argument("--dataset-type", default="raw")
+    adapter_infer.add_argument("--document-id", type=int, default=None)
+    adapter_infer.add_argument("--split", default="")
+    adapter_infer.add_argument("--task-profile", default="")
+    adapter_infer.add_argument("--sample-size", type=int, default=400)
+    adapter_infer.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    adapter_preview = adapter_sub.add_parser("preview", help="Preview transformed rows with adapter config")
+    adapter_preview.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    adapter_preview.add_argument("--source-type", default="project_dataset")
+    adapter_preview.add_argument("--source-ref", default="")
+    adapter_preview.add_argument("--dataset-type", default="raw")
+    adapter_preview.add_argument("--document-id", type=int, default=None)
+    adapter_preview.add_argument("--split", default="")
+    adapter_preview.add_argument("--adapter-id", default="auto")
+    adapter_preview.add_argument("--field-mapping", default="", help="JSON object canonical->source mapping")
+    adapter_preview.add_argument("--adapter-config", default="", help="JSON object adapter config")
+    adapter_preview.add_argument("--task-profile", default="")
+    adapter_preview.add_argument("--sample-size", type=int, default=300)
+    adapter_preview.add_argument("--preview-limit", type=int, default=25)
+    adapter_preview.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    adapter_validate = adapter_sub.add_parser("validate", help="Validate adapter coverage against sampled rows")
+    adapter_validate.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    adapter_validate.add_argument("--source-type", default="project_dataset")
+    adapter_validate.add_argument("--source-ref", default="")
+    adapter_validate.add_argument("--dataset-type", default="raw")
+    adapter_validate.add_argument("--document-id", type=int, default=None)
+    adapter_validate.add_argument("--split", default="")
+    adapter_validate.add_argument("--adapter-id", default="auto")
+    adapter_validate.add_argument("--field-mapping", default="", help="JSON object canonical->source mapping")
+    adapter_validate.add_argument("--adapter-config", default="", help="JSON object adapter config")
+    adapter_validate.add_argument("--task-profile", default="")
+    adapter_validate.add_argument("--sample-size", type=int, default=300)
+    adapter_validate.add_argument("--preview-limit", type=int, default=25)
+    adapter_validate.add_argument("--json", action="store_true", help="Emit JSON output")
+
+    adapter_export = adapter_sub.add_parser("export", help="Export saved adapter definition as plugin/template scaffold")
+    adapter_export.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    adapter_export.add_argument("--adapter-name", required=True)
+    adapter_export.add_argument("--version", type=int, required=True)
+    adapter_export.add_argument("--export-dir", default="", help="Optional output directory")
+    adapter_export.add_argument("--json", action="store_true", help="Emit JSON output")
+    adapter_parser.set_defaults(func=run_adapter)
 
     models_parser = subparsers.add_parser(
         "models",
