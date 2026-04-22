@@ -71,6 +71,7 @@ BASE_REQUIRED_TABLES = {
     "project_secrets",
     "playground_sessions",
     "autopilot_decisions",
+    "autopilot_snapshots",
 }
 
 AUTH_REQUIRED_TABLES = {

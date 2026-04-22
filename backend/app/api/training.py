@@ -118,6 +118,11 @@ from app.services.newbie_autopilot_service import (
     resolve_newbie_autopilot_intent,
 )
 from app.services.autopilot_decision_service import persist_decision_log
+from app.services.autopilot_snapshot_service import (
+    capture_project_snapshot,
+    capture_snapshot,
+    update_snapshot_post_state,
+)
 from app.services.readiness_service import get_project_readiness
 from app.services.target_profile_service import (
     check_compatibility,
@@ -1800,6 +1805,38 @@ async def _orchestrate_newbie_autopilot_v2_impl(
     run_name = str(req.run_name or "").strip() or suggested_name or "Autopilot Run"
     description = str(req.description or "").strip() or f"Autopilot v2 run from intent: {effective_intent[:120]}"
 
+    # Capture a pre-change snapshot so the upcoming experiment launch can be
+    # rolled back via /autopilot/rollback/{decision_id}. The snapshot is keyed
+    # to the sequence the `start_training` decision will occupy (current length
+    # of decision_log), so rollback can resolve snapshot from decision id.
+    start_training_sequence = len(decision_log)
+    project_pre_config = await capture_project_snapshot(db, project_id=project_id)
+    snapshot_id = await capture_snapshot(
+        run_id=run_id,
+        project_id=project_id,
+        decision_sequence=start_training_sequence,
+        snapshot_type="autopilot_training_launch",
+        pre_state={
+            "project": project_pre_config,
+            "selected_profile": selected_profile,
+            "safe_config": safe_config,
+        },
+        rollback_actions=[
+            {"kind": "cancel_experiment"},
+            {
+                "kind": "restore_project_config",
+                "fields": [
+                    "base_model_name",
+                    "target_profile_id",
+                    "training_preferred_plan_profile",
+                    "evaluation_preferred_pack_id",
+                    "dataset_adapter_preset",
+                    "active_domain_blueprint_version",
+                ],
+            },
+        ],
+    )
+
     exp = await create_experiment(
         db,
         project_id,
@@ -1823,7 +1860,11 @@ async def _orchestrate_newbie_autopilot_v2_impl(
             summary="Created experiment and started training successfully.",
             changed=True,
             safe=True,
-            metadata={"experiment_id": int(exp.id)},
+            metadata={
+                "experiment_id": int(exp.id),
+                "rollback_available": bool(snapshot_id),
+                "snapshot_id": int(snapshot_id) if snapshot_id else None,
+            },
         )
     except ValueError as exc:
         start_error = str(exc)
@@ -1836,8 +1877,25 @@ async def _orchestrate_newbie_autopilot_v2_impl(
             safe=True,
             blocker=True,
             why=start_error,
-            metadata={"experiment_id": int(exp.id)},
+            metadata={
+                "experiment_id": int(exp.id),
+                "rollback_available": bool(snapshot_id),
+                "snapshot_id": int(snapshot_id) if snapshot_id else None,
+            },
         )
+
+    # Record what actually happened so the rollback service knows which
+    # experiment/task to unwind. Best-effort: a persistence error here does
+    # not break the orchestration response.
+    await update_snapshot_post_state(
+        snapshot_id,
+        post_state={
+            "experiment_id": int(exp.id),
+            "training_started": bool(started),
+            "task_id": str((start_result or {}).get("task_id") or "") or None,
+            "start_error": start_error or None,
+        },
+    )
 
     return AutopilotV2OrchestrationResponse(
         project_id=project_id,
