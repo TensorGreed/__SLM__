@@ -1100,6 +1100,74 @@ def _append_autopilot_decision(
     decision_log.append(entry)
 
 
+# ---------------------------------------------------------------------------
+# Strict-mode refusal reason codes (priority.md P5).
+#
+# When `settings.STRICT_EXECUTION_MODE` is true, the autopilot must NOT silently
+# apply any of its auto-repairs. Instead, each repair that would have fired
+# becomes a blocker with one of these reason codes, so operators can see
+# exactly why the plan is unrunnable and what to fix.
+# ---------------------------------------------------------------------------
+
+STRICT_MODE_REFUSED_INTENT_REWRITE = "STRICT_MODE_REFUSED_INTENT_REWRITE"
+STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE = "STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE"
+STRICT_MODE_REFUSED_TARGET_FALLBACK = "STRICT_MODE_REFUSED_TARGET_FALLBACK"
+STRICT_MODE_REFUSED_PROFILE_AUTOTUNE = "STRICT_MODE_REFUSED_PROFILE_AUTOTUNE"
+
+_STRICT_REFUSAL_MESSAGES: dict[str, str] = {
+    STRICT_MODE_REFUSED_INTENT_REWRITE: (
+        "Strict mode refused an autopilot intent rewrite. Supply "
+        "`intent_rewrite` explicitly or disable strict mode."
+    ),
+    STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE: (
+        "Strict mode refused automatic dataset preparation. Prepare the "
+        "dataset splits manually before retrying."
+    ),
+    STRICT_MODE_REFUSED_TARGET_FALLBACK: (
+        "Strict mode refused to swap target profile. Choose a compatible "
+        "target explicitly or disable strict mode."
+    ),
+    STRICT_MODE_REFUSED_PROFILE_AUTOTUNE: (
+        "Strict mode refused to auto-tune the plan profile. Choose a runnable "
+        "plan profile explicitly or disable strict mode."
+    ),
+}
+
+
+def _merge_strict_mode_refusals(
+    launch_guardrails: dict[str, object],
+    refusals: list[str],
+) -> dict[str, object]:
+    """Append strict-mode refusal reason codes + blocker messages to guardrails.
+
+    Mutates `launch_guardrails` for consistency with the surrounding call sites
+    and returns it for chainability. When any refusal is present, forces
+    `can_run=False` in the merged dict.
+    """
+    if not refusals:
+        return launch_guardrails
+    blockers = [
+        str(item).strip()
+        for item in list(launch_guardrails.get("blockers") or [])
+        if str(item).strip()
+    ]
+    reason_codes = [
+        str(item).strip()
+        for item in list(launch_guardrails.get("reason_codes") or [])
+        if str(item).strip()
+    ]
+    for code in refusals:
+        message = _STRICT_REFUSAL_MESSAGES.get(code, f"Strict mode refused {code}.")
+        if message not in blockers:
+            blockers.append(message)
+        if code not in reason_codes:
+            reason_codes.append(code)
+    launch_guardrails["blockers"] = _dedupe_preserve(blockers)
+    launch_guardrails["reason_codes"] = _dedupe_preserve(reason_codes)
+    launch_guardrails["can_run"] = False
+    return launch_guardrails
+
+
 def _choose_target_fallback_id(current_target_profile_id: str) -> str | None:
     current = str(current_target_profile_id or "").strip().lower() or "vllm_server"
     preferred = ("vllm_server", "edge_gpu", "mobile_cpu", "browser_webgpu")
@@ -1269,6 +1337,10 @@ async def _orchestrate_newbie_autopilot_v2_impl(
         },
     }
 
+    # Reason codes accumulated when strict mode refuses an otherwise-silent
+    # auto-repair. Merged into the final `launch_guardrails` at the end.
+    strict_mode_refusals: list[str] = []
+
     effective_req = NewbieAutopilotIntentRequest(
         intent=effective_intent,
         target_profile_id=effective_target_profile_id,
@@ -1379,39 +1451,69 @@ async def _orchestrate_newbie_autopilot_v2_impl(
             rewrite_source = str(top.get("id") or "intent_clarification.rewrite_suggestions[0]")
 
     if rewrite_intent and rewrite_intent.lower() != effective_intent.lower():
-        previous_intent = effective_intent
-        effective_intent = rewrite_intent
-        repairs["intent_rewrite"] = {
-            "applied": True,
-            "original_intent": previous_intent,
-            "rewritten_intent": effective_intent,
-            "source": rewrite_source,
-        }
-        effective_req = NewbieAutopilotIntentRequest(
-            intent=effective_intent,
-            target_profile_id=effective_target_profile_id,
-            target_device=resolved_target_device,
-            primary_language=req.primary_language,
-            available_vram_gb=req.available_vram_gb,
-            base_model=req.base_model,
-            auto_prepare_data=req.auto_prepare_data,
-        )
-        plan_v2_resp = await _build_newbie_autopilot_plan_v2(
-            db=db,
-            project_id=project_id,
-            req=effective_req,
-        )
-        _append_autopilot_decision(
-            decision_log,
-            step="intent_rewrite",
-            status="applied",
-            summary="Applied intent rewrite suggestion and rebuilt autopilot plan.",
-            changed=True,
-            safe=True,
-            why="Clarifies task output for higher confidence planning.",
-            before={"intent": previous_intent},
-            after={"intent": effective_intent},
-        )
+        # Strict mode refuses autopilot-suggested rewrites (user-supplied
+        # rewrites, identified by `rewrite_source == "request.intent_rewrite"`,
+        # are still honored — the user made them explicit).
+        if strict_mode and rewrite_source != "request.intent_rewrite":
+            repairs["intent_rewrite"] = {
+                "applied": False,
+                "strict_mode_blocked": True,
+                "original_intent": effective_intent,
+                "proposed_intent": rewrite_intent,
+                "source": rewrite_source,
+                "reason_code": STRICT_MODE_REFUSED_INTENT_REWRITE,
+            }
+            strict_mode_refusals.append(STRICT_MODE_REFUSED_INTENT_REWRITE)
+            _append_autopilot_decision(
+                decision_log,
+                step="intent_rewrite",
+                status="blocked",
+                summary="Strict mode refused an autopilot-suggested intent rewrite.",
+                changed=False,
+                safe=True,
+                blocker=True,
+                why="Strict mode requires the caller to supply intent_rewrite explicitly.",
+                before={"intent": effective_intent},
+                after={"intent": rewrite_intent},
+                metadata={
+                    "reason_code": STRICT_MODE_REFUSED_INTENT_REWRITE,
+                    "source": rewrite_source,
+                },
+            )
+        else:
+            previous_intent = effective_intent
+            effective_intent = rewrite_intent
+            repairs["intent_rewrite"] = {
+                "applied": True,
+                "original_intent": previous_intent,
+                "rewritten_intent": effective_intent,
+                "source": rewrite_source,
+            }
+            effective_req = NewbieAutopilotIntentRequest(
+                intent=effective_intent,
+                target_profile_id=effective_target_profile_id,
+                target_device=resolved_target_device,
+                primary_language=req.primary_language,
+                available_vram_gb=req.available_vram_gb,
+                base_model=req.base_model,
+                auto_prepare_data=req.auto_prepare_data,
+            )
+            plan_v2_resp = await _build_newbie_autopilot_plan_v2(
+                db=db,
+                project_id=project_id,
+                req=effective_req,
+            )
+            _append_autopilot_decision(
+                decision_log,
+                step="intent_rewrite",
+                status="applied",
+                summary="Applied intent rewrite suggestion and rebuilt autopilot plan.",
+                changed=True,
+                safe=True,
+                why="Clarifies task output for higher confidence planning.",
+                before={"intent": previous_intent},
+                after={"intent": effective_intent},
+            )
     else:
         _append_autopilot_decision(
             decision_log,
@@ -1431,6 +1533,32 @@ async def _orchestrate_newbie_autopilot_v2_impl(
     auto_prepare_result: dict[str, object] | None = None
 
     if (
+        not can_run
+        and bool(req.auto_prepare_data)
+        and _has_dataset_guardrail_blocker(blockers)
+        and strict_mode
+    ):
+        # Strict mode refuses to silently generate or prepare dataset artifacts
+        # — the operator must prepare splits manually.
+        repairs["dataset_auto_prepare"] = {
+            "applied": False,
+            "strict_mode_blocked": True,
+            "reason_code": STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE,
+            "reason": "Strict mode refused automatic dataset preparation.",
+        }
+        strict_mode_refusals.append(STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE)
+        _append_autopilot_decision(
+            decision_log,
+            step="dataset_auto_prepare",
+            status="blocked",
+            summary="Strict mode refused automatic dataset preparation.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why="Strict mode requires datasets to be prepared manually before training.",
+            metadata={"reason_code": STRICT_MODE_REFUSED_DATASET_AUTO_PREPARE},
+        )
+    elif (
         not can_run
         and bool(req.auto_prepare_data)
         and _has_dataset_guardrail_blocker(blockers)
@@ -1500,6 +1628,42 @@ async def _orchestrate_newbie_autopilot_v2_impl(
 
     compatibility = dict(plan_v2_resp.target_compatibility or {})
     if (
+        not can_run
+        and bool(req.allow_target_fallback)
+        and _has_target_incompatibility_blocker(
+            guardrails=launch_guardrails,
+            compatibility=compatibility,
+        )
+        and strict_mode
+    ):
+        # Strict mode refuses to silently swap the user's chosen target.
+        repairs["target_fallback"] = {
+            "applied": False,
+            "strict_mode_blocked": True,
+            "from_target_profile_id": effective_target_profile_id,
+            "to_target_profile_id": None,
+            "reason": "Strict mode refused to swap target profile.",
+            "reason_code": STRICT_MODE_REFUSED_TARGET_FALLBACK,
+        }
+        strict_mode_refusals.append(STRICT_MODE_REFUSED_TARGET_FALLBACK)
+        _append_autopilot_decision(
+            decision_log,
+            step="target_fallback",
+            status="blocked",
+            summary="Strict mode refused automatic target-profile fallback.",
+            changed=False,
+            safe=True,
+            blocker=True,
+            why=(
+                "Strict mode requires the caller to choose a compatible target "
+                "explicitly rather than accepting a silent downgrade."
+            ),
+            metadata={
+                "reason_code": STRICT_MODE_REFUSED_TARGET_FALLBACK,
+                "requested_target_profile_id": effective_target_profile_id,
+            },
+        )
+    elif (
         not can_run
         and bool(req.allow_target_fallback)
         and _has_target_incompatibility_blocker(
@@ -1598,7 +1762,37 @@ async def _orchestrate_newbie_autopilot_v2_impl(
         and not bool(dict(selected_plan.get("preflight") or {}).get("ok", False))
     ):
         runnable = _first_runnable_plan(plan_options)
-        if runnable is not None:
+        if runnable is not None and strict_mode:
+            # Strict mode refuses to silently downgrade the user's chosen
+            # profile to a different runnable option.
+            previous_profile = _plan_profile_token(selected_plan.get("profile"))
+            candidate_profile = _plan_profile_token(runnable.get("profile"))
+            repairs["profile_autotune"] = {
+                "applied": False,
+                "strict_mode_blocked": True,
+                "from_profile": previous_profile,
+                "to_profile": candidate_profile,
+                "reason": "Strict mode refused to auto-tune the plan profile.",
+                "reason_code": STRICT_MODE_REFUSED_PROFILE_AUTOTUNE,
+            }
+            strict_mode_refusals.append(STRICT_MODE_REFUSED_PROFILE_AUTOTUNE)
+            _append_autopilot_decision(
+                decision_log,
+                step="profile_autotune",
+                status="blocked",
+                summary="Strict mode refused automatic plan-profile autotune.",
+                changed=False,
+                safe=True,
+                blocker=True,
+                why=(
+                    "Strict mode requires the caller to pick a runnable profile "
+                    "explicitly rather than accepting a silent downgrade."
+                ),
+                before={"profile": previous_profile},
+                after={"profile": candidate_profile},
+                metadata={"reason_code": STRICT_MODE_REFUSED_PROFILE_AUTOTUNE},
+            )
+        elif runnable is not None:
             previous_profile = _plan_profile_token(selected_plan.get("profile"))
             selected_plan = dict(runnable)
             selected_profile = _plan_profile_token(selected_plan.get("profile"))
@@ -1688,6 +1882,15 @@ async def _orchestrate_newbie_autopilot_v2_impl(
             ]
         ),
     }
+
+    # Merge strict-mode refusals recorded by each repair block into the final
+    # guardrails so every refused auto-repair surfaces as a stable blocker.
+    if strict_mode_refusals:
+        launch_guardrails = _merge_strict_mode_refusals(
+            launch_guardrails, strict_mode_refusals
+        )
+        can_run = False
+
     strict_simulation_conflict = bool(
         _contains_simulation_guardrail_signal(launch_guardrails)
         or str(settings.TRAINING_BACKEND or "").strip().lower() == "simulate"

@@ -4,6 +4,7 @@ import {
     BookOpen,
     Bot,
     Boxes,
+    ClipboardList,
     Compass,
     FileCog,
     FolderTree,
@@ -94,6 +95,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
     const isModelsRoute = location.pathname === `/project/${projectId}/models`;
     const isAdapterStudioRoute = location.pathname === `/project/${projectId}/adapter-studio`;
+    const isAutopilotRoute = location.pathname === `/project/${projectId}/autopilot`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
@@ -102,7 +104,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
     const isWizardRoute = location.pathname === `/project/${projectId}/wizard`;
 
     const routeRailKey: RailKey = useMemo(() => {
-        if (isTrainingConfigRoute || isPipelineTrainingRoute || isModelsRoute || isAdapterStudioRoute) return 'training';
+        if (isTrainingConfigRoute || isPipelineTrainingRoute || isModelsRoute || isAdapterStudioRoute || isAutopilotRoute) return 'training';
         if (isPlaygroundRoute) return 'playground';
         if (isWorkflowRoute || isRecipesRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
@@ -113,6 +115,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
         isPipelineTrainingRoute,
         isModelsRoute,
         isAdapterStudioRoute,
+        isAutopilotRoute,
         isPlaygroundRoute,
         isWorkflowRoute,
         isRecipesRoute,
@@ -326,6 +329,13 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                             >
                                 <Boxes size={15} />
                                 <span className="nav-label">Adapter Studio</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isAutopilotRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/autopilot`)}
+                            >
+                                <ClipboardList size={15} />
+                                <span className="nav-label">Autopilot Planner</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}

@@ -4,6 +4,7 @@ import { Navigate, Outlet, useParams } from 'react-router-dom';
 import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
 import WorkspaceFlowHint from '../components/layout/WorkspaceFlowHint';
+import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 
@@ -90,6 +91,7 @@ export default function ProjectWorkspaceLayout() {
                     <Outlet context={contextValue} />
                 </div>
             </div>
+            <DecisionLogDrawer projectId={projectId} />
         </div>
     );
 }
