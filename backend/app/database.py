@@ -72,6 +72,7 @@ BASE_REQUIRED_TABLES = {
     "playground_sessions",
     "autopilot_decisions",
     "autopilot_snapshots",
+    "autopilot_repair_previews",
 }
 
 AUTH_REQUIRED_TABLES = {

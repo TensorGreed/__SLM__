@@ -12,6 +12,7 @@ from app.models.domain_profile import DomainProfile
 from app.models.domain_blueprint import DomainBlueprintRevision
 from app.models.artifact import ArtifactRecord
 from app.models.autopilot_decision import AutopilotDecision
+from app.models.autopilot_repair_preview import AutopilotRepairPreview
 from app.models.autopilot_snapshot import AutopilotSnapshot
 from app.models.playground import PlaygroundSession
 from app.models.workflow_run import WorkflowRun, WorkflowRunNode
@@ -39,6 +40,7 @@ __all__ = [
     "DomainBlueprintRevision",
     "ArtifactRecord",
     "AutopilotDecision",
+    "AutopilotRepairPreview",
     "AutopilotSnapshot",
     "PlaygroundSession",
     "WorkflowRun",
