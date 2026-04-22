@@ -1274,6 +1274,294 @@ def run_models(args: argparse.Namespace, client: ApiClient) -> int:
     raise ValueError(f"Unsupported models subcommand '{subcommand}'.")
 
 
+# ---------------------------------------------------------------------------
+# Autopilot command group (priority.md P4 — plan / run / repair / rollback /
+# decisions). Builds on the P1 decision-log API, P2 rollback, and P3
+# repair-preview/apply endpoints.
+# ---------------------------------------------------------------------------
+
+
+_AUTOPILOT_PLAN_PROFILES = (
+    "safe",
+    "balanced",
+    "max_quality",
+    "fastest",
+    "best_quality",
+)
+
+
+def _build_orchestrate_body(args: argparse.Namespace) -> dict[str, Any]:
+    """Turn shared `plan` / `run` CLI flags into an orchestrate request body."""
+    body: dict[str, Any] = {
+        "intent": _normalize_text(getattr(args, "intent", "")) or DEFAULT_INTENT,
+        "target_profile_id": _normalize_text(getattr(args, "target_profile_id", "")) or "vllm_server",
+        "primary_language": _normalize_text(getattr(args, "primary_language", "")) or "english",
+        "auto_prepare_data": not bool(getattr(args, "no_auto_prepare_data", False)),
+        "auto_apply_rewrite": not bool(getattr(args, "no_auto_rewrite", False)),
+        "allow_target_fallback": not bool(getattr(args, "no_target_fallback", False)),
+        "allow_profile_autotune": not bool(getattr(args, "no_profile_autotune", False)),
+        "plan_profile": _normalize_text(getattr(args, "plan_profile", "")) or "balanced",
+    }
+    target_device = _normalize_text(getattr(args, "target_device", ""))
+    if target_device:
+        body["target_device"] = target_device
+    available_vram_gb = getattr(args, "available_vram_gb", None)
+    if available_vram_gb is not None:
+        body["available_vram_gb"] = float(available_vram_gb)
+    base_model = _normalize_text(getattr(args, "base_model", ""))
+    if base_model:
+        body["base_model"] = base_model
+    intent_rewrite = _normalize_text(getattr(args, "intent_rewrite", ""))
+    if intent_rewrite:
+        body["intent_rewrite"] = intent_rewrite
+    run_name = _normalize_text(getattr(args, "run_name", ""))
+    if run_name:
+        body["run_name"] = run_name
+    description = _normalize_text(getattr(args, "description", ""))
+    if description:
+        body["description"] = description
+    return body
+
+
+def _render_autopilot_plan_summary(payload: dict[str, Any]) -> None:
+    preview = dict(payload.get("preview") or {})
+    diff = dict(payload.get("config_diff") or {})
+    guardrails = dict(diff.get("guardrails") or {})
+    token = str(preview.get("plan_token") or "")
+    expires_at = str(preview.get("expires_at") or "")
+    state_hash = str(payload.get("state_hash") or preview.get("state_hash") or "")
+
+    print(f"Plan token: {token}")
+    print(f"State hash: {state_hash}")
+    if expires_at:
+        print(f"Expires at: {expires_at}")
+    summary = str(diff.get("summary") or "").strip()
+    if summary:
+        print(f"Summary: {summary}")
+    can_run = bool(diff.get("would_create_experiment"))
+    print(f"Would create experiment: {'yes' if can_run else 'no'}")
+    profile = str(diff.get("selected_profile") or "").strip()
+    if profile:
+        print(f"Selected profile: {profile}")
+    target = str(diff.get("effective_target_profile_id") or "").strip()
+    if target:
+        print(f"Target profile: {target}")
+
+    repairs = [row for row in list(diff.get("repairs_planned") or []) if isinstance(row, dict)]
+    if repairs:
+        print("Repairs planned:")
+        for entry in repairs:
+            kind = str(entry.get("kind") or "").strip()
+            marker = "applied" if entry.get("applied") or entry.get("succeeded") else "skipped"
+            extras = []
+            if entry.get("from_profile") and entry.get("to_profile"):
+                extras.append(f"profile {entry['from_profile']} -> {entry['to_profile']}")
+            if entry.get("from_target_profile_id") and entry.get("to_target_profile_id"):
+                extras.append(
+                    f"target {entry['from_target_profile_id']} -> {entry['to_target_profile_id']}"
+                )
+            tail = f" ({', '.join(extras)})" if extras else ""
+            print(f"  - {kind} [{marker}]{tail}")
+
+    blockers = [str(x).strip() for x in list(guardrails.get("blockers") or []) if str(x).strip()]
+    warnings = [str(x).strip() for x in list(guardrails.get("warnings") or []) if str(x).strip()]
+    print(f"Guardrails: {len(blockers)} blocker(s), {len(warnings)} warning(s)")
+    for blocker in blockers[:3]:
+        print(f"  [BLOCKER] {blocker}")
+    for warning in warnings[:3]:
+        print(f"  [WARN] {warning}")
+
+
+def _render_autopilot_run_summary(response: dict[str, Any]) -> None:
+    run_id = str(response.get("run_id") or "")
+    started = bool(response.get("started"))
+    experiment = dict(response.get("experiment") or {})
+    dry_run = bool(response.get("dry_run"))
+    print(f"Run ID: {run_id}")
+    print(f"Dry run: {'yes' if dry_run else 'no'}")
+    print(f"Training started: {'yes' if started else 'no'}")
+    if experiment:
+        print(f"Experiment id: {experiment.get('id')}")
+        print(f"Experiment name: {experiment.get('name')}")
+    _print_autopilot_v2_decision_log(response)
+
+
+def _autopilot_plan(args: argparse.Namespace, client: ApiClient, *, as_json: bool) -> int:
+    project_id = int(getattr(args, "project_id", 0) or 0)
+    if project_id <= 0:
+        raise ValueError("--project is required for autopilot plan.")
+    body = _build_orchestrate_body(args)
+    body["project_id"] = project_id
+    payload = client.request("POST", "/autopilot/repair-preview", json_body=body)
+    if as_json:
+        _print_json(payload)
+    else:
+        _render_autopilot_plan_summary(payload)
+    diff = dict(dict(payload or {}).get("config_diff") or {})
+    return 0 if bool(diff.get("would_create_experiment")) else 1
+
+
+def _autopilot_run(args: argparse.Namespace, client: ApiClient, *, as_json: bool) -> int:
+    project_id = int(getattr(args, "project_id", 0) or 0)
+    if project_id <= 0:
+        raise ValueError("--project is required for autopilot run.")
+    body = _build_orchestrate_body(args)
+    body["dry_run"] = False
+    response = client.request(
+        "POST",
+        f"/projects/{project_id}/training/autopilot/v2/orchestrate/run",
+        json_body=body,
+    )
+    if as_json:
+        _print_json(response)
+    else:
+        _render_autopilot_run_summary(response)
+    return 0 if bool(response.get("started")) else 1
+
+
+def _autopilot_repair(args: argparse.Namespace, client: ApiClient, *, as_json: bool) -> int:
+    token = _normalize_text(getattr(args, "plan_token", ""))
+    if not token:
+        raise ValueError("--plan-token is required for autopilot repair.")
+    body: dict[str, Any] = {"plan_token": token, "force": bool(getattr(args, "force", False))}
+    actor = _normalize_text(getattr(args, "actor", ""))
+    if actor:
+        body["actor"] = actor
+    reason = _normalize_text(getattr(args, "reason", ""))
+    if reason:
+        body["reason"] = reason
+    expected_hash = _normalize_text(getattr(args, "expected_state_hash", ""))
+    if expected_hash:
+        body["expected_state_hash"] = expected_hash
+    payload = client.request("POST", "/autopilot/repair-apply", json_body=body)
+    if as_json:
+        _print_json(payload)
+        return 0 if bool(payload.get("ok")) else 1
+    response = dict(payload.get("response") or {})
+    preview = dict(payload.get("preview") or {})
+    print(f"Applied plan token: {preview.get('plan_token')}")
+    if preview.get("applied_at"):
+        print(f"Applied at: {preview['applied_at']}")
+    _render_autopilot_run_summary(response)
+    return 0 if bool(payload.get("ok")) and bool(response.get("started")) else 1
+
+
+def _autopilot_rollback(args: argparse.Namespace, client: ApiClient, *, as_json: bool) -> int:
+    decision_id = int(getattr(args, "decision_id", 0) or 0)
+    if decision_id <= 0:
+        raise ValueError("decision_id must be a positive integer.")
+
+    if bool(getattr(args, "preview", False)):
+        payload = client.request(
+            "POST", f"/autopilot/rollback/{decision_id}/preview"
+        )
+        if as_json:
+            _print_json(payload)
+        else:
+            reversible = bool(payload.get("reversible"))
+            print(f"Reversible: {'yes' if reversible else 'no'}")
+            if not reversible:
+                print(f"Reason: {payload.get('reason')}")
+                print(f"Detail: {payload.get('message') or ''}")
+            steps = [row for row in list(payload.get("steps") or []) if isinstance(row, dict)]
+            if steps:
+                print(f"Steps ({len(steps)}):")
+                for step in steps:
+                    kind = str(step.get("kind") or "").strip()
+                    extras = {k: v for k, v in step.items() if k != "kind"}
+                    print(f"  - {kind}: {json.dumps(extras, ensure_ascii=True)}")
+        return 0 if bool(payload.get("reversible")) else 1
+
+    body: dict[str, Any] = {}
+    actor = _normalize_text(getattr(args, "actor", ""))
+    if actor:
+        body["actor"] = actor
+    reason = _normalize_text(getattr(args, "reason", ""))
+    if reason:
+        body["reason"] = reason
+    payload = client.request(
+        "POST",
+        f"/autopilot/rollback/{decision_id}",
+        json_body=body,
+    )
+    if as_json:
+        _print_json(payload)
+        return 0 if bool(payload.get("ok")) else 1
+    ok = bool(payload.get("ok"))
+    rollback_decision = dict(payload.get("rollback_decision") or {})
+    print(f"Rollback succeeded: {'yes' if ok else 'no'}")
+    if rollback_decision:
+        print(f"Rollback decision id: {rollback_decision.get('id')}")
+        print(f"Rollback stage: {rollback_decision.get('stage')} / {rollback_decision.get('action')}")
+    outcomes = [row for row in list(payload.get("outcomes") or []) if isinstance(row, dict)]
+    if outcomes:
+        print(f"Outcomes ({len(outcomes)}):")
+        for row in outcomes:
+            kind = str(row.get("kind") or "").strip()
+            status = str(row.get("status") or "").strip()
+            message = str(row.get("message") or "").strip()
+            tail = f": {message}" if message else ""
+            print(f"  - {kind}: {status}{tail}")
+    return 0 if ok else 1
+
+
+def _autopilot_decisions(args: argparse.Namespace, client: ApiClient, *, as_json: bool) -> int:
+    params: dict[str, Any] = {}
+    if getattr(args, "project_id", None):
+        params["project_id"] = int(args.project_id)
+    for key, attr in (
+        ("run_id", "run_id"),
+        ("stage", "stage"),
+        ("status", "status"),
+        ("action", "action"),
+        ("reason_code", "reason_code"),
+        ("since", "since"),
+        ("until", "until"),
+    ):
+        value = _normalize_text(getattr(args, attr, ""))
+        if value:
+            params[key] = value
+    params["limit"] = int(getattr(args, "limit", 100) or 100)
+    params["offset"] = int(getattr(args, "offset", 0) or 0)
+
+    payload = client.request("GET", "/autopilot/decisions", params=params)
+    if as_json:
+        _print_json(payload)
+        return 0
+    items = [row for row in list(payload.get("items") or []) if isinstance(row, dict)]
+    print(f"Autopilot decisions: {len(items)} returned")
+    if not items:
+        return 0
+    print(f"{'ID':<6} {'Run':<10} {'Seq':<4} {'Stage':<26} {'Status':<12} {'Action':<10} {'Actor'}")
+    print("-" * 90)
+    for row in items:
+        rid = str(row.get("id") or "")
+        run_token = str(row.get("run_id") or "")[:10]
+        seq = str(row.get("sequence") or 0)[:4]
+        stage = str(row.get("stage") or "")[:26]
+        status = str(row.get("status") or "")[:12]
+        action = str(row.get("action") or "")[:10]
+        actor = str(row.get("actor") or "")
+        print(f"{rid:<6} {run_token:<10} {seq:<4} {stage:<26} {status:<12} {action:<10} {actor}")
+    return 0
+
+
+def run_autopilot(args: argparse.Namespace, client: ApiClient) -> int:
+    subcommand = str(getattr(args, "autopilot_subcommand", "") or "").strip().lower()
+    as_json = bool(getattr(args, "json", False))
+    if subcommand == "plan":
+        return _autopilot_plan(args, client, as_json=as_json)
+    if subcommand == "run":
+        return _autopilot_run(args, client, as_json=as_json)
+    if subcommand == "repair":
+        return _autopilot_repair(args, client, as_json=as_json)
+    if subcommand == "rollback":
+        return _autopilot_rollback(args, client, as_json=as_json)
+    if subcommand == "decisions":
+        return _autopilot_decisions(args, client, as_json=as_json)
+    raise ValueError(f"Unsupported autopilot subcommand '{subcommand}'.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
@@ -1664,6 +1952,138 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target profile id or alias (for example: mobile_cpu, edge_gpu, vllm_server).",
     )
     optimize_parser.set_defaults(func=run_optimize)
+
+    # ------------------------------------------------------------------
+    # Autopilot command group (P4).
+    # ------------------------------------------------------------------
+    autopilot_parser = subparsers.add_parser(
+        "autopilot",
+        help="Autopilot plan/run/repair/rollback/decisions commands.",
+    )
+    autopilot_sub = autopilot_parser.add_subparsers(
+        dest="autopilot_subcommand", required=True
+    )
+
+    def _add_orchestrate_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+        p.add_argument("--intent", default=DEFAULT_INTENT, help="Plain-language training intent.")
+        p.add_argument(
+            "--target-profile",
+            dest="target_profile_id",
+            default="vllm_server",
+            help="Target profile id (e.g. mobile_cpu, edge_gpu, vllm_server).",
+        )
+        p.add_argument(
+            "--target-device",
+            dest="target_device",
+            default="",
+            choices=["", "mobile", "laptop", "server"],
+            help="Target device hint for autopilot planning.",
+        )
+        p.add_argument("--primary-language", default="english")
+        p.add_argument("--available-vram-gb", type=float, default=None)
+        p.add_argument("--base-model", default="", help="Optional explicit base model override.")
+        p.add_argument(
+            "--plan-profile",
+            default="balanced",
+            choices=list(_AUTOPILOT_PLAN_PROFILES),
+        )
+        p.add_argument("--intent-rewrite", default="", help="Optional replacement intent text.")
+        p.add_argument(
+            "--no-auto-rewrite",
+            action="store_true",
+            help="Disable autopilot auto-applied intent rewrites.",
+        )
+        p.add_argument(
+            "--no-target-fallback",
+            action="store_true",
+            help="Disable automatic target-profile fallback.",
+        )
+        p.add_argument(
+            "--no-profile-autotune",
+            action="store_true",
+            help="Disable automatic profile tuning.",
+        )
+        p.add_argument(
+            "--no-auto-prepare-data",
+            action="store_true",
+            help="Disable autopilot dataset auto-prepare step.",
+        )
+        p.add_argument("--run-name", default="", help="Optional experiment name override.")
+        p.add_argument("--description", default="", help="Optional experiment description override.")
+        p.add_argument("--json", action="store_true", help="Emit raw JSON instead of a human summary.")
+
+    plan_parser = autopilot_sub.add_parser(
+        "plan",
+        help="Dry-run autopilot and return a plan_token (alias for /autopilot/repair-preview).",
+    )
+    _add_orchestrate_args(plan_parser)
+
+    run_parser = autopilot_sub.add_parser(
+        "run",
+        help="Execute autopilot end-to-end in one shot (no persisted preview).",
+    )
+    _add_orchestrate_args(run_parser)
+
+    repair_parser = autopilot_sub.add_parser(
+        "repair",
+        help="Apply a previously issued plan_token via /autopilot/repair-apply.",
+    )
+    repair_parser.add_argument("--plan-token", dest="plan_token", required=True)
+    repair_parser.add_argument("--actor", default="", help="Actor recorded with the apply.")
+    repair_parser.add_argument("--reason", default="", help="Reason recorded with the apply.")
+    repair_parser.add_argument(
+        "--expected-state-hash",
+        dest="expected_state_hash",
+        default="",
+        help="Reject if current preview state_hash differs from this value.",
+    )
+    repair_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip state-drift detection (advanced).",
+    )
+    repair_parser.add_argument("--json", action="store_true", help="Emit raw JSON.")
+
+    rollback_parser = autopilot_sub.add_parser(
+        "rollback",
+        help="Roll back an autopilot decision by id (or preview the rollback).",
+    )
+    rollback_parser.add_argument("decision_id", type=int, help="autopilot_decisions.id")
+    rollback_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Dry-run: return what the rollback would do without mutating.",
+    )
+    rollback_parser.add_argument("--actor", default="", help="Actor recorded with the rollback.")
+    rollback_parser.add_argument("--reason", default="", help="Reason recorded with the rollback.")
+    rollback_parser.add_argument("--json", action="store_true", help="Emit raw JSON.")
+
+    decisions_parser = autopilot_sub.add_parser(
+        "decisions",
+        help="List persisted autopilot decisions (P1 /autopilot/decisions).",
+    )
+    decisions_parser.add_argument(
+        "--project", "--project-id", dest="project_id", type=int, default=None
+    )
+    decisions_parser.add_argument("--run-id", dest="run_id", default="", help="Filter by run id.")
+    decisions_parser.add_argument("--stage", default="", help="Filter by stage.")
+    decisions_parser.add_argument("--status", default="", help="Filter by status.")
+    decisions_parser.add_argument("--action", default="", help="Filter by derived action.")
+    decisions_parser.add_argument(
+        "--reason-code",
+        dest="reason_code",
+        default="",
+        help="Filter by reason code.",
+    )
+    decisions_parser.add_argument("--since", default="", help="created_at >= ISO-8601 timestamp.")
+    decisions_parser.add_argument("--until", default="", help="created_at <= ISO-8601 timestamp.")
+    decisions_parser.add_argument("--limit", type=int, default=100)
+    decisions_parser.add_argument("--offset", type=int, default=0)
+    decisions_parser.add_argument("--json", action="store_true", help="Emit raw JSON.")
+
+    for sub in (plan_parser, run_parser, repair_parser, rollback_parser, decisions_parser):
+        sub.set_defaults(func=run_autopilot)
 
     return parser
 
