@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -116,6 +117,7 @@ from app.services.newbie_autopilot_service import (
     estimate_newbie_autopilot_run,
     resolve_newbie_autopilot_intent,
 )
+from app.services.autopilot_decision_service import persist_decision_log
 from app.services.readiness_service import get_project_readiness
 from app.services.target_profile_service import (
     check_compatibility,
@@ -441,6 +443,7 @@ class AutopilotV2OrchestrationRequest(NewbieAutopilotOneClickRequest):
 
 class AutopilotV2OrchestrationResponse(BaseModel):
     project_id: int
+    run_id: str = ""
     dry_run: bool
     strict_mode: bool
     intent: str
@@ -1164,7 +1167,35 @@ async def _orchestrate_newbie_autopilot_v2(
 ) -> AutopilotV2OrchestrationResponse:
     await _get_project_or_404(db, project_id)
 
+    run_id = str(uuid.uuid4())
     decision_log: list[dict[str, object]] = []
+    try:
+        return await _orchestrate_newbie_autopilot_v2_impl(
+            db=db,
+            project_id=project_id,
+            req=req,
+            run_id=run_id,
+            decision_log=decision_log,
+        )
+    finally:
+        if decision_log:
+            await persist_decision_log(
+                run_id=run_id,
+                project_id=project_id,
+                dry_run=bool(req.dry_run),
+                intent=str(req.intent or ""),
+                entries=decision_log,
+            )
+
+
+async def _orchestrate_newbie_autopilot_v2_impl(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    req: AutopilotV2OrchestrationRequest,
+    run_id: str,
+    decision_log: list[dict[str, object]],
+) -> AutopilotV2OrchestrationResponse:
     strict_mode = bool(settings.STRICT_EXECUTION_MODE)
     _append_autopilot_decision(
         decision_log,
@@ -1303,6 +1334,7 @@ async def _orchestrate_newbie_autopilot_v2(
         )
         return AutopilotV2OrchestrationResponse(
             project_id=project_id,
+            run_id=run_id,
             dry_run=bool(req.dry_run),
             strict_mode=strict_mode,
             intent=effective_intent,
@@ -1692,6 +1724,7 @@ async def _orchestrate_newbie_autopilot_v2(
     if req.dry_run:
         return AutopilotV2OrchestrationResponse(
             project_id=project_id,
+            run_id=run_id,
             dry_run=True,
             strict_mode=strict_mode,
             intent=effective_intent,
@@ -1712,6 +1745,7 @@ async def _orchestrate_newbie_autopilot_v2(
     if not can_run:
         return AutopilotV2OrchestrationResponse(
             project_id=project_id,
+            run_id=run_id,
             dry_run=False,
             strict_mode=strict_mode,
             intent=effective_intent,
@@ -1807,6 +1841,7 @@ async def _orchestrate_newbie_autopilot_v2(
 
     return AutopilotV2OrchestrationResponse(
         project_id=project_id,
+        run_id=run_id,
         dry_run=False,
         strict_mode=strict_mode,
         intent=effective_intent,

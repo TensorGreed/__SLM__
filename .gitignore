@@ -30,6 +30,11 @@ data/projects/
 data/exports/
 data/models/
 
+# Test run artifacts (per-phase SQLite DBs and DATA_DIR trees)
+backend/tests/*.db
+backend/tests/*.sqlite
+backend/tests/*_data/
+
 # Misc
 *.log
 .DS_Store
@@ -40,3 +45,5 @@ scripts/
 .github/agents/
 .github/copilot-instructions.md
 sprintPlan.md
+priority.md
+ROADMAP22APR.md

@@ -11,6 +11,7 @@ from app.models.domain_pack import DomainPack
 from app.models.domain_profile import DomainProfile
 from app.models.domain_blueprint import DomainBlueprintRevision
 from app.models.artifact import ArtifactRecord
+from app.models.autopilot_decision import AutopilotDecision
 from app.models.playground import PlaygroundSession
 from app.models.workflow_run import WorkflowRun, WorkflowRunNode
 
@@ -36,6 +37,7 @@ __all__ = [
     "DomainProfile",
     "DomainBlueprintRevision",
     "ArtifactRecord",
+    "AutopilotDecision",
     "PlaygroundSession",
     "WorkflowRun",
     "WorkflowRunNode",

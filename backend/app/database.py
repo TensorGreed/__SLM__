@@ -70,6 +70,7 @@ BASE_REQUIRED_TABLES = {
     "base_model_registry_entries",
     "project_secrets",
     "playground_sessions",
+    "autopilot_decisions",
 }
 
 AUTH_REQUIRED_TABLES = {
