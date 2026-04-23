@@ -7,6 +7,7 @@ import {
     ClipboardList,
     FolderTree,
     Layers,
+    Lock,
     Settings2,
     Sparkles,
     Unlock,
@@ -75,30 +76,32 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isBeginner = Boolean(
         beginnerMode !== undefined ? beginnerMode : activeProject?.beginner_mode,
     );
-    const [leavingBeginner, setLeavingBeginner] = useState(false);
-    const [leaveError, setLeaveError] = useState<string | null>(null);
+    const [togglingBeginner, setTogglingBeginner] = useState(false);
+    const [toggleError, setToggleError] = useState<string | null>(null);
     const railHintRaw = (location.state as { sidebarRail?: unknown } | null)?.sidebarRail;
     const railHint = isRailKey(railHintRaw) ? railHintRaw : null;
     const lastNonWizardRailRef = useRef<RailKey>('pipeline');
 
-    const handleLeaveBeginnerMode = async () => {
-        const message =
-            'Leave beginner mode? You will regain access to Recipes, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio. You can turn beginner mode back on from Project Settings at any time.';
+    const handleToggleBeginnerMode = async () => {
+        const enabling = !isBeginner;
+        const message = enabling
+            ? 'Switch to beginner mode? Recipes, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio will be hidden to keep the workspace focused. You can leave beginner mode at any time.'
+            : 'Leave beginner mode? You will regain access to Recipes, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio. You can turn beginner mode back on from Project Settings at any time.';
         if (!window.confirm(message)) {
             return;
         }
-        setLeavingBeginner(true);
-        setLeaveError(null);
+        setTogglingBeginner(true);
+        setToggleError(null);
         try {
-            const response = await api.put(`/projects/${projectId}`, { beginner_mode: false });
+            const response = await api.put(`/projects/${projectId}`, { beginner_mode: enabling });
             setActiveProject(response.data);
         } catch (err) {
             const detail =
                 (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-                ?? (err instanceof Error ? err.message : 'Unable to leave beginner mode.');
-            setLeaveError(typeof detail === 'string' ? detail : 'Unable to leave beginner mode.');
+                ?? (err instanceof Error ? err.message : enabling ? 'Unable to enter beginner mode.' : 'Unable to leave beginner mode.');
+            setToggleError(typeof detail === 'string' ? detail : enabling ? 'Unable to enter beginner mode.' : 'Unable to leave beginner mode.');
         } finally {
-            setLeavingBeginner(false);
+            setTogglingBeginner(false);
         }
     };
     const pipelineBasePath = `/project/${projectId}/pipeline`;
@@ -378,7 +381,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                     )}
                 </nav>
 
-                {isBeginner && (
+                {isBeginner ? (
                     <div className="project-sidebar-beginner">
                         <div className="beginner-badge" role="note" aria-label="Beginner mode active">
                             Beginner mode
@@ -389,15 +392,30 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                         <button
                             type="button"
                             className="workspace-nav-item leave-beginner-button"
-                            onClick={handleLeaveBeginnerMode}
-                            disabled={leavingBeginner}
+                            onClick={handleToggleBeginnerMode}
+                            disabled={togglingBeginner}
                         >
                             <Unlock size={15} />
                             <span className="nav-label">
-                                {leavingBeginner ? 'Leaving beginner mode…' : 'Leave beginner mode'}
+                                {togglingBeginner ? 'Leaving beginner mode…' : 'Leave beginner mode'}
                             </span>
                         </button>
-                        {leaveError && <div className="beginner-error" role="alert">{leaveError}</div>}
+                        {toggleError && <div className="beginner-error" role="alert">{toggleError}</div>}
+                    </div>
+                ) : (
+                    <div className="project-sidebar-beginner project-sidebar-beginner-off">
+                        <button
+                            type="button"
+                            className="workspace-nav-item enter-beginner-button"
+                            onClick={handleToggleBeginnerMode}
+                            disabled={togglingBeginner}
+                        >
+                            <Lock size={15} />
+                            <span className="nav-label">
+                                {togglingBeginner ? 'Entering beginner mode…' : 'Enter beginner mode'}
+                            </span>
+                        </button>
+                        {toggleError && <div className="beginner-error" role="alert">{toggleError}</div>}
                     </div>
                 )}
             </div>

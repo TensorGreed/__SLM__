@@ -206,6 +206,40 @@ describe('ProjectSidebar beginner-mode hiding', () => {
     expect(alert).toHaveTextContent(/db is down/);
     confirmSpy.mockRestore();
   });
+
+  it('shows Enter beginner mode button when beginner mode is off and hides Leave button', () => {
+    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: false });
+    expect(screen.getByRole('button', { name: /Enter beginner mode/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Leave beginner mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('note', { name: /Beginner mode active/i })).not.toBeInTheDocument();
+  });
+
+  it('enter-beginner button PUTs beginner_mode=true after confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const updatedProject: Project = {
+      id: 1,
+      name: 'Demo',
+      description: null,
+      status: 'active',
+      pipeline_stage: 'training',
+      base_model_name: null,
+      domain_pack_id: null,
+      domain_profile_id: null,
+      beginner_mode: true,
+      created_at: '2026-04-23T00:00:00Z',
+      updated_at: '2026-04-23T00:00:00Z',
+    };
+    apiMock.put.mockResolvedValue({ data: updatedProject });
+
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: false });
+
+    await user.click(screen.getByRole('button', { name: /Enter beginner mode/i }));
+    await waitFor(() => {
+      expect(apiMock.put).toHaveBeenCalledWith('/projects/1', { beginner_mode: true });
+    });
+    confirmSpy.mockRestore();
+  });
 });
 
 afterEach(() => {

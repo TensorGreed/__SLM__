@@ -258,6 +258,22 @@
     border: 1px solid rgba(130, 184, 255, 0.35);
 }
 
+.project-sidebar-beginner-off {
+    padding: 8px 12px 12px;
+    background: transparent;
+}
+
+.enter-beginner-button {
+    justify-content: flex-start;
+    color: var(--nav-text-muted);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.enter-beginner-button:hover {
+    color: #dfe8ff;
+    border-color: rgba(130, 184, 255, 0.35);
+}
+
 .beginner-error {
     font-size: 0.74rem;
     color: #ff9e9e;
