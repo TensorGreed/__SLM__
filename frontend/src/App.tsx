@@ -32,7 +32,7 @@ function App() {
           <>
             <Route path="/" element={<ProjectListPage />} />
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
-              <Route index element={<Navigate to="guide" replace />} />
+              <Route index element={<Navigate to="pipeline/data" replace />} />
               <Route path="guide" element={<ProjectGuidePage />} />
               <Route path="wizard" element={<ProjectWizardPage />} />
               <Route path="pipeline" element={<Navigate to="data" replace />} />

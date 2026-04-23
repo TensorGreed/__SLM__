@@ -5,10 +5,7 @@ import {
     Bot,
     Boxes,
     ClipboardList,
-    Compass,
-    FileCog,
     FolderTree,
-    Home,
     Layers,
     Settings2,
     Sparkles,
@@ -29,7 +26,7 @@ interface ProjectSidebarProps {
     beginnerMode?: boolean;
 }
 
-type RailKey = 'home' | 'pipeline' | 'training' | 'playground' | 'workflow' | 'domain';
+type RailKey = 'pipeline' | 'training' | 'workflow' | 'domain';
 
 const STAGE_ORDER = [
     'ingestion',
@@ -65,10 +62,8 @@ function getStageIndex(stage: string): number {
 }
 
 function isRailKey(value: unknown): value is RailKey {
-    return value === 'home'
-        || value === 'pipeline'
+    return value === 'pipeline'
         || value === 'training'
-        || value === 'playground'
         || value === 'workflow'
         || value === 'domain';
 }
@@ -84,7 +79,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const [leaveError, setLeaveError] = useState<string | null>(null);
     const railHintRaw = (location.state as { sidebarRail?: unknown } | null)?.sidebarRail;
     const railHint = isRailKey(railHintRaw) ? railHintRaw : null;
-    const lastNonWizardRailRef = useRef<RailKey>('home');
+    const lastNonWizardRailRef = useRef<RailKey>('pipeline');
 
     const handleLeaveBeginnerMode = async () => {
         const message =
@@ -115,10 +110,6 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
         [pipelineStatus],
     );
 
-    const isGuideRoute = location.pathname === `/project/${projectId}/guide`;
-    const isPipelineRoute =
-        location.pathname === pipelineBasePath
-        || location.pathname.startsWith(`${pipelineBasePath}/`);
     const isPipelineDataRoute = location.pathname === pipelineBasePath || location.pathname === pipelineDataPath;
     const isPipelineTrainingRoute = location.pathname === pipelineTrainingPath;
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
@@ -135,12 +126,17 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isWizardRoute = location.pathname === `/project/${projectId}/wizard`;
 
     const routeRailKey: RailKey = useMemo(() => {
-        if (isTrainingConfigRoute || isPipelineTrainingRoute || isModelsRoute || isAdapterStudioRoute || isAutopilotRoute) return 'training';
-        if (isPlaygroundRoute) return 'playground';
+        if (
+            isTrainingConfigRoute
+            || isPipelineTrainingRoute
+            || isModelsRoute
+            || isAdapterStudioRoute
+            || isAutopilotRoute
+            || isPlaygroundRoute
+        ) return 'training';
         if (isWorkflowRoute || isRecipesRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
-        if (isPipelineRoute) return 'pipeline';
-        return 'home';
+        return 'pipeline';
     }, [
         isTrainingConfigRoute,
         isPipelineTrainingRoute,
@@ -152,7 +148,6 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
         isRecipesRoute,
         isDomainPacksRoute,
         isDomainProfilesRoute,
-        isPipelineRoute,
     ]);
 
     useEffect(() => {
@@ -164,14 +159,11 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const selectedRailKey: RailKey = isWizardRoute
         ? (railHint ?? lastNonWizardRailRef.current)
         : routeRailKey;
-    const isHomeWizardRoute = isWizardRoute && selectedRailKey === 'home';
     const isTrainingWizardRoute = isWizardRoute && selectedRailKey === 'training';
 
     const panelHeadingByRail: Record<RailKey, { kicker: string; title: string }> = {
-        home: { kicker: 'Guided', title: 'Start and Discover' },
         pipeline: { kicker: 'Pipeline', title: 'Runs and Stages' },
         training: { kicker: 'Training', title: 'Model Configuration' },
-        playground: { kicker: 'Playground', title: 'Prompt Testing' },
         workflow: { kicker: 'Automation', title: 'Recipes and Flows' },
         domain: { kicker: 'Domain', title: 'Packs and Profiles' },
     };
@@ -191,12 +183,6 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
 
     const railItems: Array<{ key: RailKey; icon: ReactNode; title: string; onClick: () => void }> = [
         {
-            key: 'home',
-            icon: <Home size={16} />,
-            title: 'Start',
-            onClick: () => navigate(`/project/${projectId}/guide`),
-        },
-        {
             key: 'pipeline',
             icon: <FolderTree size={16} />,
             title: 'Pipeline',
@@ -207,12 +193,6 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
             icon: <Settings2 size={16} />,
             title: 'Training',
             onClick: () => navigate(`/project/${projectId}/training-config`),
-        },
-        {
-            key: 'playground',
-            icon: <Bot size={16} />,
-            title: 'Playground',
-            onClick: () => navigate(`/project/${projectId}/playground`),
         },
         ...(isBeginner
             ? []
@@ -254,13 +234,6 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                         </button>
                     ))}
                 </div>
-                <button
-                    className="rail-item rail-item-bottom"
-                    onClick={() => navigate(`/project/${projectId}/training-config`)}
-                    title="Settings"
-                >
-                    <FileCog size={16} />
-                </button>
             </div>
 
             <div className="project-sidebar-panel">
@@ -278,33 +251,6 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                 </div>
 
                 <nav className="project-sidebar-nav">
-                    {selectedRailKey === 'home' && (
-                        <>
-                            <div className="nav-section-label">Data Source Discovery</div>
-                            <button
-                                className={`workspace-nav-item ${isGuideRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/guide`)}
-                            >
-                                <Compass size={15} />
-                                <span className="nav-label">Start Here</span>
-                            </button>
-                            <button
-                                className={`workspace-nav-item ${isHomeWizardRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/wizard`, { state: { sidebarRail: 'home' } })}
-                            >
-                                <Sparkles size={15} />
-                                <span className="nav-label">Wizard Mode</span>
-                            </button>
-                            <button
-                                className={`workspace-nav-item ${isPipelineDataRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/pipeline/data`)}
-                            >
-                                <FolderTree size={15} />
-                                <span className="nav-label">Go to Data Pipeline</span>
-                            </button>
-                        </>
-                    )}
-
                     {selectedRailKey === 'pipeline' && (
                         <>
                             <div className="nav-section-label">Data Pipeline</div>
@@ -375,38 +321,18 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                                 <span className="nav-label">Autopilot Planner</span>
                             </button>
                             <button
+                                className={`workspace-nav-item ${isPlaygroundRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/playground`)}
+                            >
+                                <Bot size={15} />
+                                <span className="nav-label">Playground</span>
+                            </button>
+                            <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/wizard`, { state: { sidebarRail: 'training' } })}
                             >
                                 <Sparkles size={15} />
                                 <span className="nav-label">Guided Setup</span>
-                            </button>
-                            <button
-                                className={`workspace-nav-item ${isPipelineTrainingRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
-                            >
-                                <FolderTree size={15} />
-                                <span className="nav-label">Training Stage</span>
-                            </button>
-                        </>
-                    )}
-
-                    {selectedRailKey === 'playground' && (
-                        <>
-                            <div className="nav-section-label">Validation and Vibe Check</div>
-                            <button
-                                className={`workspace-nav-item ${isPlaygroundRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/playground`)}
-                            >
-                                <Bot size={15} />
-                                <span className="nav-label">Playground Runs</span>
-                            </button>
-                            <button
-                                className={`workspace-nav-item ${isTrainingConfigRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/training-config`)}
-                            >
-                                <Settings2 size={15} />
-                                <span className="nav-label">Model Configuration</span>
                             </button>
                         </>
                     )}

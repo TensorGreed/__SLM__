@@ -75,13 +75,13 @@ function renderSidebar(
 
 describe('ProjectSidebar nav matrix', () => {
   it.each([
-    ['/project/1/guide', undefined, 'Start and Discover'],
-    ['/project/1/wizard', undefined, 'Start and Discover'],
+    ['/project/1/guide', undefined, 'Runs and Stages'],
+    ['/project/1/wizard', undefined, 'Runs and Stages'],
     ['/project/1/wizard', { sidebarRail: 'training' }, 'Model Configuration'],
     ['/project/1/pipeline/data', undefined, 'Runs and Stages'],
     ['/project/1/pipeline/training', undefined, 'Model Configuration'],
     ['/project/1/training-config', undefined, 'Model Configuration'],
-    ['/project/1/playground', undefined, 'Prompt Testing'],
+    ['/project/1/playground', undefined, 'Model Configuration'],
     ['/project/1/workflow', undefined, 'Recipes and Flows'],
     ['/project/1/recipes', undefined, 'Recipes and Flows'],
     ['/project/1/domain', undefined, 'Packs and Profiles'],
@@ -92,30 +92,22 @@ describe('ProjectSidebar nav matrix', () => {
     expect(screen.getByText(String(heading))).toBeInTheDocument();
   });
 
-  it('keeps training context when moving training-config -> guided setup -> training stage', async () => {
+  it('keeps training context when clicking Guided Setup from training-config', async () => {
     const user = userEvent.setup();
     renderSidebar(['/project/1/training-config']);
 
     await user.click(screen.getByRole('button', { name: 'Guided Setup' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/project/1/wizard');
     expect(screen.getByText('Model Configuration')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Training Stage' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/pipeline/training');
-    expect(screen.getByText('Model Configuration')).toBeInTheDocument();
   });
 
-  it('keeps home context for home wizard and then lands in pipeline data correctly', async () => {
+  it('surfaces Playground as a panel item under the Training rail', async () => {
     const user = userEvent.setup();
-    renderSidebar(['/project/1/guide']);
+    renderSidebar(['/project/1/training-config']);
 
-    await user.click(screen.getByRole('button', { name: 'Wizard Mode' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/wizard');
-    expect(screen.getByText('Start and Discover')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Go to Data Pipeline' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/pipeline/data');
-    expect(screen.getByText('Runs and Stages')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Playground' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/playground');
+    expect(screen.getByText('Model Configuration')).toBeInTheDocument();
   });
 });
 
@@ -125,17 +117,16 @@ describe('ProjectSidebar beginner-mode hiding', () => {
   });
 
   it('hides Automation + Domain rails when beginner mode is on', () => {
-    renderSidebar(['/project/1/guide'], { beginnerMode: true });
+    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: true });
     expect(screen.queryByRole('button', { name: 'Automation' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Domain' })).not.toBeInTheDocument();
     // Core rails still present.
-    expect(screen.getByRole('button', { name: 'Start' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pipeline' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Training' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Playground' })).toBeInTheDocument();
   });
 
   it('shows Automation + Domain rails when beginner mode is off', () => {
-    renderSidebar(['/project/1/guide'], { beginnerMode: false });
+    renderSidebar(['/project/1/pipeline/data'], { beginnerMode: false });
     expect(screen.getByRole('button', { name: 'Automation' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Domain' })).toBeInTheDocument();
   });

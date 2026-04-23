@@ -212,12 +212,20 @@ export default function ProjectPipelinePage() {
                         Run data preparation, training, evaluation, and export stages in sequence.
                     </p>
                 </div>
-                <button
-                    className="btn btn-secondary"
-                    onClick={() => navigate(`/project/${projectId}/wizard`)}
-                >
-                    Open Guided Setup
-                </button>
+                <div className="workspace-page-header-actions">
+                    <button
+                        className="btn btn-ghost"
+                        onClick={() => navigate(`/project/${projectId}/guide`)}
+                    >
+                        Open Guide
+                    </button>
+                    <button
+                        className="btn btn-secondary"
+                        onClick={() => navigate(`/project/${projectId}/wizard`)}
+                    >
+                        Open Guided Setup
+                    </button>
+                </div>
             </section>
             {pipelineStatus && (
                 <div className="card progress-card">
