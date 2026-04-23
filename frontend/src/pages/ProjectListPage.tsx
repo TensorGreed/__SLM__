@@ -176,8 +176,8 @@ export default function ProjectListPage() {
             });
             setAnalysisResult(res.data);
             return res.data;
-        } catch (error: any) {
-            const detail = error?.response?.data?.detail;
+        } catch (error) {
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
             setAnalyzeError(
                 typeof detail === 'string' ? detail : 'Could not analyze your brief. Please refine the text and try again.',
             );
@@ -238,12 +238,17 @@ export default function ProjectListPage() {
             );
             closeCreateModal();
             navigate(`/project/${project.id}`);
-        } catch (error: any) {
-            const detail = error?.response?.data?.detail;
+        } catch (error) {
+            const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
             if (typeof detail === 'string') {
                 setAnalyzeError(detail);
-            } else if (typeof detail?.message === 'string') {
-                setAnalyzeError(detail.message);
+            } else if (
+                detail
+                && typeof detail === 'object'
+                && 'message' in detail
+                && typeof (detail as { message?: unknown }).message === 'string'
+            ) {
+                setAnalyzeError((detail as { message: string }).message);
             } else {
                 setAnalyzeError('Project creation failed. Please review your inputs and try again.');
             }
@@ -280,8 +285,9 @@ export default function ProjectListPage() {
             setShowMagicModal(false);
             setMagicPrompt('');
             navigate(`/project/${res.data.id}`);
-        } catch (error: any) {
-            alert(error.response?.data?.detail || 'Magic create failed');
+        } catch (error) {
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            alert(typeof detail === 'string' ? detail : 'Magic create failed');
         } finally {
             setIsMagicCreating(false);
         }

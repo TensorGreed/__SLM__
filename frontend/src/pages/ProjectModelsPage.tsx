@@ -5,6 +5,13 @@ import api from '../api/client';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectModelsPage.css';
 
+function errorDetail(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 interface BaseModelRecord {
   id: number;
   model_key: string;
@@ -116,9 +123,8 @@ export default function ProjectModelsPage() {
 
       setRows(Array.isArray(modelResp.data?.models) ? modelResp.data.models : []);
       setRecommendations(Array.isArray(compatibleResp.data?.models) ? compatibleResp.data.models : []);
-    } catch (err: any) {
-      const detail = String(err?.response?.data?.detail || err?.message || 'Failed to load model registry data.');
-      setError(detail);
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to load model registry data.'));
       setRows([]);
       setRecommendations([]);
     } finally {
@@ -151,9 +157,8 @@ export default function ProjectModelsPage() {
         allow_network: false,
       });
       setSelectedValidation(resp.data);
-    } catch (err: any) {
-      const detail = String(err?.response?.data?.detail || err?.message || 'Validation failed.');
-      setError(detail);
+    } catch (err) {
+      setError(errorDetail(err, 'Validation failed.'));
     }
   };
 
@@ -165,9 +170,8 @@ export default function ProjectModelsPage() {
         base_model_name: model.source_ref || model.display_name,
       });
       setStatusMessage(`Selected '${model.display_name}' as project base model.`);
-    } catch (err: any) {
-      const detail = String(err?.response?.data?.detail || err?.message || 'Failed to set base model.');
-      setError(detail);
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to set base model.'));
     }
   };
 

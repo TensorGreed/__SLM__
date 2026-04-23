@@ -24,6 +24,7 @@ from app.services.evaluation_pack_service import (
     normalize_evaluation_pack_id,
     resolve_project_evaluation_pack,
 )
+from app.services.pack_generation_service import generate_starter_eval_pack
 from app.services.evaluation_service import (
     evaluate_with_llm_judge,
     generate_safety_scorecard,
@@ -62,6 +63,13 @@ class HeldoutEvalRunRequest(BaseModel):
 
 class EvaluationPackPreferenceUpdateRequest(BaseModel):
     pack_id: str | None = Field(default=None, max_length=128)
+
+
+class EvaluationPackGenerateRequest(BaseModel):
+    blueprint_id: int | None = Field(default=None, ge=1)
+    dataset_id: int | None = Field(default=None, ge=1)
+    adapter_id: int | None = Field(default=None, ge=1)
+    include_judge_rubric: bool = Field(default=True)
 
 
 @router.post("/run", status_code=201)
@@ -204,6 +212,43 @@ async def list_eval_packs(
         "warnings": list(resolved.get("warnings") or []),
         "packs": packs,
     }
+
+
+_PACK_GENERATE_ERROR_STATUS: dict[str, int] = {
+    "project_not_found": 404,
+    "blueprint_not_found": 404,
+    "dataset_not_found": 404,
+    "adapter_not_found": 404,
+}
+
+
+@router.post("/packs/generate", status_code=201)
+async def generate_eval_pack(
+    project_id: int,
+    req: EvaluationPackGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Auto-generate a starter evaluation pack from blueprint + dataset + adapter.
+
+    Input identifiers are optional — omitting `blueprint_id` uses the latest
+    blueprint revision for the project, omitting `dataset_id` picks the most
+    recent project dataset (if any), and omitting `adapter_id` skips the
+    adapter-driven task-profile override.
+    """
+    try:
+        pack = await generate_starter_eval_pack(
+            db,
+            project_id=project_id,
+            blueprint_id=req.blueprint_id,
+            dataset_id=req.dataset_id,
+            adapter_id=req.adapter_id,
+            include_judge_rubric=req.include_judge_rubric,
+        )
+    except ValueError as e:
+        reason = str(e)
+        status = _PACK_GENERATE_ERROR_STATUS.get(reason, 400)
+        raise HTTPException(status, reason)
+    return pack
 
 
 @router.get("/pack-preference")

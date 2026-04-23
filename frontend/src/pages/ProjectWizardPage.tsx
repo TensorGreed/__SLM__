@@ -324,6 +324,25 @@ function decisionStepLabel(step: unknown): string {
   return token.replace(/_/g, ' ');
 }
 
+function errorDetail(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
+interface TargetCatalogItem {
+  id: string;
+  name: string;
+  description?: string;
+  device_class?: string;
+  constraints: {
+    max_parameters_billions?: number | null;
+    min_vram_gb?: number | null;
+    preferred_formats?: string[];
+  };
+}
+
 export default function ProjectWizardPage() {
   const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
   const navigate = useNavigate();
@@ -332,7 +351,7 @@ export default function ProjectWizardPage() {
   const [intentText, setIntentText] = useState('');
   const [runNameOverride, setRunNameOverride] = useState('');
   const [targetProfileId, setTargetProfileId] = useState('vllm_server');
-  const [targetCatalog, setTargetCatalog] = useState<any[]>([]);
+  const [targetCatalog, setTargetCatalog] = useState<TargetCatalogItem[]>([]);
   const [targetLoading, setTargetLoading] = useState(false);
   const [targetSaving, setTargetSaving] = useState(false);
   const [targetError, setTargetError] = useState('');
@@ -379,7 +398,7 @@ export default function ProjectWizardPage() {
       try {
         const res = await api.get('/targets/catalog');
         setTargetCatalog(res.data || []);
-      } catch (err: any) {
+      } catch {
         setTargetError('Failed to load target catalog.');
       } finally {
         setTargetLoading(false);
@@ -491,8 +510,8 @@ export default function ProjectWizardPage() {
         `Uploaded ${uploaded} file(s), processed ${processed}.`
         + (errorCount > 0 ? ` ${errorCount} upload error(s).` : ''),
       );
-    } catch (err: any) {
-      setIntakeError(err?.response?.data?.detail || 'Failed to upload/process files.');
+    } catch (err) {
+      setIntakeError(errorDetail(err, 'Failed to upload/process files.'));
     } finally {
       setIntakeLoading(false);
       void fetchIngestionStats();
@@ -600,7 +619,7 @@ export default function ProjectWizardPage() {
         target_profile_id: targetProfileId,
       });
       setCurrentStep(2);
-    } catch (err: any) {
+    } catch {
       setTargetError('Failed to save target selection. Please try again.');
     } finally {
       setTargetSaving(false);
@@ -716,10 +735,10 @@ export default function ProjectWizardPage() {
       }
       setLaunchResponse(null);
       setCurrentStep(3);
-    } catch (err: any) {
+    } catch (err) {
       setPlanOrchestrationResponse(null);
       setPlanResponse(null);
-      setPlanError(err?.response?.data?.detail || 'Failed to resolve an autopilot plan.');
+      setPlanError(errorDetail(err, 'Failed to resolve an autopilot plan.'));
     } finally {
       setPlanLoading(false);
     }
@@ -775,9 +794,9 @@ export default function ProjectWizardPage() {
       if (!payload?.started) {
         setLaunchError(String(payload?.start_error || 'Autopilot completed orchestration, but training did not start.'));
       }
-    } catch (err: any) {
+    } catch (err) {
       setLaunchResponse(null);
-      setLaunchError(err?.response?.data?.detail || 'Failed to launch one-click run.');
+      setLaunchError(errorDetail(err, 'Failed to launch one-click run.'));
     } finally {
       setLaunchLoading(false);
     }
@@ -808,8 +827,8 @@ export default function ProjectWizardPage() {
       } else if (status === 'pending') {
         setTrainingProgress((prev) => Math.max(prev, 20));
       }
-    } catch (err: any) {
-      setStatusError(err?.response?.data?.detail || 'Failed to refresh training status.');
+    } catch (err) {
+      setStatusError(errorDetail(err, 'Failed to refresh training status.'));
     } finally {
       setStatusLoading(false);
     }

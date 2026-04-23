@@ -562,7 +562,7 @@ describe('ProjectWizardPage newbie autopilot', () => {
       return { data: {} };
     });
 
-    apiMock.post.mockImplementation(async (url: string, payload?: any) => {
+    apiMock.post.mockImplementation(async (url: string, payload?: Record<string, unknown>) => {
       if (url.includes('/training/autopilot/v2/orchestrate') && !url.includes('/run')) {
         const rawIntent = String(payload?.intent || '').toLowerCase();
         if (rawIntent.includes('summarize each support ticket')) {

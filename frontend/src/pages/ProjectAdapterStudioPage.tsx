@@ -5,7 +5,15 @@ import api from '../api/client';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectAdapterStudioPage.css';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Adapter Studio consumes dynamic API-shaped JSON; modeling every payload would defeat the free-form schema explorer.
 type AnyObj = Record<string, any>;
+
+function errorDetail(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
 
 const CANONICAL_FIELDS = [
   'text',
@@ -105,8 +113,8 @@ export default function ProjectAdapterStudioPage() {
       });
       setProfileResult(resp.data);
       setStatus('Schema profile generated.');
-    } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || 'Failed to profile dataset.'));
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to profile dataset.'));
     } finally {
       setIsLoading(false);
     }
@@ -134,8 +142,8 @@ export default function ProjectAdapterStudioPage() {
       if (resolvedAdapter) setAdapterId(resolvedAdapter);
       if (resolvedTaskProfile) setTaskProfile(resolvedTaskProfile);
       setStatus('Adapter inference completed. Review mapping and run preview/validate.');
-    } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || 'Failed to infer adapter.'));
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to infer adapter.'));
     } finally {
       setIsLoading(false);
     }
@@ -158,8 +166,8 @@ export default function ProjectAdapterStudioPage() {
       setPreviewResult(resp.data || null);
       setValidateResult(null);
       setStatus('Transformed row preview generated.');
-    } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || 'Failed to preview adapter transform.'));
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to preview adapter transform.'));
     } finally {
       setIsLoading(false);
     }
@@ -181,8 +189,8 @@ export default function ProjectAdapterStudioPage() {
       });
       setValidateResult(resp.data || null);
       setStatus('Adapter coverage validation completed.');
-    } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || 'Failed to validate adapter.'));
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to validate adapter.'));
     } finally {
       setIsLoading(false);
     }
@@ -208,8 +216,8 @@ export default function ProjectAdapterStudioPage() {
       });
       setStatus(`Saved adapter version: v${resp.data?.version}`);
       await refreshVersions();
-    } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || 'Failed to save adapter version.'));
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to save adapter version.'));
     } finally {
       setIsLoading(false);
     }
@@ -231,8 +239,8 @@ export default function ProjectAdapterStudioPage() {
       );
       const files = resp.data?.written_files || {};
       setStatus(`Export complete: ${files?.template_json || ''} ${files?.plugin_python || ''}`.trim());
-    } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || 'Failed to export adapter scaffold.'));
+    } catch (err) {
+      setError(errorDetail(err, 'Failed to export adapter scaffold.'));
     } finally {
       setIsLoading(false);
     }

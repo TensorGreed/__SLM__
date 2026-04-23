@@ -37,9 +37,10 @@ export default function SSOLoginPage() {
             const res = await api.post('/auth/local/login', { username, password });
             localStorage.setItem('slm_token', res.data.token);
             window.location.href = '/';
-        } catch (err: any) {
+        } catch (err) {
             console.error('Local login failed:', err);
-            setError(err.response?.data?.detail || 'Invalid credentials');
+            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            setError(typeof detail === 'string' ? detail : 'Invalid credentials');
         } finally {
             setLoading(false);
         }

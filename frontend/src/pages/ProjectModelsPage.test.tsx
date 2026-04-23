@@ -30,7 +30,7 @@ describe('ProjectModelsPage', () => {
     apiMock.post.mockReset();
     apiMock.put.mockReset();
 
-    apiMock.get.mockImplementation(async (url: string, config?: any) => {
+    apiMock.get.mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
       if (url === '/models') {
         const search = String(config?.params?.search || '').trim().toLowerCase();
         const models = search === 'qwen'

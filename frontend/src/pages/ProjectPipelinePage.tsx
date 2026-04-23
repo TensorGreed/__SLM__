@@ -64,7 +64,8 @@ export default function ProjectPipelinePage() {
     const { projectId, pipelineStatus, refreshPipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
     const { activeTab, setActiveTab } = useProjectStore();
 
-    const [showWizard, setShowWizard] = useState(false);
+    const [wizardDismissed, setWizardDismissed] = useState(false);
+    const showWizard = !wizardDismissed && pipelineStatus?.progress_percent === 0;
 
     const resolvedTab = useMemo<TabKey | null>(() => (isTabKey(tabKey) ? tabKey : null), [tabKey]);
 
@@ -76,12 +77,6 @@ export default function ProjectPipelinePage() {
             setActiveTab(resolvedTab);
         }
     }, [resolvedTab, activeTab, setActiveTab]);
-
-    useEffect(() => {
-        if (pipelineStatus) {
-            setShowWizard(pipelineStatus.progress_percent === 0);
-        }
-    }, [pipelineStatus]);
 
     useEffect(() => {
         if (!resolvedTab) {
@@ -273,7 +268,7 @@ export default function ProjectPipelinePage() {
             {showWizard ? (
                 <GettingStartedWizard
                     onStart={() => {
-                        setShowWizard(false);
+                        setWizardDismissed(true);
                         setActiveTab('data');
                         navigate(`/project/${projectId}/pipeline/data`);
                     }}
