@@ -16,6 +16,14 @@ from app.models.autopilot_repair_preview import AutopilotRepairPreview
 from app.models.autopilot_snapshot import AutopilotSnapshot
 from app.models.playground import PlaygroundSession
 from app.models.workflow_run import WorkflowRun, WorkflowRunNode
+from app.models.gold_set_annotation import (
+    GoldSetVersion,
+    GoldSetRow,
+    GoldSetReviewerQueue,
+    GoldSetVersionStatus,
+    GoldSetRowStatus,
+    GoldSetReviewerQueueStatus,
+)
 
 __all__ = [
     "Project",
@@ -45,4 +53,10 @@ __all__ = [
     "PlaygroundSession",
     "WorkflowRun",
     "WorkflowRunNode",
+    "GoldSetVersion",
+    "GoldSetRow",
+    "GoldSetReviewerQueue",
+    "GoldSetVersionStatus",
+    "GoldSetRowStatus",
+    "GoldSetReviewerQueueStatus",
 ]

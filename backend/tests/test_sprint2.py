@@ -54,7 +54,7 @@ class TestSprint2(unittest.IsolatedAsyncioTestCase):
         mock_doc.filename = "existing.jsonl"
         mock_doc.status = DocumentStatus.ACCEPTED
         mock_doc.source = "huggingface:test/dataset"
-        mock_doc.metadata_ = {"split": "train", "config_name": None}
+        mock_doc.metadata_ = {"split": "train", "config_name": None, "raw_samples": 500, "num_samples": 500}
         
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [mock_doc]

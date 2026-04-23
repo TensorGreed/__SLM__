@@ -20,14 +20,22 @@ def _gold_dir(project_id: int) -> Path:
 async def get_or_create_gold_dataset(
     db: AsyncSession, project_id: int, dataset_type: DatasetType
 ) -> Dataset:
-    """Get or create a gold dataset (dev or test)."""
+    """Get or create a gold dataset (dev or test).
+
+    Uses `.first()` rather than `.scalar_one_or_none()` so we tolerate historical
+    duplicates (e.g., from a double-click race on "Add Q&A pair" before a unique
+    constraint existed). The lowest-id match wins, which keeps user data stable
+    across retries.
+    """
     result = await db.execute(
-        select(Dataset).where(
+        select(Dataset)
+        .where(
             Dataset.project_id == project_id,
             Dataset.dataset_type == dataset_type,
         )
+        .order_by(Dataset.id.asc())
     )
-    ds = result.scalar_one_or_none()
+    ds = result.scalars().first()
     if ds:
         return ds
 

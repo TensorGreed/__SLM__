@@ -525,7 +525,9 @@ async def ingest_remote_dataset(
 
     raw_dataset = await get_or_create_raw_dataset(db, project_id)
 
-    # Idempotency check: avoid duplicate imports
+    # Idempotency check: reuse prior import only when the cached row-count is
+    # at least as large as what the caller is now asking for. If the caller
+    # bumps `max_samples` beyond what was cached, fall through and re-fetch.
     existing_check = await db.execute(
         select(RawDocument).where(
             RawDocument.dataset_id == raw_dataset.id,
@@ -533,20 +535,39 @@ async def ingest_remote_dataset(
             RawDocument.status == DocumentStatus.ACCEPTED
         )
     )
+    requested_rows = int(max_samples) if max_samples else 200
+    best_cached_doc: RawDocument | None = None
+    best_cached_rows = -1
     for existing_doc in existing_check.scalars().all():
         m = existing_doc.metadata_ or {}
-        if m.get("split") == split and m.get("config_name") == config_name:
-            await _progress(f"[import] Identical dataset already exists (document_id={existing_doc.id}). Skipping.")
-            return {
-                "document_id": existing_doc.id,
-                "filename": existing_doc.filename,
-                "source_type": source_type,
-                "identifier": identifier,
-                "raw_samples": m.get("raw_samples", 0),
-                "samples_ingested": m.get("num_samples", 0),
-                "status": "accepted",
-                "already_exists": True
-            }
+        if m.get("split") != split or m.get("config_name") != config_name:
+            continue
+        cached_rows = int(m.get("raw_samples") or 0)
+        if cached_rows > best_cached_rows:
+            best_cached_doc = existing_doc
+            best_cached_rows = cached_rows
+
+    if best_cached_doc is not None and best_cached_rows >= requested_rows:
+        m = best_cached_doc.metadata_ or {}
+        await _progress(
+            f"[import] Reusing cached import (document_id={best_cached_doc.id}, "
+            f"cached_rows={best_cached_rows}, requested={requested_rows}). Skipping fetch."
+        )
+        return {
+            "document_id": best_cached_doc.id,
+            "filename": best_cached_doc.filename,
+            "source_type": source_type,
+            "identifier": identifier,
+            "raw_samples": m.get("raw_samples", 0),
+            "samples_ingested": m.get("num_samples", 0),
+            "status": "accepted",
+            "already_exists": True,
+        }
+    if best_cached_doc is not None:
+        await _progress(
+            f"[import] Cached import has {best_cached_rows} rows but {requested_rows} "
+            f"were requested; re-fetching from upstream."
+        )
 
     data_dir = _project_data_dir(project_id)
     raw_samples: list[dict] = []
