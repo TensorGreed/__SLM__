@@ -70,6 +70,7 @@ export default function ProjectWorkspaceLayout() {
                 projectId={projectId}
                 projectName={activeProject.name}
                 pipelineStatus={pipelineStatus}
+                beginnerMode={activeProject.beginner_mode}
             />
             <div className="main-content">
                 <TopBar

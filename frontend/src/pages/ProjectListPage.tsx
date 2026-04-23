@@ -6,6 +6,7 @@ import ProjectCard from '../components/dashboard/ProjectCard';
 import TopBar from '../components/layout/TopBar';
 import EmptyState from '../components/shared/EmptyState';
 import Skeleton from '../components/shared/Skeleton';
+import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
 import type {
     DomainPackSummary,
@@ -677,7 +678,7 @@ export default function ProjectListPage() {
                                     <div className="form-hint">HuggingFace model ID (1B–8B recommended)</div>
                                 </div>
                                 <div className="form-group">
-                                    <label className="form-label">Domain Pack</label>
+                                    <label className="form-label"><Term id="domain_pack" advanced /></label>
                                     <select
                                         className="input"
                                         value={newDomainPackId}
@@ -693,7 +694,7 @@ export default function ProjectListPage() {
                                     <div className="form-hint">Optional pack-level defaults and overlays.</div>
                                 </div>
                                 <div className="form-group">
-                                    <label className="form-label">Domain Profile</label>
+                                    <label className="form-label"><Term id="domain_profile" advanced /></label>
                                     <select
                                         className="input"
                                         value={newDomainProfileId}

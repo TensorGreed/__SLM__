@@ -245,6 +245,30 @@ BUILTIN_GLOSSARY: dict[str, tuple[str, str]] = {
         "A typed configuration profile for runtime and evaluation behavior.",
         "domain",
     ),
+    "recipe": (
+        "A saved, reusable training plan — base model, adapter, data, and eval settings bundled together.",
+        "training",
+    ),
+    "runtime": (
+        "The backend that actually runs training or inference (for example, built-in simulator, external GPU, or a cloud endpoint).",
+        "deployment",
+    ),
+    "pack": (
+        "A short name for a Domain Pack: a reusable bundle of domain defaults, prompts, and guardrails.",
+        "domain",
+    ),
+    "gate": (
+        "A pass/fail threshold on an evaluation metric — if the gate fails, the model is not promoted.",
+        "evaluation",
+    ),
+    "blueprint": (
+        "A normalized domain plan — task family, inputs, outputs, and evaluation targets — generated from your brief.",
+        "domain",
+    ),
+    "autopilot": (
+        "A guided mode that proposes and runs a safe training plan for you, with every decision explained.",
+        "training",
+    ),
 }
 
 DOMAIN_HINTS: dict[str, tuple[str, ...]] = {

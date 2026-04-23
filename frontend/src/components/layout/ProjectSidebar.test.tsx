@@ -1,10 +1,19 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 
+const { apiMock } = vi.hoisted(() => ({
+    apiMock: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
+}));
+
+vi.mock('../../api/client', () => ({
+    default: apiMock,
+}));
+
 import ProjectSidebar from './ProjectSidebar';
-import type { PipelineStatusResponse, PipelineStage } from '../../types';
+import type { PipelineStatusResponse, PipelineStage, Project } from '../../types';
+import { useProjectStore } from '../../stores/projectStore';
 
 const STAGES: PipelineStage[] = [
   'ingestion',
@@ -38,7 +47,10 @@ function LocationProbe() {
   return <div data-testid="location">{location.pathname}</div>;
 }
 
-function renderSidebar(initialEntries: Array<string | { pathname: string; state?: unknown }>) {
+function renderSidebar(
+    initialEntries: Array<string | { pathname: string; state?: unknown }>,
+    opts: { beginnerMode?: boolean } = {},
+) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
       <Routes>
@@ -46,7 +58,12 @@ function renderSidebar(initialEntries: Array<string | { pathname: string; state?
           path="/project/:id/*"
           element={
             <>
-              <ProjectSidebar projectId={1} projectName="Demo" pipelineStatus={PIPELINE_STATUS} />
+              <ProjectSidebar
+                projectId={1}
+                projectName="Demo"
+                pipelineStatus={PIPELINE_STATUS}
+                beginnerMode={opts.beginnerMode}
+              />
               <LocationProbe />
             </>
           }
@@ -100,5 +117,107 @@ describe('ProjectSidebar nav matrix', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/project/1/pipeline/data');
     expect(screen.getByText('Runs and Stages')).toBeInTheDocument();
   });
+});
+
+describe('ProjectSidebar beginner-mode hiding', () => {
+  beforeEach(() => {
+    apiMock.put.mockReset();
+  });
+
+  it('hides Automation + Domain rails when beginner mode is on', () => {
+    renderSidebar(['/project/1/guide'], { beginnerMode: true });
+    expect(screen.queryByRole('button', { name: 'Automation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Domain' })).not.toBeInTheDocument();
+    // Core rails still present.
+    expect(screen.getByRole('button', { name: 'Start' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Training' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Playground' })).toBeInTheDocument();
+  });
+
+  it('shows Automation + Domain rails when beginner mode is off', () => {
+    renderSidebar(['/project/1/guide'], { beginnerMode: false });
+    expect(screen.getByRole('button', { name: 'Automation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Domain' })).toBeInTheDocument();
+  });
+
+  it('hides Adapter Studio in training panel when beginner mode is on', () => {
+    renderSidebar(['/project/1/training-config'], { beginnerMode: true });
+    expect(screen.queryByRole('button', { name: 'Adapter Studio' })).not.toBeInTheDocument();
+    // Autopilot Planner still available.
+    expect(screen.getByRole('button', { name: 'Autopilot Planner' })).toBeInTheDocument();
+  });
+
+  it('hides workflow + recipes panel entries even on deep-link', () => {
+    renderSidebar(['/project/1/workflow'], { beginnerMode: true });
+    expect(screen.queryByRole('button', { name: 'Workflow Builder' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Recipes' })).not.toBeInTheDocument();
+  });
+
+  it('hides domain panel entries even on deep-link', () => {
+    renderSidebar(['/project/1/domain/packs'], { beginnerMode: true });
+    expect(screen.queryByRole('button', { name: 'Domain Packs' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Domain Profiles' })).not.toBeInTheDocument();
+  });
+
+  it('shows the beginner-mode badge and leave button', () => {
+    renderSidebar(['/project/1/guide'], { beginnerMode: true });
+    expect(screen.getByRole('note', { name: /Beginner mode active/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leave beginner mode/i })).toBeInTheDocument();
+  });
+
+  it('leave-beginner button PUTs beginner_mode=false after confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const updatedProject: Project = {
+      id: 1,
+      name: 'Demo',
+      description: null,
+      status: 'active',
+      pipeline_stage: 'training',
+      base_model_name: null,
+      domain_pack_id: null,
+      domain_profile_id: null,
+      beginner_mode: false,
+      created_at: '2026-04-23T00:00:00Z',
+      updated_at: '2026-04-23T00:00:00Z',
+    };
+    apiMock.put.mockResolvedValue({ data: updatedProject });
+
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/guide'], { beginnerMode: true });
+
+    await user.click(screen.getByRole('button', { name: /Leave beginner mode/i }));
+    await waitFor(() => {
+      expect(apiMock.put).toHaveBeenCalledWith('/projects/1', { beginner_mode: false });
+    });
+    expect(useProjectStore.getState().activeProject).toEqual(updatedProject);
+    confirmSpy.mockRestore();
+  });
+
+  it('leave-beginner is cancelled if confirm returns false', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/guide'], { beginnerMode: true });
+
+    await user.click(screen.getByRole('button', { name: /Leave beginner mode/i }));
+    expect(apiMock.put).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('surfaces errors from the leave-beginner call', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    apiMock.put.mockRejectedValue({ response: { data: { detail: 'db is down' } } });
+
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/guide'], { beginnerMode: true });
+
+    await user.click(screen.getByRole('button', { name: /Leave beginner mode/i }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/db is down/);
+    confirmSpy.mockRestore();
+  });
+});
+
+afterEach(() => {
+  useProjectStore.setState({ activeProject: null, pipelineStatus: null });
 });
 

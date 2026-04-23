@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import api from '../api/client';
+import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
 import type {
     PipelineRecipeApplyResponse,
@@ -455,7 +456,7 @@ export default function ProjectRecipesPage() {
 
             <div className="pipeline-recipes-layout">
                 <section className="card pipeline-recipes-catalog">
-                    <h4>Recipe Catalog</h4>
+                    <h4><Term id="recipe" advanced /> Catalog</h4>
                     <div className="pipeline-recipes-list">
                         {catalog?.recipes.map((recipe) => {
                             const active = recipe.recipe_id === selectedRecipeId;

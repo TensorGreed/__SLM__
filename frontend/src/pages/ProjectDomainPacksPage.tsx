@@ -1,6 +1,7 @@
 import { useOutletContext } from 'react-router-dom';
 
 import DomainPackManager from '../components/domain/DomainPackManager';
+import Term from '../components/shared/Term';
 import { useProjectStore } from '../stores/projectStore';
 import type { Project } from '../types';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -13,7 +14,9 @@ export default function ProjectDomainPacksPage() {
         <div className="workspace-page">
             <section className="workspace-page-header">
                 <div>
-                    <h2 className="workspace-page-title">Domain Packs</h2>
+                    <h2 className="workspace-page-title">
+                        <Term id="domain_pack" plural advanced />
+                    </h2>
                     <p className="workspace-page-subtitle">
                         Set reusable policy bundles and hook defaults for this project.
                     </p>

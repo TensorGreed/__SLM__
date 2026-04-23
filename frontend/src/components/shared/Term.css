@@ -1,0 +1,90 @@
+.term {
+    position: relative;
+    display: inline-flex;
+    align-items: baseline;
+}
+
+.term-trigger {
+    display: inline;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    border-bottom: 1px dotted rgba(120, 165, 240, 0.65);
+    color: inherit;
+    font: inherit;
+    cursor: help;
+    text-align: inherit;
+}
+
+.term-trigger:hover,
+.term-trigger:focus {
+    color: #3068d9;
+    border-bottom-color: rgba(60, 115, 220, 0.85);
+    outline: none;
+}
+
+.term-popover {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    z-index: 60;
+    min-width: 260px;
+    max-width: 360px;
+    background: #ffffff;
+    color: #1e293b;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.82rem;
+    font-weight: 400;
+    line-height: 1.35;
+    white-space: normal;
+    pointer-events: auto;
+}
+
+.term-popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.term-popover-title {
+    font-weight: 600;
+    color: #0f172a;
+    font-size: 0.86rem;
+}
+
+.term-popover-category {
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
+    background: #eef2f7;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.term-popover-aka {
+    font-size: 0.74rem;
+    color: #475569;
+    font-style: italic;
+}
+
+.term-popover-body {
+    color: #1e293b;
+}
+
+.term-popover-example {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px dashed #cbd5e1;
+    font-size: 0.78rem;
+    color: #475569;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     BookOpen,
@@ -12,17 +12,21 @@ import {
     Layers,
     Settings2,
     Sparkles,
+    Unlock,
     Workflow,
 } from 'lucide-react';
 
 import { PIPELINE_TABS } from '../../types';
 import type { PipelineStatusResponse, TabKey } from '../../types';
+import { useProjectStore } from '../../stores/projectStore';
+import api from '../../api/client';
 import './ProjectSidebar.css';
 
 interface ProjectSidebarProps {
     projectId: number;
     projectName: string;
     pipelineStatus: PipelineStatusResponse | null;
+    beginnerMode?: boolean;
 }
 
 type RailKey = 'home' | 'pipeline' | 'training' | 'playground' | 'workflow' | 'domain';
@@ -69,12 +73,39 @@ function isRailKey(value: unknown): value is RailKey {
         || value === 'domain';
 }
 
-export default function ProjectSidebar({ projectId, projectName, pipelineStatus }: ProjectSidebarProps) {
+export default function ProjectSidebar({ projectId, projectName, pipelineStatus, beginnerMode }: ProjectSidebarProps) {
     const location = useLocation();
     const navigate = useNavigate();
+    const { activeProject, setActiveProject } = useProjectStore();
+    const isBeginner = Boolean(
+        beginnerMode !== undefined ? beginnerMode : activeProject?.beginner_mode,
+    );
+    const [leavingBeginner, setLeavingBeginner] = useState(false);
+    const [leaveError, setLeaveError] = useState<string | null>(null);
     const railHintRaw = (location.state as { sidebarRail?: unknown } | null)?.sidebarRail;
     const railHint = isRailKey(railHintRaw) ? railHintRaw : null;
     const lastNonWizardRailRef = useRef<RailKey>('home');
+
+    const handleLeaveBeginnerMode = async () => {
+        const message =
+            'Leave beginner mode? You will regain access to Recipes, Domain Packs, Domain Profiles, Workflow Builder, and the Extension Studio. You can turn beginner mode back on from Project Settings at any time.';
+        if (!window.confirm(message)) {
+            return;
+        }
+        setLeavingBeginner(true);
+        setLeaveError(null);
+        try {
+            const response = await api.put(`/projects/${projectId}`, { beginner_mode: false });
+            setActiveProject(response.data);
+        } catch (err) {
+            const detail =
+                (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+                ?? (err instanceof Error ? err.message : 'Unable to leave beginner mode.');
+            setLeaveError(typeof detail === 'string' ? detail : 'Unable to leave beginner mode.');
+        } finally {
+            setLeavingBeginner(false);
+        }
+    };
     const pipelineBasePath = `/project/${projectId}/pipeline`;
     const pipelineDataPath = `${pipelineBasePath}/data`;
     const pipelineTrainingPath = `${pipelineBasePath}/training`;
@@ -183,18 +214,22 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
             title: 'Playground',
             onClick: () => navigate(`/project/${projectId}/playground`),
         },
-        {
-            key: 'workflow',
-            icon: <Workflow size={16} />,
-            title: 'Automation',
-            onClick: () => navigate(`/project/${projectId}/workflow`),
-        },
-        {
-            key: 'domain',
-            icon: <Layers size={16} />,
-            title: 'Domain',
-            onClick: () => navigate(`/project/${projectId}/domain/packs`),
-        },
+        ...(isBeginner
+            ? []
+            : [
+                  {
+                      key: 'workflow' as RailKey,
+                      icon: <Workflow size={16} />,
+                      title: 'Automation',
+                      onClick: () => navigate(`/project/${projectId}/workflow`),
+                  },
+                  {
+                      key: 'domain' as RailKey,
+                      icon: <Layers size={16} />,
+                      title: 'Domain',
+                      onClick: () => navigate(`/project/${projectId}/domain/packs`),
+                  },
+              ]),
     ];
 
     return (
@@ -323,13 +358,15 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                                 <Boxes size={15} />
                                 <span className="nav-label">Base Model Registry</span>
                             </button>
-                            <button
-                                className={`workspace-nav-item ${isAdapterStudioRoute ? 'active' : ''}`}
-                                onClick={() => navigate(`/project/${projectId}/adapter-studio`)}
-                            >
-                                <Boxes size={15} />
-                                <span className="nav-label">Adapter Studio</span>
-                            </button>
+                            {!isBeginner && (
+                                <button
+                                    className={`workspace-nav-item ${isAdapterStudioRoute ? 'active' : ''}`}
+                                    onClick={() => navigate(`/project/${projectId}/adapter-studio`)}
+                                >
+                                    <Boxes size={15} />
+                                    <span className="nav-label">Adapter Studio</span>
+                                </button>
+                            )}
                             <button
                                 className={`workspace-nav-item ${isAutopilotRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/autopilot`)}
@@ -374,7 +411,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                         </>
                     )}
 
-                    {selectedRailKey === 'workflow' && (
+                    {selectedRailKey === 'workflow' && !isBeginner && (
                         <>
                             <div className="nav-section-label">Automation</div>
                             <button
@@ -394,7 +431,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                         </>
                     )}
 
-                    {selectedRailKey === 'domain' && (
+                    {selectedRailKey === 'domain' && !isBeginner && (
                         <>
                             <div className="nav-section-label">Domain Controls</div>
                             <button
@@ -414,6 +451,29 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus 
                         </>
                     )}
                 </nav>
+
+                {isBeginner && (
+                    <div className="project-sidebar-beginner">
+                        <div className="beginner-badge" role="note" aria-label="Beginner mode active">
+                            Beginner mode
+                        </div>
+                        <p className="beginner-note">
+                            Recipes, Domain Packs, Workflow, and advanced studios are hidden to keep the workspace focused.
+                        </p>
+                        <button
+                            type="button"
+                            className="workspace-nav-item leave-beginner-button"
+                            onClick={handleLeaveBeginnerMode}
+                            disabled={leavingBeginner}
+                        >
+                            <Unlock size={15} />
+                            <span className="nav-label">
+                                {leavingBeginner ? 'Leaving beginner mode…' : 'Leave beginner mode'}
+                            </span>
+                        </button>
+                        {leaveError && <div className="beginner-error" role="alert">{leaveError}</div>}
+                    </div>
+                )}
             </div>
         </aside>
     );
