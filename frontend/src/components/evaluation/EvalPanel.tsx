@@ -3,7 +3,11 @@ import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, Responsi
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import ScorecardPanel from './ScorecardPanel';
+import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
+import FailureClustersPanel from './FailureClustersPanel';
 import './EvalPanel.css';
+
+type EvalSubTab = 'runs' | 'workbench';
 
 interface EvalPanelProps {
     projectId: number;
@@ -270,6 +274,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const [maxNewTokens, setMaxNewTokens] = useState(128);
     const [temperature, setTemperature] = useState(0);
     const [modelPath, setModelPath] = useState('');
+    const [subTab, setSubTab] = useState<EvalSubTab>('runs');
 
     const [loadingExperiments, setLoadingExperiments] = useState(false);
     const [isEvaluating, setIsEvaluating] = useState(false);
@@ -752,6 +757,28 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+            <div className="eval-subtab-switch" role="tablist" aria-label="Evaluation sections">
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={subTab === 'runs' ? 'true' : 'false'}
+                    className={`eval-subtab-btn ${subTab === 'runs' ? 'active' : ''}`}
+                    onClick={() => setSubTab('runs')}
+                >
+                    Eval runs
+                </button>
+                <button
+                    type="button"
+                    role="tab"
+                    aria-selected={subTab === 'workbench' ? 'true' : 'false'}
+                    className={`eval-subtab-btn ${subTab === 'workbench' ? 'active' : ''}`}
+                    onClick={() => setSubTab('workbench')}
+                >
+                    Workbench
+                </button>
+            </div>
+            {subTab === 'workbench' && <GoldSetWorkbenchPanel projectId={projectId} />}
+            {subTab === 'runs' && (<>
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-md)' }}>Select Experiment / Model</h3>
                 {loadingExperiments ? (
@@ -1376,6 +1403,18 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 <ScorecardPanel projectId={projectId} experimentId={selectedExp} />
             )}
 
+            {selectedExp && evalResults.length > 0 && (
+                <FailureClustersPanel
+                    projectId={projectId}
+                    evalResults={evalResults.map((r) => ({
+                        id: r.id,
+                        dataset_name: r.dataset_name,
+                        eval_type: r.eval_type,
+                        pass_rate: r.pass_rate,
+                    }))}
+                />
+            )}
+
             {latestInference && (
                 <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 'var(--space-md)' }}>
                     <div>
@@ -1547,6 +1586,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     onNext={onNextStep}
                 />
             )}
+            </>)}
         </div>
     );
 }

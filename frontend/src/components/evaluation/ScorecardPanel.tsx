@@ -96,17 +96,29 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
               </tr>
             </thead>
             <tbody>
-              {gate_report.checks.map((gate) => (
-                <tr key={gate.gate_id} className={gate.passed ? 'passed' : gate.required ? 'failed' : 'warn'}>
-                  <td>{gate.gate_id}</td>
-                  <td>{gate.metric_id}</td>
-                  <td>{gate.operator} {gate.threshold}</td>
-                  <td>{gate.actual !== null ? gate.actual.toFixed(4) : 'N/A'}</td>
-                  <td>
-                    {gate.passed ? '✅ Pass' : gate.required ? '❌ Fail' : '⚠️ Low'}
-                  </td>
-                </tr>
-              ))}
+              {gate_report.checks.map((gate) => {
+                const notMeasured = gate.actual === null;
+                const rowClass = notMeasured
+                  ? (gate.required ? 'failed' : 'warn')
+                  : (gate.passed ? 'passed' : gate.required ? 'failed' : 'warn');
+                let statusLabel: string;
+                if (notMeasured) {
+                  statusLabel = gate.required ? '⚠️ Not measured' : '⏭️ Skipped';
+                } else if (gate.passed) {
+                  statusLabel = '✅ Pass';
+                } else {
+                  statusLabel = gate.required ? '❌ Fail' : '⚠️ Low';
+                }
+                return (
+                  <tr key={gate.gate_id} className={rowClass}>
+                    <td>{gate.gate_id}</td>
+                    <td>{gate.metric_id}</td>
+                    <td>{gate.operator} {gate.threshold}</td>
+                    <td>{notMeasured ? 'N/A' : gate.actual!.toFixed(4)}</td>
+                    <td>{statusLabel}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

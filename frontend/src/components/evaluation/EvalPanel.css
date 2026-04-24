@@ -1,3 +1,27 @@
+.eval-subtab-switch {
+    display: inline-flex;
+    border: 1px solid #c9d6ea;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #ffffff;
+    align-self: flex-start;
+}
+
+.eval-subtab-btn {
+    border: none;
+    background: transparent;
+    color: #526884;
+    font-size: var(--font-size-sm);
+    padding: 0.42rem 0.9rem;
+    cursor: pointer;
+}
+
+.eval-subtab-btn.active {
+    background: #eaf2ff;
+    color: #1f4f8f;
+    font-weight: 600;
+}
+
 .table-container {
     overflow-y: auto;
     border-radius: var(--radius-md);

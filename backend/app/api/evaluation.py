@@ -428,6 +428,31 @@ async def safety_scorecard(
         raise HTTPException(404, str(e))
 
 
+@router.get("/{eval_result_id}/failure-clusters")
+async def failure_clusters(
+    project_id: int,  # noqa: ARG001 — scoped by router prefix, used for route matching
+    eval_result_id: int,
+    max_failures: int = 200,
+    max_exemplars_per_cluster: int = 3,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cluster row-level eval failures by `(reason_code, output_pattern)` (P12)."""
+    from app.services.failure_cluster_service import cluster_eval_result_failures
+
+    try:
+        return await cluster_eval_result_failures(
+            db,
+            eval_result_id=eval_result_id,
+            max_failures=max_failures,
+            max_exemplars_per_cluster=max_exemplars_per_cluster,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "eval_result_not_found":
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
 @router.post("/remediation-plans/generate", status_code=201)
 async def generate_eval_remediation_plan(
     project_id: int,

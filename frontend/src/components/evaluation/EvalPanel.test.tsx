@@ -74,6 +74,21 @@ describe('EvalPanel remediation planner', () => {
           },
         };
       }
+      if (url.endsWith('/failure-clusters')) {
+        return {
+          data: {
+            eval_result_id: 501,
+            experiment_id: 21,
+            dataset_name: 'gold_test',
+            eval_type: 'llm_judge',
+            total_failures_analyzed: 0,
+            reason_code_totals: {},
+            dominant_reason_code: null,
+            clusters: [],
+            remediation_plans: [],
+          },
+        };
+      }
       if (url.includes('/evaluation/gates/21')) {
         return {
           data: {
