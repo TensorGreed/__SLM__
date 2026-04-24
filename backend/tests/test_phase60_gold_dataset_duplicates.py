@@ -61,12 +61,7 @@ class Phase60GoldDatasetDuplicateTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        resolved = str(settings.DATABASE_URL)
-        if TEST_DB_PATH.resolve().as_posix() not in resolved:
-            raise unittest.SkipTest(
-                f"phase60 requires DATABASE_URL at {TEST_DB_PATH}, "
-                f"but engine is bound to {resolved!r} (run this file standalone)."
-            )
+        # Production DB isolation is enforced by ``tests/conftest.py``.
         settings.AUTH_ENABLED = False
         settings.DEBUG = False
         settings.DATA_DIR = TEST_DATA_DIR.resolve()

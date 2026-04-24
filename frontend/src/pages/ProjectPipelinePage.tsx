@@ -170,17 +170,17 @@ export default function ProjectPipelinePage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
                         <div className="card pipeline-training-config-card">
                             <div>
-                                <h3>Training Config moved to dedicated page</h3>
+                                <h3>Configure before you run</h3>
                                 <p>
-                                    Use the new Training Config menu item for model selection, hyperparameters,
-                                    recipes, and preflight planning. This stage now focuses on runs and monitoring.
+                                    Pick model, hyperparameters, recipe, and run preflight checks on the
+                                    Training Config page. Runs and live metrics stay here on the pipeline.
                                 </p>
                             </div>
                             <button
-                                className="btn btn-secondary"
+                                className="btn btn-primary"
                                 onClick={() => navigate(`/project/${projectId}/training-config`)}
                             >
-                                Open Training Config
+                                Open Training Config →
                             </button>
                         </div>
                         <TrainingPanel

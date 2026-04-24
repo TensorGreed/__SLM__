@@ -4427,6 +4427,173 @@ async def effective_training_config(
     }
 
 
+async def _fetch_compatible_alternatives(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    target_profile_id: str,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Return a short list of models that actually ARE compatible with the target.
+
+    Used as a remediation hint in the preflight error payload so users stuck on
+    "your model is too big" immediately see which models would fit. Network
+    lookups are disabled so this call stays cheap on the preflight path.
+    """
+    try:
+        from app.services.base_model_registry_service import recommend_models_for_project
+    except ImportError:
+        return []
+
+    try:
+        rows = await recommend_models_for_project(
+            db,
+            project_id=project_id,
+            limit=max(limit * 3, 10),
+            include_incompatible=False,
+            target_profile_id=target_profile_id,
+            allow_network=False,
+        )
+    except Exception:
+        # Any failure in the registry must not break preflight; fall back to empty.
+        return []
+
+    suggestions: list[dict[str, Any]] = []
+    for row in rows:
+        if not bool(row.get("compatible", False)):
+            continue
+        # recommend_models_for_project nests the serialized record under "model";
+        # falling back to the top-level keys keeps this resilient to shape drift
+        # and the test mock that passes flat dicts.
+        model = row.get("model") if isinstance(row.get("model"), dict) else {}
+        source_ref = str(model.get("source_ref") or row.get("source_ref") or "").strip()
+        display_name = str(
+            model.get("display_name")
+            or row.get("display_name")
+            or model.get("model_key")
+            or row.get("model_key")
+            or ""
+        ).strip()
+        if not source_ref and not display_name:
+            continue
+        suggestions.append(
+            {
+                "source_ref": source_ref,
+                "display_name": display_name or source_ref,
+                "model_key": str(model.get("model_key") or row.get("model_key") or "").strip(),
+                "params_estimate_b": model.get("params_estimate_b") or row.get("params_estimate_b"),
+                "compatibility_score": row.get("compatibility_score"),
+            }
+        )
+        if len(suggestions) >= limit:
+            break
+    return suggestions
+
+
+def _format_alternatives_line(suggestions: list[dict[str, Any]]) -> str:
+    if not suggestions:
+        return ""
+    fragments: list[str] = []
+    for item in suggestions:
+        label = str(item.get("source_ref") or item.get("display_name") or "").strip()
+        if not label:
+            continue
+        params = item.get("params_estimate_b")
+        if isinstance(params, (int, float)) and params > 0:
+            fragments.append(f"{label} (~{float(params):g}B)")
+        else:
+            fragments.append(label)
+    if not fragments:
+        return ""
+    return f" Compatible alternatives: {', '.join(fragments)}."
+
+
+async def _check_target_profile_compatibility(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    base_model: str,
+) -> tuple[list[str], dict[str, Any] | None]:
+    """Check if ``base_model`` is compatible with the project's target profile.
+
+    Returns a tuple of (error messages, metadata block). The error list matches
+    the wording of the runtime failure emitted by ``/experiments/{id}/start``
+    so users see the same problem reported earlier in the flow, plus a
+    comma-separated ``Compatible alternatives: ...`` tail so users stuck on
+    "which model do I pick instead?" see real candidates in the same message.
+    Metadata carries ``target_profile_id``, rejection reasons, unblock actions,
+    and a structured ``suggested_models`` list for frontends to render richly.
+    """
+    model = (base_model or "").strip()
+    if not model:
+        return [], None
+
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_row.scalar_one_or_none()
+    if project is None:
+        return [], None
+
+    target_profile_id = str(project.target_profile_id or "vllm_server").strip() or "vllm_server"
+    compatibility = check_compatibility(model, target_profile_id)
+    if bool(compatibility.get("compatible", False)):
+        return [], None
+
+    reasons = [
+        str(item).strip()
+        for item in list(compatibility.get("reasons") or [])
+        if str(item).strip()
+    ]
+    warnings = [
+        str(item).strip()
+        for item in list(compatibility.get("warnings") or [])
+        if str(item).strip()
+    ]
+    unblock_actions = _build_target_incompatibility_actions(
+        project_id=project_id,
+        target_profile_id=target_profile_id,
+        compatibility=dict(compatibility),
+    )
+    suggestions = await _fetch_compatible_alternatives(
+        db, project_id=project_id, target_profile_id=target_profile_id
+    )
+    message = (
+        f"Base model '{model}' is not compatible with target profile "
+        f"'{target_profile_id}'."
+        + _format_alternatives_line(suggestions)
+    )
+    metadata = {
+        "error_code": "TARGET_INCOMPATIBLE",
+        "target_profile_id": target_profile_id,
+        "reasons": reasons,
+        "warnings": warnings,
+        "unblock_actions": unblock_actions,
+        "suggested_models": suggestions,
+    }
+    return [message], metadata
+
+
+def _merge_compatibility_into_preflight(
+    preflight: dict[str, Any],
+    extra_errors: list[str],
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fold target-profile compatibility failures into the preflight payload.
+
+    When the check raises an error we flip ``ok`` to False and append to the
+    existing ``errors`` list so the frontend gate (``preflight.ok``) blocks
+    submission automatically. Metadata rides on a dedicated key so the client
+    can render remediation controls without colliding with existing fields.
+    """
+    if not extra_errors:
+        return preflight
+    merged = dict(preflight)
+    merged["ok"] = False
+    merged["errors"] = [*list(merged.get("errors") or []), *extra_errors]
+    if metadata is not None:
+        merged["target_profile_compatibility"] = metadata
+    return merged
+
+
 @router.post("/experiments/preflight")
 async def training_preflight(
     project_id: int,
@@ -4447,11 +4614,16 @@ async def training_preflight(
         db=db,
     )
 
+    base_model = str(resolved_config.get("base_model", ""))
     preflight = run_training_preflight(
         project_id=project_id,
         config=resolved_config,
-        base_model=str(resolved_config.get("base_model", "")),
+        base_model=base_model,
     )
+    compat_errors, compat_meta = await _check_target_profile_compatibility(
+        db=db, project_id=project_id, base_model=base_model,
+    )
+    preflight = _merge_compatibility_into_preflight(preflight, compat_errors, compat_meta)
 
     return {
         "domain_pack_applied": runtime.get("domain_pack_applied"),
@@ -4488,11 +4660,27 @@ async def training_preflight_plan(
         db=db,
     )
 
+    base_model = str(resolved_config.get("base_model", ""))
     plan = run_training_preflight_plan(
         project_id=project_id,
         config=resolved_config,
-        base_model=str(resolved_config.get("base_model", "")),
+        base_model=base_model,
     )
+    compat_errors, compat_meta = await _check_target_profile_compatibility(
+        db=db, project_id=project_id, base_model=base_model,
+    )
+    if compat_errors and isinstance(plan, dict):
+        plan_inner = plan.get("preflight")
+        if isinstance(plan_inner, dict):
+            plan["preflight"] = _merge_compatibility_into_preflight(
+                plan_inner, compat_errors, compat_meta
+            )
+        else:
+            plan["preflight"] = _merge_compatibility_into_preflight(
+                {"ok": False, "errors": [], "warnings": [], "hints": []},
+                compat_errors,
+                compat_meta,
+            )
 
     return {
         "domain_pack_applied": runtime.get("domain_pack_applied"),
@@ -4539,6 +4727,10 @@ async def training_preflight_for_experiment(
         config=resolved_config,
         base_model=exp.base_model,
     )
+    compat_errors, compat_meta = await _check_target_profile_compatibility(
+        db=db, project_id=project_id, base_model=exp.base_model,
+    )
+    preflight = _merge_compatibility_into_preflight(preflight, compat_errors, compat_meta)
     return {
         "experiment_id": exp.id,
         "status": exp.status.value,

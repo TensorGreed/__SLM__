@@ -54,3 +54,36 @@
         justify-content: flex-start;
     }
 }
+
+.training-config-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+.training-config-breadcrumb-link {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font: inherit;
+}
+
+.training-config-breadcrumb-link:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.training-config-breadcrumb-sep {
+    opacity: 0.5;
+}
+
+.training-config-breadcrumb-current {
+    color: var(--text-primary);
+    font-weight: 500;
+}

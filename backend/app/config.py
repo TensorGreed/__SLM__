@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # ── Teacher Model (for synthetic generation) ────────────────────────
     TEACHER_MODEL_API_URL: str = ""
     TEACHER_MODEL_API_KEY: str = ""
+    # Optional suffix appended to every teacher prompt. Blank by default (works
+    # for OpenAI / llama / Mistral / generic instruct models). Reasoning models
+    # that honor a disable-thinking directive can set this — e.g. Qwen3 accepts
+    # "/no_think". DeepSeek-R1 and o1 have no such directive, so leave blank.
+    TEACHER_MODEL_NO_THINK_SUFFIX: str = ""
     ALLOW_SYNTHETIC_DEMO_FALLBACK: bool = False
     DOMAIN_BLUEPRINT_ENABLE_LLM_ENRICHMENT: bool = False
 

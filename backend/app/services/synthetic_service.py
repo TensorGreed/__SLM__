@@ -70,16 +70,41 @@ async def get_or_create_synthetic_dataset(
     return ds
 
 
+DEFAULT_TEACHER_SYSTEM_PROMPT = (
+    "You are a helpful assistant that generates high-quality training data. "
+    "Respond directly with the requested output. Do not include reasoning, "
+    "planning, or preamble before the answer — produce only the final result."
+)
+
+
 async def call_teacher_model(
     prompt: str,
-    system_prompt: str = "You are a helpful assistant that generates high-quality training data.",
+    system_prompt: str = DEFAULT_TEACHER_SYSTEM_PROMPT,
     api_url: str = "",
     api_key: str = "",
     model_name: str = "llama3",
     temperature: float = 0.7,
-    max_tokens: int = 1024,
+    max_tokens: int = 4096,
+    force_json: bool = False,
 ) -> dict[str, Any]:
-    """Call external teacher LLM API (OpenAI-compatible format)."""
+    """Call external teacher LLM API (OpenAI-compatible format).
+
+    Design choices that matter for heterogeneous teacher backends:
+
+    * Default ``max_tokens`` is 4096 so the response has room for whatever
+      preamble a reasoning model emits (Qwen3 ``<think>``, Claude structured
+      thinking, DeepSeek-R1 reflections) *and* the JSON payload. 1024 was
+      enough for llama3 + OpenAI but silently starved reasoning models.
+    * The default system prompt tells the model to skip reasoning preamble.
+      Model-agnostic and harmless to plain instruct models (they already
+      respond directly).
+    * ``settings.TEACHER_MODEL_NO_THINK_SUFFIX`` is appended to every user
+      prompt when non-empty. This is opt-in and intentionally generic: Qwen3
+      users set it to ``/no_think``; llama/OpenAI users leave it blank.
+    * ``force_json=True`` adds OpenAI ``response_format`` + Ollama-native
+      ``format=json`` to the payload. Either field is honored by models that
+      support structured output; others ignore both without error.
+    """
     url = api_url or settings.TEACHER_MODEL_API_URL
     key = api_key or settings.TEACHER_MODEL_API_KEY
 
@@ -90,15 +115,23 @@ async def call_teacher_model(
     if key:
         headers["Authorization"] = f"Bearer {key}"
 
-    payload = {
+    no_think_suffix = (getattr(settings, "TEACHER_MODEL_NO_THINK_SUFFIX", "") or "").strip()
+    user_content = f"{prompt}\n\n{no_think_suffix}" if no_think_suffix else prompt
+
+    payload: dict[str, Any] = {
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_content},
         ],
         "model": model_name,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if force_json:
+        payload["response_format"] = {"type": "json_object"}
+        # Ollama's OpenAI-compat shim also honors a top-level ``format`` field
+        # when it's exactly "json" — harmless to servers that don't know it.
+        payload["format"] = "json"
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
@@ -183,8 +216,37 @@ def _unwrap_pairs_payload(payload: Any) -> list[dict] | None:
     return None
 
 
+_THINK_TAG_PATTERN = re.compile(
+    r"<\s*(think|thinking|reasoning|reflection|scratchpad)\s*>.*?<\s*/\s*\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    """Remove ``<think>...</think>`` and similar reasoning wrappers.
+
+    Qwen3, Claude and several other modern models wrap internal chain-of-thought
+    output in ``<think>...</think>`` tags when instructed to show reasoning.
+    That preamble breaks downstream JSON / Q&A parsing, so we scrub it before
+    any structural extraction. Unterminated opening tags (streaming truncation)
+    are also stripped — everything from the opening tag to end-of-text is
+    treated as hidden reasoning.
+    """
+    if not text:
+        return text
+    cleaned = _THINK_TAG_PATTERN.sub("", text)
+    cleaned = re.sub(
+        r"<\s*(think|thinking|reasoning|reflection|scratchpad)\s*>.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return cleaned.strip()
+
+
 def _extract_json_blocks(text: str) -> list[str]:
     """Collect candidate JSON blocks from free-form model output."""
+    text = _strip_thinking_blocks(text)
     candidates: list[str] = []
     stripped = text.strip()
     if stripped:
@@ -218,45 +280,114 @@ def _extract_json_blocks(text: str) -> list[str]:
     return deduped
 
 
+_MARKDOWN_PREFIX = re.compile(r"^(?:[#>*\-\s\d\.\)]+|[*_]+)")
+_MARKDOWN_WRAPPERS = re.compile(r"[*_`]+")
+
+# Recognize question/answer markers tolerating common dressing like markdown
+# bold, hash headings, numbered bullets and numbered suffixes (``Q1:``,
+# ``**Q 1.**``, ``### Question 2:``, ``1. Q:``, etc.).
+#
+# Two forms per marker:
+#   * ``_BODY``  — marker + separator + text on the same line
+#                   (``Q: What is X?`` / ``**Answer 1:** The answer.``)
+#   * ``_BARE``  — marker appears alone on a line as a heading; the question
+#                  or answer body follows on subsequent lines
+#                   (``### Q1\nWhat is X?``).
+_Q_MARKER_BODY = re.compile(
+    r"^\s*(?:q|question)\s*\d*\s*[:\-.]\s*(.+)$",
+    re.IGNORECASE,
+)
+_A_MARKER_BODY = re.compile(
+    r"^\s*(?:a|answer)\s*\d*\s*[:\-.]\s*(.+)$",
+    re.IGNORECASE,
+)
+# Bare markers need a disambiguator so "Qualitative" doesn't trigger a new
+# question block — we require either a number after the marker word or a
+# trailing separator with no body after it.
+_Q_MARKER_BARE = re.compile(
+    r"^\s*(?:q|question)\s*(?:\d+\s*[:\-.]?|\s*[:\-.])\s*$",
+    re.IGNORECASE,
+)
+_A_MARKER_BARE = re.compile(
+    r"^\s*(?:a|answer)\s*(?:\d+\s*[:\-.]?|\s*[:\-.])\s*$",
+    re.IGNORECASE,
+)
+
+
+def _decorate_line(raw_line: str) -> str:
+    """Strip markdown dressing so the Q/A markers survive on the line."""
+    stripped = raw_line.strip()
+    if not stripped:
+        return ""
+    # Drop leading bullets / numbering / heading hashes: ``1.``, ``- ``, ``### ``.
+    stripped = _MARKDOWN_PREFIX.sub("", stripped).strip()
+    # Remove inline bold/italic wrappers like ``**Q:**`` → ``Q:``.
+    stripped = _MARKDOWN_WRAPPERS.sub("", stripped).strip()
+    return stripped
+
+
 def _parse_plaintext_qa_pairs(text: str) -> list[dict]:
-    """Fallback parser for `Q:`/`A:` formatted model responses."""
+    """Fallback parser for Q/A-shaped model responses.
+
+    Tolerates common dressing on top of the bare ``Q:`` / ``A:`` pattern:
+    markdown bold (``**Q:**``), markdown headings (``### Q1``), numbered
+    prefixes (``1. Question:``), and trailing numbering on the marker itself
+    (``Question 1:``, ``Q1 -``).
+    """
+    text = _strip_thinking_blocks(text)
     pairs: list[dict] = []
     current_question = ""
     current_answer_lines: list[str] = []
+    state = "idle"  # "idle" | "collect_q" | "collect_a"
+
+    def _commit() -> None:
+        nonlocal current_question, current_answer_lines
+        if current_question and current_answer_lines:
+            pairs.append({
+                "question": current_question.strip(),
+                "answer": " ".join(current_answer_lines).strip(),
+            })
+        current_question = ""
+        current_answer_lines = []
 
     for raw_line in text.splitlines():
-        line = raw_line.strip()
+        line = _decorate_line(raw_line)
         if not line:
             continue
 
-        q_match = re.match(r"^(?:\d+[\).:\-]\s*)?(?:q|question)\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
-        if q_match:
-            if current_question and current_answer_lines:
-                pairs.append({
-                    "question": current_question.strip(),
-                    "answer": " ".join(current_answer_lines).strip(),
-                })
-            current_question = q_match.group(1).strip()
-            current_answer_lines = []
+        q_body = _Q_MARKER_BODY.match(line)
+        if q_body:
+            _commit()
+            current_question = q_body.group(1).strip()
+            state = "collect_q"
             continue
 
-        a_match = re.match(r"^(?:a|answer)\s*[:\-]\s*(.+)$", line, re.IGNORECASE)
-        if a_match:
+        if _Q_MARKER_BARE.match(line):
+            _commit()
+            state = "collect_q"
+            continue
+
+        a_body = _A_MARKER_BODY.match(line)
+        if a_body:
             if not current_question:
                 continue
-            current_answer_lines = [a_match.group(1).strip()]
+            current_answer_lines = [a_body.group(1).strip()]
+            state = "collect_a"
             continue
 
-        if current_question and current_answer_lines:
-            current_answer_lines.append(line)
-        elif current_question:
-            current_question = f"{current_question} {line}".strip()
+        if _A_MARKER_BARE.match(line):
+            if not current_question:
+                continue
+            current_answer_lines = []
+            state = "collect_a"
+            continue
 
-    if current_question and current_answer_lines:
-        pairs.append({
-            "question": current_question.strip(),
-            "answer": " ".join(current_answer_lines).strip(),
-        })
+        if state == "collect_q":
+            current_question = f"{current_question} {line}".strip() if current_question else line
+        elif state == "collect_a":
+            current_answer_lines.append(line)
+
+    _commit()
     return pairs
 
 
@@ -563,15 +694,47 @@ async def generate_qa_pairs(
         api_url=url,
         api_key=resolved_api_key,
         model_name=model_name,
+        force_json=True,
     )
 
     content = result["content"]
     pairs = _parse_teacher_pairs(content)
     if not pairs:
-        preview = _preview_text(content)
+        raw_content = content or ""
+        had_thinking = "<think" in raw_content.lower()
+        after_strip = _strip_thinking_blocks(raw_content)
+        preview = _preview_text(raw_content)
+        hints: list[str] = []
+        if had_thinking and not after_strip:
+            # Unterminated ``<think>`` → stripper consumed the whole response.
+            # Root cause is almost always the token budget being spent inside
+            # the reasoning block before any JSON started.
+            hints.append(
+                "response body was empty after stripping reasoning tags — the "
+                "model likely ran out of tokens while still reasoning. Raise "
+                "max_tokens and/or set TEACHER_MODEL_NO_THINK_SUFFIX (Qwen3: "
+                "'/no_think') to skip the thinking step"
+            )
+        elif not raw_content.strip():
+            hints.append(
+                "model returned an empty response — check the teacher endpoint, "
+                "model name, and any auth headers"
+            )
+        elif had_thinking:
+            hints.append(
+                "response contained <think> reasoning blocks; parser stripped "
+                "them but found no JSON or Q/A structure after"
+            )
+        hints.append(
+            "if the model ignores ``response_format=json_object``, try a "
+            "stricter system prompt or switch to a model that honors JSON mode"
+        )
+        hint_text = "; ".join(hints)
         raise ValueError(
-            "Teacher model response was not valid JSON for Q&A extraction. "
-            "Expected JSON array/object with question+answer fields. "
+            "Teacher model response could not be parsed as Q&A pairs. "
+            "Expected JSON `{\"pairs\":[{\"question\":\"...\",\"answer\":\"...\"}]}` "
+            "or plaintext `Q:` / `A:` blocks. "
+            f"Diagnostics: {hint_text}. "
             f"Response preview: {preview}"
         )
 
@@ -656,6 +819,7 @@ async def generate_conversation_dialogues(
         api_url=url,
         api_key=resolved_api_key,
         model_name=model_name,
+        force_json=True,
     )
     content = result.get("content", "")
     conversations = _parse_teacher_conversations(str(content))

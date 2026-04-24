@@ -71,17 +71,9 @@ class Phase58GoldSetWorkbenchTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Skip (rather than error) when the runtime DB binding drifted away
-        # from our test file — e.g. an earlier-loaded test module froze
-        # ``settings.DATABASE_URL`` onto a different path and the engine is
-        # already connected. Refuse to run so we don't pollute the shared DB;
-        # skip, not fail, so the suite still completes cleanly.
-        resolved = str(settings.DATABASE_URL)
-        if TEST_DB_PATH.resolve().as_posix() not in resolved:
-            raise unittest.SkipTest(
-                f"phase58 requires DATABASE_URL at {TEST_DB_PATH}, "
-                f"but engine is bound to {resolved!r} (run this file standalone)."
-            )
+        # Production DB isolation is enforced by ``tests/conftest.py`` — it
+        # pins ``DATABASE_URL`` + ``DATA_DIR`` onto a per-session /tmp path
+        # before any test module body runs. No per-file DB guard needed here.
         settings.AUTH_ENABLED = False
         settings.DEBUG = False
         settings.DATA_DIR = TEST_DATA_DIR.resolve()

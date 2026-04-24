@@ -13,38 +13,46 @@ export default function ProjectTrainingConfigPage() {
 
     return (
         <div className="workspace-page">
+            <nav className="training-config-breadcrumb" aria-label="Breadcrumb">
+                <button
+                    type="button"
+                    className="training-config-breadcrumb-link"
+                    onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
+                >
+                    ← Pipeline / Training
+                </button>
+                <span className="training-config-breadcrumb-sep">/</span>
+                <span className="training-config-breadcrumb-current">Training Config</span>
+            </nav>
             <section className="workspace-page-header">
                 <div>
                     <h2 className="workspace-page-title">Training Configurations</h2>
                     <p className="workspace-page-subtitle">
-                        Start in Essentials for a cleaner launch flow. Switch to Advanced for full controls.
+                        Configure the experiment here, then return to the Pipeline Training tab
+                        to launch runs and watch live metrics.
                     </p>
                 </div>
                 <div className="training-config-header-actions">
                     <div className="training-config-mode-switch" role="tablist" aria-label="Training configuration mode">
                         <button
+                            type="button"
                             className={`training-config-mode-btn ${configMode === 'essentials' ? 'active' : ''}`}
                             onClick={() => setConfigMode('essentials')}
                             role="tab"
-                            aria-selected={configMode === 'essentials'}
+                            aria-selected={configMode === 'essentials' ? 'true' : 'false'}
                         >
                             Essentials
                         </button>
                         <button
+                            type="button"
                             className={`training-config-mode-btn ${configMode === 'advanced' ? 'active' : ''}`}
                             onClick={() => setConfigMode('advanced')}
                             role="tab"
-                            aria-selected={configMode === 'advanced'}
+                            aria-selected={configMode === 'advanced' ? 'true' : 'false'}
                         >
                             Advanced
                         </button>
                     </div>
-                    <button
-                        className="btn btn-secondary"
-                        onClick={() => navigate(`/project/${projectId}/pipeline/training`)}
-                    >
-                        Open Training Stage
-                    </button>
                 </div>
             </section>
 
