@@ -191,6 +191,44 @@ async def ensure_draft_version(
     return draft
 
 
+async def lock_draft_version(
+    db: AsyncSession,
+    *,
+    gold_set_id: int,
+    notes: str = "",
+) -> GoldSetVersion:
+    """Flip the current draft version to ``locked`` and stamp ``locked_at``.
+
+    Returns the locked version. If no draft exists, raises
+    ``no_draft_version_to_lock`` so the caller can surface a clean 400.
+    """
+    await _require_gold_set(db, gold_set_id)
+
+    existing = await db.execute(
+        select(GoldSetVersion)
+        .where(
+            GoldSetVersion.gold_set_id == gold_set_id,
+            GoldSetVersion.status == GoldSetVersionStatus.DRAFT,
+        )
+        .order_by(GoldSetVersion.version.desc())
+        .limit(1)
+    )
+    draft = existing.scalar_one_or_none()
+    if draft is None:
+        raise ValueError("no_draft_version_to_lock")
+
+    draft.status = GoldSetVersionStatus.LOCKED
+    draft.locked_at = _utcnow()
+    if notes:
+        # Preserve any existing notes rather than stomping them silently.
+        suffix = f"\n[locked] {notes}" if draft.notes else f"[locked] {notes}"
+        draft.notes = (draft.notes or "") + suffix
+    await db.flush()
+    await db.commit()
+    await db.refresh(draft)
+    return draft
+
+
 async def _existing_row_keys_in_version(
     db: AsyncSession, *, version_id: int
 ) -> set[str]:

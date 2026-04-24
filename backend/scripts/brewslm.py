@@ -1562,6 +1562,312 @@ def run_autopilot(args: argparse.Namespace, client: ApiClient) -> int:
     raise ValueError(f"Unsupported autopilot subcommand '{subcommand}'.")
 
 
+# -- eval subparser (P13) ---------------------------------------------------
+
+
+def _eval_generate(args: argparse.Namespace, client: ApiClient) -> int:
+    body: dict[str, Any] = {"include_judge_rubric": not bool(args.no_judge_rubric)}
+    if args.blueprint_id is not None:
+        body["blueprint_id"] = int(args.blueprint_id)
+    if args.dataset_id is not None:
+        body["dataset_id"] = int(args.dataset_id)
+    if args.adapter_id is not None:
+        body["adapter_id"] = int(args.adapter_id)
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/evaluation/packs/generate",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _eval_gold_set_create(args: argparse.Namespace, client: ApiClient) -> int:
+    """Seed a gold dataset via the legacy ``/gold/add`` path, which lazy-creates.
+
+    Returns the resulting dataset id in JSON so downstream CLI commands can
+    feed it into ``gold-set add-row --gold-set-id`` and ``label``.
+    """
+    body = {
+        "dataset_type": args.dataset_type,
+        "question": args.seed_question,
+        "answer": args.seed_answer,
+        "difficulty": args.difficulty,
+        "is_hallucination_trap": bool(args.hallucination_trap),
+    }
+    response = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/gold/add",
+        json_body=body,
+    )
+    entries = client.request(
+        "GET",
+        f"/api/projects/{args.project_id}/gold/entries",
+        params={"dataset_type": args.dataset_type},
+    )
+    dataset_id = None
+    entries_list = entries if isinstance(entries, list) else entries.get("entries")
+    if isinstance(entries_list, list) and entries_list:
+        dataset_id = entries_list[0].get("dataset_id") or entries_list[0].get("gold_dataset_id")
+    payload = {
+        "project_id": args.project_id,
+        "dataset_type": args.dataset_type,
+        "seeded_entry": response,
+        "gold_set_id": dataset_id,
+    }
+    _print_json(payload)
+    return 0
+
+
+def _eval_gold_set_add_row(args: argparse.Namespace, client: ApiClient) -> int:
+    """Add rows to a gold set — via sample (P10) or the legacy Q/A path."""
+    if args.from_source_dataset_id is not None:
+        body: dict[str, Any] = {
+            "source_dataset_id": int(args.from_source_dataset_id),
+            "target_count": max(1, int(args.target_count or 1)),
+            "strategy": args.strategy,
+        }
+        if args.strategy == "stratified":
+            if not (args.stratify_by or "").strip():
+                raise ValueError("--stratify-by is required when --strategy stratified")
+            body["stratify_by"] = args.stratify_by.strip()
+        if args.seed is not None:
+            body["seed"] = int(args.seed)
+        if args.reviewer_id is not None:
+            body["reviewer_id"] = int(args.reviewer_id)
+        payload = client.request(
+            "POST",
+            f"/api/gold-sets/{args.gold_set_id}/rows/sample",
+            json_body=body,
+        )
+        _print_json(payload)
+        return 0
+
+    # Fallback: legacy Q/A path — does not require a source dataset, but only
+    # works for the ``/projects/{id}/gold/add`` dataset-typed flow.
+    if not args.question or not args.answer:
+        raise ValueError(
+            "Provide either --from-source-dataset-id (P10 sampling) "
+            "or both --question and --answer (legacy Q/A seed)."
+        )
+    if args.dataset_type is None:
+        raise ValueError("--dataset-type is required for the Q/A seed path.")
+    body_legacy = {
+        "dataset_type": args.dataset_type,
+        "question": args.question,
+        "answer": args.answer,
+        "difficulty": args.difficulty,
+        "is_hallucination_trap": bool(args.hallucination_trap),
+    }
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/gold/add",
+        json_body=body_legacy,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _eval_gold_set_submit(args: argparse.Namespace, client: ApiClient) -> int:
+    body = {"notes": args.notes or ""}
+    payload = client.request(
+        "POST",
+        f"/api/gold-sets/{args.gold_set_id}/versions/lock",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _eval_label(args: argparse.Namespace, client: ApiClient) -> int:
+    patch: dict[str, Any] = {}
+    if args.expected_json is not None:
+        patch["expected"] = _parse_json_object(args.expected_json, label="--expected-json")
+    if args.labels_json is not None:
+        patch["labels"] = _parse_json_object(args.labels_json, label="--labels-json")
+    if args.rationale is not None:
+        patch["rationale"] = args.rationale
+    if args.status is not None:
+        patch["status"] = args.status
+    if args.reviewer_id is not None:
+        # `-1` sentinel clears the reviewer (mirrors the workbench panel UX).
+        patch["reviewer_id"] = None if args.reviewer_id < 0 else int(args.reviewer_id)
+    if not patch:
+        raise ValueError(
+            "No fields to update. Pass at least one of --expected-json, --labels-json, "
+            "--rationale, --status, --reviewer-id."
+        )
+    payload = client.request(
+        "PATCH",
+        f"/api/gold-sets/{args.gold_set_id}/rows/{args.row_id}",
+        json_body=patch,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _eval_run(args: argparse.Namespace, client: ApiClient) -> int:
+    body: dict[str, Any] = {
+        "experiment_id": int(args.experiment_id),
+        "dataset_name": args.dataset_name,
+        "eval_type": args.eval_type,
+        "max_samples": max(1, int(args.max_samples)),
+        "max_new_tokens": max(1, int(args.max_new_tokens)),
+        "temperature": max(0.0, float(args.temperature)),
+    }
+    if args.model_path:
+        body["model_path"] = args.model_path
+    if args.judge_model and args.eval_type == "llm_judge":
+        body["judge_model"] = args.judge_model
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/evaluation/run-heldout",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _extract_eval_metric_snapshot(result: dict[str, Any]) -> dict[str, float | None]:
+    metrics = dict(result.get("metrics") or {})
+    snapshot: dict[str, float | None] = {}
+    for key in ("exact_match", "f1", "pass_rate", "average_score"):
+        if key in metrics:
+            try:
+                snapshot[key] = float(metrics[key])
+            except (TypeError, ValueError):
+                snapshot[key] = None
+    if "pass_rate" not in snapshot and result.get("pass_rate") is not None:
+        try:
+            snapshot["pass_rate"] = float(result["pass_rate"])
+        except (TypeError, ValueError):
+            snapshot["pass_rate"] = None
+    return snapshot
+
+
+def _eval_compare(args: argparse.Namespace, client: ApiClient) -> int:
+    """Compare eval results between two experiments within one project."""
+    a_results = client.request(
+        "GET",
+        f"/api/projects/{args.project_id}/evaluation/results/{args.baseline_experiment_id}",
+    )
+    b_results = client.request(
+        "GET",
+        f"/api/projects/{args.project_id}/evaluation/results/{args.candidate_experiment_id}",
+    )
+
+    def _latest_by_type(results: Any) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        items = results if isinstance(results, list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("eval_type") or "").strip()
+            if not key:
+                continue
+            # Results come newest-first; the first one we see wins.
+            if key not in latest:
+                latest[key] = item
+        return latest
+
+    baseline_latest = _latest_by_type(a_results)
+    candidate_latest = _latest_by_type(b_results)
+
+    diffs: list[dict[str, Any]] = []
+    for eval_type in sorted(set(baseline_latest) | set(candidate_latest)):
+        base = _extract_eval_metric_snapshot(baseline_latest.get(eval_type) or {})
+        cand = _extract_eval_metric_snapshot(candidate_latest.get(eval_type) or {})
+        per_metric: list[dict[str, Any]] = []
+        for metric_name in sorted(set(base) | set(cand)):
+            a_val = base.get(metric_name)
+            b_val = cand.get(metric_name)
+            delta = None
+            if a_val is not None and b_val is not None:
+                delta = round(b_val - a_val, 6)
+            per_metric.append(
+                {
+                    "metric": metric_name,
+                    "baseline": a_val,
+                    "candidate": b_val,
+                    "delta": delta,
+                }
+            )
+        diffs.append(
+            {
+                "eval_type": eval_type,
+                "baseline_result_id": (baseline_latest.get(eval_type) or {}).get("id"),
+                "candidate_result_id": (candidate_latest.get(eval_type) or {}).get("id"),
+                "metrics": per_metric,
+            }
+        )
+
+    payload = {
+        "project_id": args.project_id,
+        "baseline_experiment_id": args.baseline_experiment_id,
+        "candidate_experiment_id": args.candidate_experiment_id,
+        "diffs": diffs,
+    }
+    _print_json(payload)
+    return 0
+
+
+def _eval_clusters(args: argparse.Namespace, client: ApiClient) -> int:
+    params: dict[str, Any] = {}
+    if args.max_failures is not None:
+        params["max_failures"] = int(args.max_failures)
+    if args.max_exemplars_per_cluster is not None:
+        params["max_exemplars_per_cluster"] = int(args.max_exemplars_per_cluster)
+    payload = client.request(
+        "GET",
+        f"/api/projects/{args.project_id}/evaluation/{args.eval_result_id}/failure-clusters",
+        params=params or None,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _eval_remediate(args: argparse.Namespace, client: ApiClient) -> int:
+    body: dict[str, Any] = {
+        "experiment_id": int(args.experiment_id),
+        "max_failures": max(1, min(int(args.max_failures), 1000)),
+    }
+    if args.evaluation_result_id is not None:
+        body["evaluation_result_id"] = int(args.evaluation_result_id)
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/evaluation/remediation-plans/generate",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def run_eval(args: argparse.Namespace, client: ApiClient) -> int:
+    subcommand = str(getattr(args, "eval_subcommand", "") or "").strip().lower()
+    gold_set_subcommand = str(getattr(args, "gold_set_subcommand", "") or "").strip().lower()
+    if subcommand == "generate":
+        return _eval_generate(args, client)
+    if subcommand == "gold-set":
+        if gold_set_subcommand == "create":
+            return _eval_gold_set_create(args, client)
+        if gold_set_subcommand == "add-row":
+            return _eval_gold_set_add_row(args, client)
+        if gold_set_subcommand == "submit":
+            return _eval_gold_set_submit(args, client)
+        raise ValueError(f"Unsupported gold-set subcommand '{gold_set_subcommand}'.")
+    if subcommand == "label":
+        return _eval_label(args, client)
+    if subcommand == "run":
+        return _eval_run(args, client)
+    if subcommand == "compare":
+        return _eval_compare(args, client)
+    if subcommand == "clusters":
+        return _eval_clusters(args, client)
+    if subcommand == "remediate":
+        return _eval_remediate(args, client)
+    raise ValueError(f"Unsupported eval subcommand '{subcommand}'.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
@@ -2084,6 +2390,125 @@ def build_parser() -> argparse.ArgumentParser:
 
     for sub in (plan_parser, run_parser, repair_parser, rollback_parser, decisions_parser):
         sub.set_defaults(func=run_autopilot)
+
+    # Eval subparser (P13)
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Evaluation workflows: pack generation, gold-set ops, label, run, compare, clusters, remediation.",
+    )
+    eval_sub = eval_parser.add_subparsers(dest="eval_subcommand", required=True)
+
+    ev_generate = eval_sub.add_parser("generate", help="Auto-generate an evaluation pack from blueprint + dataset + adapter (P9).")
+    ev_generate.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_generate.add_argument("--blueprint-id", dest="blueprint_id", type=int, default=None)
+    ev_generate.add_argument("--dataset-id", dest="dataset_id", type=int, default=None)
+    ev_generate.add_argument("--adapter-id", dest="adapter_id", type=int, default=None)
+    ev_generate.add_argument(
+        "--no-judge-rubric",
+        dest="no_judge_rubric",
+        action="store_true",
+        help="Omit the LLM-judge rubric from the generated pack.",
+    )
+    ev_generate.add_argument("--json", action="store_true", help="Emit raw JSON (always on for this subcommand).")
+
+    ev_goldset = eval_sub.add_parser(
+        "gold-set",
+        help="Gold-set create / add-row / submit (lock draft version).",
+    )
+    ev_goldset_sub = ev_goldset.add_subparsers(dest="gold_set_subcommand", required=True)
+
+    ev_gs_create = ev_goldset_sub.add_parser("create", help="Seed a gold dataset (lazy-creates if missing) and report its id.")
+    ev_gs_create.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_gs_create.add_argument("--dataset-type", dest="dataset_type", default="gold_dev", choices=["gold_dev", "gold_test"])
+    ev_gs_create.add_argument("--seed-question", dest="seed_question", required=True)
+    ev_gs_create.add_argument("--seed-answer", dest="seed_answer", required=True)
+    ev_gs_create.add_argument("--difficulty", default="medium")
+    ev_gs_create.add_argument("--hallucination-trap", dest="hallucination_trap", action="store_true")
+    ev_gs_create.add_argument("--json", action="store_true")
+
+    ev_gs_add = ev_goldset_sub.add_parser("add-row", help="Add row(s) — via P10 sampling from a source dataset OR a legacy Q/A pair.")
+    ev_gs_add.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_gs_add.add_argument("--gold-set-id", dest="gold_set_id", type=int, required=False)
+    ev_gs_add.add_argument("--from-source-dataset-id", dest="from_source_dataset_id", type=int, default=None)
+    ev_gs_add.add_argument("--target-count", dest="target_count", type=int, default=1)
+    ev_gs_add.add_argument("--strategy", choices=["random", "stratified"], default="random")
+    ev_gs_add.add_argument("--stratify-by", dest="stratify_by", default="")
+    ev_gs_add.add_argument("--seed", type=int, default=None)
+    ev_gs_add.add_argument("--reviewer-id", dest="reviewer_id", type=int, default=None)
+    ev_gs_add.add_argument("--question", default="", help="Legacy Q/A path: question text.")
+    ev_gs_add.add_argument("--answer", default="", help="Legacy Q/A path: answer text.")
+    ev_gs_add.add_argument("--dataset-type", dest="dataset_type", default=None, choices=["gold_dev", "gold_test"], help="Legacy Q/A path: which gold bucket.")
+    ev_gs_add.add_argument("--difficulty", default="medium")
+    ev_gs_add.add_argument("--hallucination-trap", dest="hallucination_trap", action="store_true")
+    ev_gs_add.add_argument("--json", action="store_true")
+
+    ev_gs_submit = ev_goldset_sub.add_parser("submit", help="Lock the current draft version (gold-set-id is the dataset id).")
+    ev_gs_submit.add_argument("--gold-set-id", dest="gold_set_id", type=int, required=True)
+    ev_gs_submit.add_argument("--notes", default="", help="Optional free-text notes appended to the version.")
+    ev_gs_submit.add_argument("--json", action="store_true")
+
+    ev_label = eval_sub.add_parser("label", help="PATCH a gold-set row (P10).")
+    ev_label.add_argument("--gold-set-id", dest="gold_set_id", type=int, required=True)
+    ev_label.add_argument("--row-id", dest="row_id", type=int, required=True)
+    ev_label.add_argument("--expected-json", dest="expected_json", default=None, help='JSON object literal, e.g. \'{"answer":"…"}\'.')
+    ev_label.add_argument("--labels-json", dest="labels_json", default=None, help='JSON object literal, e.g. \'{"difficulty":"hard"}\'.')
+    ev_label.add_argument("--rationale", default=None, help="Free-text rationale for the answer.")
+    ev_label.add_argument(
+        "--status",
+        default=None,
+        choices=["pending", "in_review", "approved", "rejected", "changes_requested"],
+    )
+    ev_label.add_argument(
+        "--reviewer-id",
+        dest="reviewer_id",
+        type=int,
+        default=None,
+        help="Assign a reviewer. Pass -1 to clear the assignment.",
+    )
+    ev_label.add_argument("--json", action="store_true")
+
+    ev_run = eval_sub.add_parser("run", help="Run held-out evaluation for an experiment.")
+    ev_run.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_run.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    ev_run.add_argument("--dataset-name", dest="dataset_name", default="test")
+    ev_run.add_argument(
+        "--eval-type",
+        dest="eval_type",
+        default="exact_match",
+        choices=["exact_match", "f1", "llm_judge"],
+    )
+    ev_run.add_argument("--max-samples", dest="max_samples", type=int, default=100)
+    ev_run.add_argument("--max-new-tokens", dest="max_new_tokens", type=int, default=128)
+    ev_run.add_argument("--temperature", type=float, default=0.0)
+    ev_run.add_argument("--model-path", dest="model_path", default="")
+    ev_run.add_argument("--judge-model", dest="judge_model", default="")
+    ev_run.add_argument("--json", action="store_true")
+
+    ev_compare = eval_sub.add_parser("compare", help="Diff the latest metrics of two experiments (by eval_type).")
+    ev_compare.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_compare.add_argument("--baseline", dest="baseline_experiment_id", type=int, required=True)
+    ev_compare.add_argument("--candidate", dest="candidate_experiment_id", type=int, required=True)
+    ev_compare.add_argument("--json", action="store_true")
+
+    ev_clusters = eval_sub.add_parser("clusters", help="Fetch failure clusters for an eval result (P12).")
+    ev_clusters.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_clusters.add_argument("--eval-result-id", dest="eval_result_id", type=int, required=True)
+    ev_clusters.add_argument("--max-failures", dest="max_failures", type=int, default=None)
+    ev_clusters.add_argument("--max-exemplars-per-cluster", dest="max_exemplars_per_cluster", type=int, default=None)
+    ev_clusters.add_argument("--json", action="store_true")
+
+    ev_remediate = eval_sub.add_parser("remediate", help="Generate a closed-loop remediation plan for an experiment's failures.")
+    ev_remediate.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    ev_remediate.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    ev_remediate.add_argument("--evaluation-result-id", dest="evaluation_result_id", type=int, default=None)
+    ev_remediate.add_argument("--max-failures", dest="max_failures", type=int, default=200)
+    ev_remediate.add_argument("--json", action="store_true")
+
+    for sub in (
+        ev_generate, ev_gs_create, ev_gs_add, ev_gs_submit,
+        ev_label, ev_run, ev_compare, ev_clusters, ev_remediate,
+    ):
+        sub.set_defaults(func=run_eval)
 
     return parser
 

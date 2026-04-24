@@ -824,6 +824,30 @@ async def start_training(
         cfg["_runtime"] = runtime_config
         exp.config = cfg
         await db.flush()
+        # P14: capture an immutable manifest for this run. Best-effort —
+        # any failure (missing tooling, transient DB issue) is logged into
+        # the manifest's own warnings list, but must never block dispatch.
+        try:
+            from app.services.training_manifest_service import capture_training_manifest
+
+            await capture_training_manifest(
+                db,
+                project_id=project_id,
+                experiment_id=int(exp.id),
+                resolved_config=resolved_config,
+                artifact_ids={
+                    "output_dir": str(output_dir) if output_dir else None,
+                    "config_path": str(config_path) if config_path else None,
+                    "prepared_dir": str(prepared_dir) if prepared_dir else None,
+                    "train_file": str(train_file) if train_file else None,
+                    "val_file": str(val_file) if val_file else None,
+                },
+            )
+        except Exception as manifest_exc:
+            print(
+                f"[training_manifest] capture_failed experiment_id={exp.id}: {manifest_exc}",
+                flush=True,
+            )
     except Exception as e:
         exp.status = ExperimentStatus.FAILED
         exp.completed_at = datetime.now(timezone.utc)

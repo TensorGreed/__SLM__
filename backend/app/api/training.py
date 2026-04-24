@@ -4837,6 +4837,136 @@ async def status(
         raise HTTPException(404, str(e))
 
 
+@router.get("/runs/{experiment_id}/manifest")
+async def get_run_manifest(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Immutable reproducibility manifest for a training run (P14)."""
+    from app.services.training_manifest_service import get_training_manifest
+
+    try:
+        return await get_training_manifest(
+            db, project_id=project_id, experiment_id=experiment_id
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"experiment_not_found", "manifest_not_captured"}:
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
+class _RerunFromManifestRequest(BaseModel):
+    run_name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class _CloneFromRunRequest(BaseModel):
+    config_overrides: dict[str, Any] | None = Field(default=None)
+    run_name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+class _CompareRunsRequest(BaseModel):
+    baseline_experiment_id: int = Field(..., ge=1)
+    candidate_experiment_id: int = Field(..., ge=1)
+    tolerance: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+def _serialize_rerun_experiment(exp) -> dict[str, Any]:
+    cfg = dict(exp.config or {})
+    parentage = dict(cfg.get("_rerun_of") or {})
+    return {
+        "experiment_id": int(exp.id),
+        "project_id": int(exp.project_id),
+        "name": str(exp.name or ""),
+        "description": str(exp.description or ""),
+        "base_model": str(exp.base_model or ""),
+        "training_mode": exp.training_mode.value if hasattr(exp.training_mode, "value") else str(exp.training_mode),
+        "status": exp.status.value if hasattr(exp.status, "value") else str(exp.status),
+        "config": cfg,
+        "parentage": parentage,
+    }
+
+
+@router.post("/runs/{experiment_id}/rerun-from-manifest", status_code=201)
+async def rerun_run_from_manifest(
+    project_id: int,
+    experiment_id: int,
+    req: _RerunFromManifestRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new experiment whose config is the captured manifest verbatim (P15)."""
+    from app.services.rerun_service import rerun_from_manifest
+
+    try:
+        exp = await rerun_from_manifest(
+            db,
+            project_id=project_id,
+            parent_experiment_id=experiment_id,
+            run_name=req.run_name,
+            description=req.description,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"experiment_not_found", "manifest_not_captured"}:
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+    return _serialize_rerun_experiment(exp)
+
+
+@router.post("/runs/{experiment_id}/clone", status_code=201)
+async def clone_run(
+    project_id: int,
+    experiment_id: int,
+    req: _CloneFromRunRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new experiment from the parent's manifest + shallow overrides (P15)."""
+    from app.services.rerun_service import clone_from_run
+
+    try:
+        exp = await clone_from_run(
+            db,
+            project_id=project_id,
+            parent_experiment_id=experiment_id,
+            config_overrides=req.config_overrides,
+            run_name=req.run_name,
+            description=req.description,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"experiment_not_found", "manifest_not_captured"}:
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+    return _serialize_rerun_experiment(exp)
+
+
+@router.post("/runs/compare")
+async def compare_runs_endpoint(
+    project_id: int,
+    req: _CompareRunsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Tolerance check between two runs — did the rerun reproduce the baseline? (P15)"""
+    from app.services.rerun_service import compare_run_metrics
+
+    try:
+        return await compare_run_metrics(
+            db,
+            project_id=project_id,
+            baseline_experiment_id=req.baseline_experiment_id,
+            candidate_experiment_id=req.candidate_experiment_id,
+            tolerance=req.tolerance,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "experiment_not_found":
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
 @router.get("/tasks/{task_id}")
 async def task_status(
     project_id: int,

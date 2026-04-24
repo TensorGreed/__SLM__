@@ -23,6 +23,7 @@ from app.database import get_db
 from app.models.gold_set_annotation import GoldSetReviewerQueueStatus
 from app.services.gold_workbench_service import (
     list_reviewer_queue,
+    lock_draft_version,
     sample_rows_from_source,
     update_row,
     _serialize_row,
@@ -46,12 +47,17 @@ _SERVICE_ERROR_STATUS: dict[str, int] = {
     "input_must_be_object": 400,
     "expected_must_be_object": 400,
     "labels_must_be_object": 400,
+    "no_draft_version_to_lock": 400,
 }
 
 
 def _reraise(reason: str) -> HTTPException:
     status = _SERVICE_ERROR_STATUS.get(reason, 400)
     return HTTPException(status, reason)
+
+
+class LockVersionRequest(BaseModel):
+    notes: str = Field(default="", max_length=2000)
 
 
 class SampleRowsRequest(BaseModel):
@@ -119,6 +125,31 @@ async def patch_gold_set_row(
     except ValueError as exc:
         raise _reraise(str(exc)) from exc
     return _serialize_row(row)
+
+
+@router.post("/{gold_set_id}/versions/lock")
+async def lock_gold_set_draft_version(
+    gold_set_id: int,
+    req: LockVersionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Lock the current draft version (used by `brewslm eval gold-set submit`)."""
+    try:
+        locked = await lock_draft_version(
+            db,
+            gold_set_id=gold_set_id,
+            notes=req.notes,
+        )
+    except ValueError as exc:
+        raise _reraise(str(exc)) from exc
+    return {
+        "gold_set_id": gold_set_id,
+        "version_id": int(locked.id),
+        "version": int(locked.version),
+        "status": locked.status.value,
+        "locked_at": locked.locked_at.isoformat() if locked.locked_at else None,
+        "notes": locked.notes or "",
+    }
 
 
 @router.get("/{gold_set_id}/queue")
