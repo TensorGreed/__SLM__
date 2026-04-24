@@ -1416,7 +1416,6 @@ def _run_training_attempt(
 
     args_kwargs: dict[str, Any] = {
         "output_dir": str(output_dir),
-        "overwrite_output_dir": True,
         "num_train_epochs": num_epochs,
         "per_device_train_batch_size": batch_size,
         "gradient_accumulation_steps": grad_accum,
