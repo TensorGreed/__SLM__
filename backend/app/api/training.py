@@ -5021,6 +5021,42 @@ async def promote_run_checkpoint(
         raise HTTPException(400, detail) from exc
 
 
+# -- P18. Cost estimator with provenance (RM3) ----------------------------
+
+
+class _EstimateCostRequest(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    base_model: str | None = Field(default=None, max_length=512)
+    target_profile_id: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/plan/estimate-cost")
+async def estimate_training_plan_cost(
+    project_id: int,
+    req: _EstimateCostRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Estimate gpu_hours / USD / CO2 for a planned training run (P18).
+
+    Calibrates against this project's completed runs when at least one
+    comparable historical run exists; otherwise returns a heuristic
+    estimate. Response always carries ``provenance: measured | estimated``
+    so the UI can render a measured-vs-estimated badge.
+    """
+    from app.services.cost_estimator_service import estimate_training_cost
+
+    try:
+        return await estimate_training_cost(
+            db,
+            project_id=project_id,
+            config=dict(req.config or {}),
+            base_model=req.base_model,
+            target_profile_id=req.target_profile_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 # -- P17. Pause / resume training (RM3) ------------------------------------
 
 
