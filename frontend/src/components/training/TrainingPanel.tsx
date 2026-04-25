@@ -7,9 +7,13 @@ import { ReadinessPanel } from '../shared/ReadinessPanel';
 import ExperimentCompare from './ExperimentCompare';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
+import WhyThisPlanPanel from './WhyThisPlanPanel';
+import CheckpointsPanel from './CheckpointsPanel';
+import PreRunConfirmModal from './PreRunConfirmModal';
 import { buildWsUrl } from '../../utils/ws';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 import './TrainingPanel.css';
+import './WaveDPanels.css';
 
 interface TrainingPanelProps {
   projectId: number;
@@ -819,6 +823,9 @@ export default function TrainingPanel({
   const [preflightPlanLoading, setPreflightPlanLoading] = useState(false);
   const [preflightPlanError, setPreflightPlanError] = useState('');
   const [preferredPlanProfile, setPreferredPlanProfile] = useState('balanced');
+  // P20 — pre-run confirm modal state. Holds the experiment whose Start
+  // click is awaiting cost-estimate confirmation; cleared on confirm/cancel.
+  const [pendingStartExperiment, setPendingStartExperiment] = useState<Experiment | null>(null);
   const [trainingWarnings, setTrainingWarnings] = useState<string[]>([]);
   const [runtimeCatalog, setRuntimeCatalog] = useState<TrainingRuntimeCatalogResponse | null>(null);
   const [runtimeCatalogError, setRuntimeCatalogError] = useState('');
@@ -3043,6 +3050,16 @@ export default function TrainingPanel({
               <span className="mb-value">{currentEvalLoss !== null ? Number(currentEvalLoss).toFixed(4) : '--'}</span>
             </div>
           </div>
+
+          {/* P20 — Why-this-plan + checkpoints (Wave D backend exposure). */}
+          <WhyThisPlanPanel projectId={projectId} experiment={activeExperiment} />
+          <CheckpointsPanel
+            projectId={projectId}
+            experiment={activeExperiment}
+            onLifecycleChange={() => {
+              void refreshExperiments();
+            }}
+          />
 
           <div className="training-observability-panel">
             <div className="training-observability-panel__head">
@@ -5686,7 +5703,10 @@ export default function TrainingPanel({
                   <div className="training-experiment-actions">
                     <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
                     {exp.status === 'pending' && (
-                      <button className="btn btn-primary btn-sm" onClick={() => handleStart(exp.id)}>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => setPendingStartExperiment(exp)}
+                      >
                         Start
                       </button>
                     )}
@@ -5716,6 +5736,30 @@ export default function TrainingPanel({
         <HardwareRecommenderModal
           onClose={() => setShowHardwareModal(false)}
           onApply={handleApplyHardwareRecommendation}
+        />
+      )}
+
+      {pendingStartExperiment && (
+        <PreRunConfirmModal
+          projectId={projectId}
+          config={
+            pendingStartExperiment.config && typeof pendingStartExperiment.config === 'object'
+              ? (pendingStartExperiment.config as Record<string, unknown>)
+              : {}
+          }
+          baseModel={pendingStartExperiment.base_model}
+          targetProfileId={
+            (pendingStartExperiment.config as Record<string, unknown> | null | undefined)?.[
+              'target_profile_id'
+            ] as string | undefined
+          }
+          onCancel={() => setPendingStartExperiment(null)}
+          onConfirm={() => {
+            const expId = pendingStartExperiment.id;
+            setPendingStartExperiment(null);
+            void handleStart(expId);
+          }}
+          confirmLabel="Launch"
         />
       )}
     </div>
