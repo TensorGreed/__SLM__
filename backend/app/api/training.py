@@ -35,6 +35,8 @@ from app.services.training_service import (
     create_experiment,
     get_training_status,
     list_experiments,
+    pause_training,
+    resume_training,
     start_training,
     register_websocket,
     unregister_websocket,
@@ -4965,6 +4967,143 @@ async def compare_runs_endpoint(
         if detail == "experiment_not_found":
             raise HTTPException(404, detail) from exc
         raise HTTPException(400, detail) from exc
+
+
+# -- P16. Checkpoint browser backend (RM3) ---------------------------------
+
+
+class _ResumeFromCheckpointRequest(BaseModel):
+    run_name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+@router.get("/runs/{experiment_id}/checkpoints")
+async def list_run_checkpoints(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List every checkpoint written for a training run (P16)."""
+    from app.services.checkpoint_service import list_checkpoints
+
+    try:
+        return await list_checkpoints(
+            db, project_id=project_id, experiment_id=experiment_id
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "experiment_not_found":
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
+@router.post("/runs/{experiment_id}/checkpoints/{step}/promote")
+async def promote_run_checkpoint(
+    project_id: int,
+    experiment_id: int,
+    step: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a checkpoint as the run's canonical "best" + stamp promoted_at (P16)."""
+    from app.services.checkpoint_service import promote_checkpoint
+
+    try:
+        return await promote_checkpoint(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            step=step,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"experiment_not_found", "checkpoint_not_found"}:
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
+# -- P17. Pause / resume training (RM3) ------------------------------------
+
+
+@router.post("/runs/{experiment_id}/pause")
+async def pause_run(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Request the runtime pause this run on its next polling iteration (P17)."""
+    try:
+        return await pause_training(db, project_id=project_id, experiment_id=experiment_id)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "experiment_not_found":
+            raise HTTPException(404, detail) from exc
+        if detail == "not_running":
+            raise HTTPException(409, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
+@router.post("/runs/{experiment_id}/resume")
+async def resume_run(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-dispatch a PAUSED run from its latest checkpoint (P17)."""
+    try:
+        return await resume_training(db, project_id=project_id, experiment_id=experiment_id)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "experiment_not_found":
+            raise HTTPException(404, detail) from exc
+        if detail in {"not_paused", "no_resume_checkpoint"}:
+            raise HTTPException(409, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
+@router.post("/runs/{experiment_id}/resume-from/{step}", status_code=201)
+async def resume_run_from_checkpoint(
+    project_id: int,
+    experiment_id: int,
+    step: int,
+    req: _ResumeFromCheckpointRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new experiment that resumes from the parent's checkpoint (P16)."""
+    from app.services.checkpoint_service import resume_from_checkpoint
+
+    payload = req or _ResumeFromCheckpointRequest()
+    try:
+        exp = await resume_from_checkpoint(
+            db,
+            project_id=project_id,
+            parent_experiment_id=experiment_id,
+            step=step,
+            run_name=payload.run_name,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {
+            "experiment_not_found",
+            "checkpoint_not_found",
+            "manifest_not_captured",
+        }:
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+    cfg = dict(exp.config or {})
+    resume_block = dict(cfg.get("_resume_from") or {})
+    return {
+        "experiment_id": int(exp.id),
+        "project_id": int(exp.project_id),
+        "name": str(exp.name or ""),
+        "description": str(exp.description or ""),
+        "base_model": str(exp.base_model or ""),
+        "training_mode": exp.training_mode.value if hasattr(exp.training_mode, "value") else str(exp.training_mode),
+        "status": exp.status.value if hasattr(exp.status, "value") else str(exp.status),
+        "config": cfg,
+        "resume_from": resume_block,
+    }
 
 
 @router.get("/tasks/{task_id}")

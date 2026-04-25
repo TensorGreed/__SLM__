@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, JSON
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,6 +19,11 @@ class ExperimentStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # P17 — operator paused the run mid-flight; latest checkpoint is the
+    # resume point. Distinct from CANCELLED (terminal) so the UI/CLI can
+    # show a "Resume" affordance and so resume_training can re-dispatch
+    # without conflicting with cancellation semantics.
+    PAUSED = "paused"
 
 
 class TrainingMode(str, enum.Enum):
@@ -53,6 +58,12 @@ class Experiment(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # P17 — pause request flag honored by runtime polling loops. The pause
+    # endpoint flips this true while status is still RUNNING; the runtime
+    # plugin observes it on its next iteration, writes a resume-capable
+    # checkpoint, transitions status to PAUSED, and clears the flag. The
+    # resume endpoint re-dispatches the runtime and the cycle starts over.
+    pause_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Relationships
     project = relationship("Project", back_populates="experiments")
@@ -76,6 +87,10 @@ class Checkpoint(Base):
     is_best: Mapped[bool] = mapped_column(default=False)
     metrics: Mapped[dict | None] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # P16 — wall-clock when an operator promoted this checkpoint as the run's
+    # canonical "best". Populated on POST .../checkpoints/{step}/promote and
+    # cleared when the promotion moves to a different step.
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     experiment = relationship("Experiment", back_populates="checkpoints")
 

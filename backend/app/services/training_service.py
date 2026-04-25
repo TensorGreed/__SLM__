@@ -455,7 +455,18 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
         lr = config.get("learning_rate", 2e-4)
         save_steps = config.get("save_steps", 100)
 
-        for step in range(1, total_steps + 1):
+        # P17 — when this run is the result of a resume, start the loop at
+        # the step the previous run paused at instead of restarting from 1.
+        resume_block = dict((config or {}).get("_resume_from") or {})
+        start_step = 1
+        try:
+            resumed_step = int(resume_block.get("checkpoint_step") or 0)
+            if 0 < resumed_step < total_steps:
+                start_step = resumed_step + 1
+        except (TypeError, ValueError):
+            start_step = 1
+
+        for step in range(start_step, total_steps + 1):
             await asyncio.sleep(0.1)  # 100ms per step to make demo fast but visible
 
             if step % 10 == 0:
@@ -466,6 +477,27 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                         await broadcast_event(
                             experiment_id,
                             {"type": "status", "status": "cancelled"},
+                        )
+                        return
+                    # P17 — operator pressed Pause. Write a resume-capable
+                    # checkpoint at the current step, transition to PAUSED,
+                    # and clear the request flag so the runtime can wind
+                    # down cleanly. Resume will re-dispatch this loop with
+                    # ``config._resume_from`` set to start_step+1 above.
+                    if exp.pause_requested:
+                        epoch_num = max(1, ((step - 1) // steps_per_epoch) + 1)
+                        await _record_pause_checkpoint(
+                            experiment_id=experiment_id,
+                            project_id=int(exp.project_id),
+                            output_dir=Path(exp.output_dir) if exp.output_dir else _experiment_dir(exp.project_id, experiment_id),
+                            step=step,
+                            epoch=epoch_num,
+                            train_loss=round(current_loss, 4),
+                            eval_loss=None,
+                        )
+                        await broadcast_event(
+                            experiment_id,
+                            {"type": "status", "status": "paused", "step": step},
                         )
                         return
 
@@ -912,6 +944,179 @@ async def cancel_training(
         "task_id": task_id or None,
         "cancel_status": cancel_note,
     }
+
+
+# -- P17. Pause / resume training -----------------------------------------
+
+
+async def _record_pause_checkpoint(
+    *,
+    experiment_id: int,
+    project_id: int,
+    output_dir: Path,
+    step: int,
+    epoch: int,
+    train_loss: float | None,
+    eval_loss: float | None,
+) -> None:
+    """Persist a pause-time checkpoint and flip status to PAUSED.
+
+    Wrapped in its own session so the runtime caller (the simulate loop or
+    a runtime plugin) doesn't need an open session to call this. Idempotent
+    on the same step — if a checkpoint already exists there, we reuse it.
+    """
+    output_dir = output_dir or _experiment_dir(project_id, experiment_id)
+    checkpoints_dir = output_dir / "checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_file = checkpoints_dir / f"checkpoint-step-{int(step)}.json"
+    payload = {
+        "experiment_id": int(experiment_id),
+        "epoch": int(epoch),
+        "step": int(step),
+        "train_loss": train_loss,
+        "eval_loss": eval_loss,
+        "reason": "pause_requested",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    checkpoint_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    async with async_session_factory() as db:
+        existing = (
+            await db.execute(
+                select(Checkpoint).where(
+                    Checkpoint.experiment_id == experiment_id,
+                    Checkpoint.step == int(step),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            ckpt = Checkpoint(
+                experiment_id=int(experiment_id),
+                epoch=int(epoch),
+                step=int(step),
+                train_loss=train_loss,
+                eval_loss=eval_loss,
+                file_path=str(checkpoint_file),
+                metrics=payload,
+            )
+            db.add(ckpt)
+
+        exp_result = await db.execute(
+            select(Experiment).where(Experiment.id == experiment_id)
+        )
+        exp = exp_result.scalar_one_or_none()
+        if exp is not None:
+            cfg = dict(exp.config or {})
+            pause_block = dict(cfg.get("_pause") or {})
+            pause_block["paused_at_step"] = int(step)
+            pause_block["paused_at_epoch"] = int(epoch)
+            pause_block["paused_at"] = datetime.now(timezone.utc).isoformat()
+            pause_block["checkpoint_path"] = str(checkpoint_file)
+            cfg["_pause"] = pause_block
+            exp.config = cfg
+            exp.status = ExperimentStatus.PAUSED
+            exp.pause_requested = False
+        await db.commit()
+
+
+async def pause_training(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+) -> dict:
+    """Mark a RUNNING experiment as pause-requested.
+
+    The runtime polling loop is responsible for actually pausing — it
+    observes ``pause_requested=True``, writes a resume-capable checkpoint,
+    transitions status to PAUSED, and clears the flag. This endpoint just
+    flips the request bit and returns immediately (the operator does not
+    have to wait for the runtime to acknowledge).
+    """
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError("experiment_not_found")
+    if exp.status != ExperimentStatus.RUNNING:
+        raise ValueError("not_running")
+
+    exp.pause_requested = True
+    cfg = dict(exp.config or {})
+    pause_block = dict(cfg.get("_pause") or {})
+    pause_block["pause_requested_at"] = datetime.now(timezone.utc).isoformat()
+    cfg["_pause"] = pause_block
+    exp.config = cfg
+    await db.flush()
+    await db.commit()
+
+    return {
+        "experiment_id": int(experiment_id),
+        "status": exp.status.value,
+        "pause_requested": True,
+        "pause_requested_at": pause_block["pause_requested_at"],
+    }
+
+
+async def resume_training(
+    db: AsyncSession,
+    project_id: int,
+    experiment_id: int,
+) -> dict:
+    """Re-dispatch a PAUSED experiment from its latest checkpoint.
+
+    The pause-time checkpoint that ``_record_pause_checkpoint`` wrote is
+    the canonical resume point. We stamp ``config._resume_from`` so the
+    runtime restarts the loop at ``checkpoint_step + 1`` instead of from
+    scratch, then hand off to ``start_training`` which validates +
+    re-dispatches the runtime + re-captures a manifest.
+
+    Resume targets the **same** experiment row — distinct from P16's
+    ``resume_from_checkpoint`` which forks a new experiment from any
+    historical run's checkpoint.
+    """
+    exp = await _get_experiment_for_project(db, project_id, experiment_id)
+    if not exp:
+        raise ValueError("experiment_not_found")
+    if exp.status != ExperimentStatus.PAUSED:
+        raise ValueError("not_paused")
+
+    latest_ckpt = (
+        await db.execute(
+            select(Checkpoint)
+            .where(Checkpoint.experiment_id == experiment_id)
+            .order_by(Checkpoint.step.desc())
+        )
+    ).scalars().first()
+    if latest_ckpt is None:
+        raise ValueError("no_resume_checkpoint")
+
+    cfg = dict(exp.config or {})
+    cfg["_resume_from"] = {
+        "parent_experiment_id": int(experiment_id),
+        "checkpoint_step": int(latest_ckpt.step),
+        "checkpoint_epoch": int(latest_ckpt.epoch),
+        "checkpoint_path": str(latest_ckpt.file_path or ""),
+        "reason": "resume-paused-run",
+    }
+    pause_block = dict(cfg.get("_pause") or {})
+    resume_history = list(pause_block.get("resume_history") or [])
+    resume_history.append(
+        {
+            "resumed_at": datetime.now(timezone.utc).isoformat(),
+            "from_step": int(latest_ckpt.step),
+        }
+    )
+    pause_block["resume_history"] = resume_history
+    cfg["_pause"] = pause_block
+    exp.config = cfg
+    # Move back through PENDING so start_training accepts it. clear pause flag.
+    exp.status = ExperimentStatus.PENDING
+    exp.pause_requested = False
+    exp.completed_at = None
+    await db.flush()
+    await db.commit()
+
+    result = await start_training(db, project_id, experiment_id)
+    result["resumed_from_step"] = int(latest_ckpt.step)
+    return result
 
 
 async def get_training_status(
