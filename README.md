@@ -590,7 +590,7 @@ Examples:
 ```bash
 ./brewslm ingest --project 1 --source hf --id nguha/legalbench --split train --wait
 ./brewslm preflight --project 1 --task causal_lm
-./brewslm train --project 1 --autopilot --one-click --intent "Build a legal Q&A assistant" --base-model Qwen/Qwen2.5-1.5B-Instruct
+./brewslm train start --project 1 --autopilot --one-click --intent "Build a legal Q&A assistant" --base-model Qwen/Qwen2.5-1.5B-Instruct
 ./brewslm export --project 1 --format huggingface --target vllm
 ./brewslm optimize --project 1 --target mobile_cpu
 ./brewslm doctor --project 1

@@ -10,12 +10,31 @@ BrewSLM includes a CLI wrapper (`./brewslm`) for common operations.
 ## Training
 
 ```bash
-./brewslm train \
+./brewslm train start \
   --project 1 \
   --autopilot \
   --one-click \
   --intent "Build a legal Q&A assistant" \
   --base-model Qwen/Qwen2.5-1.5B-Instruct
+```
+
+### Manage runs
+
+```bash
+./brewslm train rerun --project 1 --experiment-id 5 --run-name "rerun of phi-2"
+./brewslm train clone --project 1 --experiment-id 5 \
+    --config-overrides '{"learning_rate": 3e-4, "num_epochs": 5}'
+./brewslm train pause --project 1 --experiment-id 5
+./brewslm train resume --project 1 --experiment-id 5
+./brewslm train checkpoints --project 1 --experiment-id 5
+./brewslm train checkpoints --project 1 --experiment-id 5 --promote-step 200
+./brewslm train checkpoints --project 1 --experiment-id 5 --resume-from-step 150
+```
+
+### Reproducibility manifest
+
+```bash
+./brewslm repro manifest --project 1 --experiment-id 5
 ```
 
 ## Export

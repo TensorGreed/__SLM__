@@ -480,7 +480,8 @@ def run_preflight(args: argparse.Namespace, client: ApiClient) -> int:
     return 0 if bool(preflight.get("ok", False)) else 1
 
 
-def run_train(args: argparse.Namespace, client: ApiClient) -> int:
+def _train_start(args: argparse.Namespace, client: ApiClient) -> int:
+    """The autopilot one-click launch path (formerly ``brewslm train``)."""
     if not args.autopilot and not args.one_click:
         print(
             "Note: defaulting to autopilot one-click mode. "
@@ -530,6 +531,151 @@ def run_train(args: argparse.Namespace, client: ApiClient) -> int:
     _print_json(result)
     started = bool(result.get("started", False))
     return 0 if started else 1
+
+
+# -- P19. train subcommand helpers (rerun / clone / pause / resume / checkpoints) ----
+
+
+def _train_rerun(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/training/runs/{eid}/rerun-from-manifest (P15)."""
+    body: dict[str, Any] = {}
+    if args.run_name:
+        body["run_name"] = args.run_name
+    if args.description:
+        body["description"] = args.description
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}/rerun-from-manifest",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _train_clone(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/training/runs/{eid}/clone (P15)."""
+    overrides: dict[str, Any] = {}
+    if args.config_overrides:
+        overrides = _parse_json_object(args.config_overrides, label="--config-overrides")
+    elif args.config_overrides_file:
+        overrides = _load_json_object_file(
+            args.config_overrides_file, label="--config-overrides-file"
+        )
+    body: dict[str, Any] = {"config_overrides": overrides or None}
+    if args.run_name:
+        body["run_name"] = args.run_name
+    if args.description:
+        body["description"] = args.description
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}/clone",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _train_pause(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/training/runs/{eid}/pause (P17)."""
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}/pause",
+    )
+    _print_json(payload)
+    return 0
+
+
+def _train_resume(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/training/runs/{eid}/resume (P17)."""
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}/resume",
+    )
+    _print_json(payload)
+    return 0
+
+
+def _train_checkpoints(args: argparse.Namespace, client: ApiClient) -> int:
+    """List checkpoints, or promote / fork-resume from a specific step (P16).
+
+    Three modes, mutually exclusive:
+      - default: GET .../checkpoints (list every checkpoint for the run).
+      - --promote-step N: POST .../checkpoints/N/promote (mark best).
+      - --resume-from-step N: POST .../resume-from/N (fork a new run).
+    """
+    promote_step = getattr(args, "promote_step", None)
+    resume_step = getattr(args, "resume_from_step", None)
+    if promote_step is not None and resume_step is not None:
+        raise ValueError(
+            "--promote-step and --resume-from-step are mutually exclusive."
+        )
+    if promote_step is not None:
+        payload = client.request(
+            "POST",
+            f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}"
+            f"/checkpoints/{int(promote_step)}/promote",
+        )
+        _print_json(payload)
+        return 0
+    if resume_step is not None:
+        body: dict[str, Any] = {}
+        if getattr(args, "resume_from_run_name", None):
+            body["run_name"] = args.resume_from_run_name
+        if getattr(args, "resume_from_description", None):
+            body["description"] = args.resume_from_description
+        payload = client.request(
+            "POST",
+            f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}"
+            f"/resume-from/{int(resume_step)}",
+            json_body=body,
+        )
+        _print_json(payload)
+        return 0
+    payload = client.request(
+        "GET",
+        f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}/checkpoints",
+    )
+    _print_json(payload)
+    return 0
+
+
+def run_train(args: argparse.Namespace, client: ApiClient) -> int:
+    """Dispatcher for ``brewslm train <subcommand>`` (P19)."""
+    subcommand = str(getattr(args, "train_subcommand", "") or "").strip().lower()
+    if subcommand == "start":
+        return _train_start(args, client)
+    if subcommand == "rerun":
+        return _train_rerun(args, client)
+    if subcommand == "clone":
+        return _train_clone(args, client)
+    if subcommand == "pause":
+        return _train_pause(args, client)
+    if subcommand == "resume":
+        return _train_resume(args, client)
+    if subcommand == "checkpoints":
+        return _train_checkpoints(args, client)
+    raise ValueError(f"Unsupported train subcommand '{subcommand}'.")
+
+
+# -- P19. repro manifest --------------------------------------------------
+
+
+def _repro_manifest(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /api/projects/{pid}/training/runs/{eid}/manifest (P14)."""
+    payload = client.request(
+        "GET",
+        f"/api/projects/{args.project_id}/training/runs/{int(args.experiment_id)}/manifest",
+    )
+    _print_json(payload)
+    return 0
+
+
+def run_repro(args: argparse.Namespace, client: ApiClient) -> int:
+    """Dispatcher for ``brewslm repro <subcommand>`` (P19)."""
+    subcommand = str(getattr(args, "repro_subcommand", "") or "").strip().lower()
+    if subcommand == "manifest":
+        return _repro_manifest(args, client)
+    raise ValueError(f"Unsupported repro subcommand '{subcommand}'.")
 
 
 def _print_autopilot_v2_decision_log(payload: dict[str, Any]) -> None:
@@ -2169,50 +2315,160 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_parser.add_argument("--plan", action="store_true", help="Run preflight-plan suggestions endpoint")
     preflight_parser.set_defaults(func=run_preflight)
 
-    train_parser = subparsers.add_parser("train", help="Launch training (autopilot one-click)")
-    train_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
-    train_parser.add_argument("--autopilot", action="store_true")
-    train_parser.add_argument("--one-click", action="store_true")
-    train_parser.add_argument("--intent", default=DEFAULT_INTENT)
-    train_parser.add_argument(
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Launch / manage training runs (start, rerun, clone, pause, resume, checkpoints)",
+    )
+    train_sub = train_parser.add_subparsers(dest="train_subcommand", required=True)
+
+    # train start — autopilot one-click launch (formerly the bare ``brewslm train``).
+    tr_start = train_sub.add_parser("start", help="Launch training (autopilot one-click)")
+    tr_start.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    tr_start.add_argument("--autopilot", action="store_true")
+    tr_start.add_argument("--one-click", action="store_true")
+    tr_start.add_argument("--intent", default=DEFAULT_INTENT)
+    tr_start.add_argument(
         "--target-device",
         default="laptop",
         choices=["mobile", "laptop", "server"],
     )
-    train_parser.add_argument("--primary-language", default="english")
-    train_parser.add_argument("--available-vram-gb", type=float, default=None)
-    train_parser.add_argument("--base-model", default="", help="Optional explicit base model override")
-    train_parser.add_argument("--run-name", default="")
-    train_parser.add_argument("--description", default="")
-    train_parser.add_argument("--intent-rewrite", default="")
-    train_parser.add_argument("--no-auto-rewrite", action="store_true")
-    train_parser.add_argument(
+    tr_start.add_argument("--primary-language", default="english")
+    tr_start.add_argument("--available-vram-gb", type=float, default=None)
+    tr_start.add_argument("--base-model", default="", help="Optional explicit base model override")
+    tr_start.add_argument("--run-name", default="")
+    tr_start.add_argument("--description", default="")
+    tr_start.add_argument("--intent-rewrite", default="")
+    tr_start.add_argument("--no-auto-rewrite", action="store_true")
+    tr_start.add_argument(
         "--autopilot-v2",
         action="store_true",
         help="Use autopilot v2 orchestration (readiness + auto-repair + decision log).",
     )
-    train_parser.add_argument(
+    tr_start.add_argument(
         "--dry-run",
         action="store_true",
         help="Use autopilot v2 dry-run mode (no experiment is started).",
     )
-    train_parser.add_argument(
+    tr_start.add_argument(
         "--plan-profile",
         default="balanced",
         choices=["safe", "balanced", "max_quality", "fastest", "best_quality"],
         help="Preferred training plan profile for autopilot selection.",
     )
-    train_parser.add_argument(
+    tr_start.add_argument(
         "--no-target-fallback",
         action="store_true",
         help="Disable automatic target-profile fallback during autopilot v2 orchestration.",
     )
-    train_parser.add_argument(
+    tr_start.add_argument(
         "--no-profile-autotune",
         action="store_true",
         help="Disable automatic profile tuning to the first runnable preflight plan.",
     )
-    train_parser.set_defaults(func=run_train)
+    tr_start.add_argument("--json", action="store_true")
+
+    # train rerun — re-launch the parent's manifest verbatim (P15).
+    tr_rerun = train_sub.add_parser(
+        "rerun",
+        help="Create a new experiment whose config is a parent run's manifest verbatim (P15).",
+    )
+    tr_rerun.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    tr_rerun.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    tr_rerun.add_argument("--run-name", default="")
+    tr_rerun.add_argument("--description", default="")
+    tr_rerun.add_argument("--json", action="store_true")
+
+    # train clone — re-launch with shallow config overrides on top of the manifest (P15).
+    tr_clone = train_sub.add_parser(
+        "clone",
+        help="Create a new experiment from a parent run's manifest with shallow config overrides (P15).",
+    )
+    tr_clone.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    tr_clone.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    tr_clone.add_argument(
+        "--config-overrides",
+        default="",
+        help="Inline JSON object of config keys to override.",
+    )
+    tr_clone.add_argument(
+        "--config-overrides-file",
+        default="",
+        help="Path to a JSON file of config keys to override.",
+    )
+    tr_clone.add_argument("--run-name", default="")
+    tr_clone.add_argument("--description", default="")
+    tr_clone.add_argument("--json", action="store_true")
+
+    # train pause — flag a RUNNING experiment for graceful pause (P17).
+    tr_pause = train_sub.add_parser(
+        "pause",
+        help="Request the runtime pause this run on its next polling iteration (P17).",
+    )
+    tr_pause.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    tr_pause.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    tr_pause.add_argument("--json", action="store_true")
+
+    # train resume — re-dispatch a PAUSED experiment from its latest checkpoint (P17).
+    tr_resume = train_sub.add_parser(
+        "resume",
+        help="Re-dispatch a PAUSED run from its latest checkpoint (P17).",
+    )
+    tr_resume.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    tr_resume.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    tr_resume.add_argument("--json", action="store_true")
+
+    # train checkpoints — list / promote / fork-resume from a specific step (P16).
+    tr_checkpoints = train_sub.add_parser(
+        "checkpoints",
+        help="List a run's checkpoints, or promote / fork-resume from a specific step (P16).",
+    )
+    tr_checkpoints.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    tr_checkpoints.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    tr_checkpoints.add_argument(
+        "--promote-step",
+        dest="promote_step",
+        type=int,
+        default=None,
+        help="Mark this checkpoint as the run's canonical 'best' (P16 promotion).",
+    )
+    tr_checkpoints.add_argument(
+        "--resume-from-step",
+        dest="resume_from_step",
+        type=int,
+        default=None,
+        help="Fork a new experiment from this checkpoint via P16 resume-from-checkpoint.",
+    )
+    tr_checkpoints.add_argument(
+        "--resume-from-run-name",
+        dest="resume_from_run_name",
+        default="",
+        help="Optional run_name for the forked experiment created by --resume-from-step.",
+    )
+    tr_checkpoints.add_argument(
+        "--resume-from-description",
+        dest="resume_from_description",
+        default="",
+        help="Optional description for the forked experiment created by --resume-from-step.",
+    )
+    tr_checkpoints.add_argument("--json", action="store_true")
+
+    for sub in (tr_start, tr_rerun, tr_clone, tr_pause, tr_resume, tr_checkpoints):
+        sub.set_defaults(func=run_train)
+
+    # -- repro manifest (P19, reads P14) -----------------------------------
+    repro_parser = subparsers.add_parser(
+        "repro",
+        help="Reproducibility helpers (manifest dump).",
+    )
+    repro_sub = repro_parser.add_subparsers(dest="repro_subcommand", required=True)
+    rp_manifest = repro_sub.add_parser(
+        "manifest",
+        help="Dump the immutable training manifest captured at run launch (P14).",
+    )
+    rp_manifest.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    rp_manifest.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
+    rp_manifest.add_argument("--json", action="store_true")
+    rp_manifest.set_defaults(func=run_repro)
 
     export_parser = subparsers.add_parser("export", help="Create and run an export job")
     export_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
