@@ -17,3 +17,4 @@ kaggle
 transformers
 accelerate
 peft
+trl>=0.9
