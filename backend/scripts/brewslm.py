@@ -678,6 +678,183 @@ def run_repro(args: argparse.Namespace, client: ApiClient) -> int:
     raise ValueError(f"Unsupported repro subcommand '{subcommand}'.")
 
 
+# -- P23. manifest CLI (wraps P21+P22 endpoints) --------------------------
+
+
+def _extract_export_body(payload: Any) -> str:
+    """Render the export response body as a string suitable for stdout/file.
+
+    The export endpoint returns a YAML PlainTextResponse for ``format=yaml``
+    and a JSON object for ``format=json``. ``ApiClient.request`` returns the
+    parsed JSON dict for the latter and ``{"raw": "<yaml-text>"}`` for the
+    former (because YAML body fails ``response.json()``).
+    """
+    if isinstance(payload, dict) and set(payload.keys()) == {"raw"}:
+        return str(payload.get("raw") or "")
+    if isinstance(payload, str):
+        return payload
+    return json.dumps(payload, indent=2, ensure_ascii=True, sort_keys=True)
+
+
+def _manifest_export(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /api/projects/{pid}/manifest/export?format=yaml|json (P21)."""
+    fmt = str(getattr(args, "export_format", "yaml") or "yaml").strip().lower()
+    if fmt not in {"yaml", "json"}:
+        raise ValueError("--format must be one of: yaml, json")
+    payload = client.request(
+        "GET",
+        f"/projects/{int(args.project_id)}/manifest/export",
+        params={"format": fmt},
+    )
+    body = _extract_export_body(payload)
+    out_path = str(getattr(args, "out", "") or "").strip()
+    if out_path:
+        target = Path(out_path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        return 0
+    sys.stdout.write(body)
+    if not body.endswith("\n"):
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0
+
+
+def _manifest_validate(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/manifest/validate with the file body (P22)."""
+    body = _load_text_file(args.manifest_path, label="manifest")
+    payload = client.request(
+        "POST",
+        "/manifest/validate",
+        json_body={"manifest_yaml": body},
+    )
+    _print_json(payload)
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        return 1
+    return 0
+
+
+def _manifest_diff(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/manifest/diff with the file body (P22)."""
+    body = _load_text_file(args.manifest_path, label="manifest")
+    payload = client.request(
+        "POST",
+        f"/projects/{int(args.project_id)}/manifest/diff",
+        json_body={"manifest_yaml": body},
+    )
+    _print_json(payload)
+    return 0
+
+
+def _manifest_apply(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/manifest/apply or /api/manifest/apply (P22)."""
+    body = _load_text_file(args.manifest_path, label="manifest")
+    plan_only = bool(getattr(args, "plan_only", False))
+    payload = {"manifest_yaml": body, "plan_only": plan_only}
+    project_id = getattr(args, "project_id", None)
+    if project_id is not None:
+        path = f"/projects/{int(project_id)}/manifest/apply"
+    else:
+        path = "/manifest/apply"
+    result = client.request("POST", path, json_body=payload)
+    _print_json(result)
+    return 0
+
+
+def run_manifest(args: argparse.Namespace, client: ApiClient) -> int:
+    """Dispatcher for ``brewslm manifest <subcommand>`` (P23)."""
+    subcommand = str(getattr(args, "manifest_subcommand", "") or "").strip().lower()
+    if subcommand == "export":
+        return _manifest_export(args, client)
+    if subcommand == "validate":
+        return _manifest_validate(args, client)
+    if subcommand == "diff":
+        return _manifest_diff(args, client)
+    if subcommand == "apply":
+        return _manifest_apply(args, client)
+    raise ValueError(f"Unsupported manifest subcommand '{subcommand}'.")
+
+
+# -- P23. pipeline run (apply + autopilot one-click in one shot) ----------
+
+
+def _extract_target_profile_from_yaml(body: str) -> str:
+    """Pluck ``spec.workflow.target_profile_id`` from a YAML manifest body.
+
+    Falls back to an empty string when PyYAML is missing or the manifest
+    doesn't pin a target — the caller will simply omit the field from the
+    autopilot one-click body in that case.
+    """
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ModuleNotFoundError:  # pragma: no cover
+        return ""
+    try:
+        parsed = yaml.safe_load(body) or {}
+    except Exception:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    spec = parsed.get("spec") or {}
+    if not isinstance(spec, dict):
+        return ""
+    workflow = spec.get("workflow") or {}
+    if not isinstance(workflow, dict):
+        return ""
+    return str(workflow.get("target_profile_id") or "").strip()
+
+
+def _pipeline_run(args: argparse.Namespace, client: ApiClient) -> int:
+    """Apply a manifest, then kick off autopilot one-click training (P23)."""
+    body = _load_text_file(args.manifest_path, label="manifest")
+    apply_payload: dict[str, Any] = {"manifest_yaml": body, "plan_only": False}
+    project_id = getattr(args, "project_id", None)
+    if project_id is not None:
+        apply_path = f"/projects/{int(project_id)}/manifest/apply"
+    else:
+        apply_path = "/manifest/apply"
+    applied = client.request("POST", apply_path, json_body=apply_payload)
+
+    if bool(getattr(args, "no_train", False)):
+        _print_json({"applied": applied, "training_run": None})
+        return 0
+
+    resolved_project_id = None
+    if isinstance(applied, dict):
+        candidate = applied.get("project_id")
+        if candidate is not None:
+            try:
+                resolved_project_id = int(candidate)
+            except (TypeError, ValueError):
+                resolved_project_id = None
+    if resolved_project_id is None and project_id is not None:
+        resolved_project_id = int(project_id)
+    if resolved_project_id is None:
+        raise RuntimeError(
+            "pipeline run: apply response is missing project_id; cannot launch training."
+        )
+
+    target_profile_id = _extract_target_profile_from_yaml(body)
+    train_body: dict[str, Any] = {"intent": "Apply manifest"}
+    if target_profile_id:
+        train_body["target_profile_id"] = target_profile_id
+    training_run = client.request(
+        "POST",
+        f"/projects/{int(resolved_project_id)}/training/autopilot/one-click-run",
+        json_body=train_body,
+    )
+    _print_json({"applied": applied, "training_run": training_run})
+    return 0
+
+
+def run_pipeline(args: argparse.Namespace, client: ApiClient) -> int:
+    """Dispatcher for ``brewslm pipeline <subcommand>`` (P23)."""
+    subcommand = str(getattr(args, "pipeline_subcommand", "") or "").strip().lower()
+    if subcommand == "run":
+        return _pipeline_run(args, client)
+    raise ValueError(f"Unsupported pipeline subcommand '{subcommand}'.")
+
+
 def _print_autopilot_v2_decision_log(payload: dict[str, Any]) -> None:
     rows = [row for row in list(payload.get("decision_log") or []) if isinstance(row, dict)]
     if not rows:
@@ -2469,6 +2646,117 @@ def build_parser() -> argparse.ArgumentParser:
     rp_manifest.add_argument("--experiment-id", dest="experiment_id", type=int, required=True)
     rp_manifest.add_argument("--json", action="store_true")
     rp_manifest.set_defaults(func=run_repro)
+
+    # -- manifest CLI (P23, wraps P21+P22 endpoints) -----------------------
+    manifest_parser = subparsers.add_parser(
+        "manifest",
+        help="brewslm.yaml export / validate / diff / apply helpers (P23).",
+    )
+    manifest_sub = manifest_parser.add_subparsers(
+        dest="manifest_subcommand", required=True
+    )
+
+    mf_export = manifest_sub.add_parser(
+        "export",
+        help="Render the project's manifest as YAML or JSON (P21).",
+    )
+    mf_export.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    mf_export.add_argument(
+        "--format",
+        dest="export_format",
+        default="yaml",
+        choices=["yaml", "json"],
+        help="Output format (default: yaml).",
+    )
+    mf_export.add_argument(
+        "--out",
+        dest="out",
+        default="",
+        help="Optional path; when set, write the body to this file instead of stdout.",
+    )
+    mf_export.add_argument("--json", action="store_true")
+
+    mf_validate = manifest_sub.add_parser(
+        "validate",
+        help="Cross-reference validate a manifest file (P22).",
+    )
+    mf_validate.add_argument(
+        "manifest_path",
+        help="Path to a brewslm.yaml manifest file.",
+    )
+    mf_validate.add_argument("--json", action="store_true")
+
+    mf_diff = manifest_sub.add_parser(
+        "diff",
+        help="Diff a manifest file against the current project state (P22).",
+    )
+    mf_diff.add_argument(
+        "manifest_path",
+        help="Path to a brewslm.yaml manifest file.",
+    )
+    mf_diff.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    mf_diff.add_argument("--json", action="store_true")
+
+    mf_apply = manifest_sub.add_parser(
+        "apply",
+        help="Apply a manifest (project-scoped or new-project) (P22).",
+    )
+    mf_apply.add_argument(
+        "manifest_path",
+        help="Path to a brewslm.yaml manifest file.",
+    )
+    mf_apply.add_argument(
+        "--project",
+        "--project-id",
+        dest="project_id",
+        type=int,
+        default=None,
+        help="Existing project id; omit to create a new project from the manifest.",
+    )
+    mf_apply.add_argument(
+        "--plan-only",
+        dest="plan_only",
+        action="store_true",
+        help="Compute and return the apply-plan without writing.",
+    )
+    mf_apply.add_argument("--json", action="store_true")
+
+    for sub in (mf_export, mf_validate, mf_diff, mf_apply):
+        sub.set_defaults(func=run_manifest)
+
+    # -- pipeline CLI (P23, manifest apply + autopilot one-click) ---------
+    pipeline_parser = subparsers.add_parser(
+        "pipeline",
+        help="End-to-end pipeline helpers (P23).",
+    )
+    pipeline_sub = pipeline_parser.add_subparsers(
+        dest="pipeline_subcommand", required=True
+    )
+
+    pl_run = pipeline_sub.add_parser(
+        "run",
+        help="Apply a manifest, then kick off autopilot one-click training.",
+    )
+    pl_run.add_argument(
+        "manifest_path",
+        help="Path to a brewslm.yaml manifest file.",
+    )
+    pl_run.add_argument(
+        "--project",
+        "--project-id",
+        dest="project_id",
+        type=int,
+        default=None,
+        help="Existing project id; omit to create a new project from the manifest.",
+    )
+    pl_run.add_argument(
+        "--no-train",
+        dest="no_train",
+        action="store_true",
+        help="Stop after manifest apply; do not launch autopilot.",
+    )
+    pl_run.add_argument("--json", action="store_true")
+    pl_run.set_defaults(func=run_pipeline)
 
     export_parser = subparsers.add_parser("export", help="Create and run an export job")
     export_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)

@@ -7,6 +7,7 @@ asyncpg
 pydantic
 pydantic-settings
 python-multipart
+PyYAML
 celery
 redis
 httpx

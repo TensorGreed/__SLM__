@@ -43,6 +43,7 @@ from app.api.models import router as base_models_router
 from app.api.adapter_studio import router as adapter_studio_router
 from app.api.autopilot import router as autopilot_router
 from app.api.gold_workbench import router as gold_workbench_router
+from app.api.manifest import router as manifest_router, project_router as manifest_project_router
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
@@ -208,6 +209,8 @@ app.include_router(base_models_router, prefix="/api", dependencies=API_DEPENDENC
 app.include_router(adapter_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(autopilot_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gold_workbench_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(manifest_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(manifest_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

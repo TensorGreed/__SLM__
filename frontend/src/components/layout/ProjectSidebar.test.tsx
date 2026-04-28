@@ -144,6 +144,16 @@ describe('ProjectSidebar beginner-mode hiding', () => {
     expect(screen.queryByRole('button', { name: 'Recipes' })).not.toBeInTheDocument();
   });
 
+  it('shows Pipeline as Code under Automation when beginner mode is off', () => {
+    renderSidebar(['/project/1/workflow'], { beginnerMode: false });
+    expect(screen.getByRole('button', { name: 'Pipeline as Code' })).toBeInTheDocument();
+  });
+
+  it('hides Pipeline as Code when beginner mode is on', () => {
+    renderSidebar(['/project/1/workflow'], { beginnerMode: true });
+    expect(screen.queryByRole('button', { name: 'Pipeline as Code' })).not.toBeInTheDocument();
+  });
+
   it('hides domain panel entries even on deep-link', () => {
     renderSidebar(['/project/1/domain/packs'], { beginnerMode: true });
     expect(screen.queryByRole('button', { name: 'Domain Packs' })).not.toBeInTheDocument();

@@ -14,6 +14,7 @@ import ProjectWizardPage from './pages/ProjectWizardPage';
 import ProjectModelsPage from './pages/ProjectModelsPage';
 import ProjectAdapterStudioPage from './pages/ProjectAdapterStudioPage';
 import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
+import ProjectManifestPage from './pages/ProjectManifestPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -31,6 +32,7 @@ function App() {
         {isAuthenticated ? (
           <>
             <Route path="/" element={<ProjectListPage />} />
+            <Route path="/manifest/import" element={<ProjectManifestPage />} />
             <Route path="/project/:id" element={<ProjectWorkspaceLayout />}>
               <Route index element={<Navigate to="pipeline/data" replace />} />
               <Route path="guide" element={<ProjectGuidePage />} />
@@ -46,6 +48,7 @@ function App() {
               <Route path="models" element={<ProjectModelsPage />} />
               <Route path="adapter-studio" element={<ProjectAdapterStudioPage />} />
               <Route path="autopilot" element={<ProjectAutopilotPage />} />
+              <Route path="manifest" element={<ProjectManifestPage />} />
               <Route path="playground" element={<ProjectPlaygroundPage />} />
             </Route>
           </>

@@ -5,6 +5,7 @@ import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
 import WorkspaceFlowHint from '../components/layout/WorkspaceFlowHint';
 import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
+import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 
@@ -78,9 +79,16 @@ export default function ProjectWorkspaceLayout() {
                     subtitle={activeProject.description || undefined}
                     withSidebar
                     actions={
-                        <span className={`badge ${activeProject.status === 'active' ? 'badge-success' : 'badge-info'}`}>
-                            {activeProject.status}
-                        </span>
+                        <>
+                            <ManifestExportButton
+                                projectId={projectId}
+                                projectName={activeProject.name}
+                                size="sm"
+                            />
+                            <span className={`badge ${activeProject.status === 'active' ? 'badge-success' : 'badge-info'}`}>
+                                {activeProject.status}
+                            </span>
+                        </>
                     }
                 />
                 <div className="page-container">

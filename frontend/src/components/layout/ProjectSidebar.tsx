@@ -5,6 +5,7 @@ import {
     Bot,
     Boxes,
     ClipboardList,
+    FileCode,
     FolderTree,
     Layers,
     Lock,
@@ -121,6 +122,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isModelsRoute = location.pathname === `/project/${projectId}/models`;
     const isAdapterStudioRoute = location.pathname === `/project/${projectId}/adapter-studio`;
     const isAutopilotRoute = location.pathname === `/project/${projectId}/autopilot`;
+    const isManifestRoute = location.pathname === `/project/${projectId}/manifest`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
@@ -137,7 +139,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
             || isAutopilotRoute
             || isPlaygroundRoute
         ) return 'training';
-        if (isWorkflowRoute || isRecipesRoute) return 'workflow';
+        if (isWorkflowRoute || isRecipesRoute || isManifestRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
         return 'pipeline';
     }, [
@@ -149,6 +151,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
         isPlaygroundRoute,
         isWorkflowRoute,
         isRecipesRoute,
+        isManifestRoute,
         isDomainPacksRoute,
         isDomainProfilesRoute,
     ]);
@@ -356,6 +359,13 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             >
                                 <BookOpen size={15} />
                                 <span className="nav-label">Recipes</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isManifestRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/manifest`)}
+                            >
+                                <FileCode size={15} />
+                                <span className="nav-label">Pipeline as Code</span>
                             </button>
                         </>
                     )}
