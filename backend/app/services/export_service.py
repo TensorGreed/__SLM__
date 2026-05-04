@@ -1045,7 +1045,14 @@ async def execute_export_deploy_plan(
         sagemaker_model_data_url=sagemaker_model_data_url,
     )
 
-    manifest = export.manifest if isinstance(export.manifest, dict) else {}
+    # Copy out of the JSON column rather than mutating in place — SQLAlchemy's
+    # default JSON type uses identity-equality to detect a dirty column, so
+    # `export.manifest = export.manifest` (same dict reference) would not
+    # mark the row for UPDATE and the change would be silently dropped.
+    existing_manifest = (
+        export.manifest if isinstance(export.manifest, dict) else {}
+    )
+    manifest = dict(existing_manifest)
     history = list(manifest.get("deploy_execution_history") or [])
     execution = result_payload.get("execution") if isinstance(result_payload, dict) else {}
     history.append(

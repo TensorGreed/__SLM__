@@ -31,6 +31,9 @@ from app.models.deployment_version import (
     DeploymentVersionStatus,
     DeploymentRollbackAction,
 )
+from app.models.deployment_telemetry import DeploymentTelemetrySample
+from app.models.deployment_drift_check import DeploymentDriftCheck
+from app.models.deployment_score import DeploymentScore
 
 __all__ = [
     "Project",
@@ -71,4 +74,7 @@ __all__ = [
     "DeploymentRollback",
     "DeploymentVersionStatus",
     "DeploymentRollbackAction",
+    "DeploymentTelemetrySample",
+    "DeploymentDriftCheck",
+    "DeploymentScore",
 ]
