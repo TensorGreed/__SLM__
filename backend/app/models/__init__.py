@@ -25,6 +25,12 @@ from app.models.gold_set_annotation import (
     GoldSetReviewerQueueStatus,
 )
 from app.models.training_manifest import TrainingManifest
+from app.models.deployment_version import (
+    DeploymentVersion,
+    DeploymentRollback,
+    DeploymentVersionStatus,
+    DeploymentRollbackAction,
+)
 
 __all__ = [
     "Project",
@@ -61,4 +67,8 @@ __all__ = [
     "GoldSetRowStatus",
     "GoldSetReviewerQueueStatus",
     "TrainingManifest",
+    "DeploymentVersion",
+    "DeploymentRollback",
+    "DeploymentVersionStatus",
+    "DeploymentRollbackAction",
 ]

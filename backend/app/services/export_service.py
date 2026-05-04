@@ -1064,13 +1064,66 @@ async def execute_export_deploy_plan(
     await db.flush()
     await db.refresh(export)
 
-    return {
+    # Persist a deployment-version row (priority.md P25) for non-dry-run
+    # executes so the promote / reject / rollback flow has something to
+    # operate on. Capture is best-effort: a failure here must not break
+    # the deploy execute itself, since the runtime artifact has already
+    # been produced.
+    deployment_version_id: int | None = None
+    if not dry_run:
+        try:
+            from app.services.deployment_version_service import (
+                record_deployment_version,
+            )
+
+            dv = await record_deployment_version(
+                db,
+                project_id=project_id,
+                export_id=export_id,
+                target_id=str(result_payload.get("target_id") or target_id),
+                target_kind=str(result_payload.get("target_kind") or "")
+                or None,
+                endpoint_name=endpoint_name,
+                endpoint_handle=str(
+                    (execution or {}).get("endpoint_handle") or ""
+                )
+                or None,
+                region=region,
+                instance_type=instance_type,
+                plan_payload={
+                    "target_id": str(
+                        result_payload.get("target_id") or target_id
+                    ),
+                    "target_kind": str(
+                        result_payload.get("target_kind") or ""
+                    ),
+                    "endpoint_name": endpoint_name,
+                    "region": region,
+                    "instance_type": instance_type,
+                    "dry_run": False,
+                    "status": str((execution or {}).get("status") or ""),
+                    "started_at": (execution or {}).get("started_at"),
+                    "finished_at": (execution or {}).get("finished_at"),
+                },
+            )
+            deployment_version_id = dv.id
+            await db.flush()
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                f"[deployment_version] capture_failed export={export_id} "
+                f"target={target_id} err={exc!r}"
+            )
+
+    payload = {
         "project_id": project_id,
         "export_id": export_id,
         "export_format": export.export_format.value,
         "run_dir": str(run_dir),
         **result_payload,
     }
+    if deployment_version_id is not None:
+        payload["deployment_version_id"] = deployment_version_id
+    return payload
 
 
 def _generate_dockerfile(export_format: ExportFormat) -> str:
