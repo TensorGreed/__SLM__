@@ -1888,6 +1888,356 @@ def run_autopilot(args: argparse.Namespace, client: ApiClient) -> int:
 # -- eval subparser (P13) ---------------------------------------------------
 
 
+# -- P29. deploy CLI subparser (Wave F deploy plane) ----------------------
+
+
+def _deploy_plan(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /projects/{pid}/export/{eid}/deploy-as-api (P25)."""
+    body: dict[str, Any] = {"target_id": str(args.target_id).strip()}
+    for attr, key in (
+        ("endpoint_name", "endpoint_name"),
+        ("region", "region"),
+        ("instance_type", "instance_type"),
+    ):
+        value = str(getattr(args, attr, "") or "").strip()
+        if value:
+            body[key] = value
+    payload = client.request(
+        "POST",
+        f"/projects/{int(args.project_id)}/export/{int(args.export_id)}/deploy-as-api",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_smoke_test(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /projects/{pid}/export/{eid}/deployment-validate (P25)."""
+    targets = _dedupe_preserve_order(
+        [t for t in (str(getattr(args, "targets", "") or "")).split(",") if t.strip()]
+    )
+    body: dict[str, Any] = {
+        "run_smoke_tests": bool(getattr(args, "run_smoke_tests", True)),
+    }
+    if targets:
+        body["deployment_targets"] = [t.strip() for t in targets]
+    payload = client.request(
+        "POST",
+        f"/projects/{int(args.project_id)}/export/{int(args.export_id)}/deployment-validate",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_execute(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /projects/{pid}/export/{eid}/deploy-as-api/execute (P25)."""
+    body: dict[str, Any] = {
+        "target_id": str(args.target_id).strip(),
+        "dry_run": bool(getattr(args, "dry_run", False)),
+    }
+    for attr, key in (
+        ("endpoint_name", "endpoint_name"),
+        ("region", "region"),
+        ("instance_type", "instance_type"),
+        ("hf_token", "hf_token"),
+        ("managed_api_url", "managed_api_url"),
+        ("managed_api_token", "managed_api_token"),
+        ("sagemaker_role_arn", "sagemaker_role_arn"),
+        ("sagemaker_image_uri", "sagemaker_image_uri"),
+        ("sagemaker_model_data_url", "sagemaker_model_data_url"),
+    ):
+        value = str(getattr(args, attr, "") or "").strip()
+        if value:
+            body[key] = value
+    payload = client.request(
+        "POST",
+        f"/projects/{int(args.project_id)}/export/{int(args.export_id)}/deploy-as-api/execute",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_action_body(args: argparse.Namespace) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    reason = str(getattr(args, "reason", "") or "").strip()
+    actor = str(getattr(args, "actor", "") or "").strip()
+    if reason:
+        body["reason"] = reason
+    if actor:
+        body["actor"] = actor
+    return body
+
+
+def _deploy_promote(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /deployments/{id}/promote (P25)."""
+    payload = client.request(
+        "POST",
+        f"/deployments/{int(args.deployment_id)}/promote",
+        json_body=_deploy_action_body(args),
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_reject(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /deployments/{id}/reject (P25)."""
+    payload = client.request(
+        "POST",
+        f"/deployments/{int(args.deployment_id)}/reject",
+        json_body=_deploy_action_body(args),
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_rollback(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /deployments/{id}/rollback (P25)."""
+    payload = client.request(
+        "POST",
+        f"/deployments/{int(args.deployment_id)}/rollback",
+        json_body=_deploy_action_body(args),
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_get(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /deployments/{id} (P25)."""
+    payload = client.request(
+        "GET", f"/deployments/{int(args.deployment_id)}"
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_list(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /projects/{pid}/deployments (P25)."""
+    params: dict[str, Any] = {}
+    export_id = getattr(args, "export_id", None)
+    if export_id is not None:
+        params["export_id"] = int(export_id)
+    target_id = str(getattr(args, "target_id", "") or "").strip()
+    if target_id:
+        params["target_id"] = target_id
+    status = str(getattr(args, "status", "") or "").strip()
+    if status:
+        params["status"] = status
+    payload = client.request(
+        "GET",
+        f"/projects/{int(args.project_id)}/deployments",
+        params=params or None,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_telemetry(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /deployments/{id}/telemetry (P26)."""
+    params: dict[str, Any] = {}
+    window = getattr(args, "window_seconds", None)
+    if window is not None:
+        params["window_seconds"] = int(window)
+    since = str(getattr(args, "since", "") or "").strip()
+    until = str(getattr(args, "until", "") or "").strip()
+    if since:
+        params["since"] = since
+    if until:
+        params["until"] = until
+    payload = client.request(
+        "GET",
+        f"/deployments/{int(args.deployment_id)}/telemetry",
+        params=params or None,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_telemetry_ingest(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    """POST /deployments/{id}/telemetry/ingest (P26).
+
+    Reads a JSON file containing either a list of samples or an object
+    with a ``samples`` field. Either shape is accepted so a caller can
+    pipe the same shape they'd POST directly to the API.
+    """
+    body_text = _load_text_file(args.samples_file, label="samples")
+    try:
+        parsed = json.loads(body_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"samples file is not valid JSON: {exc}") from exc
+    if isinstance(parsed, list):
+        samples = parsed
+    elif isinstance(parsed, dict) and isinstance(parsed.get("samples"), list):
+        samples = parsed["samples"]
+    else:
+        raise ValueError(
+            "samples file must be a JSON array or an object with a 'samples' array."
+        )
+    payload = client.request(
+        "POST",
+        f"/deployments/{int(args.deployment_id)}/telemetry/ingest",
+        json_body={"samples": samples},
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_drift_check(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /deployments/{id}/drift/check (P27)."""
+    body: dict[str, Any] = {
+        "gold_set_id": int(args.gold_set_id),
+        "tolerance": float(getattr(args, "tolerance", 0.05)),
+        "max_samples": int(getattr(args, "max_samples", 50)),
+        "eval_type": str(getattr(args, "eval_type", "exact_match") or "exact_match"),
+    }
+    predictions_file = str(getattr(args, "predictions_file", "") or "").strip()
+    endpoint_url = str(getattr(args, "endpoint_url", "") or "").strip()
+    if predictions_file:
+        text = _load_text_file(predictions_file, label="predictions")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"predictions file is not valid JSON: {exc}"
+            ) from exc
+        if isinstance(parsed, list):
+            body["predictions"] = parsed
+        elif isinstance(parsed, dict) and isinstance(
+            parsed.get("predictions"), list
+        ):
+            body["predictions"] = parsed["predictions"]
+        else:
+            raise ValueError(
+                "predictions file must be a JSON array or an object with a 'predictions' array."
+            )
+    if endpoint_url:
+        body["endpoint_url"] = endpoint_url
+        headers = str(getattr(args, "endpoint_headers", "") or "").strip()
+        if headers:
+            body["endpoint_headers"] = _parse_json_object(
+                headers, label="endpoint-headers"
+            )
+    notes = str(getattr(args, "notes", "") or "").strip()
+    actor = str(getattr(args, "actor", "") or "").strip()
+    if notes:
+        body["notes"] = notes
+    if actor:
+        body["actor"] = actor
+    if "predictions" not in body and "endpoint_url" not in body:
+        raise ValueError(
+            "deploy drift-check requires --predictions-file or --endpoint-url."
+        )
+    payload = client.request(
+        "POST",
+        f"/deployments/{int(args.deployment_id)}/drift/check",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_drift_history(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    """GET /deployments/{id}/drift/checks (P27)."""
+    params: dict[str, Any] = {}
+    limit = getattr(args, "limit", None)
+    if limit is not None:
+        params["limit"] = int(limit)
+    payload = client.request(
+        "GET",
+        f"/deployments/{int(args.deployment_id)}/drift/checks",
+        params=params or None,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_score(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /deployments/{id}/score (P28) — most recent score."""
+    payload = client.request(
+        "GET", f"/deployments/{int(args.deployment_id)}/score"
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_score_compute(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    """POST /deployments/{id}/score/compute (P28)."""
+    body: dict[str, Any] = {}
+    notes = str(getattr(args, "notes", "") or "").strip()
+    actor = str(getattr(args, "actor", "") or "").strip()
+    if notes:
+        body["notes"] = notes
+    if actor:
+        body["actor"] = actor
+    payload = client.request(
+        "POST",
+        f"/deployments/{int(args.deployment_id)}/score/compute",
+        json_body=body,
+    )
+    _print_json(payload)
+    return 0
+
+
+def _deploy_score_history(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    """GET /deployments/{id}/score/history (P28)."""
+    params: dict[str, Any] = {}
+    limit = getattr(args, "limit", None)
+    if limit is not None:
+        params["limit"] = int(limit)
+    payload = client.request(
+        "GET",
+        f"/deployments/{int(args.deployment_id)}/score/history",
+        params=params or None,
+    )
+    _print_json(payload)
+    return 0
+
+
+def run_deploy(args: argparse.Namespace, client: ApiClient) -> int:
+    """Dispatcher for ``brewslm deploy <subcommand>`` (P29)."""
+    sub = str(getattr(args, "deploy_subcommand", "") or "").strip().lower()
+    if sub == "plan":
+        return _deploy_plan(args, client)
+    if sub == "smoke-test":
+        return _deploy_smoke_test(args, client)
+    if sub == "execute":
+        return _deploy_execute(args, client)
+    if sub == "promote":
+        return _deploy_promote(args, client)
+    if sub == "reject":
+        return _deploy_reject(args, client)
+    if sub == "rollback":
+        return _deploy_rollback(args, client)
+    if sub == "get":
+        return _deploy_get(args, client)
+    if sub == "list":
+        return _deploy_list(args, client)
+    if sub == "telemetry":
+        return _deploy_telemetry(args, client)
+    if sub == "telemetry-ingest":
+        return _deploy_telemetry_ingest(args, client)
+    if sub == "drift-check":
+        return _deploy_drift_check(args, client)
+    if sub == "drift-history":
+        return _deploy_drift_history(args, client)
+    if sub == "score":
+        return _deploy_score(args, client)
+    if sub == "score-compute":
+        return _deploy_score_compute(args, client)
+    if sub == "score-history":
+        return _deploy_score_history(args, client)
+    raise ValueError(f"Unsupported deploy subcommand '{sub}'.")
+
+
 def _eval_generate(args: argparse.Namespace, client: ApiClient) -> int:
     body: dict[str, Any] = {"include_judge_rubric": not bool(args.no_judge_rubric)}
     if args.blueprint_id is not None:
@@ -2936,6 +3286,200 @@ def build_parser() -> argparse.ArgumentParser:
         sub.set_defaults(func=run_autopilot)
 
     # Eval subparser (P13)
+    # -- deploy CLI (P29, deploy plane: plan/smoke-test/promote/...) -----
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        help="Deployment surfaces: plan, smoke-test, execute, promote/reject/rollback, telemetry, drift, score (P29).",
+    )
+    deploy_sub = deploy_parser.add_subparsers(
+        dest="deploy_subcommand", required=True
+    )
+
+    dp_plan = deploy_sub.add_parser(
+        "plan",
+        help="Build a managed-API deploy plan for a completed export (P25).",
+    )
+    dp_plan.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    dp_plan.add_argument("--export-id", dest="export_id", type=int, required=True)
+    dp_plan.add_argument("--target-id", dest="target_id", required=True)
+    dp_plan.add_argument("--endpoint-name", dest="endpoint_name", default="")
+    dp_plan.add_argument("--region", default="")
+    dp_plan.add_argument("--instance-type", dest="instance_type", default="")
+    dp_plan.add_argument("--json", action="store_true")
+
+    dp_smoke = deploy_sub.add_parser(
+        "smoke-test",
+        help="Run deployment-target validation/smoke checks against an export (P25).",
+    )
+    dp_smoke.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    dp_smoke.add_argument("--export-id", dest="export_id", type=int, required=True)
+    dp_smoke.add_argument(
+        "--targets",
+        default="",
+        help="Comma-separated deployment target ids; omit to use the export's defaults.",
+    )
+    dp_smoke.add_argument(
+        "--no-smoke",
+        dest="run_smoke_tests",
+        action="store_false",
+        help="Skip live smoke runs (compatibility checks still run).",
+    )
+    dp_smoke.set_defaults(run_smoke_tests=True)
+    dp_smoke.add_argument("--json", action="store_true")
+
+    dp_execute = deploy_sub.add_parser(
+        "execute",
+        help="Execute a deploy plan (a non-dry-run execute records a P25 deployment version).",
+    )
+    dp_execute.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    dp_execute.add_argument("--export-id", dest="export_id", type=int, required=True)
+    dp_execute.add_argument("--target-id", dest="target_id", required=True)
+    dp_execute.add_argument("--endpoint-name", dest="endpoint_name", default="")
+    dp_execute.add_argument("--region", default="")
+    dp_execute.add_argument("--instance-type", dest="instance_type", default="")
+    dp_execute.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Dry-run only — does not record a deployment version.",
+    )
+    dp_execute.add_argument("--hf-token", dest="hf_token", default="")
+    dp_execute.add_argument("--managed-api-url", dest="managed_api_url", default="")
+    dp_execute.add_argument("--managed-api-token", dest="managed_api_token", default="")
+    dp_execute.add_argument("--sagemaker-role-arn", dest="sagemaker_role_arn", default="")
+    dp_execute.add_argument("--sagemaker-image-uri", dest="sagemaker_image_uri", default="")
+    dp_execute.add_argument("--sagemaker-model-data-url", dest="sagemaker_model_data_url", default="")
+    dp_execute.add_argument("--json", action="store_true")
+
+    for verb in ("promote", "reject", "rollback"):
+        sub_parser = deploy_sub.add_parser(
+            verb,
+            help=f"{verb.capitalize()} a deployment version by id (P25).",
+        )
+        sub_parser.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+        sub_parser.add_argument("--reason", default="")
+        sub_parser.add_argument("--actor", default="")
+        sub_parser.add_argument("--json", action="store_true")
+
+    dp_get = deploy_sub.add_parser(
+        "get", help="Fetch a deployment version by id (P25)."
+    )
+    dp_get.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_get.add_argument("--json", action="store_true")
+
+    dp_list = deploy_sub.add_parser(
+        "list", help="List deployment versions for a project (P25)."
+    )
+    dp_list.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    dp_list.add_argument("--export-id", dest="export_id", type=int, default=None)
+    dp_list.add_argument("--target-id", dest="target_id", default="")
+    dp_list.add_argument(
+        "--status",
+        default="",
+        choices=["", "pending", "promoted", "rejected", "rolled_back", "superseded"],
+    )
+    dp_list.add_argument("--json", action="store_true")
+
+    dp_telemetry = deploy_sub.add_parser(
+        "telemetry",
+        help="Aggregate latency/error/throughput over a window (P26).",
+    )
+    dp_telemetry.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_telemetry.add_argument("--window-seconds", dest="window_seconds", type=int, default=None)
+    dp_telemetry.add_argument("--since", default="")
+    dp_telemetry.add_argument("--until", default="")
+    dp_telemetry.add_argument("--json", action="store_true")
+
+    dp_telemetry_ingest = deploy_sub.add_parser(
+        "telemetry-ingest",
+        help="Ingest a batch of telemetry samples from a JSON file (P26).",
+    )
+    dp_telemetry_ingest.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_telemetry_ingest.add_argument(
+        "samples_file",
+        help="Path to a JSON file: a list of samples or {'samples': [...]}.",
+    )
+    dp_telemetry_ingest.add_argument("--json", action="store_true")
+
+    dp_drift = deploy_sub.add_parser(
+        "drift-check",
+        help="Re-run gold eval against the deployed endpoint (P27).",
+    )
+    dp_drift.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_drift.add_argument("--gold-set-id", dest="gold_set_id", type=int, required=True)
+    dp_drift.add_argument(
+        "--predictions-file",
+        dest="predictions_file",
+        default="",
+        help="Path to a JSON file: a list or {'predictions': [...]} of {row_id, prediction}.",
+    )
+    dp_drift.add_argument("--endpoint-url", dest="endpoint_url", default="")
+    dp_drift.add_argument(
+        "--endpoint-headers",
+        dest="endpoint_headers",
+        default="",
+        help='JSON object with auth headers, e.g. \'{"Authorization": "Bearer …"}\'.',
+    )
+    dp_drift.add_argument("--eval-type", dest="eval_type", default="exact_match")
+    dp_drift.add_argument("--tolerance", type=float, default=0.05)
+    dp_drift.add_argument("--max-samples", dest="max_samples", type=int, default=50)
+    dp_drift.add_argument("--notes", default="")
+    dp_drift.add_argument("--actor", default="")
+    dp_drift.add_argument("--json", action="store_true")
+
+    dp_drift_history = deploy_sub.add_parser(
+        "drift-history",
+        help="List drift checks for a deployment version (P27).",
+    )
+    dp_drift_history.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_drift_history.add_argument("--limit", type=int, default=None)
+    dp_drift_history.add_argument("--json", action="store_true")
+
+    dp_score = deploy_sub.add_parser(
+        "score",
+        help="Most recent deployability score for a deployment version (P28).",
+    )
+    dp_score.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_score.add_argument("--json", action="store_true")
+
+    dp_score_compute = deploy_sub.add_parser(
+        "score-compute",
+        help="Recompute and persist a deployability score (P28).",
+    )
+    dp_score_compute.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_score_compute.add_argument("--notes", default="")
+    dp_score_compute.add_argument("--actor", default="")
+    dp_score_compute.add_argument("--json", action="store_true")
+
+    dp_score_history = deploy_sub.add_parser(
+        "score-history",
+        help="Score history for a deployment version (P28).",
+    )
+    dp_score_history.add_argument("--deployment-id", dest="deployment_id", type=int, required=True)
+    dp_score_history.add_argument("--limit", type=int, default=None)
+    dp_score_history.add_argument("--json", action="store_true")
+
+    for sub in (
+        dp_plan,
+        dp_smoke,
+        dp_execute,
+        dp_get,
+        dp_list,
+        dp_telemetry,
+        dp_telemetry_ingest,
+        dp_drift,
+        dp_drift_history,
+        dp_score,
+        dp_score_compute,
+        dp_score_history,
+    ):
+        sub.set_defaults(func=run_deploy)
+    # promote / reject / rollback parsers were created in the loop above and
+    # need their dispatcher set explicitly since they aren't named locals.
+    for action_name in ("promote", "reject", "rollback"):
+        # `deploy_sub.choices[name]` is the registered subparser instance.
+        deploy_sub.choices[action_name].set_defaults(func=run_deploy)
+
     eval_parser = subparsers.add_parser(
         "eval",
         help="Evaluation workflows: pack generation, gold-set ops, label, run, compare, clusters, remediation.",
