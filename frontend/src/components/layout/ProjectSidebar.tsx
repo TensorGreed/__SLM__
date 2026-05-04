@@ -9,6 +9,7 @@ import {
     FolderTree,
     Layers,
     Lock,
+    Rocket,
     Settings2,
     Sparkles,
     Unlock,
@@ -123,6 +124,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isAdapterStudioRoute = location.pathname === `/project/${projectId}/adapter-studio`;
     const isAutopilotRoute = location.pathname === `/project/${projectId}/autopilot`;
     const isManifestRoute = location.pathname === `/project/${projectId}/manifest`;
+    const isDeploymentsRoute = location.pathname === `/project/${projectId}/deployments`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
@@ -138,6 +140,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
             || isAdapterStudioRoute
             || isAutopilotRoute
             || isPlaygroundRoute
+            || isDeploymentsRoute
         ) return 'training';
         if (isWorkflowRoute || isRecipesRoute || isManifestRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
@@ -149,6 +152,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
         isAdapterStudioRoute,
         isAutopilotRoute,
         isPlaygroundRoute,
+        isDeploymentsRoute,
         isWorkflowRoute,
         isRecipesRoute,
         isManifestRoute,
@@ -332,6 +336,13 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             >
                                 <Bot size={15} />
                                 <span className="nav-label">Playground</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isDeploymentsRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/deployments`)}
+                            >
+                                <Rocket size={15} />
+                                <span className="nav-label">Deployments</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}

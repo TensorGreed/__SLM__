@@ -15,6 +15,7 @@ import ProjectModelsPage from './pages/ProjectModelsPage';
 import ProjectAdapterStudioPage from './pages/ProjectAdapterStudioPage';
 import ProjectAutopilotPage from './pages/ProjectAutopilotPage';
 import ProjectManifestPage from './pages/ProjectManifestPage';
+import ProjectDeploymentsPage from './pages/ProjectDeploymentsPage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -49,6 +50,7 @@ function App() {
               <Route path="adapter-studio" element={<ProjectAdapterStudioPage />} />
               <Route path="autopilot" element={<ProjectAutopilotPage />} />
               <Route path="manifest" element={<ProjectManifestPage />} />
+              <Route path="deployments" element={<ProjectDeploymentsPage />} />
               <Route path="playground" element={<ProjectPlaygroundPage />} />
             </Route>
           </>
