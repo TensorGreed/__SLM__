@@ -221,7 +221,15 @@ class TelemetryIngestRequest(BaseModel):
     samples: list[dict[str, Any]]
 
 
-@router.post("/{deployment_version_id}/telemetry/ingest")
+@router.post(
+    "/{deployment_version_id}/telemetry/ingest",
+    description=(
+        "Push-only telemetry. The deployment plane has no built-in scraper, "
+        "so every sample must be POSTed here by your own inference client "
+        "or a provider-side scrape sidecar. See "
+        "`served_model_telemetry_service` docstring for wiring patterns."
+    ),
+)
 async def ingest_telemetry(
     deployment_version_id: int,
     req: TelemetryIngestRequest,
@@ -237,7 +245,14 @@ async def ingest_telemetry(
         _raise_for(exc)
 
 
-@router.get("/{deployment_version_id}/telemetry")
+@router.get(
+    "/{deployment_version_id}/telemetry",
+    description=(
+        "Aggregate latency / error rate / token throughput over a window. "
+        "Returns zeroed payload when no samples have been ingested — push "
+        "samples via `POST .../telemetry/ingest` first."
+    ),
+)
 async def get_telemetry(
     deployment_version_id: int,
     window_seconds: int | None = Query(default=None, ge=1, le=30 * 24 * 3600),
@@ -289,16 +304,34 @@ class DriftCheckRequest(BaseModel):
     tolerance: float = Field(default=0.05, ge=0.0, le=1.0)
     max_samples: int = Field(default=50, ge=1, le=500)
     # Offline mode: pass predictions directly. The service uses these
-    # verbatim and skips the live HTTP call.
+    # verbatim and skips the live HTTP call. **This is the recommended
+    # path for production use** — bring your own inference client
+    # (HF / SageMaker / vLLM SDK) and post the results here.
     predictions: list[DriftPredictionEntry] | None = None
     # Live mode: caller supplies the inference URL (and optional auth).
+    # CAVEAT — narrow proof-of-concept: posts ``{"prompt": ...}`` per
+    # row, reads ``prediction``/``answer``/``output``/``text`` from a
+    # JSON response. Real HF / SageMaker / vLLM endpoints use different
+    # request shapes and will not work without transformation. No
+    # batching, no retries, no rate-limiting. See
+    # ``deployment_drift_service`` docstring for details.
     endpoint_url: str | None = Field(default=None, max_length=2048)
     endpoint_headers: dict[str, str] | None = None
     notes: str | None = Field(default=None, max_length=2048)
     actor: str | None = Field(default=None, max_length=128)
 
 
-@router.post("/{deployment_version_id}/drift/check")
+@router.post(
+    "/{deployment_version_id}/drift/check",
+    description=(
+        "Re-run gold-set scoring against a deployed model. Two prediction "
+        "sources: pass `predictions` for the offline replay path "
+        "(recommended for production — bring your own inference client), "
+        "or pass `endpoint_url` for the narrow live-HTTP proof of concept "
+        "(hard-coded `{prompt}` shape; will not work against HF/SageMaker/"
+        "vLLM without transformation)."
+    ),
+)
 async def trigger_drift_check(
     deployment_version_id: int,
     req: DriftCheckRequest,

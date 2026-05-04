@@ -9,13 +9,34 @@ re-running the eval.
 
 Two ways to supply predictions:
 
-- **offline** (default; the test path) — caller passes ``predictions``
-  as ``[{row_id, prediction}]`` directly. Useful for replaying a known
-  inference batch or for tests that don't want a live HTTP call.
-- **live_url** — caller passes ``endpoint_url`` (and optionally
-  ``endpoint_headers`` and ``request_template``); the service POSTs
-  ``{prompt}`` per row, expects ``{prediction}`` back, and tolerates
-  missing predictions by counting them as failures.
+- **offline** (default; production-grade) — caller passes
+  ``predictions`` as ``[{row_id, prediction}]`` directly. This is the
+  recommended path: bring your own inference client (HF Inference
+  Endpoints SDK, SageMaker boto, vLLM client, etc.), call it however
+  you need, then POST the results here for scoring. Every per-row
+  prediction supplied is exact-match scored against
+  ``GoldSetRow.expected``.
+
+- **live_url** — narrow proof-of-concept HTTP fan-out. The service
+  POSTs ``{"prompt": <flattened row.input>}`` per row to
+  ``endpoint_url`` and reads ``prediction`` / ``answer`` / ``output`` /
+  ``text`` from a JSON response.
+
+  **Production caveats** (read these before using live_url against a
+  real provider):
+
+  - The request shape (``{"prompt": ...}``) is hard-coded. Real HF
+    Inference Endpoints expect ``{"inputs": ...}``, SageMaker uses
+    ``ContentType``-specific bodies, and vLLM-managed expects an
+    OpenAI-compatible chat schema. None of these will work without
+    transformation.
+  - There is no automatic auth. Pass ``endpoint_headers`` for tokens.
+  - Per-row calls are issued sequentially, no batching, no retries,
+    no rate-limiting.
+  - Network failure paths are exercised by integration only — the
+    error branches are covered by ``# pragma: no cover`` in this file.
+
+  Use the offline path for anything that touches a real provider.
 
 A future provider-SDK mode (HF / SageMaker / vLLM-managed) plugs in
 behind ``_collect_live_predictions`` without touching callers.

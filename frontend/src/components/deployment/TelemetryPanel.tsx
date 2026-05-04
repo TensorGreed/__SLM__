@@ -21,6 +21,12 @@ import type { TelemetryAggregate } from '../../types/deployment';
 
 interface Props {
     deploymentVersionId: number;
+    /**
+     * Bump from the parent to force an immediate re-fetch (in addition
+     * to the 15s poll). Useful after a promote/reject/rollback so the
+     * panel reflects the new live state without waiting a full tick.
+     */
+    refreshKey?: number;
 }
 
 interface ApiErrorShape {
@@ -121,7 +127,10 @@ function PercentileBars({ width, height, p50, p95, p99, max }: PercentileBars) {
     );
 }
 
-export default function TelemetryPanel({ deploymentVersionId }: Props) {
+export default function TelemetryPanel({
+    deploymentVersionId,
+    refreshKey = 0,
+}: Props) {
     const [windowSeconds, setWindowSeconds] = useState<number>(3600);
     const [aggregate, setAggregate] = useState<TelemetryAggregate | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
@@ -158,7 +167,9 @@ export default function TelemetryPanel({ deploymentVersionId }: Props) {
                 timerRef.current = null;
             }
         };
-    }, [fetchAggregate]);
+        // refreshKey is a deliberate dependency so the parent can force
+        // an immediate re-fetch after a promote/reject/rollback.
+    }, [fetchAggregate, refreshKey]);
 
     const kpis = useMemo(() => {
         if (!aggregate) return null;
@@ -219,8 +230,18 @@ export default function TelemetryPanel({ deploymentVersionId }: Props) {
                 <div className="dim">{loading ? 'Loading telemetry…' : 'No telemetry yet.'}</div>
             ) : kpis.sampleCount === 0 ? (
                 <div className="deployment-empty">
-                    No samples in this window. Ingest via{' '}
-                    <code>POST /deployments/{deploymentVersionId}/telemetry/ingest</code>.
+                    <div>No samples in this window.</div>
+                    <div className="deployment-empty-detail">
+                        The deployment plane is push-only — your inference
+                        client (or a provider-side scrape sidecar) needs to
+                        POST samples to{' '}
+                        <code>
+                            /api/deployments/{deploymentVersionId}/telemetry/ingest
+                        </code>
+                        . Until then this panel and the
+                        <code> telemetry_health</code> score component will
+                        report no signal.
+                    </div>
                 </div>
             ) : (
                 <>

@@ -19,6 +19,12 @@ import type { DeploymentScore } from '../../types/deployment';
 
 interface Props {
     deploymentVersionId: number;
+    /**
+     * Bump from the parent to force a re-fetch even when
+     * ``deploymentVersionId`` is unchanged — e.g. after a promote, the
+     * same dv is now live and its score should be recomputed.
+     */
+    refreshKey?: number;
 }
 
 interface ApiErrorShape {
@@ -50,7 +56,10 @@ function formatScore(score: number | null): string {
     return score.toFixed(2);
 }
 
-export default function DeployabilityScoreCard({ deploymentVersionId }: Props) {
+export default function DeployabilityScoreCard({
+    deploymentVersionId,
+    refreshKey = 0,
+}: Props) {
     const [score, setScore] = useState<DeploymentScore | null>(null);
     const [loading, setLoading] = useState(false);
     const [computing, setComputing] = useState(false);
@@ -98,7 +107,10 @@ export default function DeployabilityScoreCard({ deploymentVersionId }: Props) {
 
     useEffect(() => {
         void fetchLatest();
-    }, [fetchLatest]);
+        // refreshKey is a deliberate dependency so the parent can force
+        // a re-fetch after a promote / reject / rollback even when the
+        // deployment id hasn't changed.
+    }, [fetchLatest, refreshKey]);
 
     if (loading && !score) {
         return (

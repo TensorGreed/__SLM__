@@ -35,6 +35,23 @@ interface Props {
     onRefresh: () => Promise<void> | void;
 }
 
+function findRollbackPredecessor(
+    versions: DeploymentVersion[],
+    target: DeploymentVersion,
+): DeploymentVersion | null {
+    // Mirror the backend's rollback target selection: most recent
+    // SUPERSEDED sibling for the same (export_id, target_id).
+    const siblings = versions.filter(
+        (v) =>
+            v.id !== target.id
+            && v.export_id === target.export_id
+            && v.target_id === target.target_id
+            && v.status === 'superseded',
+    );
+    siblings.sort((a, b) => b.version - a.version);
+    return siblings[0] || null;
+}
+
 interface ApiErrorShape {
     response?: { status?: number; data?: { detail?: unknown } };
     message?: string;
@@ -84,16 +101,34 @@ export default function DeployedVersionsList({
     const [actionError, setActionError] = useState<string | null>(null);
 
     const callAction = useCallback(
-        async (deploymentId: number, action: 'promote' | 'reject' | 'rollback') => {
-            const reason = window.prompt(
-                `Optional reason for ${action} (Cancel to abort):`,
-                '',
-            );
+        async (
+            target: DeploymentVersion,
+            action: 'promote' | 'reject' | 'rollback',
+        ) => {
+            // Rollback gets a richer prompt that names the predecessor
+            // version it will re-promote — and refuses up front when no
+            // predecessor exists, mirroring the backend's
+            // `no_promoted_predecessor` 409 without round-tripping.
+            let promptMessage = `Optional reason for ${action} (Cancel to abort):`;
+            if (action === 'rollback') {
+                const predecessor = findRollbackPredecessor(versions, target);
+                if (predecessor == null) {
+                    setActionError(
+                        `Cannot roll back v${target.version}: no superseded predecessor exists for target ${target.target_id}.`,
+                    );
+                    return;
+                }
+                promptMessage =
+                    `Roll back v${target.version} on ${target.target_id}? `
+                    + `v${predecessor.version} (#${predecessor.id}) will be re-promoted in its place.\n\n`
+                    + `Optional reason (Cancel to abort):`;
+            }
+            const reason = window.prompt(promptMessage, '');
             if (reason === null) return; // user cancelled
-            setBusyDeploymentId(deploymentId);
+            setBusyDeploymentId(target.id);
             setActionError(null);
             try {
-                await api.post(`/deployments/${deploymentId}/${action}`, {
+                await api.post(`/deployments/${target.id}/${action}`, {
                     reason: reason.trim() || undefined,
                 });
                 await onRefresh();
@@ -103,7 +138,7 @@ export default function DeployedVersionsList({
                 setBusyDeploymentId(null);
             }
         },
-        [onRefresh],
+        [onRefresh, versions],
     );
 
     if (!versions.length) {
@@ -174,7 +209,7 @@ export default function DeployedVersionsList({
                                                 type="button"
                                                 className="btn btn-primary btn-sm"
                                                 disabled={isBusy}
-                                                onClick={() => void callAction(dv.id, 'promote')}
+                                                onClick={() => void callAction(dv, 'promote')}
                                             >
                                                 {isBusy ? '…' : 'Promote'}
                                             </button>
@@ -182,7 +217,7 @@ export default function DeployedVersionsList({
                                                 type="button"
                                                 className="btn btn-secondary btn-sm"
                                                 disabled={isBusy}
-                                                onClick={() => void callAction(dv.id, 'reject')}
+                                                onClick={() => void callAction(dv, 'reject')}
                                             >
                                                 Reject
                                             </button>
@@ -193,7 +228,7 @@ export default function DeployedVersionsList({
                                             type="button"
                                             className="btn btn-warning btn-sm"
                                             disabled={isBusy}
-                                            onClick={() => void callAction(dv.id, 'rollback')}
+                                            onClick={() => void callAction(dv, 'rollback')}
                                         >
                                             {isBusy ? '…' : 'Rollback'}
                                         </button>

@@ -47,10 +47,18 @@ os.environ["TRAINING_BACKEND"] = "simulate"
 os.environ["ALLOW_SIMULATED_TRAINING"] = "true"
 os.environ["ALLOW_SYNTHETIC_DEMO_FALLBACK"] = "true"
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.database import async_session_factory
 from app.main import app
+from app.models.registry import (
+    DeploymentStatus,
+    ModelRegistryEntry,
+    RegistryStage,
+)
 
 
 def _cleanup_artifacts() -> None:
@@ -108,6 +116,12 @@ class Phase74DeploymentVersionsTests(unittest.TestCase):
         return int(resp.json()["id"])
 
     def _create_completed_export(self, project_id: int) -> int:
+        export_id, _ = self._create_completed_export_with_experiment(project_id)
+        return export_id
+
+    def _create_completed_export_with_experiment(
+        self, project_id: int
+    ) -> tuple[int, int]:
         exp_resp = self.client.post(
             f"/api/projects/{project_id}/training/experiments",
             json={
@@ -145,7 +159,54 @@ class Phase74DeploymentVersionsTests(unittest.TestCase):
         )
         self.assertEqual(run_resp.status_code, 200, run_resp.text)
         self.assertEqual(str(run_resp.json().get("status")), "completed")
-        return export_id
+        return export_id, experiment_id
+
+    def _seed_registry_entry(
+        self,
+        *,
+        project_id: int,
+        experiment_id: int,
+        export_id: int,
+        name: str = "phase74-registry",
+    ) -> int:
+        """Seed a ModelRegistryEntry tied to a specific experiment + export."""
+
+        async def _runner():
+            async with async_session_factory() as db:
+                entry = ModelRegistryEntry(
+                    project_id=project_id,
+                    experiment_id=experiment_id,
+                    export_id=export_id,
+                    name=name,
+                    version="v1",
+                    stage=RegistryStage.STAGING,
+                    deployment_status=DeploymentStatus.NOT_DEPLOYED,
+                )
+                db.add(entry)
+                await db.flush()
+                entry_id = entry.id
+                await db.commit()
+                return entry_id
+
+        return asyncio.run(_runner())
+
+    def _read_registry_promoted_at(self, registry_entry_id: int):
+        """Return ``ModelRegistryEntry.promoted_at`` (or None) by id."""
+
+        async def _runner():
+            async with async_session_factory() as db:
+                from sqlalchemy import select as _select
+
+                row = (
+                    await db.execute(
+                        _select(ModelRegistryEntry).where(
+                            ModelRegistryEntry.id == registry_entry_id
+                        )
+                    )
+                ).scalar_one()
+                return row.promoted_at
+
+        return asyncio.run(_runner())
 
     def _execute_deploy(
         self,
@@ -208,6 +269,56 @@ class Phase74DeploymentVersionsTests(unittest.TestCase):
             for forbidden in ("token", "secret", "key", "password", "credential"):
                 self.assertNotIn(forbidden, key.lower(), plan_payload)
         self.assertEqual(body["audit"], [])
+
+    def test_execute_wires_registry_entry_id_when_one_exists(self):
+        project_id = self._create_project("regwire")
+        export_id, experiment_id = self._create_completed_export_with_experiment(
+            project_id
+        )
+        registry_entry_id = self._seed_registry_entry(
+            project_id=project_id,
+            experiment_id=experiment_id,
+            export_id=export_id,
+        )
+
+        payload = self._execute_deploy(
+            project_id=project_id,
+            export_id=export_id,
+        )
+        dv_id = int(payload["deployment_version_id"])
+
+        body = self.client.get(f"/api/deployments/{dv_id}").json()
+        self.assertEqual(
+            body["deployment_version"]["registry_entry_id"], registry_entry_id
+        )
+
+    def test_promote_stamps_registry_promoted_at_when_linked(self):
+        project_id = self._create_project("regprom")
+        export_id, experiment_id = self._create_completed_export_with_experiment(
+            project_id
+        )
+        registry_entry_id = self._seed_registry_entry(
+            project_id=project_id,
+            experiment_id=experiment_id,
+            export_id=export_id,
+        )
+
+        # Sanity: pre-promote the registry entry has no promoted_at.
+        self.assertIsNone(self._read_registry_promoted_at(registry_entry_id))
+
+        dv_id = int(
+            self._execute_deploy(project_id=project_id, export_id=export_id)[
+                "deployment_version_id"
+            ]
+        )
+        promote_resp = self.client.post(
+            f"/api/deployments/{dv_id}/promote", json={}
+        )
+        self.assertEqual(promote_resp.status_code, 200, promote_resp.text)
+
+        # The registry entry's promoted_at should now be stamped.
+        promoted_at = self._read_registry_promoted_at(registry_entry_id)
+        self.assertIsNotNone(promoted_at)
 
     def test_dry_run_execute_does_not_record_version(self):
         project_id = self._create_project("dryrun")

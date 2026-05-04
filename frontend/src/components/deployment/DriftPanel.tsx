@@ -19,6 +19,8 @@ import type {
 
 interface Props {
     deploymentVersionId: number;
+    /** Bump from the parent to force a re-fetch of drift history. */
+    refreshKey?: number;
 }
 
 interface ApiErrorShape {
@@ -54,7 +56,10 @@ function driftBadgeLabel(check: DeploymentDriftCheck): string {
     return check.drift_detected ? 'drift' : 'within tolerance';
 }
 
-export default function DriftPanel({ deploymentVersionId }: Props) {
+export default function DriftPanel({
+    deploymentVersionId,
+    refreshKey = 0,
+}: Props) {
     const [history, setHistory] = useState<DeploymentDriftCheck[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -81,7 +86,9 @@ export default function DriftPanel({ deploymentVersionId }: Props) {
 
     useEffect(() => {
         void fetchHistory();
-    }, [fetchHistory]);
+        // refreshKey is a deliberate dependency so the parent can force
+        // a re-fetch after a promote/reject/rollback.
+    }, [fetchHistory, refreshKey]);
 
     const runDriftCheck = useCallback(async () => {
         const gold = Number.parseInt(goldSetId, 10);

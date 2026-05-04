@@ -17,9 +17,33 @@ Stable reason codes (raised as ``ValueError``):
 - ``samples_required`` (400 — empty or missing samples list)
 - ``invalid_window`` (400 — window_seconds <= 0 or since > until)
 
-This file is intentionally provider-agnostic. Pull-mode (provider
-metrics API scraping) plugs in by calling ``ingest_samples`` from a
-provider-specific adapter — there is no shared scraping loop here yet.
+----
+
+**Production note — this service is push-only**. There is no built-in
+scraper. The deployment plane in this codebase **will not collect any
+telemetry on its own**; the data flow is exclusively:
+
+    your inference client ──► POST /deployments/{id}/telemetry/ingest
+
+Until something on your side calls that endpoint, every deployment
+version will sit at ``sample_count=0`` and every P28 deployability
+score will report ``telemetry_health: no signal``. Two practical
+patterns to wire telemetry up:
+
+1. **Inline reporting** — wrap your inference client so each request
+   produces a sample dict (``latency_ms``, ``success``, ``status_code``,
+   ``input_tokens``, ``output_tokens``) and post a batch every N
+   requests or every M seconds.
+2. **Provider-side scrape** — a sidecar that polls the provider's
+   metrics API (HF Inference Endpoints analytics, SageMaker
+   CloudWatch, vLLM Prometheus ``/metrics``), normalises into the
+   sample shape, and posts batches. Each provider has a different
+   API and no shared scraper exists in this codebase.
+
+The endpoint accepts either a top-level list or ``{"samples": [...]}``,
+in batches of up to ``_MAX_SAMPLES_PER_INGEST`` (5000). Invalid samples
+in a batch are dropped with a per-sample reason rather than failing
+the whole batch.
 """
 
 from __future__ import annotations

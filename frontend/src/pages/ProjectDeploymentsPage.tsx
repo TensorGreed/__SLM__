@@ -70,6 +70,11 @@ export default function ProjectDeploymentsPage() {
     );
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Bumped after every successful refresh so the downstream cards
+    // (score / telemetry / drift) re-fetch even when the selected
+    // deployment id is unchanged — e.g. after a promote, the same dv
+    // is now PROMOTED and its score / telemetry should be re-pulled.
+    const [refreshKey, setRefreshKey] = useState(0);
 
     const fetchVersions = useCallback(async () => {
         if (projectId == null) return;
@@ -81,6 +86,7 @@ export default function ProjectDeploymentsPage() {
             const list = response.data.deployment_versions || [];
             setVersions(list);
             setSelectedDeploymentId((current) => pickPreferredDeployment(list, current));
+            setRefreshKey((prev) => prev + 1);
             setError(null);
         } catch (err) {
             setError(extractErrorMessage(err, 'Failed to load deployment versions.'));
@@ -155,9 +161,18 @@ export default function ProjectDeploymentsPage() {
 
             {selectedDeploymentId != null && (
                 <>
-                    <DeployabilityScoreCard deploymentVersionId={selectedDeploymentId} />
-                    <TelemetryPanel deploymentVersionId={selectedDeploymentId} />
-                    <DriftPanel deploymentVersionId={selectedDeploymentId} />
+                    <DeployabilityScoreCard
+                        deploymentVersionId={selectedDeploymentId}
+                        refreshKey={refreshKey}
+                    />
+                    <TelemetryPanel
+                        deploymentVersionId={selectedDeploymentId}
+                        refreshKey={refreshKey}
+                    />
+                    <DriftPanel
+                        deploymentVersionId={selectedDeploymentId}
+                        refreshKey={refreshKey}
+                    />
                 </>
             )}
         </div>

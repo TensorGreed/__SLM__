@@ -128,7 +128,13 @@ describe('DeployedVersionsList', () => {
     });
 
     it('PROMOTED row only exposes Rollback; surfaces stable error code', async () => {
-        const versions = [makeVersion({ id: 9, version: 4, status: 'promoted' })];
+        // The PROMOTED v4 has a SUPERSEDED v3 predecessor on the same
+        // (export_id, target_id) so the client-side preflight passes
+        // and the API call goes out.
+        const versions = [
+            makeVersion({ id: 8, version: 3, status: 'superseded' }),
+            makeVersion({ id: 9, version: 4, status: 'promoted' }),
+        ];
         const onRefresh = vi.fn();
         apiMock.post.mockRejectedValueOnce({
             response: { status: 409, data: { detail: 'no_promoted_predecessor' } },
@@ -147,6 +153,62 @@ describe('DeployedVersionsList', () => {
         await user.click(screen.getByRole('button', { name: /Rollback/i }));
         expect(await screen.findByRole('alert')).toHaveTextContent('no_promoted_predecessor');
         expect(onRefresh).not.toHaveBeenCalled();
+    });
+
+    it('Rollback prompt surfaces the predecessor version it will re-promote', async () => {
+        const versions = [
+            makeVersion({ id: 8, version: 3, status: 'superseded' }),
+            makeVersion({ id: 9, version: 4, status: 'promoted' }),
+        ];
+        const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('rollback');
+        apiMock.post.mockResolvedValueOnce({ data: {} });
+
+        render(
+            <DeployedVersionsList
+                versions={versions}
+                selectedDeploymentId={9}
+                onSelect={vi.fn()}
+                onRefresh={vi.fn().mockResolvedValue(undefined)}
+            />,
+        );
+        const user = userEvent.setup();
+        await user.click(screen.getByRole('button', { name: /Rollback/i }));
+
+        // The prompt should mention the destination version explicitly.
+        expect(promptSpy).toHaveBeenCalledTimes(1);
+        const promptText = promptSpy.mock.calls[0][0] as string;
+        expect(promptText).toMatch(/Roll back v4/);
+        expect(promptText).toMatch(/v3 \(#8\)/);
+        promptSpy.mockRestore();
+    });
+
+    it('Rollback short-circuits client-side when no predecessor exists', async () => {
+        // Only the promoted row, no SUPERSEDED sibling.
+        const versions = [
+            makeVersion({ id: 9, version: 1, status: 'promoted' }),
+        ];
+        const promptSpy = vi.spyOn(window, 'prompt');
+        const onRefresh = vi.fn();
+
+        render(
+            <DeployedVersionsList
+                versions={versions}
+                selectedDeploymentId={9}
+                onSelect={vi.fn()}
+                onRefresh={onRefresh}
+            />,
+        );
+        const user = userEvent.setup();
+        await user.click(screen.getByRole('button', { name: /Rollback/i }));
+
+        // No prompt opened, no API call, error rendered inline.
+        expect(promptSpy).not.toHaveBeenCalled();
+        expect(apiMock.post).not.toHaveBeenCalled();
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            /no superseded predecessor/i,
+        );
+        expect(onRefresh).not.toHaveBeenCalled();
+        promptSpy.mockRestore();
     });
 
     it('REJECTED / ROLLED_BACK / SUPERSEDED rows have no action buttons', () => {

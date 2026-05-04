@@ -1082,6 +1082,27 @@ async def execute_export_deploy_plan(
             from app.services.deployment_version_service import (
                 record_deployment_version,
             )
+            from app.models.registry import ModelRegistryEntry
+
+            # Resolve the latest ModelRegistryEntry for this export's
+            # underlying experiment. Stamping it on the deployment-version
+            # row lets the promote/rollback path keep `registry.promoted_at`
+            # in lockstep with the new lifecycle without breaking the
+            # legacy registry view (priority.md P25 design note).
+            registry_entry_id: int | None = None
+            if export.experiment_id is not None:
+                registry_lookup = await db.execute(
+                    select(ModelRegistryEntry)
+                    .where(
+                        ModelRegistryEntry.project_id == project_id,
+                        ModelRegistryEntry.experiment_id == export.experiment_id,
+                    )
+                    .order_by(ModelRegistryEntry.id.desc())
+                    .limit(1)
+                )
+                registry_entry = registry_lookup.scalar_one_or_none()
+                if registry_entry is not None:
+                    registry_entry_id = registry_entry.id
 
             dv = await record_deployment_version(
                 db,
@@ -1097,6 +1118,7 @@ async def execute_export_deploy_plan(
                 or None,
                 region=region,
                 instance_type=instance_type,
+                registry_entry_id=registry_entry_id,
                 plan_payload={
                     "target_id": str(
                         result_payload.get("target_id") or target_id

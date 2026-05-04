@@ -40,6 +40,12 @@
     border-radius: 6px;
 }
 
+.deployments-page .deployment-empty-detail {
+    margin-top: var(--space-xs, 8px);
+    text-align: left;
+    font-size: var(--font-size-sm, 13px);
+}
+
 .deployments-page .dim {
     color: var(--text-tertiary, #6e7781);
 }

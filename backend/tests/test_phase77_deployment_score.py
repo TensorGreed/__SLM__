@@ -185,13 +185,25 @@ class Phase77DeploymentScoreTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
 
     def _seed_gold_set(
-        self, *, project_id: int, rows: list[tuple[str, str]]
-    ) -> tuple[int, list[int]]:
+        self,
+        *,
+        project_id: int,
+        rows: list[tuple[str, str]],
+        name: str | None = None,
+    ) -> tuple[int, list[int], str]:
+        """Create a gold-set Dataset + draft version + rows.
+
+        Returns ``(gold_set_id, row_ids, gold_set_name)`` so callers that
+        need to seed a matching baseline ``EvalResult`` can pin the
+        same ``dataset_name``.
+        """
+        gold_name = name or f"phase77-gold-{uuid.uuid4().hex[:6]}"
+
         async def _runner():
             async with async_session_factory() as db:
                 ds = Dataset(
                     project_id=project_id,
-                    name=f"phase77-gold-{uuid.uuid4().hex[:6]}",
+                    name=gold_name,
                     dataset_type=DatasetType.GOLD_DEV,
                     description="phase77",
                     record_count=len(rows),
@@ -224,7 +236,7 @@ class Phase77DeploymentScoreTests(unittest.TestCase):
                     await db.flush()
                     row_ids.append(gsrow.id)
                 await db.commit()
-                return ds.id, row_ids
+                return ds.id, row_ids, gold_name
 
         return asyncio.run(_runner())
 
@@ -399,27 +411,21 @@ class Phase77DeploymentScoreTests(unittest.TestCase):
         export_id, experiment_id = self._create_completed_export(project_id)
         dv_id = self._create_deployment_version(project_id, export_id)
 
-        gold_set_id, row_ids = self._seed_gold_set(
+        gold_set_id, row_ids, gold_name = self._seed_gold_set(
             project_id=project_id,
-            rows=[("q1", "a1"), ("q2", "a2")],
+            rows=[("q1", "a1"), ("q2", "a2"), ("q3", "a3"), ("q4", "a4")],
         )
-        # Use the same dataset name when seeding the baseline so the drift
-        # service finds a baseline to compare against.
+        # Pin the baseline EvalResult to the gold set's actual name so the
+        # drift service hits its primary (name-filtered) match path rather
+        # than relying on the broad eval-type-only fallback. baseline=1.0.
         self._seed_baseline_eval_result(
             experiment_id=experiment_id,
-            dataset_name=(
-                self.client.get(
-                    f"/api/deployments/{dv_id}"
-                ).json()["deployment_version"][
-                    "id"
-                ]
-                and ""
-            ),  # placeholder; we'll resolve from the gold set Dataset row
+            dataset_name=gold_name,
             pass_rate=1.0,
         )
 
-        # Run a drift check that hits 0.5 pass rate (vs baseline 1.0)
-        # ⇒ delta -0.5 ⇒ drift_health score = max(0, 1 - 1.0) = 0.0.
+        # 1 / 4 correct ⇒ current_pass_rate = 0.25, baseline = 1.0,
+        # delta = -0.75. Score formula: max(0, 1 - 2 * |delta|) ⇒ 0.0.
         drift_resp = self.client.post(
             f"/api/deployments/{dv_id}/drift/check",
             json={
@@ -428,10 +434,17 @@ class Phase77DeploymentScoreTests(unittest.TestCase):
                 "predictions": [
                     {"row_id": row_ids[0], "prediction": "a1"},
                     {"row_id": row_ids[1], "prediction": "wrong"},
+                    {"row_id": row_ids[2], "prediction": "wrong"},
+                    {"row_id": row_ids[3], "prediction": "wrong"},
                 ],
             },
         )
         self.assertEqual(drift_resp.status_code, 200, drift_resp.text)
+        drift_body = drift_resp.json()
+        # The drift service must have actually found the baseline.
+        self.assertIsNotNone(drift_body["baseline_pass_rate"])
+        self.assertIsNotNone(drift_body["delta"])
+        self.assertTrue(drift_body["drift_detected"])
 
         score_resp = self.client.post(
             f"/api/deployments/{dv_id}/score/compute", json={}
@@ -439,12 +452,53 @@ class Phase77DeploymentScoreTests(unittest.TestCase):
         body = score_resp.json()
         drift = self._component_by_name(body, "drift_health")
         self.assertEqual(drift["provenance"], "measured")
-        # Without a matched baseline (we seeded a row with empty
-        # dataset_name) drift's score may still be None — the harness
-        # only asserts the contract is well-formed regardless of which
-        # branch fires.
-        self.assertIn("score", drift)
+        # Real assertion now: with baseline=1.0 and current=0.25, the
+        # score MUST be measurable (not None) and MUST be 0.0 since
+        # |delta|=0.75 saturates the 1 - 2*|delta| formula.
+        self.assertIsNotNone(drift["score"])
+        self.assertEqual(float(drift["score"]), 0.0)
+        # signals_summary should record the drift verdict for the UI.
+        self.assertEqual(body["signals_summary"].get("drift_detected"), True)
         self.assertIsNotNone(body["signals_summary"].get("drift_check_id"))
+
+    def test_drift_health_within_tolerance_yields_high_score(self):
+        """Mirror of the previous test but with predictions that match the
+        baseline — drift_health should land near 1.0 with provenance=measured."""
+        project_id = self._create_project("nodrift")
+        export_id, experiment_id = self._create_completed_export(project_id)
+        dv_id = self._create_deployment_version(project_id, export_id)
+
+        gold_set_id, row_ids, gold_name = self._seed_gold_set(
+            project_id=project_id,
+            rows=[("q1", "a1"), ("q2", "a2"), ("q3", "a3"), ("q4", "a4")],
+        )
+        self._seed_baseline_eval_result(
+            experiment_id=experiment_id,
+            dataset_name=gold_name,
+            pass_rate=1.0,
+        )
+
+        # Perfect predictions ⇒ delta = 0 ⇒ drift_health.score = 1.0.
+        self.client.post(
+            f"/api/deployments/{dv_id}/drift/check",
+            json={
+                "gold_set_id": gold_set_id,
+                "tolerance": 0.05,
+                "predictions": [
+                    {"row_id": rid, "prediction": expected}
+                    for rid, expected in zip(row_ids, ["a1", "a2", "a3", "a4"])
+                ],
+            },
+        )
+        score_resp = self.client.post(
+            f"/api/deployments/{dv_id}/score/compute", json={}
+        )
+        body = score_resp.json()
+        drift = self._component_by_name(body, "drift_health")
+        self.assertEqual(drift["provenance"], "measured")
+        self.assertIsNotNone(drift["score"])
+        self.assertAlmostEqual(float(drift["score"]), 1.0)
+        self.assertEqual(body["signals_summary"].get("drift_detected"), False)
 
     def test_components_with_no_signal_have_null_score_and_zero_normalised_weight(self):
         project_id = self._create_project("missing")
