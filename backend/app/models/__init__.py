@@ -35,6 +35,7 @@ from app.models.deployment_telemetry import DeploymentTelemetrySample
 from app.models.deployment_drift_check import DeploymentDriftCheck
 from app.models.deployment_score import DeploymentScore
 from app.models.run_event import RunEvent
+from app.models.failure_cluster import FailureCluster
 
 __all__ = [
     "Project",
@@ -79,4 +80,5 @@ __all__ = [
     "DeploymentDriftCheck",
     "DeploymentScore",
     "RunEvent",
+    "FailureCluster",
 ]

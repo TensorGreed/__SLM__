@@ -36,11 +36,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import Project
+from app.models.reason_codes import KNOWN_REASON_CODES
 from app.models.run_event import (
     KNOWN_SEVERITIES,
     KNOWN_STAGES,
+    SEVERITY_CRITICAL,
+    SEVERITY_ERROR,
     SEVERITY_INFO,
     RunEvent,
+)
+
+
+# Severities that REQUIRE a reason_code from the canonical taxonomy
+# (priority.md P33 lint rule). Below this severity, reason_code is
+# optional and free-form.
+_REASON_CODE_REQUIRED_SEVERITIES: frozenset[str] = frozenset(
+    {SEVERITY_ERROR, SEVERITY_CRITICAL}
 )
 
 
@@ -111,6 +122,17 @@ async def emit_event(
         raise ValueError(f"invalid_stage:{stage}")
     if severity not in KNOWN_SEVERITIES:
         raise ValueError(f"invalid_severity:{severity}")
+
+    # P33 lint rule: every error / critical event MUST carry a stable
+    # reason_code from the canonical taxonomy. Anything missing or
+    # outside the taxonomy is rejected here so the failure-cluster
+    # surface (P33) and the support bundle (P34) never have to ignore
+    # rows without a code.
+    if severity in _REASON_CODE_REQUIRED_SEVERITIES:
+        if not reason_code:
+            raise ValueError("reason_code_required")
+        if reason_code not in KNOWN_REASON_CODES:
+            raise ValueError(f"invalid_reason_code:{reason_code}")
 
     ts_value: datetime | None = (
         ts if isinstance(ts, datetime) else _coerce_ts(ts)

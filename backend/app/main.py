@@ -53,6 +53,9 @@ from app.api.run_events import (
     project_router as run_events_project_router,
     timeline_project_router as timeline_project_router,
 )
+from app.api.run_event_clusters import (
+    project_router as run_event_clusters_project_router,
+)
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
@@ -225,6 +228,7 @@ app.include_router(deployments_project_router, prefix="/api", dependencies=API_D
 app.include_router(run_events_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(run_events_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(timeline_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(run_event_clusters_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")
