@@ -87,6 +87,12 @@ CRITICAL_COLUMN_REQUIREMENTS: dict[str, set[str]] = {
         "beginner_mode",
         "active_domain_blueprint_version",
     },
+    "failure_clusters": {
+        # Wave G P36 — parallel exemplar array. Migration 0028 adds
+        # this; the runtime-repair below covers SQLite dev DBs that
+        # were created before the migration landed.
+        "exemplar_run_ids",
+    },
 }
 
 
@@ -117,6 +123,7 @@ def _repair_sqlite_schema_drift(sync_conn) -> list[str]:
     repair_sql: dict[str, str] = {
         "projects.beginner_mode": "ALTER TABLE projects ADD COLUMN beginner_mode BOOLEAN NOT NULL DEFAULT 0",
         "projects.active_domain_blueprint_version": "ALTER TABLE projects ADD COLUMN active_domain_blueprint_version INTEGER",
+        "failure_clusters.exemplar_run_ids": "ALTER TABLE failure_clusters ADD COLUMN exemplar_run_ids JSON",
     }
     existing = set(_list_missing_columns(sync_conn, CRITICAL_COLUMN_REQUIREMENTS))
     applied: list[str] = []
