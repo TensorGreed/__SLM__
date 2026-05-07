@@ -205,6 +205,42 @@ async def run_evaluation(
     await db.flush()
     await db.refresh(eval_result)
 
+    # P31: emit a RunEvent for the evaluation completion. Severity is
+    # info regardless of pass_rate — failure clustering (P33) uses the
+    # eval_result row directly via reason_code on per-row failures, not
+    # the aggregate pass rate.
+    try:
+        from app.models.run_event import (
+            SEVERITY_INFO,
+            STAGE_EVAL,
+        )
+        from app.services.run_event_service import emit_event
+
+        await emit_event(
+            db,
+            project_id=project_id,
+            run_id=f"eval-{eval_result.id}",
+            parent_run_id=f"exp-{experiment_id}",
+            stage=STAGE_EVAL,
+            severity=SEVERITY_INFO,
+            summary=(
+                f"Evaluation completed: {eval_type} on {dataset_name}"
+            ),
+            payload={
+                "eval_result_id": eval_result.id,
+                "experiment_id": experiment_id,
+                "eval_type": eval_type,
+                "dataset_name": dataset_name,
+                "pass_rate": eval_result.pass_rate,
+                "total": metrics.get("total") or metrics.get("total_tests"),
+            },
+        )
+    except Exception as event_exc:
+        print(
+            f"[run_event] eval_emit_failed eval_result_id={eval_result.id}: {event_exc}",
+            flush=True,
+        )
+
     return eval_result
 
 

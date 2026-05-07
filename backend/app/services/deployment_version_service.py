@@ -51,6 +51,61 @@ from app.models.project import Project
 from app.models.registry import ModelRegistryEntry
 
 
+async def _emit_deployment_event(
+    db: AsyncSession,
+    *,
+    dv: DeploymentVersion,
+    action: str,
+    reason: str | None,
+    actor: str,
+    extra_payload: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort canonical RunEvent for a deployment lifecycle transition.
+
+    Mirrors the existing P25 ``deployment_rollbacks`` audit row but lands
+    in the unified ``run_events`` table (priority.md P31) so the timeline
+    surface (P32) and support bundles (P34) can join across stages.
+    Failures are logged and swallowed — observability bugs must not
+    break promote/reject/rollback.
+    """
+    try:
+        from app.models.run_event import (
+            SEVERITY_INFO,
+            STAGE_DEPLOYMENT,
+        )
+        from app.services.run_event_service import emit_event
+
+        payload: dict[str, Any] = {
+            "action": action,
+            "deployment_version_id": dv.id,
+            "version": dv.version,
+            "export_id": dv.export_id,
+            "target_id": dv.target_id,
+            "status_after": dv.status.value if dv.status else None,
+        }
+        if reason:
+            payload["reason"] = reason
+        if extra_payload:
+            payload.update(extra_payload)
+
+        await emit_event(
+            db,
+            project_id=dv.project_id,
+            run_id=f"deploy-{dv.id}",
+            stage=STAGE_DEPLOYMENT,
+            severity=SEVERITY_INFO,
+            actor=actor,
+            summary=f"Deployment v{dv.version} {action}",
+            payload=payload,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"[run_event] emit_failed deployment dv={dv.id} action={action} "
+            f"err={exc!r}",
+            flush=True,
+        )
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -272,6 +327,17 @@ async def record_deployment_version(
     db.add(row)
     await db.flush()
     await db.refresh(row)
+
+    # Surface the create on the unified timeline so the operator can see
+    # "deployment v3 of export 12 was recorded" without joining two tables.
+    await _emit_deployment_event(
+        db,
+        dv=row,
+        action="record",
+        reason=None,
+        actor=actor_str,
+    )
+
     return row
 
 
@@ -356,6 +422,9 @@ async def promote_deployment_version(
         actor=actor_str,
         status_after=DeploymentVersionStatus.PROMOTED,
     )
+    await _emit_deployment_event(
+        db, dv=dv, action="promote", reason=reason, actor=actor_str,
+    )
     await db.flush()
     await db.refresh(dv)
     return {
@@ -392,6 +461,13 @@ async def reject_deployment_version(
         reason=reason,
         actor=actor_str,
         status_after=DeploymentVersionStatus.REJECTED,
+    )
+    await _emit_deployment_event(
+        db,
+        dv=dv,
+        action="reject",
+        reason=reason,
+        actor=actor_str,
     )
     await db.flush()
     await db.refresh(dv)
@@ -473,6 +549,25 @@ async def rollback_deployment_version(
         actor=actor_str,
         status_after=DeploymentVersionStatus.PROMOTED,
         payload={"rollback_source_id": dv.id},
+    )
+
+    # Two RunEvents: one for the row that came down, one for the
+    # predecessor that came back up. Both share the same actor + reason.
+    await _emit_deployment_event(
+        db,
+        dv=dv,
+        action="rollback",
+        reason=reason,
+        actor=actor_str,
+        extra_payload={"rolled_back_to_id": predecessor.id},
+    )
+    await _emit_deployment_event(
+        db,
+        dv=predecessor,
+        action="re_promote",
+        reason=f"rollback_target_of:{dv.id}",
+        actor=actor_str,
+        extra_payload={"rollback_source_id": dv.id},
     )
 
     if predecessor.registry_entry_id is not None:

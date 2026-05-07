@@ -898,6 +898,53 @@ async def run_export(
 
     await db.flush()
     await db.refresh(export)
+
+    # P31: emit a RunEvent reflecting the final state of the export. We
+    # emit a single completion event (not a separate "started" event) to
+    # keep the timeline tight — the started state is already implied by
+    # the create endpoint and the export row's created_at.
+    try:
+        from app.models.run_event import (
+            SEVERITY_ERROR,
+            SEVERITY_INFO,
+            STAGE_EXPORT,
+        )
+        from app.services.run_event_service import emit_event
+
+        is_failed = export.status == ExportStatus.FAILED
+        await emit_event(
+            db,
+            project_id=project_id,
+            run_id=f"export-{export_id}",
+            parent_run_id=(
+                f"exp-{export.experiment_id}"
+                if export.experiment_id is not None
+                else None
+            ),
+            stage=STAGE_EXPORT,
+            severity=SEVERITY_ERROR if is_failed else SEVERITY_INFO,
+            reason_code="export_run_failed" if is_failed else None,
+            summary=(
+                f"Export failed: {export.export_format.value}"
+                if is_failed
+                else f"Export completed: {export.export_format.value}"
+            ),
+            payload={
+                "export_id": export_id,
+                "experiment_id": export.experiment_id,
+                "format": export.export_format.value,
+                "status": export.status.value,
+                "output_path": export.output_path,
+                "file_size_bytes": export.file_size_bytes,
+            },
+        )
+        await db.flush()
+    except Exception as event_exc:
+        print(
+            f"[run_event] export_emit_failed export_id={export_id}: {event_exc}",
+            flush=True,
+        )
+
     return export
 
 

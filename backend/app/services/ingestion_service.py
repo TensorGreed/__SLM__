@@ -152,6 +152,37 @@ async def ingest_file(
     dataset.record_count += 1
     await db.flush()
 
+    # P31: emit a RunEvent for the ingest. Run id is per-document so the
+    # timeline can show "doc-42 was uploaded → cleaned → indexed".
+    try:
+        from app.models.run_event import (
+            SEVERITY_INFO,
+            STAGE_INGESTION,
+        )
+        from app.services.run_event_service import emit_event
+
+        await emit_event(
+            db,
+            project_id=project_id,
+            run_id=f"doc-{doc.id}",
+            stage=STAGE_INGESTION,
+            severity=SEVERITY_INFO,
+            summary=f"Document ingested: {doc.filename}",
+            payload={
+                "document_id": doc.id,
+                "dataset_id": dataset.id,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size_bytes": doc.file_size_bytes,
+                "source": source,
+            },
+        )
+    except Exception as event_exc:
+        print(
+            f"[run_event] ingest_emit_failed document_id={doc.id}: {event_exc}",
+            flush=True,
+        )
+
     return doc
 
 

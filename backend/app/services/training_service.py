@@ -657,7 +657,43 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                 exp.status = ExperimentStatus.COMPLETED
                 exp.completed_at = datetime.now(timezone.utc)
                 exp.final_train_loss = round(current_loss, 4)
+                project_id_for_event = int(exp.project_id)
+                exp_name_for_event = str(exp.name or "")
+                final_loss_for_event = round(current_loss, 4)
                 await db.commit()
+            else:
+                project_id_for_event = None
+                exp_name_for_event = ""
+                final_loss_for_event = None
+        if project_id_for_event is not None:
+            try:
+                from app.models.run_event import (
+                    SEVERITY_INFO,
+                    STAGE_TRAINING,
+                )
+                from app.services.run_event_service import emit_event
+
+                async with async_session_factory() as event_db:
+                    await emit_event(
+                        event_db,
+                        project_id=project_id_for_event,
+                        run_id=f"exp-{experiment_id}",
+                        stage=STAGE_TRAINING,
+                        severity=SEVERITY_INFO,
+                        summary=f"Training completed: {exp_name_for_event}",
+                        payload={
+                            "experiment_id": experiment_id,
+                            "backend": "simulate",
+                            "final_train_loss": final_loss_for_event,
+                        },
+                    )
+                    await event_db.commit()
+            except Exception as event_exc:
+                print(
+                    f"[run_event] training_completed_emit_failed "
+                    f"experiment_id={experiment_id}: {event_exc}",
+                    flush=True,
+                )
     except Exception as e:
         async with async_session_factory() as db:
             result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
@@ -671,7 +707,42 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                     "error": str(e),
                 }
                 exp.config = cfg
+                project_id_for_event = int(exp.project_id)
+                exp_name_for_event = str(exp.name or "")
                 await db.commit()
+            else:
+                project_id_for_event = None
+                exp_name_for_event = ""
+        if project_id_for_event is not None:
+            try:
+                from app.models.run_event import (
+                    SEVERITY_ERROR,
+                    STAGE_TRAINING,
+                )
+                from app.services.run_event_service import emit_event
+
+                async with async_session_factory() as event_db:
+                    await emit_event(
+                        event_db,
+                        project_id=project_id_for_event,
+                        run_id=f"exp-{experiment_id}",
+                        stage=STAGE_TRAINING,
+                        severity=SEVERITY_ERROR,
+                        reason_code="training_runtime_error",
+                        summary=f"Training failed: {exp_name_for_event}",
+                        payload={
+                            "experiment_id": experiment_id,
+                            "backend": "simulate",
+                            "error": str(e),
+                        },
+                    )
+                    await event_db.commit()
+            except Exception as event_exc:
+                print(
+                    f"[run_event] training_failed_emit_failed "
+                    f"experiment_id={experiment_id}: {event_exc}",
+                    flush=True,
+                )
 
 
 async def start_training(
@@ -880,6 +951,38 @@ async def start_training(
                 f"[training_manifest] capture_failed experiment_id={exp.id}: {manifest_exc}",
                 flush=True,
             )
+        # P31: emit the training-started RunEvent on the unified timeline.
+        try:
+            from app.models.run_event import (
+                SEVERITY_INFO,
+                STAGE_TRAINING,
+            )
+            from app.services.run_event_service import emit_event
+
+            await emit_event(
+                db,
+                project_id=project_id,
+                run_id=f"exp-{int(exp.id)}",
+                stage=STAGE_TRAINING,
+                severity=SEVERITY_INFO,
+                summary=f"Training started: {exp.name}",
+                payload={
+                    "experiment_id": int(exp.id),
+                    "runtime_id": runtime_id,
+                    "base_model": exp.base_model,
+                    "training_mode": str(
+                        getattr(exp, "training_mode", "") or ""
+                    ),
+                    "task_id": task_id,
+                    "epochs": epochs,
+                    "total_steps": exp.total_steps,
+                },
+            )
+        except Exception as event_exc:
+            print(
+                f"[run_event] training_started_emit_failed experiment_id={exp.id}: {event_exc}",
+                flush=True,
+            )
     except Exception as e:
         exp.status = ExperimentStatus.FAILED
         exp.completed_at = datetime.now(timezone.utc)
@@ -890,6 +993,34 @@ async def start_training(
         fail_cfg["_runtime"] = fail_runtime
         exp.config = fail_cfg
         await db.flush()
+        # P31: emit the training-failed event so the timeline + failure
+        # cluster surfaces (P33) can see dispatch errors.
+        try:
+            from app.models.run_event import (
+                SEVERITY_ERROR,
+                STAGE_TRAINING,
+            )
+            from app.services.run_event_service import emit_event
+
+            await emit_event(
+                db,
+                project_id=project_id,
+                run_id=f"exp-{int(exp.id)}",
+                stage=STAGE_TRAINING,
+                severity=SEVERITY_ERROR,
+                reason_code="training_dispatch_error",
+                summary=f"Training dispatch failed: {exp.name}",
+                payload={
+                    "experiment_id": int(exp.id),
+                    "runtime_id": runtime_id,
+                    "error": str(e),
+                },
+            )
+        except Exception as event_exc:
+            print(
+                f"[run_event] training_failed_emit_failed experiment_id={exp.id}: {event_exc}",
+                flush=True,
+            )
         raise ValueError(f"Failed to dispatch training runtime '{runtime_id}': {e}")
 
     return {
