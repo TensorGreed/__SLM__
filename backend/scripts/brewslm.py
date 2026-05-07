@@ -927,22 +927,32 @@ def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
         "GET",
         f"/projects/{args.project_id}/runtime/readiness",
     )
-    
+
     status = result.get("status", "unknown")
     strict = result.get("strict_mode", False)
-    
+
+    if getattr(args, "json", False):
+        # --json overrides the human-readable output even in --deep mode
+        # so callers can pipe to jq / shell branching.
+        payload: dict[str, Any] = {"readiness": result}
+        if getattr(args, "deep", False):
+            payload["timeline"] = _doctor_fetch_timeline(args, client)
+            payload["failure_clusters"] = _doctor_fetch_clusters(args, client)
+        _print_json(payload)
+        return 0 if status == "pass" else 1
+
     print(f"BrewSLM Doctor - Project {args.project_id}")
     print(f"Overall Status: {status.upper()}")
     print(f"Strict Mode: {'ENABLED' if strict else 'DISABLED'}")
     print("-" * 40)
-    
+
     checks = result.get("checks", [])
     for check in checks:
         c_status = check.get("status", "unknown").upper()
         c_name = check.get("name", "Unknown Check")
         c_msg = check.get("message", "")
         c_fix = check.get("fix", "")
-        
+
         icon = "✅" if c_status == "PASS" else "⚠️" if c_status == "WARN" else "❌"
         print(f"{icon} {c_name}: {c_status}")
         print(f"   {c_msg}")
@@ -950,7 +960,257 @@ def run_doctor(args: argparse.Namespace, client: ApiClient) -> int:
             print(f"   FIX: {c_fix}")
         print()
 
+    if getattr(args, "deep", False):
+        _doctor_print_deep_section(args, client)
+
     return 0 if status == "pass" else 1
+
+
+def _doctor_fetch_timeline(
+    args: argparse.Namespace, client: ApiClient
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"limit": int(getattr(args, "deep_limit", 100))}
+    since = str(getattr(args, "deep_since", "") or "").strip()
+    if since:
+        params["since"] = since
+    return client.request(
+        "GET",
+        f"/projects/{int(args.project_id)}/timeline",
+        params=params,
+    )
+
+
+def _doctor_fetch_clusters(
+    args: argparse.Namespace, client: ApiClient
+) -> dict[str, Any]:
+    return client.request(
+        "GET",
+        f"/projects/{int(args.project_id)}/failure-clusters",
+        params={"limit": 25},
+    )
+
+
+def _doctor_print_deep_section(
+    args: argparse.Namespace, client: ApiClient
+) -> None:
+    """Pull P32 timeline + P33 failure clusters and surface a compact
+    operational health summary under the readiness checks."""
+    print("=" * 40)
+    print("Deep observability (P32 timeline + P33 clusters)")
+    print("-" * 40)
+
+    timeline = _doctor_fetch_timeline(args, client)
+    total_events = int(timeline.get("total_events", 0) or 0)
+    total_runs = int(timeline.get("total_runs", 0) or 0)
+    truncated = bool(timeline.get("truncated"))
+    orphaned = int(timeline.get("orphaned_count", 0) or 0)
+    print(
+        f"Timeline: {total_events} events across {total_runs} run(s)"
+        + (f" [{orphaned} orphaned]" if orphaned else "")
+        + (" [truncated]" if truncated else "")
+    )
+
+    # Find the highest-severity recent event so the doctor reads
+    # "everything fine" when info-only and screams when errors landed.
+    rank = {"info": 0, "warning": 1, "error": 2, "critical": 3}
+    worst_node: dict[str, Any] | None = None
+    worst_rank = -1
+    for node in timeline.get("tree") or []:
+        node_rank = rank.get(str(node.get("highest_severity") or ""), -1)
+        if node_rank > worst_rank:
+            worst_rank = node_rank
+            worst_node = node
+    if worst_node is not None:
+        sev = str(worst_node.get("highest_severity") or "info")
+        icon = "❌" if sev in {"error", "critical"} else "⚠️" if sev == "warning" else "✅"
+        print(
+            f"{icon} most-severe recent run: {worst_node.get('run_id')} "
+            f"({sev}) — {worst_node.get('summary') or '(no summary)'}"
+        )
+
+    print()
+    clusters = _doctor_fetch_clusters(args, client).get("clusters") or []
+    if not clusters:
+        print("No persisted failure clusters. "
+              "Run `POST /failure-clusters/recompute` if you've shipped errors recently.")
+        return
+    print(f"Top failure clusters ({len(clusters)} total):")
+    for cluster in clusters[:10]:
+        print(
+            f"  [{cluster.get('failure_count', 0)}x] "
+            f"{cluster.get('stage')}::{cluster.get('reason_code')} "
+            f"sig={cluster.get('signature')}"
+        )
+        last_seen = cluster.get("last_seen_at")
+        if last_seen:
+            print(f"     last: {last_seen}")
+        exemplars = cluster.get("exemplar_summaries") or []
+        if exemplars:
+            print(f"     ex: {str(exemplars[0])[:100]}")
+
+
+# -- P35. logs + support-bundle CLI ---------------------------------------
+
+
+def _logs_tail(args: argparse.Namespace, client: ApiClient) -> int:
+    """GET /api/projects/{id}/run-events with the documented filters (P31).
+
+    Default output is one line per event ordered newest-first; pass
+    ``--json`` to dump the raw response shape for piping.
+    """
+    params: dict[str, Any] = {"limit": int(getattr(args, "limit", 50))}
+    for attr, key in (
+        ("run_id", "run_id"),
+        ("parent_run_id", "parent_run_id"),
+        ("stage", "stage"),
+        ("severity", "severity"),
+        ("since", "since"),
+        ("until", "until"),
+    ):
+        value = str(getattr(args, attr, "") or "").strip()
+        if value:
+            params[key] = value
+    payload = client.request(
+        "GET",
+        f"/projects/{int(args.project_id)}/run-events",
+        params=params,
+    )
+    if getattr(args, "json", False):
+        _print_json(payload)
+        return 0
+    events = payload.get("events") or []
+    if not events:
+        print("(no events match)")
+        return 0
+    for event in events:
+        ts = str(event.get("ts") or "")[:19]
+        sev = str(event.get("severity") or "info")
+        stage = str(event.get("stage") or "?")
+        run_id = str(event.get("run_id") or "?")
+        summary = str(event.get("summary") or "")[:120]
+        reason = str(event.get("reason_code") or "")
+        suffix = f" [{reason}]" if reason else ""
+        print(
+            f"{ts}  {sev:<8}  {stage:<10}  {run_id:<24}  "
+            f"{summary}{suffix}"
+        )
+    return 0
+
+
+def run_logs(args: argparse.Namespace, client: ApiClient) -> int:
+    sub = str(getattr(args, "logs_subcommand", "") or "").strip().lower()
+    if sub == "tail":
+        return _logs_tail(args, client)
+    raise ValueError(f"Unsupported logs subcommand '{sub}'.")
+
+
+def _support_bundle_create(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    """POST /api/projects/{id}/support-bundle (P34).
+
+    On success, prints the metadata JSON. With ``--download``, also
+    streams the bundle to ``--out`` (or ``./<bundle_uid>.zip``).
+    """
+    body: dict[str, Any] = {}
+    actor = str(getattr(args, "actor", "") or "").strip()
+    if actor:
+        body["actor"] = actor
+    ttl_seconds = getattr(args, "ttl_seconds", None)
+    if ttl_seconds is not None:
+        body["ttl_seconds"] = int(ttl_seconds)
+
+    payload = client.request(
+        "POST",
+        f"/projects/{int(args.project_id)}/support-bundle",
+        json_body=body,
+    )
+
+    if getattr(args, "download", False):
+        out_path = str(getattr(args, "out", "") or "").strip()
+        if not out_path:
+            out_path = f"{payload.get('bundle_uid', 'bundle')}.zip"
+        bundle_uid = str(payload.get("bundle_uid") or "")
+        token = str(payload.get("download_token") or "")
+        if not bundle_uid or not token:
+            raise ValueError(
+                "Bundle metadata is missing bundle_uid/download_token; cannot download."
+            )
+        # Use the underlying httpx client for binary streaming.
+        download_resp = client._client.request(  # type: ignore[attr-defined]
+            "GET",
+            f"/support-bundles/{bundle_uid}/download",
+            params={"token": token},
+        )
+        if download_resp.status_code >= 400:
+            raise RuntimeError(
+                f"Bundle download failed ({download_resp.status_code}): "
+                f"{(download_resp.text or '')[:300]}"
+            )
+        target = Path(out_path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(download_resp.content)
+        payload = dict(payload)
+        payload["downloaded_to"] = str(target.resolve())
+
+    _print_json(payload)
+    return 0
+
+
+def _support_bundle_list(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    payload = client.request(
+        "GET",
+        f"/projects/{int(args.project_id)}/support-bundles",
+        params={"limit": int(getattr(args, "limit", 50))},
+    )
+    _print_json(payload)
+    return 0
+
+
+def _support_bundle_download(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    bundle_uid = str(args.bundle_uid).strip()
+    token = str(args.token).strip()
+    out_path = str(getattr(args, "out", "") or "").strip()
+    if not out_path:
+        out_path = f"{bundle_uid}.zip"
+    download_resp = client._client.request(  # type: ignore[attr-defined]
+        "GET",
+        f"/support-bundles/{bundle_uid}/download",
+        params={"token": token},
+    )
+    if download_resp.status_code >= 400:
+        raise RuntimeError(
+            f"Bundle download failed ({download_resp.status_code}): "
+            f"{(download_resp.text or '')[:300]}"
+        )
+    target = Path(out_path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(download_resp.content)
+    _print_json(
+        {
+            "bundle_uid": bundle_uid,
+            "downloaded_to": str(target.resolve()),
+            "size_bytes": len(download_resp.content),
+        }
+    )
+    return 0
+
+
+def run_support_bundle(args: argparse.Namespace, client: ApiClient) -> int:
+    sub = str(
+        getattr(args, "support_bundle_subcommand", "") or ""
+    ).strip().lower()
+    if sub == "create":
+        return _support_bundle_create(args, client)
+    if sub == "list":
+        return _support_bundle_list(args, client)
+    if sub == "download":
+        return _support_bundle_download(args, client)
+    raise ValueError(f"Unsupported support-bundle subcommand '{sub}'.")
 
 
 def _format_float(value: Any, *, precision: int = 3) -> str:
@@ -3131,8 +3391,37 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--no-smoke-tests", action="store_true")
     export_parser.set_defaults(func=run_export)
 
-    doctor_parser = subparsers.add_parser("doctor", help="Check project readiness (GPU/deps/secrets)")
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help=(
+            "Check project readiness (GPU/deps/secrets). "
+            "Use --deep for P31/P32/P33 observability roll-up."
+        ),
+    )
     doctor_parser.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    doctor_parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="Also fetch the P32 timeline and P33 failure clusters and summarise operational health.",
+    )
+    doctor_parser.add_argument(
+        "--deep-since",
+        dest="deep_since",
+        default="",
+        help="ISO timestamp; only consider timeline events after this point in --deep mode.",
+    )
+    doctor_parser.add_argument(
+        "--deep-limit",
+        dest="deep_limit",
+        type=int,
+        default=100,
+        help="Max timeline events to consider in --deep mode (default 100).",
+    )
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit raw JSON instead of the human-readable summary.",
+    )
     doctor_parser.set_defaults(func=run_doctor)
 
     optimize_parser = subparsers.add_parser(
@@ -3479,6 +3768,106 @@ def build_parser() -> argparse.ArgumentParser:
     for action_name in ("promote", "reject", "rollback"):
         # `deploy_sub.choices[name]` is the registered subparser instance.
         deploy_sub.choices[action_name].set_defaults(func=run_deploy)
+
+    # -- logs CLI (P35, observability tail) -----------------------------
+    logs_parser = subparsers.add_parser(
+        "logs",
+        help="Tail the canonical RunEvent log (P31/P35).",
+    )
+    logs_sub = logs_parser.add_subparsers(
+        dest="logs_subcommand", required=True
+    )
+    lg_tail = logs_sub.add_parser(
+        "tail",
+        help="Tail recent RunEvents for a project (P31).",
+    )
+    lg_tail.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    lg_tail.add_argument("--limit", type=int, default=50)
+    lg_tail.add_argument("--run-id", dest="run_id", default="")
+    lg_tail.add_argument("--parent-run-id", dest="parent_run_id", default="")
+    lg_tail.add_argument(
+        "--stage",
+        default="",
+        choices=[
+            "",
+            "ingestion",
+            "cleaning",
+            "adapter",
+            "training",
+            "eval",
+            "export",
+            "deployment",
+            "autopilot",
+            "system",
+        ],
+    )
+    lg_tail.add_argument(
+        "--severity",
+        default="",
+        choices=["", "info", "warning", "error", "critical"],
+    )
+    lg_tail.add_argument("--since", default="")
+    lg_tail.add_argument("--until", default="")
+    lg_tail.add_argument("--json", action="store_true")
+    lg_tail.set_defaults(func=run_logs)
+
+    # -- support-bundle CLI (P35, P34 wrapper) --------------------------
+    sb_parser = subparsers.add_parser(
+        "support-bundle",
+        help="Generate / list / download support bundles (P34).",
+    )
+    sb_sub = sb_parser.add_subparsers(
+        dest="support_bundle_subcommand", required=True
+    )
+
+    sb_create = sb_sub.add_parser(
+        "create",
+        help="Generate a redacted support bundle for a project (P34).",
+    )
+    sb_create.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    sb_create.add_argument("--actor", default="")
+    sb_create.add_argument(
+        "--ttl-seconds",
+        dest="ttl_seconds",
+        type=int,
+        default=None,
+        help="Lifetime of the download token in seconds (default 24h).",
+    )
+    sb_create.add_argument(
+        "--download",
+        action="store_true",
+        help="After create, also download the zip to --out (or <bundle_uid>.zip).",
+    )
+    sb_create.add_argument(
+        "--out",
+        default="",
+        help="Local path for --download. Defaults to ./<bundle_uid>.zip.",
+    )
+    sb_create.add_argument("--json", action="store_true")
+    sb_create.set_defaults(func=run_support_bundle)
+
+    sb_list = sb_sub.add_parser(
+        "list",
+        help="List recent support bundles for a project (P34).",
+    )
+    sb_list.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    sb_list.add_argument("--limit", type=int, default=50)
+    sb_list.add_argument("--json", action="store_true")
+    sb_list.set_defaults(func=run_support_bundle)
+
+    sb_download = sb_sub.add_parser(
+        "download",
+        help="Download a support bundle by uid + token (P34).",
+    )
+    sb_download.add_argument("--bundle-uid", dest="bundle_uid", required=True)
+    sb_download.add_argument("--token", required=True)
+    sb_download.add_argument(
+        "--out",
+        default="",
+        help="Local path. Defaults to ./<bundle_uid>.zip.",
+    )
+    sb_download.add_argument("--json", action="store_true")
+    sb_download.set_defaults(func=run_support_bundle)
 
     eval_parser = subparsers.add_parser(
         "eval",
