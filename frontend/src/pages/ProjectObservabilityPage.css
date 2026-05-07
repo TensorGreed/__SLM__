@@ -1,0 +1,348 @@
+/* ProjectObservabilityPage — Wave G observability surface (P36) */
+
+.observability-page .observability-summary-counts {
+    display: flex;
+    gap: var(--space-xs, 6px);
+    align-items: center;
+}
+
+.observability-page .observability-heading {
+    margin-top: 0;
+}
+
+.observability-page .deployment-status {
+    padding: var(--space-sm, 12px) var(--space-md, 16px);
+    border-radius: 6px;
+    margin-bottom: var(--space-sm, 12px);
+}
+
+.observability-page .deployment-status.is-error {
+    background: var(--color-danger-bg, #ffebe9);
+    color: var(--color-danger, #cf222e);
+    border: 1px solid var(--color-danger, #cf222e);
+}
+
+.observability-page .deployment-status.is-info {
+    background: var(--color-info-bg, #ddf4ff);
+    color: var(--color-info, #0969da);
+    border: 1px solid var(--color-info, #0969da);
+}
+
+.observability-page .deployment-empty {
+    padding: var(--space-md, 16px);
+    color: var(--text-tertiary, #6e7781);
+    text-align: center;
+    border: 1px dashed var(--border-default, #d0d7de);
+    border-radius: 6px;
+}
+
+.observability-page .dim {
+    color: var(--text-tertiary, #6e7781);
+}
+
+/* -- Filters bar ----------------------------------------------------- */
+
+.observability-page .timeline-filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-sm, 12px);
+    align-items: end;
+    margin-bottom: var(--space-sm, 12px);
+}
+
+.observability-page .timeline-filters label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .timeline-filters select,
+.observability-page .timeline-filters input {
+    padding: 4px 6px;
+}
+
+/* -- Timeline tree --------------------------------------------------- */
+
+.observability-page .timeline-tree {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.observability-page .timeline-row {
+    border-bottom: 1px solid var(--border-muted, #eaeef2);
+}
+
+.observability-page .timeline-row.is-selected > .timeline-row-body {
+    background: var(--bg-hover, #f0f6fc);
+}
+
+.observability-page .timeline-row-body {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs, 6px);
+    padding: 6px 8px;
+    flex-wrap: wrap;
+    font-size: var(--font-size-sm, 13px);
+}
+
+.observability-page .timeline-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    width: 16px;
+    color: var(--text-secondary, #57606a);
+}
+
+.observability-page .timeline-toggle:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.observability-page .timeline-stage {
+    background: var(--bg-subtle, #f6f8fa);
+    border-radius: 4px;
+    padding: 0 6px;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .timeline-run-id {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--color-info, #0969da);
+    cursor: pointer;
+    font-weight: 600;
+    font-family: var(--font-mono, monospace);
+}
+
+.observability-page .timeline-run-id:hover {
+    text-decoration: underline;
+}
+
+.observability-page .timeline-summary {
+    flex: 1;
+    min-width: 200px;
+    color: var(--text-primary, #1f2328);
+}
+
+.observability-page .timeline-meta {
+    margin-left: auto;
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .timeline-reason-code {
+    background: var(--color-danger-bg, #ffebe9);
+    color: var(--color-danger, #cf222e);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .timeline-children {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.observability-page .timeline-empty {
+    padding: var(--space-md, 16px);
+    color: var(--text-tertiary, #6e7781);
+    text-align: center;
+}
+
+/* -- Failure clusters ----------------------------------------------- */
+
+.observability-page .failure-cluster-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-md, 16px);
+    margin-bottom: var(--space-sm, 12px);
+}
+
+.observability-page .failure-cluster-rows {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.observability-page .failure-cluster-row {
+    border-bottom: 1px solid var(--border-muted, #eaeef2);
+    padding: 8px 0;
+}
+
+.observability-page .failure-cluster-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs, 6px);
+    flex-wrap: wrap;
+    font-size: var(--font-size-sm, 13px);
+}
+
+.observability-page .failure-cluster-stage {
+    background: var(--bg-subtle, #f6f8fa);
+    padding: 0 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .failure-cluster-reason {
+    background: var(--color-danger-bg, #ffebe9);
+    color: var(--color-danger, #cf222e);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .failure-cluster-last {
+    margin-left: auto;
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .failure-cluster-exemplars {
+    list-style: none;
+    margin: var(--space-xs, 6px) 0 0 0;
+    padding: 0 0 0 32px;
+}
+
+.observability-page .failure-cluster-exemplar {
+    display: flex;
+    gap: var(--space-xs, 6px);
+    align-items: center;
+    font-size: var(--font-size-xs, 12px);
+    padding: 2px 0;
+}
+
+.observability-page .failure-cluster-exemplar-link {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--color-info, #0969da);
+    cursor: pointer;
+    font-family: var(--font-mono, monospace);
+}
+
+.observability-page .failure-cluster-exemplar-link:hover {
+    text-decoration: underline;
+}
+
+/* -- Support bundle card -------------------------------------------- */
+
+.observability-page .support-bundle-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-md, 16px);
+    margin-bottom: var(--space-sm, 12px);
+}
+
+.observability-page .support-bundle-latest {
+    background: var(--bg-subtle, #f6f8fa);
+    border-radius: 6px;
+    padding: var(--space-sm, 12px);
+    margin-bottom: var(--space-md, 16px);
+}
+
+.observability-page .support-bundle-latest-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs, 6px);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-sm, 12px);
+}
+
+.observability-page .support-bundle-preview {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md, 16px);
+}
+
+.observability-page .support-bundle-preview ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--font-size-xs, 12px);
+}
+
+.observability-page .support-bundle-history {
+    margin-top: var(--space-md, 16px);
+}
+
+/* -- Drilldown drawer ----------------------------------------------- */
+
+.observability-page .event-drilldown-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(560px, 100vw);
+    background: var(--bg-default, #ffffff);
+    border-left: 1px solid var(--border-default, #d0d7de);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+    overflow-y: auto;
+    z-index: 50;
+    padding: var(--space-md, 16px);
+}
+
+.observability-page .event-drilldown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-md, 16px);
+    margin-bottom: var(--space-md, 16px);
+}
+
+.observability-page .event-drilldown-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm, 12px);
+}
+
+.observability-page .event-drilldown-item {
+    border: 1px solid var(--border-muted, #eaeef2);
+    border-radius: 6px;
+    padding: var(--space-sm, 12px);
+}
+
+.observability-page .event-drilldown-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs, 6px);
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.observability-page .event-drilldown-stage {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-xs, 12px);
+    background: var(--bg-subtle, #f6f8fa);
+    padding: 0 6px;
+    border-radius: 4px;
+}
+
+.observability-page .event-drilldown-summary {
+    font-size: var(--font-size-sm, 13px);
+}
+
+.observability-page .event-drilldown-payload {
+    margin-top: 4px;
+}
+
+.observability-page .event-drilldown-payload pre {
+    background: var(--bg-subtle, #f6f8fa);
+    border-radius: 4px;
+    padding: var(--space-xs, 6px);
+    font-size: var(--font-size-xs, 12px);
+    overflow-x: auto;
+    max-height: 200px;
+}

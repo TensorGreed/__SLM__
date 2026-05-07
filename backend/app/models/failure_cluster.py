@@ -77,6 +77,10 @@ class FailureCluster(Base):
     # Parallel array — most recent summary text per exemplar so the UI
     # can show a label without round-tripping for each event.
     exemplar_summaries: Mapped[list] = mapped_column(JSON, default=list)
+    # Parallel array — run_id for each exemplar so the failure-analysis
+    # UI can deep-link straight into the per-run event drilldown
+    # without a chained fetch (priority.md P36).
+    exemplar_run_ids: Mapped[list] = mapped_column(JSON, default=list)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

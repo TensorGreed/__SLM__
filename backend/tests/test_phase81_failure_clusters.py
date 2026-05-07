@@ -310,6 +310,18 @@ class Phase81FailureClusterTests(unittest.TestCase):
         self.assertLessEqual(
             len(clusters[0]["exemplar_event_ids"]), 5
         )
+        # P36 deep-link support: exemplar_run_ids array runs parallel
+        # to exemplar_event_ids so the failure-analysis UI can deep-link
+        # without a chained per-event lookup.
+        self.assertEqual(
+            len(clusters[0]["exemplar_run_ids"]),
+            len(clusters[0]["exemplar_event_ids"]),
+        )
+        # All seeded events shared run_id "r-0" / "r-1" / "r-2" via
+        # the helper's default; just check the field is populated.
+        self.assertTrue(
+            all(rid for rid in clusters[0]["exemplar_run_ids"])
+        )
 
     def test_distinct_summaries_yield_separate_clusters(self):
         project_id = self._create_project("distinct")

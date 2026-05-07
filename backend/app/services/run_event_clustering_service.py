@@ -209,6 +209,7 @@ async def compute_failure_clusters(
         ]
         exemplar_ids = [e.id for e in exemplars]
         exemplar_summaries = [e.summary or "" for e in exemplars]
+        exemplar_run_ids = [e.run_id for e in exemplars]
 
         existing = existing_by_key.get(key)
         if existing is None:
@@ -222,6 +223,7 @@ async def compute_failure_clusters(
                 last_seen_at=last_ts,
                 exemplar_event_ids=exemplar_ids,
                 exemplar_summaries=exemplar_summaries,
+                exemplar_run_ids=exemplar_run_ids,
                 last_computed_at=now,
             )
             db.add(row)
@@ -238,6 +240,7 @@ async def compute_failure_clusters(
             existing.last_seen_at = last_ts
             existing.exemplar_event_ids = exemplar_ids
             existing.exemplar_summaries = exemplar_summaries
+            existing.exemplar_run_ids = exemplar_run_ids
             existing.last_computed_at = now
             updated += 1
         touched.add(key)
@@ -278,6 +281,7 @@ def _serialize_cluster(row: FailureCluster) -> dict[str, Any]:
         ),
         "exemplar_event_ids": list(row.exemplar_event_ids or []),
         "exemplar_summaries": list(row.exemplar_summaries or []),
+        "exemplar_run_ids": list(row.exemplar_run_ids or []),
         "last_computed_at": (
             row.last_computed_at.isoformat()
             if row.last_computed_at

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+    Activity,
     BookOpen,
     Bot,
     Boxes,
@@ -125,6 +126,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isAutopilotRoute = location.pathname === `/project/${projectId}/autopilot`;
     const isManifestRoute = location.pathname === `/project/${projectId}/manifest`;
     const isDeploymentsRoute = location.pathname === `/project/${projectId}/deployments`;
+    const isObservabilityRoute = location.pathname === `/project/${projectId}/observability`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
@@ -141,6 +143,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
             || isAutopilotRoute
             || isPlaygroundRoute
             || isDeploymentsRoute
+            || isObservabilityRoute
         ) return 'training';
         if (isWorkflowRoute || isRecipesRoute || isManifestRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
@@ -153,6 +156,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
         isAutopilotRoute,
         isPlaygroundRoute,
         isDeploymentsRoute,
+        isObservabilityRoute,
         isWorkflowRoute,
         isRecipesRoute,
         isManifestRoute,
@@ -343,6 +347,13 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             >
                                 <Rocket size={15} />
                                 <span className="nav-label">Deployments</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isObservabilityRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/observability`)}
+                            >
+                                <Activity size={15} />
+                                <span className="nav-label">Observability</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}
