@@ -1,4 +1,4 @@
-"""Run-events API (priority.md P31, Wave G).
+"""Run-events + timeline API (priority.md P31 + P32, Wave G).
 
 Read-only HTTP surface over the canonical ``run_events`` table:
 
@@ -8,6 +8,11 @@ Read-only HTTP surface over the canonical ``run_events`` table:
 - ``GET /api/run-events/run/{run_id}`` — every event for a single
   ``run_id`` ordered oldest-first; used for per-experiment timeline
   drill-in surfaces.
+- ``GET /api/projects/{id}/timeline`` (P32) — tree-ordered roll-up of
+  RunEvents joined by parent/run pointer. Returns one compact summary
+  node per ``run_id`` with children nested. Filters: ``since`` /
+  ``until`` / ``stage`` / ``severity`` / ``run_id`` (anchor on a
+  subtree).
 
 Stable reason codes mapped to HTTP:
 - ``project_not_found`` (404)
@@ -24,12 +29,16 @@ from app.services.run_event_service import (
     list_run_events,
     list_run_events_for_run,
 )
+from app.services.timeline_service import build_timeline
 
 
 project_router = APIRouter(
     prefix="/projects/{project_id}/run-events", tags=["RunEvents"]
 )
 router = APIRouter(prefix="/run-events", tags=["RunEvents"])
+timeline_project_router = APIRouter(
+    prefix="/projects/{project_id}/timeline", tags=["Timeline"]
+)
 
 
 _NOT_FOUND_CODES = {"project_not_found"}
@@ -78,3 +87,37 @@ async def list_for_run(
     db: AsyncSession = Depends(get_db),
 ):
     return await list_run_events_for_run(db, run_id=run_id, limit=limit)
+
+
+@timeline_project_router.get(
+    "",
+    description=(
+        "Tree-ordered timeline (priority.md P32). Joins RunEvents by "
+        "project + parent/run pointer; returns one compact summary node "
+        "per run_id with children nested. Filters: since, until, stage, "
+        "severity, run_id (anchor on a subtree)."
+    ),
+)
+async def get_timeline(
+    project_id: int,
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    stage: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await build_timeline(
+            db,
+            project_id=project_id,
+            since=since,
+            until=until,
+            stage=stage,
+            severity=severity,
+            run_id=run_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        _raise_for(exc)
