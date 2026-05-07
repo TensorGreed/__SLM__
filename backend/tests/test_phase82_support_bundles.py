@@ -256,8 +256,31 @@ class Phase82SupportBundleTests(unittest.TestCase):
     # 2. End-to-end bundle creation + download
     # ------------------------------------------------------------------
 
+    def _seed_experiment(self, project_id: int) -> int:
+        """Create a real Experiment via the API so the support-bundle
+        ``experiments`` section actually has a row to serialise.
+
+        The original P34 tests never seeded one, which is how a missing
+        ``metrics`` attribute on the Experiment model slipped past
+        coverage and surfaced as a 500 in dev. This helper plus the
+        assertion below close that gap.
+        """
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/experiments",
+            json={
+                "name": "phase82-exp",
+                "description": "phase82",
+                "config": {"base_model": "microsoft/phi-2"},
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
     def test_create_bundle_returns_metadata_and_writes_zip(self):
         project_id = self._create_project("createzip")
+        # Seed a real experiment so the bundle's experiments section
+        # exercises the row serialiser end-to-end.
+        self._seed_experiment(project_id)
         self._seed_event_with_secret_payload(project_id)
 
         resp = self.client.post(
@@ -279,6 +302,8 @@ class Phase82SupportBundleTests(unittest.TestCase):
         )
         # Project section is always exactly 1 row.
         self.assertEqual(int(body["section_counts"]["project"]), 1)
+        # The seeded experiment must serialise cleanly into the bundle.
+        self.assertEqual(int(body["section_counts"]["experiments"]), 1)
         self.assertEqual(body["actor"], "ops")
 
         # Bundle row persisted.

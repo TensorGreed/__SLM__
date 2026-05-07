@@ -220,6 +220,12 @@ def _serialise_project(row: Project) -> dict[str, Any]:
 
 
 def _serialise_experiment(row: Experiment) -> dict[str, Any]:
+    # ``Experiment`` has no top-level ``metrics`` JSON column — that
+    # belongs to ``Checkpoint``. Final loss values are the stable
+    # surface; per-step metrics live on the checkpoint rows (which the
+    # bundle could include in a future iteration if the support
+    # workflow needs them).
+    training_mode = getattr(row, "training_mode", None)
     return {
         "id": row.id,
         "project_id": row.project_id,
@@ -227,11 +233,17 @@ def _serialise_experiment(row: Experiment) -> dict[str, Any]:
         "description": row.description,
         "status": row.status.value if row.status else None,
         "base_model": row.base_model,
-        "training_mode": getattr(row, "training_mode", None),
+        "training_mode": (
+            training_mode.value
+            if training_mode is not None and hasattr(training_mode, "value")
+            else training_mode
+        ),
         "config": row.config or {},
-        "metrics": row.metrics or {},
         "final_train_loss": row.final_train_loss,
         "final_eval_loss": row.final_eval_loss,
+        "total_epochs": row.total_epochs,
+        "total_steps": row.total_steps,
+        "output_dir": row.output_dir,
         "started_at": _serialise_dt(row.started_at),
         "completed_at": _serialise_dt(row.completed_at),
         "created_at": _serialise_dt(row.created_at),
