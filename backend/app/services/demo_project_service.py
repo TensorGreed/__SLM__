@@ -39,7 +39,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+from app.models.dataset import (
+    Dataset,
+    DatasetType,
+    DatasetVersion,
+    DocumentStatus,
+    RawDocument,
+)
 from app.models.gold_set_annotation import (
     GoldSetRow,
     GoldSetRowStatus,
@@ -137,6 +143,79 @@ async def _next_gold_version(db: AsyncSession, gold_set_id: int) -> int:
     return (current or 0) + 1
 
 
+def _adapter_for_task(task_profile: str) -> str:
+    task = str(task_profile or "").strip().lower()
+    if task == "classification":
+        return "classification-label"
+    return "qa-pair"
+
+
+def _canonical_prepared_row(
+    row: dict[str, Any],
+    *,
+    input_field: str,
+    output_field: str,
+    task_profile: str,
+) -> dict[str, Any]:
+    """Materialise a CSV row in the canonical prepared shape.
+
+    Always sets text/source_text/target_text so seq2seq + causal_lm contracts
+    pass; adds {question,answer} for QA-style tasks and {label} for
+    classification. Keeps the original fields too so the row stays
+    self-describing.
+    """
+
+    input_val = str(row.get(input_field) or "").strip()
+    output_val = str(row.get(output_field) or "").strip()
+    canonical: dict[str, Any] = dict(row)
+    canonical["text"] = input_val
+    canonical["source_text"] = input_val
+    canonical["target_text"] = output_val
+    if str(task_profile or "").strip().lower() == "classification":
+        canonical["label"] = output_val
+    else:
+        canonical.setdefault("question", input_val)
+        canonical.setdefault("answer", output_val)
+    return canonical
+
+
+def _split_rows(rows: list[dict[str, Any]]) -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]
+]:
+    """Deterministic 70/15/15 train/val/test split.
+
+    No shuffle — order in the bundle is curated so the first rows are the
+    most representative examples (helps when a beginner inspects the
+    train split). Guarantees at least one row in val + test when the
+    source has ≥ 3 rows so the val/test files aren't empty.
+    """
+
+    total = len(rows)
+    if total == 0:
+        return [], [], []
+    if total < 3:
+        return list(rows), [], []
+    n_test = max(1, total // 7)
+    n_val = max(1, total // 7)
+    n_train = total - n_val - n_test
+    if n_train <= 0:
+        n_train = 1
+        n_val = max(1, (total - n_train) // 2)
+        n_test = total - n_train - n_val
+    return (
+        list(rows[:n_train]),
+        list(rows[n_train : n_train + n_val]),
+        list(rows[n_train + n_val :]),
+    )
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 async def seed_demo_project(
     db: AsyncSession,
     slug: str,
@@ -159,11 +238,16 @@ async def seed_demo_project(
     plan_profile = str(manifest.get("training_preferred_plan_profile") or "balanced")
     eval_pack = manifest.get("evaluation_preferred_pack_id") or None
 
+    task_profile = str(manifest.get("task_profile") or "instruction_sft")
+    adapter_id = _adapter_for_task(task_profile)
+    input_field = str(manifest.get("dataset_input_field") or "input")
+    output_field = str(manifest.get("dataset_output_field") or "output")
+
     project = Project(
         name=project_name,
         description=description,
         status=ProjectStatus.ACTIVE,
-        pipeline_stage=PipelineStage.GOLD_SET,
+        pipeline_stage=PipelineStage.TRAINING,
         beginner_mode=True,
         target_profile_id=target_profile,
         training_preferred_plan_profile=plan_profile,
@@ -171,6 +255,9 @@ async def seed_demo_project(
         dataset_adapter_preset={
             "demo_slug": slug,
             "suggested_brief": suggested_brief,
+            "adapter_id": adapter_id,
+            "task_profile": task_profile,
+            "field_mapping": {"input": input_field, "output": output_field},
         },
     )
     db.add(project)
@@ -321,6 +408,100 @@ async def seed_demo_project(
             )
         )
 
+    # 3) Prepared training splits ----------------------------------------------
+    # Autopilot's readiness check (newbie_autopilot_service.evaluate_*) blocks
+    # any training launch if ``prepared/train.jsonl`` is missing, and the
+    # dataset-contract check (analyze_prepared_dataset_contract) requires
+    # ≥90% rows match the task type's shape. We materialise canonical rows
+    # so qa_pair / classification_label contracts both pass, plus a
+    # manifest.json with adapter_id + task_profile + field_mapping so
+    # downstream stages can resolve the right adapter without re-running prep.
+    prepared_dir = settings.DATA_DIR / "projects" / str(project.id) / "prepared"
+    canonical_rows = [
+        _canonical_prepared_row(
+            row,
+            input_field=input_field,
+            output_field=output_field,
+            task_profile=task_profile,
+        )
+        for row in csv_rows
+    ]
+    train_rows, val_rows, test_rows = _split_rows(canonical_rows)
+    train_path = prepared_dir / "train.jsonl"
+    val_path = prepared_dir / "val.jsonl"
+    test_path = prepared_dir / "test.jsonl"
+    _write_jsonl(train_path, train_rows)
+    _write_jsonl(val_path, val_rows)
+    _write_jsonl(test_path, test_rows)
+
+    prepared_manifest = {
+        "project_id": project.id,
+        "created_at": now_iso,
+        "seed": 42,
+        "total_entries": len(csv_rows),
+        "splits": {
+            "train": len(train_rows),
+            "val": len(val_rows),
+            "test": len(test_rows),
+        },
+        "ratios": {"train": 0.7, "val": 0.15, "test": 0.15},
+        "file_paths": {
+            "train": str(train_path),
+            "val": str(val_path),
+            "test": str(test_path),
+        },
+        "adapter_id": adapter_id,
+        "adapter_config": {},
+        "field_mapping": {"input": input_field, "output": output_field},
+        "task_profile": task_profile,
+        "demo_slug": slug,
+    }
+    manifest_path = prepared_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(prepared_manifest, indent=2), encoding="utf-8"
+    )
+
+    prepared_specs = (
+        ("train", DatasetType.TRAIN, train_rows, train_path),
+        ("val", DatasetType.VALIDATION, val_rows, val_path),
+        ("test", DatasetType.TEST, test_rows, test_path),
+    )
+    prepared_dataset_ids: dict[str, int] = {}
+    for split_name, ds_type, rows, file_path in prepared_specs:
+        prep_ds = Dataset(
+            project_id=project.id,
+            name=f"{project_name} · {split_name}",
+            dataset_type=ds_type,
+            description=f"Prepared {split_name} split for the demo project.",
+            record_count=len(rows),
+            file_path=str(file_path),
+            metadata_={
+                "demo_slug": slug,
+                "split": split_name,
+                "adapter_id": adapter_id,
+                "task_profile": task_profile,
+            },
+            is_locked=True,
+        )
+        db.add(prep_ds)
+        await db.flush()
+        prepared_dataset_ids[split_name] = prep_ds.id
+        db.add(
+            DatasetVersion(
+                dataset_id=prep_ds.id,
+                version=1,
+                file_path=str(file_path),
+                record_count=len(rows),
+                manifest={
+                    "split": split_name,
+                    "seed": 42,
+                    "count": len(rows),
+                    "adapter_id": adapter_id,
+                    "task_profile": task_profile,
+                },
+            )
+        )
+
     await db.flush()
 
     summary = {
@@ -333,6 +514,13 @@ async def seed_demo_project(
         "gold_set_id": gold_dataset.id,
         "gold_version_id": gold_version.id,
         "gold_row_count": len(gold_rows),
+        "prepared_train_path": str(train_path),
+        "prepared_train_rows": len(train_rows),
+        "prepared_val_rows": len(val_rows),
+        "prepared_test_rows": len(test_rows),
+        "prepared_dataset_ids": prepared_dataset_ids,
+        "adapter_id": adapter_id,
+        "task_profile": task_profile,
         "suggested_brief": suggested_brief,
     }
     return project, summary

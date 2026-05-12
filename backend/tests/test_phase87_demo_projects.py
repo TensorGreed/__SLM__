@@ -51,17 +51,20 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import async_session_factory
 from app.main import app
-from app.models.dataset import Dataset, DatasetType, RawDocument
+from app.models.dataset import Dataset, DatasetType, DatasetVersion, RawDocument
 from app.models.gold_set_annotation import (
     GoldSetRow,
     GoldSetRowStatus,
     GoldSetVersion,
     GoldSetVersionStatus,
 )
-from app.models.project import Project
+from app.models.project import PipelineStage, Project
 from app.services.demo_project_service import (
     list_demo_archetypes,
     seed_demo_project,
+)
+from app.services.newbie_autopilot_service import (
+    evaluate_newbie_autopilot_dataset_readiness,
 )
 
 
@@ -145,10 +148,14 @@ class Phase87DemoProjectTests(unittest.TestCase):
                 self.assertIsNotNone(project)
                 self.assertTrue(project.beginner_mode)
                 self.assertEqual(project.target_profile_id, "vllm_server")
-                self.assertEqual(
-                    (project.dataset_adapter_preset or {}).get("demo_slug"),
-                    "support-faq",
-                )
+                # Phase 4.1: pipeline_stage advances to TRAINING because the
+                # demo materialises prepared splits, so the autopilot can
+                # actually launch training without manual prep.
+                self.assertEqual(project.pipeline_stage, PipelineStage.TRAINING)
+                preset = project.dataset_adapter_preset or {}
+                self.assertEqual(preset.get("demo_slug"), "support-faq")
+                self.assertEqual(preset.get("adapter_id"), "qa-pair")
+                self.assertEqual(preset.get("task_profile"), "instruction_sft")
 
                 # Source dataset is RAW (not CLEANED) so the Pipeline →
                 # Data tab + the Cleaning tab can find it via the
@@ -212,7 +219,82 @@ class Phase87DemoProjectTests(unittest.TestCase):
                 for row in row_records:
                     self.assertEqual(row.status, GoldSetRowStatus.APPROVED)
 
+                # Phase 4.1: prepared train/val/test + manifest exist on
+                # disk in canonical shape, and matching Dataset rows are
+                # present so the Pipeline → Data Prep tab + autopilot
+                # readiness check both succeed.
+                prepared_dir = (
+                    settings.DATA_DIR
+                    / "projects"
+                    / str(project_id)
+                    / "prepared"
+                )
+                self.assertTrue((prepared_dir / "train.jsonl").exists())
+                self.assertTrue((prepared_dir / "val.jsonl").exists())
+                self.assertTrue((prepared_dir / "test.jsonl").exists())
+                manifest_path = prepared_dir / "manifest.json"
+                self.assertTrue(manifest_path.exists())
+                import json as _json
+                manifest_payload = _json.loads(
+                    manifest_path.read_text(encoding="utf-8")
+                )
+                self.assertEqual(manifest_payload["adapter_id"], "qa-pair")
+                self.assertEqual(
+                    manifest_payload["task_profile"], "instruction_sft"
+                )
+                # Every prepared row must carry the canonical fields the
+                # dataset-contract analyzer keys on for qa_pair shape.
+                with (prepared_dir / "train.jsonl").open(
+                    "r", encoding="utf-8"
+                ) as handle:
+                    train_entries = [
+                        _json.loads(line)
+                        for line in handle
+                        if line.strip()
+                    ]
+                self.assertGreater(len(train_entries), 0)
+                for entry in train_entries:
+                    self.assertTrue(entry.get("question"))
+                    self.assertTrue(entry.get("answer"))
+                    self.assertTrue(entry.get("text"))
+                    self.assertTrue(entry.get("source_text"))
+                    self.assertTrue(entry.get("target_text"))
+
+                # TRAIN/VALIDATION/TEST Dataset rows + a DatasetVersion v1
+                # per split land in the DB.
+                splits_rows = await db.execute(
+                    select(Dataset).where(
+                        Dataset.project_id == project_id,
+                        Dataset.dataset_type.in_(
+                            (
+                                DatasetType.TRAIN,
+                                DatasetType.VALIDATION,
+                                DatasetType.TEST,
+                            )
+                        ),
+                    )
+                )
+                split_datasets = splits_rows.scalars().all()
+                self.assertEqual(len(split_datasets), 3)
+                for ds in split_datasets:
+                    versions = await db.execute(
+                        select(DatasetVersion).where(
+                            DatasetVersion.dataset_id == ds.id
+                        )
+                    )
+                    self.assertEqual(len(versions.scalars().all()), 1)
+
         asyncio.run(_inspect())
+
+        # The whole point of Phase 4.1: the autopilot's dataset-readiness
+        # gate must clear so the "Apply" button isn't blocked.
+        readiness = evaluate_newbie_autopilot_dataset_readiness(
+            project_id=project_id, min_rows=1
+        )
+        self.assertTrue(readiness["ready"], readiness)
+        self.assertEqual(readiness["blockers"], [])
+        self.assertTrue(readiness["prepared_train_exists"])
+        self.assertGreater(readiness["prepared_row_count"], 0)
 
     # ------------------------------------------------------------------
     # 3. Idempotency
@@ -244,8 +326,20 @@ class Phase87DemoProjectTests(unittest.TestCase):
                     select(Dataset).where(Dataset.project_id == id1)
                 )
                 all_datasets = datasets.scalars().all()
-                # One CLEANED + one GOLD_DEV.
-                self.assertEqual(len(all_datasets), 2)
+                # 1 RAW + 1 GOLD_DEV + 3 prepared (TRAIN/VALIDATION/TEST).
+                types = sorted(d.dataset_type.value for d in all_datasets)
+                self.assertEqual(
+                    types,
+                    sorted(
+                        [
+                            DatasetType.RAW.value,
+                            DatasetType.GOLD_DEV.value,
+                            DatasetType.TRAIN.value,
+                            DatasetType.VALIDATION.value,
+                            DatasetType.TEST.value,
+                        ]
+                    ),
+                )
                 gold = next(d for d in all_datasets if d.dataset_type == DatasetType.GOLD_DEV)
                 versions = await db.execute(
                     select(GoldSetVersion).where(GoldSetVersion.gold_set_id == gold.id)
