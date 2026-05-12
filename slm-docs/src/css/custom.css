@@ -1,30 +1,269 @@
+/* BrewSLM docs — monochrome Geist theme, matching the app's UI overhaul. */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+
 :root {
-  --ifm-color-primary: #1f5fd8;
-  --ifm-color-primary-dark: #1b54c1;
-  --ifm-color-primary-darker: #1a4fb6;
-  --ifm-color-primary-darkest: #164194;
-  --ifm-color-primary-light: #2f6ee0;
-  --ifm-color-primary-lighter: #3b77e4;
-  --ifm-color-primary-lightest: #5f92ea;
-  --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(31, 95, 216, 0.12);
+  /* Monochrome ramp */
+  --ifm-color-primary: #0a0a0a;
+  --ifm-color-primary-dark: #171717;
+  --ifm-color-primary-darker: #262626;
+  --ifm-color-primary-darkest: #404040;
+  --ifm-color-primary-light: #262626;
+  --ifm-color-primary-lighter: #404040;
+  --ifm-color-primary-lightest: #525252;
+
+  /* Typography */
+  --ifm-font-family-base: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ifm-font-family-monospace: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ifm-heading-font-family: var(--ifm-font-family-base);
+  --ifm-heading-font-weight: 600;
+  --ifm-font-weight-bold: 600;
+  --ifm-code-font-size: 92%;
+
+  /* Spacing + radius */
+  --ifm-border-radius: 6px;
+  --ifm-global-radius: 6px;
+  --ifm-button-border-radius: 6px;
+
+  /* Surfaces */
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #ffffff;
+  --ifm-color-emphasis-0: #ffffff;
+  --ifm-color-emphasis-100: #fafafa;
+  --ifm-color-emphasis-200: #f5f5f5;
+  --ifm-color-emphasis-300: #eaeaea;
+  --ifm-color-emphasis-400: #d4d4d4;
+  --ifm-color-emphasis-500: #a3a3a3;
+  --ifm-color-emphasis-600: #737373;
+  --ifm-color-emphasis-700: #525252;
+  --ifm-color-emphasis-800: #404040;
+  --ifm-color-emphasis-900: #171717;
+  --ifm-color-emphasis-1000: #0a0a0a;
+
+  --ifm-toc-border-color: #eaeaea;
+  --ifm-hr-border-color: #eaeaea;
+  --ifm-blockquote-border-color: #eaeaea;
+  --ifm-table-stripe-background: #fafafa;
+  --ifm-table-border-color: #eaeaea;
+  --ifm-code-background: #f5f5f5;
+  --ifm-pre-background: #fafafa;
+
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.06);
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #73a2ff;
-  --ifm-color-primary-dark: #5f94ff;
-  --ifm-color-primary-darker: #558dff;
-  --ifm-color-primary-darkest: #3678ff;
-  --ifm-color-primary-light: #87b0ff;
-  --ifm-color-primary-lighter: #91b7ff;
-  --ifm-color-primary-lightest: #aecbff;
-  --docusaurus-highlighted-code-line-bg: rgba(115, 162, 255, 0.24);
+  /* Force light-only — the app is light-only too. Override dark theme
+     to the same monochrome palette so the toggle doesn't break things. */
+  --ifm-color-primary: #0a0a0a;
+  --ifm-color-primary-dark: #171717;
+  --ifm-color-primary-darker: #262626;
+  --ifm-color-primary-darkest: #404040;
+  --ifm-color-primary-light: #262626;
+  --ifm-color-primary-lighter: #404040;
+  --ifm-color-primary-lightest: #525252;
+  --ifm-background-color: #ffffff;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.06);
 }
 
+html, body {
+  font-family: var(--ifm-font-family-base);
+  letter-spacing: -0.005em;
+  background: #ffffff;
+}
+
+/* Tighter headings, Geist-tuned */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.015em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+/* Hero — flat, no gradient */
+.hero {
+  background: #ffffff;
+  border-bottom: 1px solid #eaeaea;
+}
 .hero--primary {
-  background: linear-gradient(135deg, #163a7a 0%, #1f5fd8 48%, #5b8ef0 100%);
+  background: #ffffff;
+  color: #0a0a0a;
+}
+.hero__title {
+  color: #0a0a0a;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.hero__subtitle {
+  color: #525252;
 }
 
+/* Navbar — minimal */
 .navbar {
-  border-bottom: 1px solid #e4ebf7;
+  background: #ffffff;
+  border-bottom: 1px solid #eaeaea;
+  box-shadow: none;
+}
+.navbar__brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.navbar__title {
+  font-weight: 600;
+}
+.navbar__link {
+  font-weight: 500;
+  font-size: 14px;
+}
+.navbar__link--active {
+  color: #0a0a0a;
+}
+
+/* Sidebar */
+.menu {
+  font-size: 14px;
+  padding: 12px;
+}
+.menu__link {
+  border-radius: 4px;
+  font-weight: 400;
+  color: #525252;
+  padding: 6px 8px;
+}
+.menu__link:hover {
+  background: #f5f5f5;
+  color: #0a0a0a;
+}
+.menu__link--active,
+.menu__link--active:hover {
+  background: #f5f5f5;
+  color: #0a0a0a;
+  font-weight: 500;
+}
+.menu__list-item-collapsible--active {
+  background: transparent;
+}
+.menu__caret {
+  border-radius: 4px;
+}
+
+/* Buttons — flat, monochrome */
+.button {
+  border-radius: 6px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  box-shadow: none;
+}
+.button--primary {
+  background: #0a0a0a;
+  border-color: #0a0a0a;
+}
+.button--primary:hover {
+  background: #262626;
+  border-color: #262626;
+  transform: none;
+}
+.button--secondary {
+  background: #ffffff;
+  border-color: #eaeaea;
+  color: #0a0a0a;
+}
+.button--secondary:hover {
+  background: #fafafa;
+  border-color: #d4d4d4;
+  color: #0a0a0a;
+}
+
+/* Code blocks */
+pre, code {
+  font-family: var(--ifm-font-family-monospace);
+}
+code {
+  background: #f5f5f5;
+  border: 1px solid #eaeaea;
+  border-radius: 4px;
+  font-size: 0.92em;
+  padding: 1px 4px;
+}
+.theme-code-block {
+  background: #fafafa !important;
+  border: 1px solid #eaeaea;
+  border-radius: 6px;
+  box-shadow: none !important;
+}
+.theme-code-block code {
+  background: transparent;
+  border: none;
+}
+
+/* Tables */
+table {
+  font-size: 14px;
+}
+table thead {
+  background: #fafafa;
+}
+table th, table td {
+  border-color: #eaeaea;
+}
+
+/* Admonitions — flatten */
+.admonition,
+.alert {
+  border: 1px solid #eaeaea;
+  border-left-width: 3px;
+  border-radius: 6px;
+  box-shadow: none;
+  background: #fafafa;
+}
+.admonition-heading h5,
+.alert h5 {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* Pagination buttons */
+.pagination-nav__link {
+  border-color: #eaeaea;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.pagination-nav__link:hover {
+  border-color: #d4d4d4;
+}
+
+/* TOC */
+.table-of-contents__link {
+  font-size: 13px;
+  color: #525252;
+}
+.table-of-contents__link--active,
+.table-of-contents__link:hover {
+  color: #0a0a0a;
+}
+
+/* Footer */
+.footer {
+  background: #fafafa;
+  border-top: 1px solid #eaeaea;
+  color: #525252;
+}
+.footer--dark {
+  background: #fafafa;
+  color: #525252;
+}
+.footer__title {
+  color: #0a0a0a;
+}
+.footer__link-item {
+  color: #525252;
+}
+.footer__link-item:hover {
+  color: #0a0a0a;
+}
+
+/* Search */
+.DocSearch-Button {
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #eaeaea;
+  box-shadow: none;
 }
