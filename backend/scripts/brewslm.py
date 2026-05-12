@@ -1213,6 +1213,103 @@ def run_support_bundle(args: argparse.Namespace, client: ApiClient) -> int:
     raise ValueError(f"Unsupported support-bundle subcommand '{sub}'.")
 
 
+# ---------------------------------------------------------------------------
+# Extensions / scaffold (priority.md P39, Wave H)
+# ---------------------------------------------------------------------------
+
+
+_SCAFFOLD_ALIAS_TO_KIND: dict[str, str] = {
+    "adapter": "data_adapter",
+    "data-adapter": "data_adapter",
+    "data_adapter": "data_adapter",
+    "runtime": "training_runtime",
+    "training-runtime": "training_runtime",
+    "training_runtime": "training_runtime",
+    "domain-pack": "domain_pack",
+    "domain_pack": "domain_pack",
+    "eval-pack": "eval_pack",
+    "eval_pack": "eval_pack",
+    "evaluation-pack": "eval_pack",
+}
+
+
+def _resolve_scaffold_kind(alias: str) -> str:
+    token = str(alias or "").strip().lower()
+    kind = _SCAFFOLD_ALIAS_TO_KIND.get(token)
+    if kind is None:
+        raise ValueError(
+            f"Unsupported scaffold alias '{alias}'. Expected one of: "
+            "adapter, runtime, domain-pack, eval-pack."
+        )
+    return kind
+
+
+def _scaffold_create(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/extensions/scaffold (P38)."""
+    kind = _resolve_scaffold_kind(args.scaffold_subcommand)
+    body: dict[str, Any] = {
+        "kind": kind,
+        "plugin_id": str(args.plugin_id).strip(),
+    }
+    for key in ("display_name", "description", "author", "version", "export_dir"):
+        value = getattr(args, key, None)
+        if value is None:
+            continue
+        cleaned = str(value).strip()
+        if cleaned:
+            body[key] = cleaned
+    if getattr(args, "no_write", False):
+        body["write"] = False
+    payload = client.request("POST", "/extensions/scaffold", json_body=body)
+    _print_json(payload)
+    return 0
+
+
+def run_scaffold(args: argparse.Namespace, client: ApiClient) -> int:
+    return _scaffold_create(args, client)
+
+
+def _extensions_list(args: argparse.Namespace, client: ApiClient) -> int:
+    payload = client.request("GET", "/extensions")
+    _print_json(payload)
+    return 0
+
+
+def _extensions_validate(args: argparse.Namespace, client: ApiClient) -> int:
+    body: dict[str, Any] = {
+        "kind": _resolve_scaffold_kind(args.kind),
+        "module": str(args.module).strip(),
+    }
+    if getattr(args, "force_reload", False):
+        body["force_reload"] = True
+    payload = client.request("POST", "/extensions/validate", json_body=body)
+    _print_json(payload)
+    return 0 if payload.get("ok") else 1
+
+
+def _extensions_reload(args: argparse.Namespace, client: ApiClient) -> int:
+    body: dict[str, Any] = {}
+    kind = getattr(args, "kind", None)
+    if kind:
+        body["kind"] = _resolve_scaffold_kind(kind)
+    payload = client.request("POST", "/extensions/reload", json_body=body)
+    _print_json(payload)
+    results = payload.get("results") or []
+    bad = [r for r in results if r.get("status") not in ("ok", "not_supported")]
+    return 0 if not bad else 1
+
+
+def run_extensions(args: argparse.Namespace, client: ApiClient) -> int:
+    sub = str(getattr(args, "extensions_subcommand", "") or "").strip().lower()
+    if sub == "list":
+        return _extensions_list(args, client)
+    if sub == "validate":
+        return _extensions_validate(args, client)
+    if sub == "reload":
+        return _extensions_reload(args, client)
+    raise ValueError(f"Unsupported extensions subcommand '{sub}'.")
+
+
 def _format_float(value: Any, *, precision: int = 3) -> str:
     try:
         return f"{float(value):.{precision}f}"
@@ -3868,6 +3965,97 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sb_download.add_argument("--json", action="store_true")
     sb_download.set_defaults(func=run_support_bundle)
+
+    # ----------------------------------------------------------------- #
+    # scaffold + extensions (priority.md P39, Wave H)                    #
+    # ----------------------------------------------------------------- #
+    scaffold_parser = subparsers.add_parser(
+        "scaffold",
+        help="Generate a contract-valid plugin scaffold (P38).",
+    )
+    scaffold_sub = scaffold_parser.add_subparsers(
+        dest="scaffold_subcommand", required=True
+    )
+    for alias, description in (
+        ("adapter", "Scaffold a data-adapter plugin."),
+        ("runtime", "Scaffold a training-runtime plugin."),
+        ("domain-pack", "Scaffold a domain-pack plugin."),
+        ("eval-pack", "Scaffold an evaluation-pack plugin."),
+    ):
+        sub = scaffold_sub.add_parser(alias, help=description)
+        sub.add_argument(
+            "--plugin-id",
+            dest="plugin_id",
+            required=True,
+            help="Identifier for the new plugin (kebab/snake case).",
+        )
+        sub.add_argument("--display-name", dest="display_name", default=None)
+        sub.add_argument("--description", default=None)
+        sub.add_argument("--author", default=None)
+        sub.add_argument(
+            "--version",
+            default=None,
+            help="Plugin version string (e.g. 0.1.0). Default: 0.1.0.",
+        )
+        sub.add_argument(
+            "--export-dir",
+            dest="export_dir",
+            default=None,
+            help="Directory to write the scaffold into. Default: DATA_DIR/extension_scaffolds/<kind>/<plugin_id>.",
+        )
+        sub.add_argument(
+            "--no-write",
+            dest="no_write",
+            action="store_true",
+            help="Return the file contents in the response without writing to disk.",
+        )
+        sub.set_defaults(func=run_scaffold)
+
+    extensions_parser = subparsers.add_parser(
+        "extensions",
+        help="List / validate / reload extension plugins (P37).",
+    )
+    extensions_sub = extensions_parser.add_subparsers(
+        dest="extensions_subcommand", required=True
+    )
+
+    ext_list = extensions_sub.add_parser(
+        "list", help="List configured plugin kinds and their loaded modules."
+    )
+    ext_list.set_defaults(func=run_extensions)
+
+    ext_validate = extensions_sub.add_parser(
+        "validate",
+        help="Validate a plugin module against its kind contract (does not register).",
+    )
+    ext_validate.add_argument(
+        "--kind",
+        required=True,
+        help="Plugin kind (adapter / runtime / domain-pack / eval-pack).",
+    )
+    ext_validate.add_argument(
+        "--module",
+        required=True,
+        help="Importable Python module path of the plugin.",
+    )
+    ext_validate.add_argument(
+        "--force-reload",
+        dest="force_reload",
+        action="store_true",
+        help="Reload the module if already imported.",
+    )
+    ext_validate.set_defaults(func=run_extensions)
+
+    ext_reload = extensions_sub.add_parser(
+        "reload",
+        help="Reload extension modules configured in settings.",
+    )
+    ext_reload.add_argument(
+        "--kind",
+        default=None,
+        help="Reload a single kind. Omit to reload every kind that supports it.",
+    )
+    ext_reload.set_defaults(func=run_extensions)
 
     eval_parser = subparsers.add_parser(
         "eval",
