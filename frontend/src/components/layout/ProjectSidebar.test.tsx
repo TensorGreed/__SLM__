@@ -138,6 +138,20 @@ describe('ProjectSidebar beginner-mode hiding', () => {
     expect(screen.getByRole('button', { name: 'Autopilot Planner' })).toBeInTheDocument();
   });
 
+  it('hides Extension Studio under Training when beginner mode is on (priority.md P40)', () => {
+    renderSidebar(['/project/1/training-config'], { beginnerMode: true });
+    expect(
+      screen.queryByRole('button', { name: 'Extension Studio' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows Extension Studio under Training when beginner mode is off (priority.md P40)', () => {
+    renderSidebar(['/project/1/training-config'], { beginnerMode: false });
+    expect(
+      screen.getByRole('button', { name: 'Extension Studio' }),
+    ).toBeInTheDocument();
+  });
+
   it('hides workflow + recipes panel entries even on deep-link', () => {
     renderSidebar(['/project/1/workflow'], { beginnerMode: true });
     expect(screen.queryByRole('button', { name: 'Workflow Builder' })).not.toBeInTheDocument();

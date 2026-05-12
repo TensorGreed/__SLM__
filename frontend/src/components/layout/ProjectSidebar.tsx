@@ -10,6 +10,7 @@ import {
     FolderTree,
     Layers,
     Lock,
+    Puzzle,
     Rocket,
     Settings2,
     Sparkles,
@@ -127,6 +128,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isManifestRoute = location.pathname === `/project/${projectId}/manifest`;
     const isDeploymentsRoute = location.pathname === `/project/${projectId}/deployments`;
     const isObservabilityRoute = location.pathname === `/project/${projectId}/observability`;
+    const isExtensionStudioRoute = location.pathname === `/project/${projectId}/extensions`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
@@ -144,6 +146,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
             || isPlaygroundRoute
             || isDeploymentsRoute
             || isObservabilityRoute
+            || isExtensionStudioRoute
         ) return 'training';
         if (isWorkflowRoute || isRecipesRoute || isManifestRoute) return 'workflow';
         if (isDomainPacksRoute || isDomainProfilesRoute) return 'domain';
@@ -157,6 +160,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
         isPlaygroundRoute,
         isDeploymentsRoute,
         isObservabilityRoute,
+        isExtensionStudioRoute,
         isWorkflowRoute,
         isRecipesRoute,
         isManifestRoute,
@@ -355,6 +359,15 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                                 <Activity size={15} />
                                 <span className="nav-label">Observability</span>
                             </button>
+                            {!isBeginner && (
+                                <button
+                                    className={`workspace-nav-item ${isExtensionStudioRoute ? 'active' : ''}`}
+                                    onClick={() => navigate(`/project/${projectId}/extensions`)}
+                                >
+                                    <Puzzle size={15} />
+                                    <span className="nav-label">Extension Studio</span>
+                                </button>
+                            )}
                             <button
                                 className={`workspace-nav-item ${isTrainingWizardRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/wizard`, { state: { sidebarRail: 'training' } })}
