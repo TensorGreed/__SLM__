@@ -268,5 +268,66 @@ describe('ProjectSidebar beginner-mode hiding', () => {
 
 afterEach(() => {
   useProjectStore.setState({ activeProject: null, pipelineStatus: null });
+  try {
+    window.localStorage.removeItem('brewslm_sidebar_collapsed');
+  } catch {
+    // ignore
+  }
+  document.body.classList.remove('sidebar-collapsed');
+});
+
+describe('ProjectSidebar collapse', () => {
+  it('starts expanded by default and renders the collapse toggle', () => {
+    renderSidebar(['/project/1/training-config']);
+    expect(
+      screen.getByRole('button', { name: /Collapse sidebar/i }),
+    ).toBeInTheDocument();
+    // Brand wordmark visible (both the SVG title and the wordmark span).
+    expect(screen.getAllByText('BrewSLM').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('clicking the toggle adds the sidebar-collapsed body class', async () => {
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/training-config']);
+
+    await user.click(screen.getByRole('button', { name: /Collapse sidebar/i }));
+    expect(document.body.classList.contains('sidebar-collapsed')).toBe(true);
+    // Toggle button label flips.
+    expect(
+      screen.getByRole('button', { name: /Expand sidebar/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('persists collapsed state in localStorage', async () => {
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/training-config']);
+
+    await user.click(screen.getByRole('button', { name: /Collapse sidebar/i }));
+    expect(window.localStorage.getItem('brewslm_sidebar_collapsed')).toBe('1');
+
+    await user.click(screen.getByRole('button', { name: /Expand sidebar/i }));
+    expect(window.localStorage.getItem('brewslm_sidebar_collapsed')).toBe('0');
+  });
+
+  it('reads the persisted collapsed state on mount', () => {
+    window.localStorage.setItem('brewslm_sidebar_collapsed', '1');
+    renderSidebar(['/project/1/training-config']);
+    expect(document.body.classList.contains('sidebar-collapsed')).toBe(true);
+    expect(
+      screen.getByRole('button', { name: /Expand sidebar/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('Cmd-B toggles the sidebar', async () => {
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/training-config']);
+    expect(document.body.classList.contains('sidebar-collapsed')).toBe(false);
+
+    await user.keyboard('{Meta>}b{/Meta}');
+    expect(document.body.classList.contains('sidebar-collapsed')).toBe(true);
+
+    await user.keyboard('{Meta>}b{/Meta}');
+    expect(document.body.classList.contains('sidebar-collapsed')).toBe(false);
+  });
 });
 

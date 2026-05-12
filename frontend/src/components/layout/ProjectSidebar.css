@@ -43,13 +43,7 @@
     justify-content: center;
     width: 22px;
     height: 22px;
-    background: var(--gray-1000);
-    color: var(--gray-0);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0;
+    color: var(--text-primary);
 }
 
 .brand-logo-name {
@@ -356,6 +350,113 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-secondary);
+}
+
+/* ── Collapse toggle ────────────────────────────────────────────────── */
+
+.sidebar-collapse-toggle {
+    margin: 0 8px 10px;
+    padding: 6px 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-collapse-toggle:hover {
+    background: var(--gray-100);
+    color: var(--text-primary);
+}
+
+/* ── Collapsed mode ─────────────────────────────────────────────────── */
+
+body.sidebar-collapsed {
+    --sidebar-width: 56px;
+}
+
+.project-sidebar.is-collapsed .brand-logo-name,
+.project-sidebar.is-collapsed .project-sidebar-project,
+.project-sidebar.is-collapsed .project-sidebar-section-label,
+.project-sidebar.is-collapsed .nav-section-label,
+.project-sidebar.is-collapsed .nav-label,
+.project-sidebar.is-collapsed .rail-pill-label,
+.project-sidebar.is-collapsed .beginner-badge,
+.project-sidebar.is-collapsed .beginner-note,
+.project-sidebar.is-collapsed .beginner-error,
+.project-sidebar.is-collapsed .sidebar-cmdk-hint-label,
+.project-sidebar.is-collapsed .sidebar-cmdk-hint-key,
+.project-sidebar.is-collapsed .sidebar-collapse-toggle-label,
+.project-sidebar.is-collapsed .nav-status-dot {
+    display: none;
+}
+
+.project-sidebar.is-collapsed .project-sidebar-brand {
+    padding: 14px 0 10px;
+    display: flex;
+    justify-content: center;
+}
+
+.project-sidebar.is-collapsed .brand-logo {
+    justify-content: center;
+}
+
+.project-sidebar.is-collapsed .project-sidebar-rail-strip {
+    flex-direction: column;
+    padding: 6px 8px;
+    gap: 2px;
+}
+
+.project-sidebar.is-collapsed .rail-pill {
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.project-sidebar.is-collapsed .project-sidebar-nav {
+    padding: 4px 8px;
+    align-items: center;
+}
+
+.project-sidebar.is-collapsed .workspace-nav-item,
+.project-sidebar.is-collapsed .pipeline-subnav-item {
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.project-sidebar.is-collapsed .pipeline-subnav-item {
+    padding-left: 0;
+}
+
+.project-sidebar.is-collapsed .pipeline-subnav-leading {
+    display: none;
+}
+
+.project-sidebar.is-collapsed .project-sidebar-beginner {
+    padding: 8px 8px 6px;
+    align-items: center;
+}
+
+.project-sidebar.is-collapsed .leave-beginner-button,
+.project-sidebar.is-collapsed .enter-beginner-button {
+    justify-content: center;
+    padding: 8px 0;
+    width: 100%;
+}
+
+.project-sidebar.is-collapsed .sidebar-cmdk-hint {
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.project-sidebar.is-collapsed .sidebar-collapse-toggle {
+    justify-content: center;
+    padding: 8px 0;
 }
 
 @media (max-width: 980px) {
