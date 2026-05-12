@@ -20,6 +20,7 @@ import type {
     SupportBundleListResponse,
     SupportBundleMetadata,
 } from '../../types/observability';
+import CommandSnippet from '../shared/CommandSnippet';
 
 interface Props {
     projectId: number;
@@ -139,14 +140,24 @@ export default function SupportBundleCard({ projectId }: Props) {
                         write.
                     </div>
                 </div>
-                <button
-                    type="button"
-                    className="btn btn-primary btn-sm"
-                    disabled={creating}
-                    onClick={() => void createBundle()}
-                >
-                    {creating ? 'Generating…' : 'Generate bundle'}
-                </button>
+                <div className="support-bundle-header-actions">
+                    <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={creating}
+                        onClick={() => void createBundle()}
+                    >
+                        {creating ? 'Generating…' : 'Generate bundle'}
+                    </button>
+                    <CommandSnippet
+                        cli={`brewslm support-bundle create --project ${projectId} --download`}
+                        api={{
+                            method: 'POST',
+                            path: `/projects/${projectId}/support-bundle`,
+                            body: {},
+                        }}
+                    />
+                </div>
             </div>
 
             {error && (

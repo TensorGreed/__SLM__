@@ -22,6 +22,7 @@ import type {
     FailureClusterListResponse,
     FailureClusterRecomputeResponse,
 } from '../../types/observability';
+import CommandSnippet from '../shared/CommandSnippet';
 
 interface Props {
     projectId: number;
@@ -190,14 +191,24 @@ export default function FailureClusterList({
         <div className="failure-cluster-list">
             <div className="failure-cluster-header">
                 <h3 className="observability-heading">Failure clusters</h3>
-                <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => void recompute()}
-                    disabled={recomputing}
-                >
-                    {recomputing ? 'Recomputing…' : 'Recompute'}
-                </button>
+                <div className="failure-cluster-header-actions">
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => void recompute()}
+                        disabled={recomputing}
+                    >
+                        {recomputing ? 'Recomputing…' : 'Recompute'}
+                    </button>
+                    <CommandSnippet
+                        cli={`brewslm logs clusters --project ${projectId}`}
+                        api={{
+                            method: 'POST',
+                            path: `/projects/${projectId}/failure-clusters/recompute`,
+                            body: {},
+                        }}
+                    />
+                </div>
             </div>
             {error && (
                 <div className="deployment-status is-error" role="alert">

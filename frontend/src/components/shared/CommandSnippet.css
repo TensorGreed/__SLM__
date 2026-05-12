@@ -1,0 +1,125 @@
+/* CommandSnippet — collapsed CLI / API reveal next to a Run button. */
+
+.command-snippet-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    margin-top: 6px;
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.command-snippet-toggle:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.command-snippet-toggle-chevron {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+}
+
+.command-snippet {
+    margin-top: 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    overflow: hidden;
+}
+
+.command-snippet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-muted);
+    background: var(--bg-primary);
+}
+
+.command-snippet-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.command-snippet-tab {
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.command-snippet-tab:hover {
+    color: var(--text-primary);
+    background: var(--gray-100);
+}
+
+.command-snippet-tab.is-active,
+.command-snippet-tab[aria-selected="true"] {
+    background: var(--gray-1000);
+    color: var(--gray-0);
+}
+
+.command-snippet-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.command-snippet-copy,
+.command-snippet-close {
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.command-snippet-copy:hover,
+.command-snippet-close:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+    background: var(--gray-50);
+}
+
+.command-snippet-close {
+    padding: 3px 6px;
+    line-height: 1;
+}
+
+.command-snippet-copy-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    margin-right: 2px;
+}
+
+.command-snippet-code {
+    margin: 0;
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    overflow-x: auto;
+    white-space: pre;
+}

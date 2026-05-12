@@ -5,14 +5,15 @@
  * response and renders the file preview / download buttons.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type {
     PluginKind,
     ScaffoldRequest,
     ScaffoldResponse,
 } from '../../types/extensions';
-import { PLUGIN_KIND_LABEL } from '../../types/extensions';
+import { PLUGIN_KIND_ALIAS, PLUGIN_KIND_LABEL } from '../../types/extensions';
+import CommandSnippet, { type ApiSnippet } from '../shared/CommandSnippet';
 
 interface Props {
     kind: PluginKind;
@@ -56,6 +57,34 @@ export default function ScaffoldForm({
     const update = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
         setForm((prev) => ({ ...prev, [key]: value }));
     }, []);
+
+    const snippet = useMemo(() => {
+        const pluginId = form.plugin_id.trim() || '<plugin-id>';
+        const alias = PLUGIN_KIND_ALIAS[kind];
+        const cliParts = [`brewslm scaffold ${alias}`, `  --plugin-id ${pluginId}`];
+        if (form.display_name.trim()) {
+            cliParts.push(`  --display-name ${JSON.stringify(form.display_name.trim())}`);
+        }
+        if (form.description.trim()) {
+            cliParts.push(`  --description ${JSON.stringify(form.description.trim())}`);
+        }
+        if (form.author.trim()) cliParts.push(`  --author ${JSON.stringify(form.author.trim())}`);
+        if (form.version.trim()) cliParts.push(`  --version ${form.version.trim()}`);
+        if (!form.write) cliParts.push('  --no-write');
+
+        const apiBody: ScaffoldRequest = { kind, plugin_id: pluginId, write: form.write };
+        if (form.display_name.trim()) apiBody.display_name = form.display_name.trim();
+        if (form.description.trim()) apiBody.description = form.description.trim();
+        if (form.author.trim()) apiBody.author = form.author.trim();
+        if (form.version.trim()) apiBody.version = form.version.trim();
+
+        const api: ApiSnippet = {
+            method: 'POST',
+            path: '/extensions/scaffold',
+            body: apiBody,
+        };
+        return { cli: cliParts.join(' \\\n'), api };
+    }, [form, kind]);
 
     const handleSubmit = useCallback(
         async (event: React.FormEvent<HTMLFormElement>) => {
@@ -180,6 +209,7 @@ export default function ScaffoldForm({
                     {submitting ? 'Generating…' : 'Generate scaffold'}
                 </button>
             </div>
+            <CommandSnippet cli={snippet.cli} api={snippet.api} />
         </form>
     );
 }

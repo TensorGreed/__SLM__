@@ -13,6 +13,7 @@ import type {
     ReloadKindResult,
 } from '../../types/extensions';
 import { PLUGIN_KIND_LABEL } from '../../types/extensions';
+import CommandSnippet from '../shared/CommandSnippet';
 
 interface Props {
     kinds: ExtensionKindStatus[];
@@ -56,14 +57,24 @@ export default function ExtensionKindList({
         <div className="extension-kind-list">
             <div className="extension-kind-list-header">
                 <h3 className="observability-heading">Plugin kinds</h3>
-                <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={handleReloadAll}
-                    disabled={reloading}
-                >
-                    {reloading ? 'Reloading…' : 'Reload all'}
-                </button>
+                <div className="extension-kind-list-header-actions">
+                    <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleReloadAll}
+                        disabled={reloading}
+                    >
+                        {reloading ? 'Reloading…' : 'Reload all'}
+                    </button>
+                    <CommandSnippet
+                        cli={`brewslm extensions reload`}
+                        api={{
+                            method: 'POST',
+                            path: '/extensions/reload',
+                            body: {},
+                        }}
+                    />
+                </div>
             </div>
             <ul className="extension-kind-rows" aria-label="Plugin kinds">
                 {kinds.map((row) => {

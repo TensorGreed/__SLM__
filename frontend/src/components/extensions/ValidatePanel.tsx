@@ -7,12 +7,14 @@
  * landed on disk.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import type {
     PluginContractReport,
     PluginKind,
 } from '../../types/extensions';
+import { PLUGIN_KIND_ALIAS } from '../../types/extensions';
+import CommandSnippet, { type ApiSnippet } from '../shared/CommandSnippet';
 
 interface Props {
     kind: PluginKind;
@@ -27,6 +29,27 @@ export default function ValidatePanel({ kind, onValidate }: Props) {
     const [submitting, setSubmitting] = useState(false);
     const [report, setReport] = useState<PluginContractReport | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    const snippet = useMemo(() => {
+        const moduleName = module.trim() || '<module-path>';
+        const alias = PLUGIN_KIND_ALIAS[kind];
+        const cliParts = [
+            `brewslm extensions validate`,
+            `  --kind ${alias}`,
+            `  --module ${moduleName}`,
+        ];
+        if (forceReload) cliParts.push('  --force-reload');
+        const api: ApiSnippet = {
+            method: 'POST',
+            path: '/extensions/validate',
+            body: {
+                kind,
+                module: moduleName,
+                force_reload: forceReload,
+            },
+        };
+        return { cli: cliParts.join(' \\\n'), api };
+    }, [forceReload, kind, module]);
 
     const handleSubmit = useCallback(
         async (event: React.FormEvent<HTMLFormElement>) => {
@@ -97,6 +120,7 @@ export default function ValidatePanel({ kind, onValidate }: Props) {
                         {submitting ? 'Validating…' : 'Validate'}
                     </button>
                 </div>
+                <CommandSnippet cli={snippet.cli} api={snippet.api} />
             </form>
 
             {error && (
