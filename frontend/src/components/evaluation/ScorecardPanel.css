@@ -7,11 +7,11 @@
 }
 
 .scorecard-container.ship {
-  border-left: 8px solid #10b981;
+  border-left: 8px solid var(--color-success);
 }
 
 .scorecard-container.no-ship {
-  border-left: 8px solid #ef4444;
+  border-left: 8px solid var(--color-error);
 }
 
 .scorecard-header {
@@ -30,22 +30,22 @@
 }
 
 .ship .decision-badge {
-  background-color: #10b981;
+  background-color: var(--color-success);
   color: white;
 }
 
 .no-ship .decision-badge {
-  background-color: #ef4444;
+  background-color: var(--color-error);
   color: white;
 }
 
 .scorecard-reasons {
-  background-color: #fee2e2;
-  border: 1px solid #fecaca;
+  background-color: var(--color-error-bg);
+  border: 1px solid var(--color-error-bg);
   border-radius: var(--border-radius-md);
   padding: var(--space-md);
   margin-bottom: var(--space-lg);
-  color: #991b1b;
+  color: var(--color-error);
 }
 
 .scorecard-reasons h3 {
@@ -82,16 +82,16 @@
 }
 
 .gates-table tr.failed {
-  background-color: #fff1f2;
+  background-color: var(--color-error-bg);
 }
 
 .gates-table tr.warn {
-  background-color: #fffbeb;
+  background-color: var(--color-warning-bg);
 }
 
 .missing-metric-tag {
   display: inline-block;
-  background-color: #e5e7eb;
+  background-color: var(--bg-tertiary);
   padding: 4px 8px;
   border-radius: 4px;
   margin: 4px;
@@ -100,7 +100,7 @@
 
 .missing-diagnostics {
   font-size: 0.875rem;
-  color: #6b7280;
+  color: var(--text-tertiary);
   margin-top: 12px;
   font-style: italic;
 }
@@ -110,6 +110,6 @@
   padding-top: var(--space-md);
   border-top: 1px solid var(--border-color);
   font-size: 0.875rem;
-  color: #9ca3af;
+  color: var(--text-tertiary);
   text-align: center;
 }

@@ -4,16 +4,16 @@
     flex-direction: column;
     gap: 0;
     cursor: pointer;
-    border: 1px solid #cfdaeb;
+    border: 1px solid var(--gray-100);
     border-radius: 14px;
     padding: 16px;
-    background: #ffffff;
+    background: var(--bg-primary);
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .project-card:hover {
     transform: translateY(-1px);
-    border-color: #9bb5dc;
+    border-color: var(--gray-100);
     box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
 }
 
@@ -29,19 +29,19 @@
 }
 
 .project-card.status-active::before {
-    background: linear-gradient(90deg, #22a561, #2f74d9);
+    background: linear-gradient(90deg, var(--text-primary), var(--gray-1000));
 }
 
 .project-card.status-draft::before {
-    background: linear-gradient(90deg, #4f9be6, #57bfd0);
+    background: linear-gradient(90deg, var(--gray-1000), var(--gray-1000));
 }
 
 .project-card.status-completed::before {
-    background: linear-gradient(90deg, #d19f2a, #d88436);
+    background: linear-gradient(90deg, var(--color-warning), var(--color-error));
 }
 
 .project-card.status-failed::before {
-    background: linear-gradient(90deg, #dc5b5b, #cf4444);
+    background: linear-gradient(90deg, var(--color-error), var(--color-error));
 }
 
 .project-card-header {
@@ -56,12 +56,12 @@
     margin: 0;
     font-size: 1rem;
     font-weight: 650;
-    color: #132948;
+    color: var(--text-primary);
 }
 
 .project-card-desc {
     margin-bottom: var(--space-md);
-    color: #516684;
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
     line-height: 1.45;
     display: -webkit-box;
@@ -78,7 +78,7 @@
 
 .progress-track {
     height: 6px;
-    background: #e8effa;
+    background: var(--bg-tertiary);
     border-radius: 999px;
     overflow: hidden;
     margin-bottom: 6px;
@@ -86,7 +86,7 @@
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #2f74d9, #4f96ea);
+    background: linear-gradient(90deg, var(--gray-1000), var(--gray-1000));
     border-radius: 999px;
     transition: width 0.45s ease-out;
 }
@@ -95,12 +95,12 @@
     display: flex;
     justify-content: space-between;
     font-size: 0.74rem;
-    color: #6b7f9b;
+    color: var(--text-tertiary);
 }
 
 .stage-name {
     font-weight: 600;
-    color: #315d99;
+    color: var(--gray-1000);
 }
 
 .project-card-meta {
@@ -109,8 +109,8 @@
     gap: var(--space-md);
     margin-bottom: var(--space-lg);
     padding: 10px;
-    background: #f7faff;
-    border: 1px solid #dde7f6;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--bg-tertiary);
     border-radius: var(--radius-md);
 }
 
@@ -122,14 +122,14 @@
 }
 
 .meta-item:nth-child(2) {
-    border-left: 1px solid #d7e1f0;
-    border-right: 1px solid #d7e1f0;
+    border-left: 1px solid var(--gray-100);
+    border-right: 1px solid var(--gray-100);
     padding: 0 var(--space-md);
 }
 
 .meta-label {
     font-size: 0.65rem;
-    color: #7387a2;
+    color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -137,7 +137,7 @@
 .meta-value {
     font-size: var(--font-size-sm);
     font-weight: 600;
-    color: #19375f;
+    color: var(--text-primary);
 }
 
 .truncate {
@@ -152,13 +152,13 @@
     align-items: center;
     justify-content: space-between;
     padding-top: var(--space-sm);
-    border-top: 1px solid #e2eaf6;
+    border-top: 1px solid var(--bg-tertiary);
     margin-top: auto;
 }
 
 .project-date {
     font-size: var(--font-size-xs);
-    color: #7e8fa8;
+    color: var(--text-tertiary);
 }
 
 .btn-sm {
@@ -172,6 +172,6 @@
 
 .btn-delete:hover {
     opacity: 1;
-    background: #feecef;
-    color: #c03434;
+    background: var(--color-error-bg);
+    color: var(--color-error);
 }

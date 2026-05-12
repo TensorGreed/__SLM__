@@ -134,13 +134,13 @@
 }
 
 .manifest-viewer {
-    background: #0d1117;
+    background: var(--text-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-md);
     font-family: 'Fira Code', 'Courier New', Courier, monospace;
     font-size: 0.75rem;
-    color: #c9d1d9;
+    color: var(--border-default);
     overflow-x: auto;
     position: relative;
     max-height: 300px;
@@ -260,8 +260,8 @@
     padding: 8px;
     border-radius: 6px;
     border: 1px solid var(--border-color);
-    background: #0d1117;
-    color: #c9d1d9;
+    background: var(--text-primary);
+    color: var(--border-default);
     font-family: 'Fira Code', 'Courier New', Courier, monospace;
     font-size: 0.72rem;
     overflow-x: auto;
@@ -341,7 +341,7 @@
 .optimization-matrix-chip {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: #fff;
+    background: var(--bg-primary);
     padding: var(--space-xs) var(--space-sm);
     display: flex;
     flex-direction: column;
@@ -395,31 +395,31 @@
 .serve-template-card,
 .serve-run-card,
 .serve-run-telemetry__item {
-    background: #f8fbff;
-    border-color: #d5e1f3;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .export-target-option {
-    background: #ffffff;
-    border-color: #d2def0;
+    background: var(--bg-primary);
+    border-color: var(--gray-100);
 }
 
 .export-target-option.selected {
-    border-color: #3d79cb;
-    background: #eaf2ff;
+    border-color: var(--gray-1000);
+    background: var(--gray-100);
 }
 
 .export-history-table th {
-    background: #f2f7ff;
+    background: var(--bg-tertiary);
 }
 
 .export-row:hover {
-    background: #f7faff;
+    background: var(--bg-tertiary);
 }
 
 .export-row.expanded,
 .export-details-row {
-    background: #f4f8ff;
+    background: var(--bg-tertiary);
 }
 
 @media (max-width: 980px) {
@@ -430,17 +430,17 @@
 
 .manifest-viewer,
 .serve-template-code {
-    background: #f5f8fd;
-    color: #2f4a6f;
-    border-color: #d5e1f2;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--gray-100);
 }
 
 .btn-icon:hover {
-    background: #edf3ff;
+    background: var(--bg-tertiary);
 }
 
 .serve-plan-run-dir code {
-    background: #edf3fd;
+    background: var(--bg-tertiary);
 }
 
 .optimization-results {
@@ -448,7 +448,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-md);
-    background: #f8fbff;
+    background: var(--bg-tertiary);
 }
 
 .optimization-candidates-grid {
@@ -459,10 +459,10 @@
 }
 
 .optimization-card {
-    border: 1px solid #d5e1f3;
+    border: 1px solid var(--gray-100);
     border-radius: var(--radius-md);
     padding: var(--space-md);
-    background: #ffffff;
+    background: var(--bg-primary);
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
@@ -471,7 +471,7 @@
 }
 
 .optimization-card.recommended {
-    border-color: #3d79cb;
+    border-color: var(--gray-1000);
     box-shadow: 0 4px 12px rgba(61, 121, 203, 0.15);
 }
 
@@ -494,7 +494,7 @@
     position: absolute;
     top: -10px;
     right: 10px;
-    background: #3d79cb;
+    background: var(--gray-1000);
     color: white;
     font-size: 10px;
     font-weight: 700;
@@ -514,14 +514,14 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    background: #f5f8fd;
+    background: var(--bg-tertiary);
     padding: var(--space-xs);
     border-radius: var(--radius-sm);
 }
 
 .optimization-metric-label {
     font-size: 10px;
-    color: #6a737d;
+    color: var(--text-tertiary);
     text-transform: uppercase;
 }
 
@@ -553,16 +553,16 @@
 
 .optimization-provenance-note {
     font-size: var(--font-size-xs);
-    color: #556a86;
-    background: #f5f8fd;
-    border: 1px dashed #c9d8ef;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border: 1px dashed var(--gray-100);
     border-radius: var(--radius-sm);
     padding: 6px 8px;
 }
 
 .optimization-reasons {
     font-size: var(--font-size-xs);
-    color: #586069;
+    color: var(--text-tertiary);
     margin-top: var(--space-xs);
 }
 

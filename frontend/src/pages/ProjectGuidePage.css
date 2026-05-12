@@ -62,19 +62,19 @@
     align-items: center;
     gap: var(--space-lg);
     flex-wrap: wrap;
-    border-color: #c7d7f5;
-    background: linear-gradient(135deg, #f6f9ff, #eef4ff);
+    border-color: var(--gray-100);
+    background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-tertiary));
 }
 
 .project-guide-beginner h4 {
     margin: 0;
     font-size: var(--font-size-md);
-    color: #16335f;
+    color: var(--text-primary);
 }
 
 .project-guide-beginner p {
     margin-top: 6px;
-    color: #35537d;
+    color: var(--text-primary);
     max-width: 760px;
     font-size: var(--font-size-sm);
 }

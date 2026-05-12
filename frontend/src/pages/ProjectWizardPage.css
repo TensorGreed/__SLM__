@@ -12,7 +12,7 @@
 .wizard-header {
     padding: 18px 24px;
     border-bottom: 1px solid var(--border-secondary);
-    background: #f8fbff;
+    background: var(--bg-tertiary);
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -22,13 +22,13 @@
 .wizard-header h2 {
     margin: 0;
     font-size: 1.18rem;
-    color: #112a50;
+    color: var(--text-primary);
 }
 
 .wizard-header p {
     margin: 4px 0 0;
     font-size: 0.86rem;
-    color: #5e7391;
+    color: var(--text-tertiary);
 }
 
 .wizard-stepper {
@@ -37,39 +37,39 @@
     gap: 8px;
     padding: 14px 24px;
     border-bottom: 1px solid var(--border-secondary);
-    background: #fff;
+    background: var(--bg-primary);
 }
 
 .wizard-step-indicator {
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #637a9a;
+    color: var(--text-tertiary);
 }
 
 .step-circle {
     width: 24px;
     height: 24px;
     border-radius: 999px;
-    border: 1px solid #bfcce0;
-    background: #fff;
+    border: 1px solid var(--gray-100);
+    background: var(--bg-primary);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     font-size: 0.76rem;
     font-weight: 600;
-    color: #617892;
+    color: var(--text-tertiary);
 }
 
 .step-circle.complete {
-    background: #e7f3ff;
-    border-color: #5f93db;
-    color: #1f4b88;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-1000);
+    color: var(--text-primary);
 }
 
 .wizard-step-indicator.active .step-circle {
-    border-color: #3c79d2;
-    color: #1f4b88;
+    border-color: var(--gray-1000);
+    color: var(--text-primary);
 }
 
 .step-label {
@@ -78,7 +78,7 @@
 }
 
 .wizard-step-indicator.active .step-label {
-    color: #1b3f75;
+    color: var(--text-primary);
     font-weight: 600;
 }
 
@@ -90,7 +90,7 @@
 .wizard-section h3 {
     margin: 0 0 10px;
     font-size: 1.06rem;
-    color: #132e56;
+    color: var(--text-primary);
 }
 
 .wizard-subhead {
@@ -98,15 +98,15 @@
 }
 
 .wizard-muted {
-    color: #637a9a;
+    color: var(--text-tertiary);
     font-size: 0.86rem;
     margin-bottom: 14px;
 }
 
 .wizard-upload-box {
     margin-top: 14px;
-    border: 1px dashed #b9cce7;
-    background: #f8fbff;
+    border: 1px dashed var(--gray-100);
+    background: var(--bg-tertiary);
     border-radius: 10px;
     padding: 20px;
     display: flex;
@@ -116,13 +116,13 @@
 }
 
 .wizard-upload-box.wizard-warning {
-    border-color: #e7c15f;
-    background: #fff8e7;
+    border-color: var(--color-warning);
+    background: var(--color-warning-bg);
 }
 
 .wizard-upload-box.wizard-error {
-    border-color: #f0b5b5;
-    background: #fff2f2;
+    border-color: var(--color-error-bg);
+    background: var(--color-error-bg);
 }
 
 .wizard-upload-box input[type="file"] {
@@ -130,7 +130,7 @@
 }
 
 .wizard-upload-box span {
-    color: #667d9a;
+    color: var(--text-tertiary);
     font-size: 0.8rem;
 }
 
@@ -138,7 +138,7 @@
     border: 1px solid var(--border-primary);
     border-radius: 10px;
     padding: 12px;
-    background: #fff;
+    background: var(--bg-primary);
 }
 
 .wizard-option-grid {
@@ -149,8 +149,8 @@
 
 .wizard-option-card {
     text-align: left;
-    border: 1px solid #bccbe1;
-    background: #fefefe;
+    border: 1px solid var(--gray-100);
+    background: var(--bg-primary);
     border-radius: 9px;
     padding: 14px;
     cursor: pointer;
@@ -158,20 +158,20 @@
 }
 
 .wizard-option-card:hover {
-    border-color: #8fb0de;
-    background: #f7fbff;
+    border-color: var(--border-default);
+    background: var(--bg-tertiary);
 }
 
 .wizard-option-card.selected {
-    border-color: #3d7ad2;
-    box-shadow: inset 0 0 0 1px #3d7ad2;
-    background: #f4f9ff;
+    border-color: var(--gray-1000);
+    box-shadow: inset 0 0 0 1px var(--gray-1000);
+    background: var(--bg-tertiary);
 }
 
 .wizard-option-title {
     font-size: 0.9rem;
     font-weight: 600;
-    color: #173764;
+    color: var(--text-primary);
     margin-bottom: 6px;
 }
 
@@ -183,9 +183,9 @@
 }
 
 .option-tag {
-    background: #eaf1ff;
-    color: #2f5ea1;
-    border: 1px solid #c8daf8;
+    background: var(--bg-tertiary);
+    color: var(--gray-1000);
+    border: 1px solid var(--gray-100);
     border-radius: 5px;
     font-size: 0.72rem;
     padding: 2px 6px;
@@ -194,7 +194,7 @@
 .wizard-option-card p {
     margin: 0;
     font-size: 0.82rem;
-    color: #5f7390;
+    color: var(--text-tertiary);
     line-height: 1.45;
 }
 
@@ -207,7 +207,7 @@
 }
 
 .wizard-error {
-    color: #b91c1c;
+    color: var(--color-error);
     font-size: 0.82rem;
 }
 
@@ -228,12 +228,12 @@
 .wizard-table td {
     text-align: left;
     padding: 9px 10px;
-    border-bottom: 1px solid #e8edf5;
+    border-bottom: 1px solid var(--gray-100);
 }
 
 .wizard-table th {
-    background: #f8fbff;
-    color: #4d6382;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
     font-size: 0.74rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -252,9 +252,9 @@
 
 .wizard-filter-chip {
     font-size: 0.74rem;
-    border: 1px solid #cad8ec;
-    background: #f5f9ff;
-    color: #32598f;
+    border: 1px solid var(--gray-100);
+    background: var(--bg-tertiary);
+    color: var(--gray-1000);
     padding: 3px 8px;
     border-radius: 999px;
 }
@@ -268,7 +268,7 @@
 
 .wizard-actions-bottom {
     padding-top: 14px;
-    border-top: 1px solid #e8edf5;
+    border-top: 1px solid var(--gray-100);
 }
 
 .wizard-decision-log {
@@ -279,12 +279,12 @@
 }
 
 .wizard-decision-entry {
-    border: 1px solid #d6e2f3;
+    border: 1px solid var(--gray-100);
     border-radius: 8px;
     padding: 10px;
-    background: #f8fbff;
+    background: var(--bg-tertiary);
     font-size: 0.82rem;
-    color: #345074;
+    color: var(--text-primary);
 }
 
 .wizard-decision-header {
@@ -295,27 +295,27 @@
     margin-bottom: 4px;
     font-size: 0.76rem;
     text-transform: uppercase;
-    color: #5f7595;
+    color: var(--text-tertiary);
 }
 
 .wizard-progress {
     width: 100%;
     height: 10px;
     border-radius: 999px;
-    background: #e6edf8;
+    background: var(--bg-tertiary);
     overflow: hidden;
 }
 
 .wizard-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #2f6ec8, #4b8df1);
+    background: linear-gradient(90deg, var(--gray-1000), var(--gray-1000));
     transition: width 0.3s ease;
 }
 
 .wizard-progress-label {
     margin-top: 8px;
     text-align: right;
-    color: #496282;
+    color: var(--text-secondary);
     font-size: 0.82rem;
     font-weight: 600;
 }
@@ -344,12 +344,12 @@
 }
 
 .target-card {
-    border: 2px solid #e2e8f0;
+    border: 2px solid var(--border-default);
     border-radius: 12px;
     padding: 20px;
     cursor: pointer;
     transition: all 0.2s ease;
-    background: #fff;
+    background: var(--bg-primary);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -357,36 +357,36 @@
 }
 
 .target-card:hover {
-    border-color: #cbd5e1;
+    border-color: var(--border-default);
     transform: translateY(-2px);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
 .target-card.selected {
-    border-color: #3b82f6;
-    background: #eff6ff;
+    border-color: var(--gray-1000);
+    background: var(--bg-tertiary);
     box-shadow: 0 4px 12px -2px rgba(59, 130, 246, 0.15);
 }
 
 .target-card h4 {
     margin: 0;
     font-size: 1.05rem;
-    color: #1e293b;
+    color: var(--text-primary);
 }
 
 .target-card p {
     margin: 0;
     font-size: 0.85rem;
-    color: #64748b;
+    color: var(--text-tertiary);
     line-height: 1.4;
 }
 
 .target-card .constraints {
     margin-top: auto;
     padding-top: 12px;
-    border-top: 1px solid #f1f5f9;
+    border-top: 1px solid var(--bg-tertiary);
     font-size: 0.8rem;
-    color: #475569;
+    color: var(--text-secondary);
 }
 
 .target-card .badge {
@@ -403,10 +403,10 @@
 }
 
 .autopilot-plan-card {
-    border: 1px solid #bfcce0;
+    border: 1px solid var(--gray-100);
     border-radius: 12px;
     padding: 16px;
-    background: #fff;
+    background: var(--bg-primary);
     cursor: pointer;
     transition: all 0.2s ease;
     display: flex;
@@ -415,13 +415,13 @@
 }
 
 .autopilot-plan-card:hover {
-    border-color: #8fb0de;
-    background: #f8fbff;
+    border-color: var(--border-default);
+    background: var(--bg-tertiary);
 }
 
 .autopilot-plan-card.selected {
-    border-color: #3d7ad2;
-    background: #f0f7ff;
+    border-color: var(--gray-1000);
+    background: var(--bg-tertiary);
     box-shadow: 0 0 0 2px rgba(61, 122, 210, 0.2);
 }
 
@@ -446,12 +446,12 @@
 .plan-header h4 {
     margin: 0;
     font-size: 1rem;
-    color: #112a50;
+    color: var(--text-primary);
 }
 
 .plan-description {
     font-size: 0.82rem;
-    color: #5e7391;
+    color: var(--text-tertiary);
     margin: 0;
     flex-grow: 1;
 }
@@ -461,15 +461,15 @@
     justify-content: space-between;
     font-size: 0.78rem;
     font-weight: 600;
-    color: #1b3f75;
+    color: var(--text-primary);
     padding-top: 8px;
-    border-top: 1px solid #e8edf5;
+    border-top: 1px solid var(--gray-100);
 }
 
 .plan-estimate-note {
     margin-top: 2px;
     font-size: 0.74rem;
-    color: #5e7391;
+    color: var(--text-tertiary);
     line-height: 1.35;
 }
 
@@ -482,18 +482,18 @@
     font-size: 0.7rem;
     padding: 2px 6px;
     border-radius: 4px;
-    background: #f0f4f8;
-    color: #4d6382;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
 }
 
-.label-badge.speed { background: #e7f3ff; color: #1f4b88; }
-.label-badge.quality { background: #f0fff4; color: #166534; }
+.label-badge.speed { background: var(--bg-tertiary); color: var(--text-primary); }
+.label-badge.quality { background: var(--color-success); color: var(--color-success); }
 
 .wizard-intent-summary {
-    background: #f8fbff;
+    background: var(--bg-tertiary);
     padding: 12px;
     border-radius: 8px;
-    border-left: 4px solid #3d7ad2;
+    border-left: 4px solid var(--gray-1000);
     margin-bottom: 16px;
     font-size: 0.9rem;
 }
@@ -501,13 +501,13 @@
 .wizard-rewrite-badge {
     margin-top: 6px;
     font-size: 0.8rem;
-    color: #5e7391;
+    color: var(--text-tertiary);
     font-style: italic;
 }
 
 .wizard-fix-panel {
-    background: #fff9f0;
-    border-color: #ffe4bc;
+    background: var(--color-warning-bg);
+    border-color: var(--color-warning-bg);
 }
 
 .wizard-data-intake {
@@ -523,12 +523,12 @@
 }
 
 .wizard-data-intake-copy strong {
-    color: #173764;
+    color: var(--text-primary);
     font-size: 0.9rem;
 }
 
 .wizard-data-intake-copy span {
-    color: #667d9a;
+    color: var(--text-tertiary);
     font-size: 0.8rem;
 }
 

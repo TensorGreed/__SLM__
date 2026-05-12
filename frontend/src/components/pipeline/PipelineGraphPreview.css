@@ -29,7 +29,7 @@
     padding: var(--space-sm) var(--space-md);
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
-    background: #f7faff;
+    background: var(--bg-tertiary);
 }
 
 .pipeline-graph-alert--error {
@@ -49,7 +49,7 @@
     padding: var(--space-sm) var(--space-md);
     border: 1px solid var(--border-secondary);
     font-size: var(--font-size-sm);
-    background: #f8fbff;
+    background: var(--bg-tertiary);
 }
 
 .pipeline-graph-result.ok {
@@ -84,7 +84,7 @@
     min-height: 230px;
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
-    background: #ffffff;
+    background: var(--bg-primary);
     padding: var(--space-md);
     display: flex;
     flex-direction: column;
@@ -138,7 +138,7 @@
 }
 
 .pipeline-graph-node-status--active {
-    color: #23518f;
+    color: var(--text-primary);
     border-color: rgba(59, 130, 246, 0.4);
     background: rgba(59, 130, 246, 0.14);
 }
@@ -146,7 +146,7 @@
 .pipeline-graph-node-status--pending {
     color: var(--text-tertiary);
     border-color: var(--border-secondary);
-    background: #f7faff;
+    background: var(--bg-tertiary);
 }
 
 .pipeline-graph-node h4 {
@@ -185,7 +185,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 6px 8px;
-    background: #f8fbff;
+    background: var(--bg-tertiary);
 }
 
 .pipeline-graph-node-artifacts span {

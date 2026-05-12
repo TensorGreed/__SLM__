@@ -112,11 +112,11 @@
 }
 
 .cloud-burst-metrics__line--train {
-    stroke: #22c55e;
+    stroke: var(--color-success);
 }
 
 .cloud-burst-metrics__line--eval {
-    stroke: #f59e0b;
+    stroke: var(--color-warning);
 }
 
 /* Cloud Burst Timeline */
@@ -303,7 +303,7 @@
 .training-preflight-contract-card__notice--warning {
     background: rgba(245, 158, 11, 0.14);
     border: 1px solid rgba(245, 158, 11, 0.28);
-    color: #f59e0b;
+    color: var(--color-warning);
 }
 
 .training-preflight-contract-card__notice--hint {
@@ -493,7 +493,7 @@
 .training-setup-tab {
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
-    background: #ffffff;
+    background: var(--bg-primary);
     color: var(--text-secondary);
     padding: 6px 10px;
     font-size: var(--font-size-sm);
@@ -509,9 +509,9 @@
 }
 
 .training-setup-tab.active {
-    border-color: #4f82ca;
-    background: #eaf2ff;
-    color: #1f4f8f;
+    border-color: var(--gray-1000);
+    background: var(--gray-100);
+    color: var(--text-primary);
 }
 
 .setup-tab-index {
@@ -529,7 +529,7 @@
 .training-review-panel {
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
-    background: #f8fbff;
+    background: var(--bg-tertiary);
     padding: var(--space-md);
     display: flex;
     flex-direction: column;
@@ -543,9 +543,9 @@
 }
 
 .training-review-item {
-    border: 1px solid #d7e2f2;
+    border: 1px solid var(--gray-100);
     border-radius: var(--radius-sm);
-    background: #ffffff;
+    background: var(--bg-primary);
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
@@ -565,9 +565,9 @@
 }
 
 .training-review-selection-panel {
-    border: 1px solid #d7e2f2;
+    border: 1px solid var(--gray-100);
     border-radius: var(--radius-sm);
-    background: #ffffff;
+    background: var(--bg-primary);
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
@@ -1455,12 +1455,12 @@
 
 /* Light workspace overrides */
 .resolved-defaults-panel__kv {
-    color: #546b88;
+    color: var(--text-secondary);
 }
 
 .resolved-defaults-panel__json {
-    background: #f5f8fd;
-    border-color: #d5e0f1;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .training-preflight-panel,
@@ -1472,26 +1472,26 @@
 .training-model-benchmark,
 .training-model-benchmark__row,
 .training-model-benchmark__history {
-    background: #f8fbff;
-    border-color: #d8e2f2;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .training-model-introspection {
-    background: #f2f7ff;
-    border-color: #d8e2f2;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .training-preflight-contract-card {
-    background: #f2f7ff;
-    border-color: #d8e2f2;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .training-preflight-panel__details > summary {
-    background: #edf3ff;
+    background: var(--bg-tertiary);
 }
 
 .training-collapsible > summary {
-    background: #eef4ff;
+    background: var(--bg-tertiary);
 }
 
 .training-workspace-tabs,
@@ -1499,19 +1499,19 @@
 .training-overview-card,
 .training-model-wizard,
 .training-lora-box {
-    background: #f8fbff;
-    border-color: #d8e2f2;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .training-workspace-tab:hover {
-    background: #edf3ff;
+    background: var(--bg-tertiary);
 }
 
 .training-workspace-tab.active {
-    background: #eaf2ff;
-    color: #1f4b89;
+    background: var(--gray-100);
+    color: var(--text-primary);
 }
 
 .training-compare-bar {
-    border-bottom: 1px solid #dde6f4;
+    border-bottom: 1px solid var(--bg-tertiary);
 }

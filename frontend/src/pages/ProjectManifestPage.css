@@ -111,13 +111,13 @@
 .manifest-issue-card.is-error {
     border: 1px solid rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.08);
-    color: #b91c1c;
+    color: var(--color-error);
 }
 
 .manifest-issue-card.is-warning {
     border: 1px solid rgba(234, 179, 8, 0.5);
     background: rgba(234, 179, 8, 0.08);
-    color: #92400e;
+    color: var(--color-warning);
 }
 
 .manifest-issue-card .issue-head {
@@ -151,7 +151,7 @@
 .manifest-validation-ok {
     border: 1px solid rgba(34, 197, 94, 0.5);
     background: rgba(34, 197, 94, 0.08);
-    color: #15803d;
+    color: var(--color-success);
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     font-size: var(--font-size-sm);
@@ -221,13 +221,13 @@
 .manifest-status.is-error {
     border: 1px solid rgba(239, 68, 68, 0.5);
     background: rgba(239, 68, 68, 0.08);
-    color: #b91c1c;
+    color: var(--color-error);
 }
 
 .manifest-status.is-info {
     border: 1px solid rgba(59, 130, 246, 0.5);
     background: rgba(59, 130, 246, 0.08);
-    color: #1d4ed8;
+    color: var(--gray-1000);
 }
 
 .manifest-export-button {

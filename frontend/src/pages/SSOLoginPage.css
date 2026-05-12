@@ -21,7 +21,7 @@
     height: 50px;
     border-radius: 12px;
     margin: 0 auto var(--space-xl);
-    background: linear-gradient(135deg, #2f74d9, #5b9eef);
+    background: linear-gradient(135deg, var(--gray-1000), var(--gray-1000));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -29,7 +29,7 @@
 }
 
 .auth-logo-mark {
-    color: #ffffff;
+    color: var(--bg-primary);
     font-size: 0.86rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -39,11 +39,11 @@
     font-size: 1.7rem;
     font-weight: 700;
     margin-bottom: var(--space-sm);
-    color: #132c52;
+    color: var(--text-primary);
 }
 
 .auth-subtitle {
-    color: #5d7495;
+    color: var(--text-tertiary);
     margin-bottom: var(--space-xl);
 }
 
@@ -60,7 +60,7 @@
 .auth-field label {
     display: block;
     margin-bottom: var(--space-xs);
-    color: #506987;
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
 }
 

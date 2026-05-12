@@ -35,9 +35,9 @@
 }
 
 .failure-clusters-error {
-    border: 1px solid var(--color-error, #d14343);
+    border: 1px solid var(--color-error, var(--color-error));
     background: rgba(209, 67, 67, 0.08);
-    color: var(--color-error, #d14343);
+    color: var(--color-error, var(--color-error));
     padding: 8px 12px;
     border-radius: 6px;
     font-size: var(--font-size-sm);
@@ -64,33 +64,33 @@
     border-radius: 999px;
     font-size: 0.78rem;
     font-family: var(--font-mono, monospace);
-    background: #eef2fa;
-    color: #3f536e;
-    border: 1px solid #c9d6ea;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
 }
 
 .failure-clusters-chip-safety_failure {
-    background: #fde7e7;
-    color: #a53030;
-    border-color: #f3b6b6;
+    background: var(--color-error-bg);
+    color: var(--color-error);
+    border-color: var(--color-error-bg);
 }
 
 .failure-clusters-chip-hallucination {
-    background: #fff3d6;
-    color: #8a6414;
-    border-color: #f0d694;
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    border-color: var(--color-warning-bg);
 }
 
 .failure-clusters-chip-coverage_gap {
-    background: #e6f4ff;
-    color: #1f4f8f;
-    border-color: #a8cdf0;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--gray-100);
 }
 
 .failure-clusters-chip-formatting_mismatch {
-    background: #f5ecff;
-    color: #5b3a94;
-    border-color: #d4bdf4;
+    background: var(--gray-100);
+    color: var(--gray-1000);
+    border-color: var(--gray-1000);
 }
 
 .failure-clusters-empty {
@@ -106,9 +106,9 @@
 }
 
 .failure-cluster {
-    border: 1px solid #e1e7f3;
+    border: 1px solid var(--border-default);
     border-radius: 8px;
-    background: #fcfdff;
+    background: var(--bg-tertiary);
     overflow: hidden;
 }
 
@@ -128,7 +128,7 @@
 }
 
 .failure-cluster-head:hover {
-    background: #f3f6fc;
+    background: var(--bg-tertiary);
 }
 
 .failure-cluster-title {
@@ -162,8 +162,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    border-top: 1px dashed #e1e7f3;
-    background: #f9fbff;
+    border-top: 1px dashed var(--border-default);
+    background: var(--bg-tertiary);
 }
 
 .failure-cluster-reason {
@@ -182,9 +182,9 @@
 }
 
 .failure-cluster-exemplar {
-    border-left: 3px solid #c9d6ea;
+    border-left: 3px solid var(--border-default);
     padding: 4px 10px;
-    background: #ffffff;
+    background: var(--bg-primary);
     border-radius: 0 6px 6px 0;
     font-size: var(--font-size-sm);
 }
@@ -218,7 +218,7 @@
 }
 
 .failure-clusters-remediation {
-    border-top: 1px solid #e1e7f3;
+    border-top: 1px solid var(--border-default);
     padding-top: var(--space-md);
     display: flex;
     flex-direction: column;

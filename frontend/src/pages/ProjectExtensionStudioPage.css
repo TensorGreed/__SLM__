@@ -11,13 +11,13 @@
 }
 
 .extension-studio-page .deployment-status.is-error {
-    background: var(--color-danger-bg, #ffebe9);
-    color: var(--color-danger, #cf222e);
-    border: 1px solid var(--color-danger, #cf222e);
+    background: var(--color-danger-bg, var(--color-error-bg));
+    color: var(--color-danger, var(--color-error));
+    border: 1px solid var(--color-danger, var(--color-error));
 }
 
 .extension-studio-page .dim {
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
 }
 
 .extension-studio-page .workspace-page-header {
@@ -71,7 +71,7 @@
     gap: 4px;
     width: 100%;
     text-align: left;
-    border: 1px solid var(--border-muted, #eaeef2);
+    border: 1px solid var(--border-muted, var(--border-default));
     background: transparent;
     border-radius: 6px;
     padding: var(--space-sm, 12px);
@@ -80,8 +80,8 @@
 }
 
 .extension-kind-row.is-selected .extension-kind-button {
-    border-color: var(--color-accent, #0969da);
-    background: var(--bg-hover, #f0f6fc);
+    border-color: var(--color-accent, var(--gray-1000));
+    background: var(--bg-hover, var(--bg-tertiary));
 }
 
 .extension-kind-row .extension-kind-row-title {
@@ -181,7 +181,7 @@
 
 .scaffold-preview {
     margin-top: var(--space-md, 16px);
-    border: 1px solid var(--border-muted, #eaeef2);
+    border: 1px solid var(--border-muted, var(--border-default));
     border-radius: 6px;
     overflow: hidden;
 }
@@ -192,8 +192,8 @@
     justify-content: space-between;
     gap: var(--space-md, 16px);
     padding: var(--space-sm, 12px) var(--space-md, 16px);
-    background: var(--bg-subtle, #f6f8fa);
-    border-bottom: 1px solid var(--border-muted, #eaeef2);
+    background: var(--bg-subtle, var(--bg-tertiary));
+    border-bottom: 1px solid var(--border-muted, var(--border-default));
 }
 
 .scaffold-preview-title {
@@ -217,8 +217,8 @@
     list-style: none;
     padding: 0;
     margin: 0;
-    border-right: 1px solid var(--border-muted, #eaeef2);
-    background: var(--bg-subtle, #f6f8fa);
+    border-right: 1px solid var(--border-muted, var(--border-default));
+    background: var(--bg-subtle, var(--bg-tertiary));
 }
 
 .scaffold-preview-tab {
@@ -235,8 +235,8 @@
 
 .scaffold-preview-tab.is-active,
 .scaffold-preview-tab[aria-selected="true"] {
-    background: var(--bg-hover, #f0f6fc);
-    color: var(--color-accent, #0969da);
+    background: var(--bg-hover, var(--bg-tertiary));
+    color: var(--color-accent, var(--gray-1000));
 }
 
 .scaffold-preview-pane {
@@ -250,7 +250,7 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-xs, 6px) var(--space-sm, 12px);
-    border-bottom: 1px solid var(--border-muted, #eaeef2);
+    border-bottom: 1px solid var(--border-muted, var(--border-default));
 }
 
 .scaffold-preview-code {
@@ -259,7 +259,7 @@
     overflow: auto;
     font-size: var(--font-size-xs, 12px);
     line-height: 1.45;
-    background: var(--bg-code, #f6f8fa);
+    background: var(--bg-code, var(--bg-tertiary));
     max-height: 480px;
 }
 
@@ -273,13 +273,13 @@
 
 .extension-validate-report {
     margin-top: var(--space-md, 16px);
-    border: 1px solid var(--border-muted, #eaeef2);
+    border: 1px solid var(--border-muted, var(--border-default));
     border-radius: 6px;
     padding: var(--space-sm, 12px) var(--space-md, 16px);
 }
 
 .extension-validate-report.is-error {
-    border-color: var(--color-danger, #cf222e);
+    border-color: var(--color-danger, var(--color-error));
 }
 
 .extension-validate-report-head {

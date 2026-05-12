@@ -13,15 +13,15 @@
 }
 
 .deployments-page .deployment-status.is-error {
-    background: var(--color-danger-bg, #ffebe9);
-    color: var(--color-danger, #cf222e);
-    border: 1px solid var(--color-danger, #cf222e);
+    background: var(--color-danger-bg, var(--color-error-bg));
+    color: var(--color-danger, var(--color-error));
+    border: 1px solid var(--color-danger, var(--color-error));
 }
 
 .deployments-page .deployment-status.is-info {
-    background: var(--color-info-bg, #ddf4ff);
-    color: var(--color-info, #0969da);
-    border: 1px solid var(--color-info, #0969da);
+    background: var(--color-info-bg, var(--gray-100));
+    color: var(--color-info, var(--gray-1000));
+    border: 1px solid var(--color-info, var(--gray-1000));
 }
 
 .deployments-page .deployment-section-header {
@@ -34,9 +34,9 @@
 
 .deployments-page .deployment-empty {
     padding: var(--space-md, 16px);
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
     text-align: center;
-    border: 1px dashed var(--border-default, #d0d7de);
+    border: 1px dashed var(--border-default, var(--border-default));
     border-radius: 6px;
 }
 
@@ -47,7 +47,7 @@
 }
 
 .deployments-page .dim {
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
 }
 
 /* -- Versions table -------------------------------------------------- */
@@ -60,26 +60,26 @@
 .deployments-page .deployment-table th,
 .deployments-page .deployment-table td {
     padding: 6px 10px;
-    border-bottom: 1px solid var(--border-muted, #eaeef2);
+    border-bottom: 1px solid var(--border-muted, var(--border-default));
     text-align: left;
     font-size: var(--font-size-sm, 13px);
 }
 
 .deployments-page .deployment-table th {
-    background: var(--bg-subtle, #f6f8fa);
-    color: var(--text-secondary, #57606a);
+    background: var(--bg-subtle, var(--bg-tertiary));
+    color: var(--text-secondary, var(--text-secondary));
     font-weight: 600;
 }
 
 .deployments-page .deployment-table tr.is-selected {
-    background: var(--bg-hover, #f0f6fc);
+    background: var(--bg-hover, var(--bg-tertiary));
 }
 
 .deployments-page .deployment-version-button {
     background: none;
     border: none;
     padding: 0;
-    color: var(--color-info, #0969da);
+    color: var(--color-info, var(--gray-1000));
     cursor: pointer;
     font-weight: 600;
 }
@@ -129,14 +129,14 @@
 }
 
 .deployments-page .deployment-score-component {
-    border: 1px solid var(--border-muted, #eaeef2);
+    border: 1px solid var(--border-muted, var(--border-default));
     border-radius: 6px;
     padding: var(--space-sm, 12px);
 }
 
 .deployments-page .deployment-score-component.is-missing {
-    background: var(--bg-subtle, #f6f8fa);
-    color: var(--text-tertiary, #6e7781);
+    background: var(--bg-subtle, var(--bg-tertiary));
+    color: var(--text-tertiary, var(--text-tertiary));
 }
 
 .deployments-page .component-head {
@@ -158,7 +158,7 @@
 }
 
 .deployments-page .component-summary {
-    color: var(--text-secondary, #57606a);
+    color: var(--text-secondary, var(--text-secondary));
     font-size: var(--font-size-sm, 13px);
 }
 
@@ -174,7 +174,7 @@
 }
 
 .deployments-page .component-signals li.is-warn code:first-child {
-    color: var(--color-warning, #d4a72c);
+    color: var(--color-warning, var(--color-warning));
 }
 
 /* -- Telemetry panel ------------------------------------------------- */
@@ -192,13 +192,13 @@
 }
 
 .deployments-page .deployment-kpi {
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     border-radius: 6px;
     padding: var(--space-sm, 12px);
 }
 
 .deployments-page .kpi-label {
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
     font-size: var(--font-size-xs, 12px);
     margin-bottom: 4px;
     text-transform: uppercase;
@@ -212,7 +212,7 @@
 }
 
 .deployments-page .kpi-sub {
-    color: var(--text-secondary, #57606a);
+    color: var(--text-secondary, var(--text-secondary));
     font-size: var(--font-size-sm, 13px);
 }
 
@@ -232,14 +232,14 @@
 .deployments-page .deployment-drift-summary .kv {
     display: flex;
     flex-direction: column;
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     border-radius: 6px;
     padding: var(--space-sm, 12px);
 }
 
 .deployments-page .deployment-drift-launcher summary {
     cursor: pointer;
-    color: var(--color-info, #0969da);
+    color: var(--color-info, var(--gray-1000));
     margin-bottom: var(--space-sm, 12px);
 }
 

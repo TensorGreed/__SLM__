@@ -208,10 +208,10 @@
 
 /* Light workspace overrides */
 .remote-import-adapter-box {
-    background: #f8fbff;
-    border-color: #d5e1f2;
+    background: var(--bg-tertiary);
+    border-color: var(--gray-100);
 }
 
 .doc-row:hover {
-    background: #f7faff;
+    background: var(--bg-tertiary);
 }

@@ -17,27 +17,27 @@
 }
 
 .observability-page .deployment-status.is-error {
-    background: var(--color-danger-bg, #ffebe9);
-    color: var(--color-danger, #cf222e);
-    border: 1px solid var(--color-danger, #cf222e);
+    background: var(--color-danger-bg, var(--color-error-bg));
+    color: var(--color-danger, var(--color-error));
+    border: 1px solid var(--color-danger, var(--color-error));
 }
 
 .observability-page .deployment-status.is-info {
-    background: var(--color-info-bg, #ddf4ff);
-    color: var(--color-info, #0969da);
-    border: 1px solid var(--color-info, #0969da);
+    background: var(--color-info-bg, var(--gray-100));
+    color: var(--color-info, var(--gray-1000));
+    border: 1px solid var(--color-info, var(--gray-1000));
 }
 
 .observability-page .deployment-empty {
     padding: var(--space-md, 16px);
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
     text-align: center;
-    border: 1px dashed var(--border-default, #d0d7de);
+    border: 1px dashed var(--border-default, var(--border-default));
     border-radius: 6px;
 }
 
 .observability-page .dim {
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
 }
 
 /* -- Filters bar ----------------------------------------------------- */
@@ -71,11 +71,11 @@
 }
 
 .observability-page .timeline-row {
-    border-bottom: 1px solid var(--border-muted, #eaeef2);
+    border-bottom: 1px solid var(--border-muted, var(--border-default));
 }
 
 .observability-page .timeline-row.is-selected > .timeline-row-body {
-    background: var(--bg-hover, #f0f6fc);
+    background: var(--bg-hover, var(--bg-tertiary));
 }
 
 .observability-page .timeline-row-body {
@@ -92,7 +92,7 @@
     border: none;
     cursor: pointer;
     width: 16px;
-    color: var(--text-secondary, #57606a);
+    color: var(--text-secondary, var(--text-secondary));
 }
 
 .observability-page .timeline-toggle:disabled {
@@ -101,7 +101,7 @@
 }
 
 .observability-page .timeline-stage {
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     border-radius: 4px;
     padding: 0 6px;
     font-family: var(--font-mono, monospace);
@@ -112,7 +112,7 @@
     background: none;
     border: none;
     padding: 0;
-    color: var(--color-info, #0969da);
+    color: var(--color-info, var(--gray-1000));
     cursor: pointer;
     font-weight: 600;
     font-family: var(--font-mono, monospace);
@@ -125,7 +125,7 @@
 .observability-page .timeline-summary {
     flex: 1;
     min-width: 200px;
-    color: var(--text-primary, #1f2328);
+    color: var(--text-primary, var(--text-primary));
 }
 
 .observability-page .timeline-meta {
@@ -134,8 +134,8 @@
 }
 
 .observability-page .timeline-reason-code {
-    background: var(--color-danger-bg, #ffebe9);
-    color: var(--color-danger, #cf222e);
+    background: var(--color-danger-bg, var(--color-error-bg));
+    color: var(--color-danger, var(--color-error));
     padding: 0 4px;
     border-radius: 3px;
     font-size: var(--font-size-xs, 12px);
@@ -149,7 +149,7 @@
 
 .observability-page .timeline-empty {
     padding: var(--space-md, 16px);
-    color: var(--text-tertiary, #6e7781);
+    color: var(--text-tertiary, var(--text-tertiary));
     text-align: center;
 }
 
@@ -170,7 +170,7 @@
 }
 
 .observability-page .failure-cluster-row {
-    border-bottom: 1px solid var(--border-muted, #eaeef2);
+    border-bottom: 1px solid var(--border-muted, var(--border-default));
     padding: 8px 0;
 }
 
@@ -183,7 +183,7 @@
 }
 
 .observability-page .failure-cluster-stage {
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     padding: 0 6px;
     border-radius: 4px;
     font-family: var(--font-mono, monospace);
@@ -191,8 +191,8 @@
 }
 
 .observability-page .failure-cluster-reason {
-    background: var(--color-danger-bg, #ffebe9);
-    color: var(--color-danger, #cf222e);
+    background: var(--color-danger-bg, var(--color-error-bg));
+    color: var(--color-danger, var(--color-error));
     padding: 0 4px;
     border-radius: 3px;
     font-size: var(--font-size-xs, 12px);
@@ -221,7 +221,7 @@
     background: none;
     border: none;
     padding: 0;
-    color: var(--color-info, #0969da);
+    color: var(--color-info, var(--gray-1000));
     cursor: pointer;
     font-family: var(--font-mono, monospace);
 }
@@ -241,7 +241,7 @@
 }
 
 .observability-page .support-bundle-latest {
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     border-radius: 6px;
     padding: var(--space-sm, 12px);
     margin-bottom: var(--space-md, 16px);
@@ -283,8 +283,8 @@
     right: 0;
     bottom: 0;
     width: min(560px, 100vw);
-    background: var(--bg-default, #ffffff);
-    border-left: 1px solid var(--border-default, #d0d7de);
+    background: var(--bg-default, var(--bg-primary));
+    border-left: 1px solid var(--border-default, var(--border-default));
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
     overflow-y: auto;
     z-index: 50;
@@ -309,7 +309,7 @@
 }
 
 .observability-page .event-drilldown-item {
-    border: 1px solid var(--border-muted, #eaeef2);
+    border: 1px solid var(--border-muted, var(--border-default));
     border-radius: 6px;
     padding: var(--space-sm, 12px);
 }
@@ -325,7 +325,7 @@
 .observability-page .event-drilldown-stage {
     font-family: var(--font-mono, monospace);
     font-size: var(--font-size-xs, 12px);
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     padding: 0 6px;
     border-radius: 4px;
 }
@@ -339,7 +339,7 @@
 }
 
 .observability-page .event-drilldown-payload pre {
-    background: var(--bg-subtle, #f6f8fa);
+    background: var(--bg-subtle, var(--bg-tertiary));
     border-radius: 4px;
     padding: var(--space-xs, 6px);
     font-size: var(--font-size-xs, 12px);

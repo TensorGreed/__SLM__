@@ -5,8 +5,8 @@
 }
 
 .tok-section {
-    background: #ffffff;
-    border: 1px solid #d9e3f2;
+    background: var(--bg-primary);
+    border: 1px solid var(--gray-100);
     border-radius: 12px;
     padding: 1.1rem 1.2rem;
 }
@@ -17,7 +17,7 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    color: #17355f;
+    color: var(--text-primary);
 }
 
 .tok-section h3 .icon {
@@ -40,18 +40,18 @@
 
 .tok-field label {
     font-size: 0.75rem;
-    color: #617792;
+    color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
 
 .tok-field input,
 .tok-field select {
-    background: #ffffff;
-    border: 1px solid #cdd9eb;
+    background: var(--bg-primary);
+    border: 1px solid var(--gray-100);
     border-radius: 8px;
     padding: 0.5rem 0.75rem;
-    color: #183257;
+    color: var(--text-primary);
     font-size: 0.85rem;
 }
 
@@ -73,17 +73,17 @@
 .tok-preset {
     padding: 0.3rem 0.7rem;
     border-radius: 999px;
-    border: 1px solid #c7d7f0;
-    background: #f4f8ff;
-    color: #2f5e9f;
+    border: 1px solid var(--gray-100);
+    background: var(--bg-tertiary);
+    color: var(--gray-1000);
     font-size: 0.75rem;
     cursor: pointer;
     transition: all 0.2s;
 }
 
 .tok-preset:hover {
-    background: #eaf2ff;
-    border-color: #97b6e2;
+    background: var(--gray-100);
+    border-color: var(--gray-100);
 }
 
 .tok-btn {
@@ -94,8 +94,8 @@
     font-weight: 600;
     font-size: 0.85rem;
     transition: all 0.2s;
-    background: linear-gradient(135deg, #2f74d9, #5b9eef);
-    color: #ffffff;
+    background: linear-gradient(135deg, var(--gray-1000), var(--gray-1000));
+    color: var(--bg-primary);
 }
 
 .tok-btn:hover {
@@ -118,8 +118,8 @@
 }
 
 .tok-stat {
-    background: #f8fbff;
-    border: 1px solid #dfe8f5;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--bg-tertiary);
     border-radius: 8px;
     padding: 0.75rem 1rem;
     text-align: center;
@@ -127,7 +127,7 @@
 
 .tok-stat .label {
     font-size: 0.72rem;
-    color: #6e839e;
+    color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 0.25rem;
@@ -136,20 +136,20 @@
 .tok-stat .value {
     font-size: 1.35rem;
     font-weight: 700;
-    color: #2a5697;
+    color: var(--text-primary);
 }
 
 .tok-stat.warning .value {
-    color: #d14747;
+    color: var(--color-error);
 }
 
 .tok-stat.success .value {
-    color: #1f8f53;
+    color: var(--color-success);
 }
 
 .tok-chart {
-    background: #f8fbff;
-    border: 1px solid #deebfd;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--bg-tertiary);
     border-radius: 10px;
     padding: 0.75rem;
     margin-bottom: 0.75rem;
@@ -158,7 +158,7 @@
 .tok-chart-label {
     text-align: center;
     font-size: 0.75rem;
-    color: #607794;
+    color: var(--text-tertiary);
     margin-bottom: 0.5rem;
 }
 
@@ -167,11 +167,11 @@
     align-items: flex-start;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    background: #ecf9f1;
-    border: 1px solid #c8ead7;
+    background: var(--color-success-bg);
+    border: 1px solid var(--color-success-bg);
     border-radius: 8px;
     font-size: 0.85rem;
-    color: #21563c;
+    color: var(--text-primary);
     margin-top: 0.5rem;
 }
 
@@ -181,11 +181,11 @@
 }
 
 .tok-recommendation code {
-    background: #ddf0e6;
+    background: var(--color-success-bg);
     padding: 0.15rem 0.4rem;
     border-radius: 4px;
     font-size: 0.82rem;
-    color: #1e7b4a;
+    color: var(--text-primary);
 }
 
 .tok-vocab-grid {
@@ -195,15 +195,15 @@
     max-height: 280px;
     overflow-y: auto;
     padding: 0.5rem;
-    background: #f7faff;
-    border: 1px solid #e2eaf7;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--bg-tertiary);
     border-radius: 8px;
 }
 
 .tok-vocab-item {
     padding: 0.3rem 0.5rem;
-    background: #ffffff;
-    border: 1px solid #e1e9f7;
+    background: var(--bg-primary);
+    border: 1px solid var(--bg-tertiary);
     border-radius: 4px;
     font-size: 0.72rem;
     display: flex;
@@ -213,14 +213,14 @@
 }
 
 .tok-vocab-item .token {
-    color: #405f88;
+    color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .tok-vocab-item .tid {
-    color: #7d92ae;
+    color: var(--text-tertiary);
     font-family: var(--font-mono);
     flex-shrink: 0;
 }
@@ -230,11 +230,11 @@
     align-items: flex-start;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    background: #edf5ff;
-    border: 1px solid #d0e4ff;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--gray-100);
     border-radius: 8px;
     font-size: 0.82rem;
-    color: #3f5c82;
+    color: var(--text-secondary);
     margin-bottom: 1rem;
 }
 

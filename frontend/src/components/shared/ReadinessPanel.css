@@ -1,22 +1,22 @@
 .readiness-panel {
   padding: 1rem;
   border-radius: 8px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
   margin-bottom: 1.5rem;
   font-family: system-ui, -apple-system, sans-serif;
 }
 
 .readiness-panel.fail {
-  border-left: 4px solid #ef4444;
+  border-left: 4px solid var(--color-error);
 }
 
 .readiness-panel.warn {
-  border-left: 4px solid #f59e0b;
+  border-left: 4px solid var(--color-warning);
 }
 
 .readiness-panel.pass {
-  border-left: 4px solid #10b981;
+  border-left: 4px solid var(--color-success);
 }
 
 .readiness-header {
@@ -28,7 +28,7 @@
 
 .readiness-title {
   font-weight: 600;
-  color: #1e293b;
+  color: var(--text-primary);
   font-size: 1.1rem;
 }
 
@@ -46,13 +46,13 @@
 }
 
 .badge.strict {
-  background: #1e293b;
+  background: var(--text-primary);
   color: white;
 }
 
-.badge.status-pass { background: #d1fae5; color: #065f46; }
-.badge.status-warn { background: #fef3c7; color: #92400e; }
-.badge.status-fail { background: #fee2e2; color: #991b1b; }
+.badge.status-pass { background: var(--color-success-bg); color: var(--color-success); }
+.badge.status-warn { background: var(--color-warning-bg); color: var(--color-warning); }
+.badge.status-fail { background: var(--color-error-bg); color: var(--color-error); }
 
 .readiness-checks {
   display: flex;
@@ -64,7 +64,7 @@
   padding: 0.75rem;
   background: white;
   border-radius: 6px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid var(--bg-tertiary);
 }
 
 .check-main {
@@ -85,17 +85,17 @@
 
 .check-name {
   font-weight: 600;
-  color: #334155;
+  color: var(--text-primary);
   font-size: 0.9rem;
 }
 
 .check-message {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--text-tertiary);
 }
 
 .check-type-tag.blocker {
-  background: #ef4444;
+  background: var(--color-error);
   color: white;
   font-size: 0.7rem;
   padding: 0.1rem 0.4rem;
@@ -106,9 +106,9 @@
 .check-fix {
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px dashed #e2e8f0;
+  border-top: 1px dashed var(--border-default);
   font-size: 0.8rem;
-  color: #475569;
+  color: var(--text-secondary);
 }
 
 .readiness-refresh {
@@ -116,15 +116,15 @@
   padding: 0.4rem 0.8rem;
   font-size: 0.8rem;
   background: white;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-default);
   border-radius: 4px;
   cursor: pointer;
-  color: #64748b;
+  color: var(--text-tertiary);
   transition: all 0.2s;
 }
 
 .readiness-refresh:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
-  color: #1e293b;
+  background: var(--bg-tertiary);
+  border-color: var(--border-default);
+  color: var(--text-primary);
 }

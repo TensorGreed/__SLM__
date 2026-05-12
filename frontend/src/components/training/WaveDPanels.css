@@ -91,16 +91,16 @@
 
 .why-this-plan__provenance--measured {
     background: rgba(34, 197, 94, 0.18);
-    color: #15803d;
+    color: var(--color-success);
 }
 
 .why-this-plan__provenance--estimated {
     background: rgba(234, 179, 8, 0.18);
-    color: #a16207;
+    color: var(--color-warning);
 }
 
 .why-this-plan__error {
-    color: var(--color-danger, #dc2626);
+    color: var(--color-danger, var(--color-error));
     font-size: var(--font-size-sm);
     margin-bottom: var(--space-sm);
 }
@@ -115,7 +115,7 @@
 }
 
 .why-this-plan__manifest-json {
-    background: var(--bg-tertiary, #f3f4f6);
+    background: var(--bg-tertiary, var(--bg-tertiary));
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     padding: var(--space-sm);
@@ -149,7 +149,7 @@
 }
 
 .checkpoints-panel__error {
-    color: var(--color-danger, #dc2626);
+    color: var(--color-danger, var(--color-error));
     font-size: var(--font-size-sm);
     margin-bottom: var(--space-sm);
 }
@@ -277,12 +277,12 @@
 
 .pre-run-modal__provenance--measured {
     background: rgba(34, 197, 94, 0.18);
-    color: #15803d;
+    color: var(--color-success);
 }
 
 .pre-run-modal__provenance--estimated {
     background: rgba(234, 179, 8, 0.18);
-    color: #a16207;
+    color: var(--color-warning);
 }
 
 .pre-run-modal__confidence {
@@ -309,7 +309,7 @@
 }
 
 .pre-run-modal__error {
-    color: var(--color-danger, #dc2626);
+    color: var(--color-danger, var(--color-error));
     font-size: var(--font-size-sm);
 }
 

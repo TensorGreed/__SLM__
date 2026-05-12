@@ -8,24 +8,24 @@
 
 .training-config-mode-switch {
     display: inline-flex;
-    border: 1px solid #c9d6ea;
+    border: 1px solid var(--border-default);
     border-radius: 999px;
     overflow: hidden;
-    background: #ffffff;
+    background: var(--bg-primary);
 }
 
 .training-config-mode-btn {
     border: none;
     background: transparent;
-    color: #526884;
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
     padding: 0.42rem 0.9rem;
     cursor: pointer;
 }
 
 .training-config-mode-btn.active {
-    background: #eaf2ff;
-    color: #1f4f8f;
+    background: var(--gray-100);
+    color: var(--text-primary);
     font-weight: 600;
 }
 

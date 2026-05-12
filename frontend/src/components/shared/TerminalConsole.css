@@ -14,9 +14,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.5rem 1rem;
-    background-color: #1e1e1e;
-    border-bottom: 1px solid #333;
-    color: #888;
+    background-color: var(--text-primary);
+    border-bottom: 1px solid var(--text-secondary);
+    color: var(--text-tertiary);
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -34,21 +34,21 @@
 }
 
 .terminal-dots .dot.red {
-    background-color: #ff5f56;
+    background-color: var(--color-error);
 }
 
 .terminal-dots .dot.yellow {
-    background-color: #ffbd2e;
+    background-color: var(--color-warning);
 }
 
 .terminal-dots .dot.green {
-    background-color: #27c93f;
+    background-color: var(--text-primary);
 }
 
 .terminal-body {
     flex: 1;
-    background-color: #0d0d0d;
-    color: #e6e6e6;
+    background-color: var(--text-primary);
+    color: var(--bg-tertiary);
     padding: 1rem;
     overflow-y: auto;
     font-size: 0.8125rem;
@@ -57,7 +57,7 @@
 }
 
 .terminal-empty {
-    color: #666;
+    color: var(--text-tertiary);
     font-style: italic;
     display: flex;
     height: 100%;
@@ -72,7 +72,7 @@
 }
 
 .terminal-line.error-line {
-    color: #ff5f56;
+    color: var(--color-error);
 }
 
 /* Custom scrollbar for terminal */
@@ -82,15 +82,15 @@
 }
 
 .terminal-body::-webkit-scrollbar-track {
-    background: #0d0d0d;
+    background: var(--text-primary);
 }
 
 .terminal-body::-webkit-scrollbar-thumb {
-    background: #333;
-    border: 2px solid #0d0d0d;
+    background: var(--text-secondary);
+    border: 2px solid var(--text-primary);
     border-radius: 5px;
 }
 
 .terminal-body::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: var(--text-secondary);
 }

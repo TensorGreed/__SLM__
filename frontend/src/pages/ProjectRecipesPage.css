@@ -68,7 +68,7 @@
 
 .pipeline-recipe-card.active {
     border-color: var(--accent-primary);
-    background: #eaf2ff;
+    background: var(--gray-100);
 }
 
 .pipeline-recipe-card-head {
@@ -310,19 +310,19 @@
 .pipeline-recipes-status {
     border: 1px solid rgba(59, 130, 246, 0.35);
     background: rgba(59, 130, 246, 0.1);
-    color: #93c5fd;
+    color: var(--gray-1000);
 }
 
 .pipeline-recipes-warning {
     border: 1px solid rgba(245, 158, 11, 0.35);
     background: rgba(245, 158, 11, 0.1);
-    color: #fbbf24;
+    color: var(--color-warning);
 }
 
 .pipeline-recipes-error {
     border: 1px solid rgba(239, 68, 68, 0.35);
     background: rgba(239, 68, 68, 0.1);
-    color: #fca5a5;
+    color: var(--color-error-bg);
 }
 
 .pipeline-recipes-json-view {
