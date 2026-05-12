@@ -1,0 +1,15 @@
+{
+  "slug": "support-faq",
+  "name": "Demo · Support FAQ",
+  "headline": "Build a support assistant from real ticket Q&A",
+  "description": "A pre-loaded project with 20 cleaned support tickets + 6 hand-labelled gold rows. Click Autopilot Planner and paste the suggested brief to see the whole pipeline work end-to-end.",
+  "task_profile": "instruction_sft",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "tickets.csv",
+  "dataset_input_field": "question",
+  "dataset_output_field": "answer",
+  "gold_filename": "gold.jsonl",
+  "suggested_brief": "Build a support assistant that answers SaaS FAQ questions from our resolved-ticket history. Tone: concise, friendly. Never hallucinate beyond the dataset. Deploy on vLLM."
+}

@@ -1,0 +1,10 @@
+{"key": "g1", "input": {"text": "Best headphones I've ever owned. The noise cancellation is unreal."}, "expected": {"label": "positive"}, "rationale": "Clear positive sentiment with intensifier."}
+{"key": "g2", "input": {"text": "Works as advertised. Nothing extraordinary, nothing broken."}, "expected": {"label": "neutral"}, "rationale": "Classic neutral — works but unremarkable."}
+{"key": "g3", "input": {"text": "Completely defective. Won't even turn on. Returning today."}, "expected": {"label": "negative"}, "rationale": "Clear negative — defective + return action."}
+{"key": "g4", "input": {"text": "I was skeptical at first but this thing is genuinely great."}, "expected": {"label": "positive"}, "rationale": "Tests turn-around / shift in sentiment to positive."}
+{"key": "g5", "input": {"text": "It's a screwdriver. It screws and unscrews. What else can I say."}, "expected": {"label": "neutral"}, "rationale": "Functional neutral — no opinion either way."}
+{"key": "g6", "input": {"text": "Broke after one use. Customer service ghosted me. Garbage."}, "expected": {"label": "negative"}, "rationale": "Strong negative + multiple complaints."}
+{"key": "g7", "input": {"text": "Genuinely the best money I've spent this year. Will buy again."}, "expected": {"label": "positive"}, "rationale": "Positive intent + intention to repurchase."}
+{"key": "g8", "input": {"text": "Decent but not great. Probably wouldn't recommend to a friend."}, "expected": {"label": "neutral"}, "rationale": "Tests boundary — slightly negative-leaning but not clearly negative."}
+{"key": "g9", "input": {"text": "Awful design. Cheap materials. Returned within an hour."}, "expected": {"label": "negative"}, "rationale": "Tests multi-attribute negative."}
+{"key": "g10", "input": {"text": "I love this product. Highly recommend!"}, "expected": {"label": "positive"}, "rationale": "Simplest possible positive — basic recall check."}

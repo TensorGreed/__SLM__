@@ -1533,6 +1533,19 @@ def run_project(args: argparse.Namespace, client: ApiClient) -> int:
         _print_json(output)
         return 0
 
+    if args.subcommand == "list-demos":
+        catalog = client.request("GET", "/demo-projects")
+        _print_json(catalog)
+        return 0
+
+    if args.subcommand == "create-demo":
+        slug = str(getattr(args, "slug", "") or "").strip()
+        if not slug:
+            raise ValueError("--slug is required for project create-demo.")
+        result = client.request("POST", f"/demo-projects/{slug}", json_body={})
+        _print_json(result)
+        return 0
+
     pid = getattr(args, "project_id", None)
     if pid is None:
         print("Project ID required.")
@@ -2920,6 +2933,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_budget = project_sub.add_parser("budget", help="Show project budget and spend")
     p_budget.add_argument("--id", "--project-id", dest="project_id", type=int, required=True)
+
+    p_list_demos = project_sub.add_parser(
+        "list-demos",
+        help="List pre-loaded demo project archetypes (newbie UX Phase 3).",
+    )
+    p_list_demos.set_defaults(func=run_project)
+
+    p_create_demo = project_sub.add_parser(
+        "create-demo",
+        help="Seed (or fetch) a pre-loaded demo project — idempotent.",
+    )
+    p_create_demo.add_argument(
+        "--slug",
+        required=True,
+        help="Demo archetype slug (e.g. support-faq, sentiment-classifier).",
+    )
+    p_create_demo.set_defaults(func=run_project)
 
     p_create = project_sub.add_parser("create", help="Create a project (quickstart template supported)")
     p_create.add_argument("--name", required=True, help="Project name")
