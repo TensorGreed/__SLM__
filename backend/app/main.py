@@ -60,6 +60,7 @@ from app.api.support_bundles import (
     router as support_bundles_router,
     project_router as support_bundles_project_router,
 )
+from app.api.extensions import router as extensions_router
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
 from app.services.domain_profile_service import ensure_default_domain_profile
@@ -235,6 +236,7 @@ app.include_router(timeline_project_router, prefix="/api", dependencies=API_DEPE
 app.include_router(run_event_clusters_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(support_bundles_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(support_bundles_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(extensions_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 
 @app.middleware("http")

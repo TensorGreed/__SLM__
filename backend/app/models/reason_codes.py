@@ -104,6 +104,10 @@ SYSTEM_DB_ERROR = "system_db_error"
 """Unexpected database error from a service-internal write path."""
 SYSTEM_CONFIG_INVALID = "system_config_invalid"
 """A required configuration value was missing or malformed at runtime."""
+EXTENSION_LOAD_FAILED = "extension_load_failed"
+"""Plugin module import / register hook raised (priority.md P37)."""
+EXTENSION_CONTRACT_INVALID = "extension_contract_invalid"
+"""Plugin module failed one or more contract checks (priority.md P37)."""
 
 
 REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
@@ -151,6 +155,8 @@ REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
     STAGE_SYSTEM: frozenset({
         SYSTEM_DB_ERROR,
         SYSTEM_CONFIG_INVALID,
+        EXTENSION_LOAD_FAILED,
+        EXTENSION_CONTRACT_INVALID,
     }),
 }
 
