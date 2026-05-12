@@ -150,11 +150,13 @@ class Phase87DemoProjectTests(unittest.TestCase):
                     "support-faq",
                 )
 
-                # Source dataset + RawDocument rows
+                # Source dataset is RAW (not CLEANED) so the Pipeline →
+                # Data tab + the Cleaning tab can find it via the
+                # /ingestion/documents endpoint.
                 source = await db.execute(
                     select(Dataset).where(
                         Dataset.project_id == project_id,
-                        Dataset.dataset_type == DatasetType.CLEANED,
+                        Dataset.dataset_type == DatasetType.RAW,
                     )
                 )
                 source_ds = source.scalar_one()
@@ -173,6 +175,28 @@ class Phase87DemoProjectTests(unittest.TestCase):
                     )
                 )
                 gold_ds = gold.scalar_one()
+                # file_path points at the per-project gold dir, NOT the
+                # read-only demo-bundle source file. Critical so the
+                # legacy GoldSetPanel can read entries from disk.
+                self.assertTrue(gold_ds.file_path.endswith("gold/gold_dev.jsonl"))
+                gold_jsonl = Path(gold_ds.file_path)
+                self.assertTrue(gold_jsonl.exists(), gold_jsonl)
+                # Each line has the legacy shape the gold endpoint /
+                # GoldSetPanel UI expects.
+                import json as _json
+                with gold_jsonl.open("r", encoding="utf-8") as handle:
+                    entries = [_json.loads(line) for line in handle if line.strip()]
+                self.assertGreater(len(entries), 0)
+                for entry in entries:
+                    self.assertIn("id", entry)
+                    self.assertIn("question", entry)
+                    self.assertIn("answer", entry)
+                    self.assertIsInstance(entry["question"], str)
+                    self.assertIsInstance(entry["answer"], str)
+                    self.assertTrue(entry["question"])
+                    self.assertTrue(entry["answer"])
+
+                # Workbench rows (P10) also exist in parallel.
                 ver = await db.execute(
                     select(GoldSetVersion).where(
                         GoldSetVersion.gold_set_id == gold_ds.id
@@ -184,8 +208,6 @@ class Phase87DemoProjectTests(unittest.TestCase):
                     select(GoldSetRow).where(GoldSetRow.version_id == gold_version.id)
                 )
                 row_records = rows.scalars().all()
-                # Gold rows match the bundle's gold.jsonl (6 rows for
-                # support-faq). Assert non-empty + every row is APPROVED.
                 self.assertGreater(len(row_records), 0)
                 for row in row_records:
                     self.assertEqual(row.status, GoldSetRowStatus.APPROVED)

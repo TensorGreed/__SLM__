@@ -29,9 +29,9 @@ Stable reason codes (raised as ``ValueError`` from the API path):
 from __future__ import annotations
 
 import csv
-import io
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -176,7 +176,11 @@ async def seed_demo_project(
     db.add(project)
     await db.flush()  # populate project.id
 
-    # 1) Cleaned source dataset ------------------------------------------------
+    # 1) Raw source dataset ----------------------------------------------------
+    # NOTE: dataset_type is RAW (not CLEANED) so the Pipeline → Data tab
+    # picks the rows up — that tab filters on Dataset.dataset_type == RAW
+    # via app/services/ingestion_service.list_documents. The Cleaning tab
+    # uses the same endpoint.
     csv_filename = str(manifest.get("dataset_filename") or "data.csv")
     csv_src = demo_dir / csv_filename
     if not csv_src.exists():
@@ -191,7 +195,7 @@ async def seed_demo_project(
     dataset = Dataset(
         project_id=project.id,
         name=f"{project_name} · source",
-        dataset_type=DatasetType.CLEANED,
+        dataset_type=DatasetType.RAW,
         description="Pre-loaded source rows for the demo project.",
         record_count=len(csv_rows),
         file_path=str(csv_dst),
@@ -223,18 +227,67 @@ async def seed_demo_project(
         )
 
     # 2) Locked gold set -------------------------------------------------------
+    # The legacy gold UI (GoldSetPanel) reads from the dataset's
+    # ``file_path`` JSONL on disk and expects each line to carry
+    # ``{id, question, answer, ...}``. We materialise both the legacy
+    # JSONL AND the GoldSetVersion / GoldSetRow workbench rows below —
+    # the older "Gold set" tab consumes the JSONL while the newer
+    # workbench (Pipeline → Gold workbench) consumes the rows.
     gold_filename = str(manifest.get("gold_filename") or "gold.jsonl")
     gold_src = demo_dir / gold_filename
     if not gold_src.exists():
         raise ValueError(f"demo_manifest_invalid:{slug}:missing_gold_file")
     gold_rows = _read_gold_rows(gold_src)
+
+    gold_dir = settings.DATA_DIR / "projects" / str(project.id) / "gold"
+    gold_dir.mkdir(parents=True, exist_ok=True)
+    gold_jsonl_path = gold_dir / "gold_dev.jsonl"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    legacy_entries: list[dict[str, Any]] = []
+    for idx, row in enumerate(gold_rows):
+        inp = row.get("input") or {}
+        exp = row.get("expected") or {}
+        # Map the bundle's input / expected dicts onto the legacy
+        # question / answer fields the UI hardcodes. For sentiment we
+        # use input.text / expected.label; for support-faq we use
+        # input.question / expected.answer.
+        question = (
+            inp.get("question")
+            or inp.get("text")
+            or next(iter(inp.values()), "")
+        )
+        answer = (
+            exp.get("answer")
+            or exp.get("label")
+            or next(iter(exp.values()), "")
+        )
+        legacy_entries.append({
+            "id": idx + 1,
+            "question": str(question),
+            "answer": str(answer),
+            "difficulty": "medium",
+            "criticality": "normal",
+            "is_hallucination_trap": False,
+            "metadata": {
+                "demo_slug": slug,
+                "bundle_key": row.get("key"),
+                "rationale": str(row.get("rationale") or ""),
+            },
+            "created_at": now_iso,
+        })
+
+    with gold_jsonl_path.open("w", encoding="utf-8") as handle:
+        for entry in legacy_entries:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
     gold_dataset = Dataset(
         project_id=project.id,
         name=f"{project_name} · gold",
         dataset_type=DatasetType.GOLD_DEV,
         description="Hand-labelled gold-set rows for the demo project.",
         record_count=len(gold_rows),
-        file_path=str(gold_src),
+        file_path=str(gold_jsonl_path),
         metadata_={"demo_slug": slug, "frozen": True},
         is_locked=True,
     )
