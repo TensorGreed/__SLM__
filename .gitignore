@@ -13,6 +13,11 @@ venv/
 node_modules/
 dist/
 
+# Docusaurus build artifacts + intermediate OpenAPI dump
+slm-docs/build/
+slm-docs/.docusaurus/
+slm-docs/openapi.json
+
 # Local environment / secrets
 .env
 .env.*

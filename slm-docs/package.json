@@ -12,7 +12,10 @@
     "serve": "docusaurus serve",
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "docs:gen:api": "cd ../backend && PYTHONPATH=. python scripts/dump_openapi.py --out ../slm-docs/openapi.json && cd ../slm-docs && python3 scripts/generate_api_ref.py --spec openapi.json",
+    "docs:gen:cli": "python3 scripts/generate_cli_ref.py",
+    "docs:gen": "npm run docs:gen:api && npm run docs:gen:cli"
   },
   "dependencies": {
     "@docusaurus/core": "3.9.2",
