@@ -76,7 +76,7 @@ describe('TelemetryPanel', () => {
         apiMock.get.mockResolvedValue({ data: EMPTY_AGGREGATE });
         render(<TelemetryPanel deploymentVersionId={99} />);
         expect(
-            await screen.findByText(/No samples in this window/i),
+            await screen.findByText(/No telemetry samples yet/i),
         ).toBeInTheDocument();
     });
 

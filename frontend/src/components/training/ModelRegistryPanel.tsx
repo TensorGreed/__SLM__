@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Download, Star, Clock, HardDrive } from 'lucide-react';
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 
 interface Checkpoint {
     id: number;
@@ -79,11 +80,18 @@ export default function ModelRegistryPanel({ projectId }: ModelRegistryPanelProp
             </div>
 
             {filtered.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 'var(--space-2xl)', color: 'var(--text-tertiary)' }}>
-                    {checkpoints.length === 0
-                        ? 'No checkpoints yet. Start training to generate model checkpoints.'
-                        : 'No best checkpoints found.'}
-                </div>
+                checkpoints.length === 0 ? (
+                    <EmptyState
+                        title="No checkpoints yet"
+                        description="Checkpoints land here as training runs write them. Each one is promotable + downloadable — once you have one, you can export it for a target."
+                        docsHref="http://localhost:3001/docs/workflows/training"
+                    />
+                ) : (
+                    <EmptyState
+                        title="No best checkpoints found"
+                        description="No checkpoint in the current view is marked as a 'best' candidate. Untoggle Best Only to see every captured checkpoint."
+                    />
+                )
             ) : (
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>

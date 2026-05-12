@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import type {
     RunEvent,
     RunEventsForRunResponse,
@@ -114,9 +115,11 @@ export default function EventDrilldownDrawer({ runId, onClose }: Props) {
             )}
 
             {!loading && !events.length && !error && (
-                <div className="deployment-empty">
-                    No events for this run id.
-                </div>
+                <EmptyState
+                    title="No events for this run"
+                    description="Every pipeline stage emits canonical RunEvents to this timeline. If nothing's here, the run probably finished outside the current window or was started before observability went live."
+                    docsHref="http://localhost:3001/docs/observability/run-events"
+                />
             )}
 
             <ol className="event-drilldown-list">

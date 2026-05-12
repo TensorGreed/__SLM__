@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import type {
     DeploymentDriftCheck,
     DeploymentDriftHistoryResponse,
@@ -248,7 +249,11 @@ export default function DriftPanel({
                 <h4>History</h4>
                 {loading && !history.length && <div className="dim">Loading drift history…</div>}
                 {!loading && !history.length && (
-                    <div className="deployment-empty">No drift checks yet.</div>
+                    <EmptyState
+                        title="No drift checks yet"
+                        description="A drift check re-runs your gold-set eval against the live endpoint and compares to the promote-time baseline. Run one weekly or after any infra change."
+                        docsHref="http://localhost:3001/docs/deployment/drift-checks"
+                    />
                 )}
                 {history.length > 0 && (
                     <table className="deployment-table" aria-label="Drift history">

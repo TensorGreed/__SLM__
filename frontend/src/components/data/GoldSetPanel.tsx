@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import './GoldSetPanel.css';
 
@@ -88,7 +89,13 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                             </div>
                         </div>
                     ))}
-                    {entries.length === 0 && <div className="empty-state"><div className="empty-state-text">No entries yet. Add Q&A pairs above.</div></div>}
+                    {entries.length === 0 && (
+                        <EmptyState
+                            title="No gold-set entries yet"
+                            description="The gold set is the labelled ground-truth eval set. Add Q&A pairs above — 50–100 carefully labelled rows is enough to start scoring training runs."
+                            docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
+                        />
+                    )}
                 </div>
             </div>
 

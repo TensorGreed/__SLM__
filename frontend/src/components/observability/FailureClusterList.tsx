@@ -23,6 +23,7 @@ import type {
     FailureClusterRecomputeResponse,
 } from '../../types/observability';
 import CommandSnippet from '../shared/CommandSnippet';
+import EmptyState from '../shared/EmptyState';
 
 interface Props {
     projectId: number;
@@ -224,11 +225,12 @@ export default function FailureClusterList({
                 <div className="dim">Loading clusters…</div>
             )}
             {!loading && !clusters.length && !error && (
-                <div className="deployment-empty">
-                    No persisted failure clusters yet.
-                    {' '}
-                    Click <strong>Recompute</strong> to fold any recent error events into the cluster view.
-                </div>
+                <EmptyState
+                    title="No failure clusters yet"
+                    description="Failure clusters group recent error events by reason code + signature so you can spot patterns. Click Recompute to fold any error events in the run log into clusters."
+                    primary={{ label: 'Recompute now', onClick: () => void recompute() }}
+                    docsHref="http://localhost:3001/docs/observability/failure-clusters"
+                />
             )}
             {clusters.length > 0 && (
                 <ul className="failure-cluster-rows" aria-label="Failure clusters">

@@ -19,6 +19,7 @@ import { type FormEvent, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 
 import api from '../api/client';
+import EmptyState from '../components/shared/EmptyState';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectAutopilotPage.css';
 
@@ -518,14 +519,11 @@ export default function ProjectAutopilotPage() {
 
                 <div className="autopilot-result">
                     {!preview && !dryRunResponse && !applyResult ? (
-                        <div className="card autopilot-empty">
-                            <h3>No plan yet</h3>
-                            <p>
-                                Fill in the intent and click <strong>Preview Plan</strong> to see
-                                what autopilot would do. Nothing mutates until you click
-                                <strong> Apply</strong>.
-                            </p>
-                        </div>
+                        <EmptyState
+                            title="No plan yet"
+                            description="Type a plain-English brief above and click Preview Plan to see what autopilot would do — adapter, base model, recipe, eval pack, target. Nothing mutates until you click Apply."
+                            docsHref="http://localhost:3001/docs/workflows/newbie-autopilot"
+                        />
                     ) : null}
 
                     {preview ? (

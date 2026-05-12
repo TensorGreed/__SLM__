@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 
 interface ExperimentSummary {
     id: number;
@@ -231,9 +232,11 @@ export default function CheckpointsPanel({
             </div>
 
             {checkpoints.length === 0 ? (
-                <div className="checkpoints-panel__empty">
-                    No checkpoints yet. They'll appear here as training writes them.
-                </div>
+                <EmptyState
+                    title="No checkpoints yet"
+                    description="Checkpoints land here as training writes them. Each one is promotable + resumable — you can fork a continuation from any step or promote a non-final one if the run overfit late."
+                    docsHref="http://localhost:3001/docs/workflows/training"
+                />
             ) : (
                 <table className="checkpoints-panel__table">
                     <thead>

@@ -48,7 +48,7 @@ describe('SupportBundleCard', () => {
         });
         render(<SupportBundleCard projectId={7} />);
         expect(
-            await screen.findByText(/No support bundles generated yet/i),
+            await screen.findByText(/No support bundles yet/i),
         ).toBeInTheDocument();
     });
 

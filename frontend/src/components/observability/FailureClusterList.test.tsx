@@ -81,7 +81,7 @@ describe('FailureClusterList', () => {
             <FailureClusterList projectId={7} onSelectRun={vi.fn()} />,
         );
         expect(
-            await screen.findByText(/No persisted failure clusters yet/i),
+            await screen.findByText(/No failure clusters yet/i),
         ).toBeInTheDocument();
     });
 
@@ -130,7 +130,7 @@ describe('FailureClusterList', () => {
         render(
             <FailureClusterList projectId={7} onSelectRun={vi.fn()} />,
         );
-        await screen.findByText(/No persisted failure clusters yet/i);
+        await screen.findByText(/No failure clusters yet/i);
 
         const user = userEvent.setup();
         await user.click(

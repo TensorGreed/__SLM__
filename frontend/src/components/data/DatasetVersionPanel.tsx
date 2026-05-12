@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { GitBranch, FileText, Clock, ArrowRight, CheckCircle } from 'lucide-react';
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 
 interface DatasetVersion {
     id: number;
@@ -73,9 +74,11 @@ export default function DatasetVersionPanel({ projectId }: DatasetVersionPanelPr
             </div>
 
             {datasets.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 'var(--space-2xl)', color: 'var(--text-tertiary)' }}>
-                    No datasets yet. Start by ingesting data.
-                </div>
+                <EmptyState
+                    title="No datasets yet"
+                    description="Datasets are versioned snapshots produced by ingestion → cleaning → prep. Start by ingesting a file or remote source above; new versions will land here as each stage runs."
+                    docsHref="http://localhost:3001/docs/workflows/data-ingestion"
+                />
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
                     {/* Timeline view */}

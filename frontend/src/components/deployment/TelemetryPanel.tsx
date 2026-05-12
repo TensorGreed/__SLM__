@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import type { TelemetryAggregate } from '../../types/deployment';
 
 interface Props {
@@ -229,20 +230,13 @@ export default function TelemetryPanel({
             {!kpis ? (
                 <div className="dim">{loading ? 'Loading telemetry…' : 'No telemetry yet.'}</div>
             ) : kpis.sampleCount === 0 ? (
-                <div className="deployment-empty">
-                    <div>No samples in this window.</div>
-                    <div className="deployment-empty-detail">
-                        The deployment plane is push-only — your inference
-                        client (or a provider-side scrape sidecar) needs to
-                        POST samples to{' '}
-                        <code>
-                            /api/deployments/{deploymentVersionId}/telemetry/ingest
-                        </code>
-                        . Until then this panel and the
-                        <code> telemetry_health</code> score component will
-                        report no signal.
-                    </div>
-                </div>
+                <EmptyState
+                    title="No telemetry samples yet"
+                    description={
+                        `Telemetry is push-only — your inference client (or a sidecar) needs to POST samples to /api/deployments/${deploymentVersionId}/telemetry/ingest. Until then this panel and the telemetry_health score component report no signal.`
+                    }
+                    docsHref="http://localhost:3001/docs/deployment/telemetry"
+                />
             ) : (
                 <>
                     <div className="deployment-kpi-grid">

@@ -21,6 +21,7 @@ import type {
     SupportBundleMetadata,
 } from '../../types/observability';
 import CommandSnippet from '../shared/CommandSnippet';
+import EmptyState from '../shared/EmptyState';
 
 interface Props {
     projectId: number;
@@ -229,9 +230,12 @@ export default function SupportBundleCard({ projectId }: Props) {
                     <div className="dim">Loading bundles…</div>
                 )}
                 {!loading && !bundles.length && (
-                    <div className="deployment-empty">
-                        No support bundles generated yet.
-                    </div>
+                    <EmptyState
+                        title="No support bundles yet"
+                        description="A support bundle packages recent events, failure clusters, and deployment state into one redacted zip you can hand to oncall. Generate one when you hit an issue worth forwarding."
+                        primary={{ label: 'Generate first bundle', onClick: () => void createBundle() }}
+                        docsHref="http://localhost:3001/docs/observability/support-bundles"
+                    />
                 )}
                 {bundles.length > 0 && (
                     <table className="deployment-table" aria-label="Support bundles">

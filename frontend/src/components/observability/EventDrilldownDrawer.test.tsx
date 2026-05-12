@@ -72,7 +72,7 @@ describe('EventDrilldownDrawer', () => {
         });
         render(<EventDrilldownDrawer runId="exp-1" onClose={vi.fn()} />);
         expect(
-            await screen.findByText(/No events for this run id/i),
+            await screen.findByText(/No events for this run/i),
         ).toBeInTheDocument();
     });
 
