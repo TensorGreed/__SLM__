@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
@@ -933,13 +934,11 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                         ))}
                     </div>
                 ) : documents.length === 0 ? (
-                    <div className="empty-state" style={{ padding: '2rem' }}>
-                        <div className="empty-state-icon">📂</div>
-                        <div className="empty-state-title">No documents yet</div>
-                        <div className="empty-state-text">
-                            Upload files or import from HuggingFace, Kaggle, or a URL above.
-                        </div>
-                    </div>
+                    <EmptyState
+                        title="No documents yet"
+                        description="Upload a CSV / JSONL / Parquet file, or import from HuggingFace, Kaggle, or a URL using the form above. Aim for 100–500 high-quality rows for a first iteration."
+                        docsHref="http://localhost:3001/docs/workflows/data-ingestion"
+                    />
                 ) : (
                     <div className="docs-table-container">
                         <table className="docs-table">

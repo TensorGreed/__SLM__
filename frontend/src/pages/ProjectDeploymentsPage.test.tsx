@@ -135,7 +135,7 @@ describe('ProjectDeploymentsPage', () => {
         render(<ProjectDeploymentsPage />);
 
         expect(
-            await screen.findByText(/No deployment versions yet/i),
+            await screen.findByText(/No deployments yet/i),
         ).toBeInTheDocument();
         // Downstream card headings (h3) must not mount when nothing is
         // selected. The page subtitle paragraph mentions "deployability

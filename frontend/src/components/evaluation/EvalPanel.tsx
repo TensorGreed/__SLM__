@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
@@ -787,10 +788,11 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         <div className="empty-state-title">Loading experiments...</div>
                     </div>
                 ) : experiments.length === 0 ? (
-                    <div className="empty-state">
-                        <div className="empty-state-icon">📊</div>
-                        <div className="empty-state-title">No experiments to evaluate</div>
-                    </div>
+                    <EmptyState
+                        title="No experiments to evaluate"
+                        description="Train an experiment first — then come back here, pick a gold set, pick an eval pack, and run a scored evaluation."
+                        docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
+                    />
                 ) : (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         {experiments.map((experiment) => (

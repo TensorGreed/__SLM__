@@ -23,6 +23,7 @@
 import { useCallback, useState } from 'react';
 
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import type {
     DeploymentVersion,
     DeploymentVersionStatus,
@@ -143,10 +144,11 @@ export default function DeployedVersionsList({
 
     if (!versions.length) {
         return (
-            <div className="deployment-empty" role="status">
-                No deployment versions yet. Run a non-dry-run{' '}
-                <code>deploy-as-api/execute</code> to record one.
-            </div>
+            <EmptyState
+                title="No deployments yet"
+                description="A deployment captures the plan → smoke → promote loop for one checkpoint + target profile. Run an export first, then plan a deployment to start tracking versions, telemetry, and drift."
+                docsHref="http://localhost:3001/docs/deployment/plan"
+            />
         );
     }
 

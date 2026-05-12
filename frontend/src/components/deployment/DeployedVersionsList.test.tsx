@@ -76,7 +76,7 @@ describe('DeployedVersionsList', () => {
                 onRefresh={vi.fn()}
             />,
         );
-        expect(screen.getByText(/No deployment versions yet/i)).toBeInTheDocument();
+        expect(screen.getByText(/No deployments yet/i)).toBeInTheDocument();
     });
 
     it('PENDING row exposes Promote and Reject; promote POSTs and refreshes', async () => {

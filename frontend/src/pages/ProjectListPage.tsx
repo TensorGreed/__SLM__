@@ -349,19 +349,11 @@ export default function ProjectListPage() {
                     </div>
                 ) : projects.length === 0 ? (
                     <EmptyState
-                        icon="◈"
                         title="No projects yet"
-                        description="Create your first BrewSLM project to start building, evaluating, and exporting domain-specific small language models."
-                        action={
-                            <div className="project-list-empty-actions">
-                                <button className="btn btn-secondary" onClick={() => setShowMagicModal(true)}>
-                                    ✨ Magic Create
-                                </button>
-                                <button className="btn btn-primary" onClick={openCreateModal}>
-                                    + Create First Project
-                                </button>
-                            </div>
-                        }
+                        description="Create your first BrewSLM project to start building, evaluating, and exporting domain-specific Small Language Models. Try Magic Create to describe what you want in plain English, or pick a starter template."
+                        primary={{ label: '+ Create First Project', onClick: openCreateModal }}
+                        secondary={{ label: '✨ Magic Create', onClick: () => setShowMagicModal(true) }}
+                        docsHref="http://localhost:3001/docs/getting-started/quickstart"
                     />
                 ) : (
                     <div className="project-grid">

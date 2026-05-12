@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
+import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
@@ -5651,15 +5652,15 @@ export default function TrainingPanel({
 
         {canViewRuns && (workspaceView === 'runs' || (!showWorkspaceTabs && workspaceView !== 'setup')) && (
           experiments.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">🔬</div>
-              <div className="empty-state-title">No experiments</div>
-              <div className="empty-state-text">
-                {hideCreateControls
-                  ? 'No runs yet. Create one from the Training Config menu item.'
-                  : 'Create a training experiment to start fine-tuning.'}
-              </div>
-            </div>
+            <EmptyState
+              title="No experiments yet"
+              description={
+                hideCreateControls
+                  ? 'No runs yet. Open Training Config to pick a recipe + base model, then launch your first experiment.'
+                  : 'Create a training experiment to fine-tune your first model. The Autopilot Planner is the fastest path — type a plain-English brief and it picks the recipe.'
+              }
+              docsHref="http://localhost:3001/docs/workflows/training"
+            />
           ) : (
             <div className="training-experiment-list">
               {selectedForCompare.length > 1 && (
