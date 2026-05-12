@@ -26,6 +26,17 @@
     background: rgba(0, 0, 0, 0.08);
 }
 
+.autopilot-prefill-hint {
+    margin-bottom: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 .autopilot-grid {
     display: grid;
     grid-template-columns: minmax(340px, 420px) 1fr;

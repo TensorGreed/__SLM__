@@ -177,11 +177,24 @@ function renderKeyValue(entry: [string, unknown]): string {
     return `${key}: ${String(value)}`;
 }
 
-export default function ProjectAutopilotPage() {
-    const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
+const DEFAULT_AUTOPILOT_INTENT = 'Train a concise support assistant with JSON output.';
 
-    // Form state
-    const [intent, setIntent] = useState('Train a concise support assistant with JSON output.');
+function extractSuggestedBrief(project: ProjectWorkspaceContextValue['project']): string {
+    const preset = project?.dataset_adapter_preset;
+    if (!preset || typeof preset !== 'object') return '';
+    const value = (preset as Record<string, unknown>).suggested_brief;
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+export default function ProjectAutopilotPage() {
+    const { projectId, project } = useOutletContext<ProjectWorkspaceContextValue>();
+
+    // Form state — pre-fill the intent from a demo project's
+    // suggested_brief on first mount so newbie UX Phase 3 demo tiles
+    // land here with the brief already typed.
+    const suggestedBrief = extractSuggestedBrief(project);
+    const [intent, setIntent] = useState(suggestedBrief || DEFAULT_AUTOPILOT_INTENT);
+    const [intentWasPrefilled] = useState(Boolean(suggestedBrief));
     const [intentRewrite, setIntentRewrite] = useState('');
     const [targetProfile, setTargetProfile] = useState('edge_gpu');
     const [targetDevice, setTargetDevice] = useState<TargetDeviceHint>('');
@@ -368,6 +381,15 @@ export default function ProjectAutopilotPage() {
             <div className="autopilot-grid">
                 <form className="card autopilot-form" onSubmit={handlePreview}>
                     <h3>Intent</h3>
+                    {intentWasPrefilled && (
+                        <div
+                            className="autopilot-prefill-hint"
+                            role="status"
+                            aria-label="Intent pre-filled from demo project"
+                        >
+                            <span>✨ Pre-filled from this demo project's suggested brief — tweak as needed before previewing.</span>
+                        </div>
+                    )}
                     <label className="autopilot-field">
                         <span>Plain-language intent</span>
                         <textarea

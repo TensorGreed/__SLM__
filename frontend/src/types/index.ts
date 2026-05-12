@@ -44,6 +44,12 @@ export interface Project {
     target_profile_id?: string | null;
     beginner_mode?: boolean;
     active_domain_blueprint_version?: number | null;
+    /**
+     * Free-form preset payload. Demo projects stash a
+     * `suggested_brief` here so the Autopilot Planner can pre-fill
+     * the intent on first open (newbie UX Phase 3.1).
+     */
+    dataset_adapter_preset?: Record<string, unknown> | null;
     created_at: string;
     updated_at: string;
 }
