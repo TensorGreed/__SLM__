@@ -11,9 +11,9 @@
 }
 
 .dp-view-tab {
-    border: 1px solid rgba(255 255 255 / .14);
-    background: rgba(255 255 255 / .04);
-    color: rgba(255 255 255 / .76);
+    border: 1px solid rgba(0 0 0 / .14);
+    background: var(--bg-tertiary);
+    color: rgba(0 0 0 / .76);
     border-radius: 999px;
     padding: .45rem .9rem;
     font-size: .8rem;
@@ -22,20 +22,20 @@
 }
 
 .dp-view-tab:hover {
-    border-color: rgba(255 255 255 / .24);
-    color: rgba(255 255 255 / .95);
+    border-color: rgba(0 0 0 / .24);
+    color: rgba(0 0 0 / .95);
 }
 
 .dp-view-tab.active {
-    border-color: rgba(108, 92, 231, .55);
-    background: rgba(108, 92, 231, .16);
-    color: var(--bg-primary);
+    border-color: var(--gray-900);
+    background: var(--gray-1000);
+    color: var(--gray-0);
 }
 
 /* ── Section Cards ─────────────────────────────────────────── */
 .dp-section {
-    background: var(--card-bg, rgba(255 255 255 / .04));
-    border: 1px solid var(--border, rgba(255 255 255 / .08));
+    background: var(--card-bg, rgba(0 0 0 / .04));
+    border: 1px solid var(--border, rgba(0 0 0 / .08));
     border-radius: 12px;
     padding: 1.25rem 1.5rem;
 }
@@ -63,8 +63,8 @@
 
 .dp-actions select,
 .dp-actions input {
-    background: rgba(255 255 255 / .06);
-    border: 1px solid rgba(255 255 255 / .12);
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0 0 0 / .12);
     border-radius: 8px;
     padding: .5rem .75rem;
     color: inherit;
@@ -110,7 +110,7 @@
     display: grid;
     gap: .4rem;
     font-size: .78rem;
-    color: rgba(255 255 255 / .65);
+    color: rgba(0 0 0 / .65);
     margin-bottom: .9rem;
 }
 
@@ -118,9 +118,9 @@
     min-height: 92px;
     resize: vertical;
     border-radius: 8px;
-    border: 1px solid rgba(255 255 255 / .12);
+    border: 1px solid rgba(0 0 0 / .12);
     background: rgba(12 18 34 / .7);
-    color: rgba(255 255 255 / .9);
+    color: rgba(0 0 0 / .9);
     font-size: .76rem;
     line-height: 1.35;
     padding: .65rem .75rem;
@@ -136,7 +136,7 @@
 }
 
 .dp-stat {
-    background: rgba(255 255 255 / .04);
+    background: var(--bg-tertiary);
     border-radius: 8px;
     padding: .75rem 1rem;
     text-align: center;
@@ -144,7 +144,7 @@
 
 .dp-stat .label {
     font-size: .75rem;
-    color: rgba(255 255 255 / .5);
+    color: rgba(0 0 0 / .5);
     text-transform: uppercase;
     letter-spacing: .05em;
     margin-bottom: .25rem;
@@ -193,7 +193,7 @@
     max-height: 400px;
     overflow-y: auto;
     border-radius: 8px;
-    border: 1px solid rgba(255 255 255 / .06);
+    border: 1px solid rgba(0 0 0 / .06);
 }
 
 .dp-table {
@@ -209,16 +209,16 @@
     padding: .6rem .75rem;
     text-align: left;
     font-weight: 600;
-    color: rgba(255 255 255 / .6);
+    color: rgba(0 0 0 / .6);
     text-transform: uppercase;
     font-size: .7rem;
     letter-spacing: .04em;
-    border-bottom: 1px solid rgba(255 255 255 / .08);
+    border-bottom: 1px solid rgba(0 0 0 / .08);
 }
 
 .dp-table td {
     padding: .5rem .75rem;
-    border-bottom: 1px solid rgba(255 255 255 / .04);
+    border-bottom: 1px solid rgba(0 0 0 / .04);
     max-width: 400px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -226,7 +226,7 @@
 }
 
 .dp-table tr:hover td {
-    background: rgba(255 255 255 / .03);
+    background: var(--bg-tertiary);
 }
 
 /* ── Split Controls ────────────────────────────────────────── */
@@ -247,7 +247,7 @@
     align-items: center;
     gap: .5rem;
     font-size: .82rem;
-    color: rgba(255 255 255 / .72);
+    color: rgba(0 0 0 / .72);
 }
 
 .dp-split-default-toggle input {
@@ -262,15 +262,15 @@
 
 .dp-split-field label {
     font-size: .75rem;
-    color: rgba(255 255 255 / .5);
+    color: rgba(0 0 0 / .5);
     text-transform: uppercase;
     letter-spacing: .04em;
 }
 
 .dp-split-field input,
 .dp-split-field select {
-    background: rgba(255 255 255 / .06);
-    border: 1px solid rgba(255 255 255 / .12);
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0 0 0 / .12);
     border-radius: 8px;
     padding: .5rem .75rem;
     color: inherit;
@@ -298,14 +298,14 @@
 .dp-field-bar .field-name {
     min-width: 120px;
     font-size: .82rem;
-    color: rgba(255 255 255 / .7);
+    color: rgba(0 0 0 / .7);
     text-align: right;
 }
 
 .dp-field-bar .bar-track {
     flex: 1;
     height: 18px;
-    background: rgba(255 255 255 / .04);
+    background: var(--bg-tertiary);
     border-radius: 4px;
     overflow: hidden;
 }
@@ -320,12 +320,12 @@
 .dp-field-bar .bar-count {
     min-width: 50px;
     font-size: .78rem;
-    color: rgba(255 255 255 / .45);
+    color: rgba(0 0 0 / .45);
 }
 
 .dp-resolved-panel {
-    background: rgba(59, 130, 246, .08);
-    border: 1px solid rgba(59, 130, 246, .2);
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0, 0, 0, .2);
     border-radius: 10px;
     padding: .85rem 1rem;
     margin: 0 0 1rem;
@@ -335,7 +335,7 @@
     font-size: .85rem;
     text-transform: uppercase;
     letter-spacing: .05em;
-    color: rgba(255 255 255 / .75);
+    color: rgba(0 0 0 / .75);
     margin-bottom: .65rem;
 }
 
@@ -344,12 +344,12 @@
     justify-content: space-between;
     gap: 1rem;
     font-size: .8rem;
-    color: rgba(255 255 255 / .76);
+    color: rgba(0 0 0 / .76);
     margin-bottom: .45rem;
 }
 
 .dp-resolved-kv strong {
-    color: rgba(255 255 255 / .96);
+    color: rgba(0 0 0 / .96);
     text-align: right;
 }
 
@@ -362,14 +362,14 @@
 
 .dp-resolved-subtitle {
     font-size: .75rem;
-    color: rgba(255 255 255 / .58);
+    color: rgba(0 0 0 / .58);
     margin-bottom: .3rem;
 }
 
 .dp-resolved-json {
     margin: 0;
-    background: rgba(10, 14, 26, .75);
-    border: 1px solid rgba(255, 255, 255, .08);
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0, 0, 0, .08);
     border-radius: 8px;
     padding: .55rem .65rem;
     font-size: .72rem;
@@ -392,12 +392,12 @@
 }
 
 .dp-manifest pre {
-    background: rgba(0, 0, 0, .2);
+    background: var(--bg-tertiary);
     padding: .75rem;
     border-radius: 8px;
     font-size: .78rem;
     overflow-x: auto;
-    color: rgba(255 255 255 / .7);
+    color: rgba(0 0 0 / .7);
 }
 
 /* ── Info Banner ───────────────────────────────────────────── */
@@ -410,7 +410,7 @@
     border: 1px solid rgba(99, 179, 237, .2);
     border-radius: 8px;
     font-size: .82rem;
-    color: rgba(255 255 255 / .7);
+    color: rgba(0 0 0 / .7);
     margin-bottom: 1rem;
 }
 

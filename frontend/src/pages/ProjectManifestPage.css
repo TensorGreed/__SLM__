@@ -60,8 +60,8 @@
 }
 
 .manifest-dropzone.is-active {
-    border-color: rgba(59, 130, 246, 0.6);
-    background: rgba(59, 130, 246, 0.06);
+    border-color: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.06);
 }
 
 .manifest-dropzone input[type='file'] {
@@ -225,8 +225,8 @@
 }
 
 .manifest-status.is-info {
-    border: 1px solid rgba(59, 130, 246, 0.5);
-    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.08);
     color: var(--gray-1000);
 }
 

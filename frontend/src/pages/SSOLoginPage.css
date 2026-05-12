@@ -5,7 +5,7 @@
     justify-content: center;
     padding: var(--space-xl);
     background:
-        radial-gradient(circle at 15% 15%, rgba(71, 130, 228, 0.16), transparent 44%),
+        radial-gradient(circle at 15% 15%, rgba(0, 0, 0, 0.16), transparent 44%),
         radial-gradient(circle at 88% 20%, rgba(97, 161, 237, 0.1), transparent 36%),
         var(--bg-primary);
 }

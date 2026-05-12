@@ -44,7 +44,7 @@
 }
 
 .compare-table th {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-tertiary);
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
@@ -65,7 +65,7 @@
 }
 
 .compare-metric-row {
-    background: rgba(255, 255, 255, 0.01);
+    background: var(--bg-tertiary);
 }
 
 .compare-legend-color {

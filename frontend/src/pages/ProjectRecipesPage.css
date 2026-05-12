@@ -308,8 +308,8 @@
 }
 
 .pipeline-recipes-status {
-    border: 1px solid rgba(59, 130, 246, 0.35);
-    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    background: rgba(0, 0, 0, 0.1);
     color: var(--gray-1000);
 }
 

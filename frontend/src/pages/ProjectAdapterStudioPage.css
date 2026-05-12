@@ -156,5 +156,5 @@
   border-radius: var(--radius-sm);
   padding: 10px;
   font-size: var(--font-size-sm);
-  background: rgba(15, 23, 42, 0.36);
+  background: var(--bg-tertiary);
 }

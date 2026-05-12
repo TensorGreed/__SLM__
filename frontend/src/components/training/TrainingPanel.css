@@ -24,8 +24,8 @@
 
 .resolved-defaults-panel {
     margin-bottom: var(--space-md);
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.2);
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0, 0, 0, 0.2);
     border-radius: var(--radius-md);
     padding: var(--space-md);
 }
@@ -44,7 +44,7 @@
     gap: var(--space-sm);
     font-size: var(--font-size-sm);
     margin-bottom: 6px;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-primary);
 }
 
 .resolved-defaults-panel__kv strong {
@@ -67,7 +67,7 @@
 
 .resolved-defaults-panel__json {
     margin: 0;
-    background: rgba(10, 14, 26, 0.75);
+    background: var(--bg-tertiary);
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 8px;
@@ -78,9 +78,9 @@
 
 .cloud-burst-metrics {
     margin-top: 10px;
-    border: 1px solid rgba(59, 130, 246, 0.28);
+    border: 1px solid rgba(0, 0, 0, 0.28);
     border-radius: var(--radius-sm);
-    background: rgba(15, 23, 42, 0.55);
+    background: var(--bg-tertiary);
     padding: 10px;
 }
 
@@ -99,11 +99,11 @@
     display: block;
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
-    background: rgba(2, 6, 23, 0.85);
+    background: var(--bg-tertiary);
 }
 
 .cloud-burst-metrics__bg {
-    fill: rgba(15, 23, 42, 0.6);
+    fill: var(--text-primary);
 }
 
 .cloud-burst-metrics__line {
@@ -202,7 +202,7 @@
     border-radius: var(--radius-md);
     padding: var(--space-md);
     border: 1px solid var(--border-color);
-    background: rgba(15, 23, 42, 0.45);
+    background: var(--bg-tertiary);
 }
 
 .training-preflight-panel--ok {
@@ -251,7 +251,7 @@
 }
 
 .training-preflight-contract-card {
-    background: rgba(15, 23, 42, 0.4);
+    background: var(--bg-tertiary);
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 10px;
@@ -307,8 +307,8 @@
 }
 
 .training-preflight-contract-card__notice--hint {
-    background: rgba(59, 130, 246, 0.12);
-    border: 1px solid rgba(59, 130, 246, 0.25);
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(0, 0, 0, 0.25);
     color: var(--text-secondary);
 }
 
@@ -324,7 +324,7 @@
     padding: 8px 10px;
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
-    background: rgba(148, 163, 184, 0.08);
+    background: rgba(115, 115, 115, 0.08);
 }
 
 .training-preflight-panel__details > summary::-webkit-details-marker {
@@ -341,7 +341,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-md);
-    background: rgba(148, 163, 184, 0.08);
+    background: rgba(115, 115, 115, 0.08);
 }
 
 .training-plan-panel__head {
@@ -362,7 +362,7 @@
 .training-plan-card {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: rgba(15, 23, 42, 0.45);
+    background: var(--bg-tertiary);
     padding: 10px;
     display: flex;
     flex-direction: column;
@@ -378,7 +378,7 @@
 }
 
 .training-plan-card--recommended {
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.55) inset;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55) inset;
 }
 
 .training-plan-card__head {
@@ -438,7 +438,7 @@
 .training-collapsible {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    background: rgba(15, 23, 42, 0.3);
+    background: var(--bg-tertiary);
     overflow: hidden;
 }
 
@@ -449,7 +449,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    background: rgba(148, 163, 184, 0.08);
+    background: rgba(115, 115, 115, 0.08);
 }
 
 .training-collapsible > summary::-webkit-details-marker {
@@ -625,7 +625,7 @@
     padding: 10px;
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
 }
 
 .training-journey-card__index {
@@ -714,7 +714,7 @@
     border-radius: var(--radius-sm);
     padding: 6px 8px;
     font-size: var(--font-size-xs);
-    background: rgba(15, 23, 42, 0.35);
+    background: var(--bg-tertiary);
 }
 
 .training-observability-panel__muted {
@@ -783,7 +783,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 8px;
-    background: rgba(15, 23, 42, 0.35);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -812,7 +812,7 @@
     padding: 4px;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-secondary);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
 }
 
 .training-workspace-tab {
@@ -827,7 +827,7 @@
 
 .training-workspace-tab:hover {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--bg-tertiary);
 }
 
 .training-workspace-tab.active {
@@ -846,7 +846,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
     padding: 10px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1035,7 +1035,7 @@
     border-radius: var(--radius-md);
     padding: 10px;
     margin-bottom: var(--space-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1088,7 +1088,7 @@
 .training-model-wizard__card {
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
-    background: rgba(15, 23, 42, 0.35);
+    background: var(--bg-tertiary);
     padding: 8px;
     display: flex;
     flex-direction: column;
@@ -1130,7 +1130,7 @@
 .training-model-benchmark {
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
-    background: rgba(15, 23, 42, 0.35);
+    background: var(--bg-tertiary);
     padding: 8px;
     display: flex;
     flex-direction: column;
@@ -1171,7 +1171,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 6px;
-    background: rgba(15, 23, 42, 0.25);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1206,7 +1206,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 8px;
-    background: rgba(15, 23, 42, 0.25);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -1229,7 +1229,7 @@
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-sm);
     padding: 8px;
-    background: rgba(15, 23, 42, 0.25);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1297,7 +1297,7 @@
 
 .training-lora-box {
     padding: var(--space-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-tertiary);
     border-radius: 8px;
     margin-bottom: 16px;
 }
@@ -1316,7 +1316,7 @@
     padding: var(--space-sm) 0;
     display: flex;
     justify-content: flex-end;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
     margin-bottom: 8px;
 }
 
@@ -1424,7 +1424,7 @@
 }
 
 .training-essentials-model-gate--unknown {
-    background: rgba(148, 163, 184, 0.08);
+    background: rgba(115, 115, 115, 0.08);
     border-color: var(--border-secondary);
 }
 

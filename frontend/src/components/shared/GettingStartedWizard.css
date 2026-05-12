@@ -19,12 +19,10 @@
 }
 
 .wizard-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, var(--color-primary), var(--gray-1000));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: var(--font-size-2xl);
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.015em;
     margin-bottom: 8px;
 }
 
@@ -56,9 +54,9 @@
 
 .wizard-step--active {
     opacity: 1;
-    border-color: var(--color-primary);
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(59, 130, 246, 0.08));
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+    border-color: var(--text-primary);
+    background: var(--bg-tertiary);
+    box-shadow: none;
 }
 
 .wizard-step__num {

@@ -212,7 +212,7 @@
 
 .decision-log-status.status-active,
 .decision-log-status.status-info {
-    background: rgba(59, 130, 246, 0.12);
+    background: rgba(0, 0, 0, 0.12);
     color: var(--gray-1000);
 }
 

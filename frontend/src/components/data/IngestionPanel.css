@@ -22,7 +22,7 @@
 .remote-import-adapter-box {
     border: 1px solid var(--border-secondary);
     border-radius: var(--radius-md);
-    background: rgba(15, 23, 42, 0.32);
+    background: rgba(0, 0, 0, 0.32);
     padding: var(--space-sm) var(--space-md);
 }
 
@@ -167,7 +167,7 @@
 }
 
 .doc-row:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(0, 0, 0, 0.02);
 }
 
 .doc-name {

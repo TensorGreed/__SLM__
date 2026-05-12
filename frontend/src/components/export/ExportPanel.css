@@ -9,7 +9,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
 }
 
 .export-target-panel-header {
@@ -55,7 +55,7 @@
     border-radius: var(--radius-sm);
     padding: var(--space-sm);
     cursor: pointer;
-    background: rgba(255, 255, 255, 0.01);
+    background: var(--bg-tertiary);
 }
 
 .export-target-option.selected {
@@ -105,7 +105,7 @@
     text-transform: uppercase;
     font-size: var(--font-size-xs);
     letter-spacing: 0.05em;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
 }
 
 .export-row {
@@ -113,11 +113,11 @@
 }
 
 .export-row:hover {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-tertiary);
 }
 
 .export-row.expanded {
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--bg-tertiary);
     border-bottom: none;
 }
 
@@ -126,7 +126,7 @@
 }
 
 .export-details-row {
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--bg-tertiary);
 }
 
 .export-details-row td {
@@ -183,7 +183,7 @@
 }
 
 .btn-icon:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--bg-tertiary);
     color: var(--text-primary);
 }
 
@@ -210,7 +210,7 @@
 }
 
 .serve-plan-run-dir code {
-    background: rgba(0, 0, 0, 0.25);
+    background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: 4px;
 }
@@ -225,7 +225,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
@@ -281,7 +281,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-md);
-    background: rgba(255, 255, 255, 0.01);
+    background: var(--bg-tertiary);
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
@@ -310,7 +310,7 @@
 .serve-run-telemetry__item {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-tertiary);
     padding: var(--space-xs) var(--space-sm);
     display: flex;
     flex-direction: column;

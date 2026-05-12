@@ -76,7 +76,7 @@
 
 .training-config-breadcrumb-link:hover {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--bg-tertiary);
 }
 
 .training-config-breadcrumb-sep {
