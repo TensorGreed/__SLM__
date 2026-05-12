@@ -1,0 +1,87 @@
+/* FirstRunCheatSheet — newbie UX Phase 4.3. Monochrome / Vercel-airy. */
+
+.first-run-cheatsheet {
+    margin-bottom: var(--space-xl);
+    padding: var(--space-md) var(--space-lg);
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.first-run-cheatsheet-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.first-run-cheatsheet-head h2 {
+    margin: 0;
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
+.first-run-cheatsheet-dismiss {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    padding: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.first-run-cheatsheet-dismiss:hover,
+.first-run-cheatsheet-dismiss:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--border-default);
+}
+
+.first-run-cheatsheet-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.first-run-cheatsheet-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+.first-run-cheatsheet-list li svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--text-tertiary);
+}
+
+.first-run-cheatsheet-list strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.first-run-cheatsheet-list a {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-decoration-color: var(--border-default);
+    text-underline-offset: 2px;
+}
+
+.first-run-cheatsheet-list a:hover,
+.first-run-cheatsheet-list a:focus-visible {
+    text-decoration-color: var(--text-primary);
+}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import api from '../api/client';
 import DemoProjectTiles from '../components/dashboard/DemoProjectTiles';
+import FirstRunCheatSheet from '../components/dashboard/FirstRunCheatSheet';
 import ProjectCard from '../components/dashboard/ProjectCard';
 import TopBar from '../components/layout/TopBar';
 import EmptyState from '../components/shared/EmptyState';
@@ -341,6 +342,8 @@ export default function ProjectListPage() {
                         ))}
                     </div>
                 </section>
+
+                <FirstRunCheatSheet />
 
                 <DemoProjectTiles />
 
