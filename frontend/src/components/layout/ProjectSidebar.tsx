@@ -22,6 +22,7 @@ import { PIPELINE_TABS } from '../../types';
 import type { PipelineStatusResponse, TabKey } from '../../types';
 import { useProjectStore } from '../../stores/projectStore';
 import api from '../../api/client';
+import { openCommandPalette } from './commandPaletteBridge';
 import './ProjectSidebar.css';
 
 interface ProjectSidebarProps {
@@ -232,40 +233,45 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
 
     return (
         <aside className="project-sidebar">
-            <div className="project-sidebar-rail">
-                <button
-                    className="rail-logo"
-                    onClick={() => navigate('/')}
-                    title="Back to BrewSLM projects"
-                >
-                    BS
-                </button>
-                <div className="project-sidebar-rail-nav">
-                    {railItems.map((item) => (
-                        <button
-                            key={item.key}
-                            className={`rail-item ${selectedRailKey === item.key ? 'active' : ''}`}
-                            onClick={item.onClick}
-                            title={item.title}
-                        >
-                            {item.icon}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
             <div className="project-sidebar-panel">
-                <div className="project-sidebar-header">
-                    <div className="project-sidebar-heading">
-                        <span className="heading-kicker">{panelHeadingByRail[selectedRailKey].kicker}</span>
-                        <span className="heading-title">{panelHeadingByRail[selectedRailKey].title}</span>
-                    </div>
-                    <span className="project-sidebar-collapse">«</span>
+                <div className="project-sidebar-brand">
+                    <button
+                        type="button"
+                        className="brand-logo"
+                        onClick={() => navigate('/')}
+                        title="Back to BrewSLM projects"
+                    >
+                        <span className="brand-logo-mark">BS</span>
+                        <span className="brand-logo-name">BrewSLM</span>
+                    </button>
                 </div>
 
                 <div className="project-sidebar-project">
                     <span className="project-label">Project</span>
                     <span className="project-name" title={projectName}>{projectName}</span>
+                </div>
+
+                <div
+                    className="project-sidebar-rail-strip"
+                    aria-label="Workspace sections"
+                >
+                    {railItems.map((item) => (
+                        <button
+                            key={item.key}
+                            type="button"
+                            aria-pressed={selectedRailKey === item.key}
+                            className={`rail-pill ${selectedRailKey === item.key ? 'active' : ''}`}
+                            onClick={item.onClick}
+                            title={item.title}
+                        >
+                            <span className="rail-pill-icon">{item.icon}</span>
+                            <span className="rail-pill-label">{item.title}</span>
+                        </button>
+                    ))}
+                </div>
+
+                <div className="project-sidebar-section-label">
+                    {panelHeadingByRail[selectedRailKey].title}
                 </div>
 
                 <nav className="project-sidebar-nav">
@@ -425,6 +431,19 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                         </>
                     )}
                 </nav>
+
+                <button
+                    type="button"
+                    className="sidebar-cmdk-hint"
+                    onClick={() => openCommandPalette()}
+                    aria-label="Open command palette"
+                >
+                    <span>Quick search</span>
+                    <span className="sidebar-cmdk-hint-key">
+                        <kbd>⌘</kbd>
+                        <kbd>K</kbd>
+                    </span>
+                </button>
 
                 {isBeginner ? (
                     <div className="project-sidebar-beginner">

@@ -3,6 +3,7 @@ import { Navigate, Outlet, useParams } from 'react-router-dom';
 
 import TopBar from '../components/layout/TopBar';
 import ProjectSidebar from '../components/layout/ProjectSidebar';
+import CommandPalette from '../components/layout/CommandPalette';
 import WorkspaceFlowHint from '../components/layout/WorkspaceFlowHint';
 import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
@@ -101,6 +102,10 @@ export default function ProjectWorkspaceLayout() {
                 </div>
             </div>
             <DecisionLogDrawer projectId={projectId} />
+            <CommandPalette
+                projectId={projectId}
+                beginnerMode={activeProject.beginner_mode}
+            />
         </div>
     );
 }
