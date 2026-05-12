@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { Term } from '../shared/Term';
 import './ScorecardPanel.css';
 
 interface GateCheck {
@@ -84,11 +85,11 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
 
       <div className="gates-grid">
         <div className="gates-section">
-          <h3>Quality Gates</h3>
+          <h3>Quality <Term id="gate" plural /></h3>
           <table className="gates-table">
             <thead>
               <tr>
-                <th>Gate ID</th>
+                <th><Term id="gate" /> ID</th>
                 <th>Metric</th>
                 <th>Target</th>
                 <th>Actual</th>

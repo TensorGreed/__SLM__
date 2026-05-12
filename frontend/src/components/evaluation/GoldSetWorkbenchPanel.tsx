@@ -8,6 +8,7 @@ import {
 } from 'react';
 
 import api from '../../api/client';
+import { Term } from '../shared/Term';
 import './GoldSetWorkbenchPanel.css';
 
 interface DatasetEntry {
@@ -531,7 +532,7 @@ export default function GoldSetWorkbenchPanel({ projectId }: GoldSetWorkbenchPan
                                     <table className="gold-workbench-gate-table">
                                         <thead>
                                             <tr>
-                                                <th>Gate</th>
+                                                <th><Term id="gate" /></th>
                                                 <th>Metric</th>
                                                 <th>Target</th>
                                                 <th>Required</th>

@@ -20,6 +20,7 @@ import { useOutletContext } from 'react-router-dom';
 
 import api from '../api/client';
 import EmptyState from '../components/shared/EmptyState';
+import { Term } from '../components/shared/Term';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectAutopilotPage.css';
 
@@ -353,10 +354,12 @@ export default function ProjectAutopilotPage() {
         <div className="workspace-page autopilot-page">
             <section className="workspace-page-header">
                 <div>
-                    <h2 className="workspace-page-title">Autopilot Planner</h2>
+                    <h2 className="workspace-page-title">
+                        <Term id="autopilot" advanced /> Planner
+                    </h2>
                     <p className="workspace-page-subtitle">
-                        Preview a full autopilot plan before running it. See every auto-repair,
-                        every blocker, and apply only when you're satisfied.
+                        Preview a full <Term id="autopilot" /> plan before running it. See every auto-repair,
+                        every <Term id="preflight" /> blocker, and apply only when you're satisfied.
                     </p>
                 </div>
                 <div className="autopilot-header-badges">

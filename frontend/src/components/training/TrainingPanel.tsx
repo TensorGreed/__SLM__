@@ -4,6 +4,7 @@ import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
+import { Term } from '../shared/Term';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
 import ExperimentCompare from './ExperimentCompare';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
@@ -3209,7 +3210,9 @@ export default function TrainingPanel({
             <span className="training-journey-card__index">1</span>
             <div>
               <strong>Setup</strong>
-              <p>Recipe, profile defaults, preflight, hyperparameters.</p>
+              <p>
+                <Term id="recipe" />, profile defaults, <Term id="preflight" />, hyperparameters.
+              </p>
             </div>
           </div>
           <div className="training-journey-card">

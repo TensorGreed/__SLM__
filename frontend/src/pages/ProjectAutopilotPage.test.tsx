@@ -250,6 +250,22 @@ describe('ProjectAutopilotPage', () => {
         expect(alert).toBeInTheDocument();
     });
 
+    it('renders the title with a Term-wrapped Autopilot tooltip (Phase 4.2)', async () => {
+        // Phase 4.2 wraps "Autopilot" in the H2 title (and the subtitle) with
+        // the <Term> tooltip. This is the visible signal that the glossary
+        // integration is live on the page a newbie lands on after seeding a
+        // demo project.
+        apiMock.get.mockResolvedValue({ data: { entries: [] } });
+        const user = userEvent.setup();
+        render(<ProjectAutopilotPage />);
+
+        const title = await screen.findByRole('heading', { level: 2 });
+        const titleTermButton = within(title).getByRole('button', { name: /autopilot/i });
+        await user.click(titleTermButton);
+        const tooltip = await screen.findByRole('tooltip');
+        expect(tooltip).toHaveTextContent(/guided mode that proposes and runs/i);
+    });
+
     it('shows guardrail badges and decision log preview', async () => {
         apiMock.post.mockResolvedValue(buildPreviewResponse());
         const user = userEvent.setup();

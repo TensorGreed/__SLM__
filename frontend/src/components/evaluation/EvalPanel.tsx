@@ -3,6 +3,7 @@ import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, Responsi
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
+import { Term } from '../shared/Term';
 import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import FailureClustersPanel from './FailureClustersPanel';
@@ -902,7 +903,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                 <table className="docs-table">
                                     <thead>
                                         <tr>
-                                            <th>Gate</th>
+                                            <th><Term id="gate" /></th>
                                             <th>Metric</th>
                                             <th>Resolved</th>
                                             <th>Threshold</th>
