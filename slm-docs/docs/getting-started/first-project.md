@@ -1,119 +1,228 @@
 ---
 sidebar_position: 3
-title: Build Your First Project
+title: Build your first project
 ---
 
-# Build Your First Project
+# Build your first project
 
-This walkthrough helps you get a first model iteration, even with a small dataset.
+A narrated walkthrough that picks up where the [Quickstart](quickstart.md) left off. We take one realistic example — a support-ticket FAQ assistant — from a CSV file to a deployable artifact, with the UI / CLI / API alternatives at each step.
 
-## Step 1: Create Project
+## Scenario
 
-From the dashboard:
+You have a CSV of resolved support tickets (~500 rows) with columns `question` and `answer`. You want a small instruction-tuned model that responds to FAQs in the same style. Target: a vLLM server.
 
-1. Click **New Project**.
-2. Keep **Beginner Mode** enabled.
-3. Enter a clear name (for example, `Support FAQ Assistant`).
-4. Write a plain-language domain brief describing:
-   - your problem statement,
-   - who will use outputs,
-   - sample inputs/outputs,
-   - safety/compliance constraints,
-   - target deployment.
-5. Review **What the system understood** (task family, output contract, assumptions, glossary), then create.
+## Step 1 — Create the project
 
-Starter packs prefill sane defaults for:
+### UI
 
-- model family suggestions
-- adapter/task defaults
-- evaluation gates
-- safety reminders
-- target profile defaults
+Click **New Project** on the project list. Name it `Support FAQ`, template `support`, beginner mode on. Submit.
 
-Beginner Mode lets you start from domain intent first; advanced pack/profile fields can be refined later.
+### CLI
 
-## Step 2: Ingest Data
+```sh
+brewslm project create --name "Support FAQ" --template support
+```
 
-Start small. Aim for 100 to 500 high-quality examples first.
+### API
 
-Good starter dataset patterns:
+```sh
+curl -X POST http://localhost:8000/api/projects \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Support FAQ", "template": "support"}'
+```
 
-- question -> answer pairs
-- instruction -> response pairs
-- chunk + expected extraction JSON
+The template pre-fills sensible defaults for an FAQ-style assistant: starter eval pack, conservative training recipe, vLLM as the default target profile. You can override any of these later.
 
-## Step 3: Run Training Wizard / Autopilot
+## Step 2 — Ingest your dataset
 
-Use wizard defaults for your first run.
+Aim for 100–500 high-quality rows for a first iteration. Tiny datasets are fine — you can grow once you've seen the loop work.
 
-If blocked, read the blocker message carefully. BrewSLM usually gives:
+### UI
 
-- exact reason
-- severity (warning vs blocker)
-- concrete fixes
+Pipeline rail → **Data** → **Add source** → **Upload CSV**. Pick `tickets.csv`. The Dataset Structure Explorer auto-profiles the file: row count, columns, sample values. Click **Continue**.
 
-Before launching training, open **Base Model Registry** (Training rail) and:
+### CLI
 
-- filter by family/license/context/training mode,
-- click **Validate For Project** to inspect compatibility reason codes,
-- review tokenizer/chat-template warnings.
+```sh
+brewslm dataset upload --project 1 \
+  --source-type csv --source-ref ./tickets.csv \
+  --name "tickets_v1"
+```
 
-## Step 4: Evaluate
+### API
 
-Run evaluation before exporting.
+```sh
+curl -X POST http://localhost:8000/api/projects/1/datasets/upload \
+  -F file=@tickets.csv \
+  -F source_type=csv \
+  -F name=tickets_v1
+```
 
-Look at:
+You should see the dataset appear in the Pipeline → Data tab with `status=ingested`.
 
-- pass rate
-- hallucination/safety metrics
-- failure clusters
+## Step 3 — Clean
 
-Then apply remediation suggestions (data + config fixes), retrain, and re-evaluate.
+The cleaning stage normalises text, dedups, and runs a PII scan. The defaults from the `support` template are conservative — strict PII blocking, light dedup.
 
-## Step 5: Export and Smoke Test
+### UI
 
-Export for one target first (for example, edge GPU or server).
+Pipeline rail → **Cleaning** → **Run cleaning**. The page shows row counts before / after, the PII findings (if any), and the dedup ratio.
 
-Validate:
+### CLI
 
-- artifact exists and loads
-- latency/memory are acceptable
-- quality is close to evaluation behavior
+```sh
+brewslm dataset clean --project 1 --dataset tickets_v1
+```
 
-## Definition of Done (First Iteration)
+### API
 
-- You can run one complete project from ingestion to export.
-- You can explain at least one failure mode and one fix.
-- You can reproduce your result with the same project config.
+```sh
+curl -X POST http://localhost:8000/api/projects/1/datasets/clean \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_name": "tickets_v1"}'
+```
 
-## Sample Briefs and Resulting Blueprints
+If the PII scan blocks the run with `reason_code=cleaning_pii_block`, see [Common blockers](../reliability/common-blockers.md).
 
-### Sample Brief 1: Support Q&A
+## Step 4 — Build a gold set
 
-Brief:
+The gold set is the ground-truth eval set. The workbench helps you label 50–100 rows by sampling intelligently.
 
-> Build a support assistant that answers customer FAQ questions from resolved tickets.  
-> It should be concise, avoid hallucinations, and run on an edge GPU deployment.
+### UI
 
-Typical resulting blueprint fields:
+Pipeline rail → **Gold set** → **Sample 100 rows (stratified)**. Each row has a textarea — paste the gold answer and approve. Submit; the gold version locks (draft → locked).
 
-- `task_family`: `qa`
-- `input_modality`: `text`
-- `deployment_target_constraints.target_profile_id`: `edge_gpu`
-- `expected_output_schema`: `{"type":"object","properties":{"answer":"string"},"required":["answer"]}`
-- `success_metrics`: `answer_correctness`, `hallucination_rate`
+### CLI
 
-### Sample Brief 2: Contract Extraction
+```sh
+brewslm eval gold-set sample --project 1 --strategy stratified --count 100
+# … label rows in the UI …
+brewslm eval gold-set submit --project 1 --version 1
+```
 
-Brief:
+### API
 
-> Extract liability and indemnification clauses from legal contracts into JSON.  
-> This is for legal analysts, and output must always be valid structured JSON.
+```sh
+curl -X POST http://localhost:8000/api/projects/1/gold-sets/sample \
+  -H "Content-Type: application/json" \
+  -d '{"strategy": "stratified", "count": 100}'
+```
 
-Typical resulting blueprint fields:
+## Step 5 — Pick a base model
 
-- `task_family`: `structured_extraction`
-- `input_modality`: `text`
-- `expected_output_schema`: object with required extraction fields
-- `safety_compliance_notes`: legal-policy and quality guardrails
-- `success_metrics`: `exact_match`, `json_valid_rate`
+The Base Model Registry lists candidates with **measured compatibility** for your project's target + license.
+
+### UI
+
+Training rail → **Base Model Registry**. Filter `family=qwen`, `context >= 4096`, `license=permissive`. Click **Validate for project** on a candidate — surfaces tokenizer / chat-template / runtime warnings. Click **Set as default** when you find one you like (e.g. `Qwen2.5-1.5B-Instruct`).
+
+### CLI
+
+```sh
+brewslm models list --family qwen --hardware-fit server --json
+brewslm models validate --project 1 --model 12 --json
+brewslm models set-default --project 1 --model 12
+```
+
+### API
+
+```sh
+curl "http://localhost:8000/api/projects/1/models/recommend?limit=5"
+curl -X POST http://localhost:8000/api/projects/1/models/12/validate
+```
+
+## Step 6 — Train
+
+For a first project, let the Autopilot pick the recipe. It chooses between safe-SFT, LoRA-fast, and a small full-fine-tune based on dataset size + base model.
+
+### UI
+
+Training rail → **Autopilot Planner** → describe the goal in plain English: *"Support FAQ tone, concise answers, no hallucinations beyond the dataset."* → **Plan** → **One-click run**. The page swaps to live mode.
+
+### CLI
+
+```sh
+brewslm train start --project 1 --autopilot --one-click \
+  --intent "Support FAQ tone, concise answers, no hallucinations beyond the dataset."
+```
+
+### API
+
+```sh
+curl -X POST http://localhost:8000/api/projects/1/autopilot/plan \
+  -H "Content-Type: application/json" \
+  -d '{"intent": "Support FAQ tone, concise answers, no hallucinations beyond the dataset."}'
+
+curl -X POST http://localhost:8000/api/projects/1/autopilot/run \
+  -H "Content-Type: application/json" \
+  -d '{"plan_id": "auto_..."}'
+```
+
+Watch the loss curve. Cost + provenance show in the Resolved Defaults panel — see [Measured vs estimated](../reliability/measured-vs-estimated.md).
+
+## Step 7 — Evaluate
+
+Once training finishes, the Eval stage kicks off automatically (Autopilot path) or you trigger it.
+
+### UI
+
+Pipeline rail → **Eval** → **Run evaluation**. Each gate (exact match, LLM-judge, safety) lands as a row with pass / fail and a per-gate metric. The **Failure Clusters** card below groups errors by reason code — click one to see exemplars.
+
+### CLI
+
+```sh
+brewslm eval run --project 1 --experiment 1 --pack support-default
+brewslm eval clusters --project 1
+```
+
+### API
+
+```sh
+curl -X POST http://localhost:8000/api/projects/1/eval/run \
+  -H "Content-Type: application/json" \
+  -d '{"experiment_id": 1, "pack_id": "support-default"}'
+```
+
+If any gate fails, the **Remediation** panel suggests concrete fixes (data, hyperparameters, prompt template). Apply, re-run training, re-evaluate.
+
+## Step 8 — Export
+
+When eval passes, export for the target.
+
+### UI
+
+Pipeline rail → **Export** → **New export** → target `vllm_server` → format `huggingface`. Click **Run export**. Artifact lands under `DATA_DIR/exports/`.
+
+### CLI
+
+```sh
+brewslm export --project 1 --experiment 1 --target vllm_server --format huggingface
+```
+
+### API
+
+```sh
+curl -X POST http://localhost:8000/api/projects/1/export \
+  -H "Content-Type: application/json" \
+  -d '{"experiment_id": 1, "target_profile": "vllm_server", "format": "huggingface"}'
+```
+
+## Step 9 — Plan + smoke + promote deployment
+
+Once you have an export, the [deployment loop](../deployment/plan.md) takes over. Plan → smoke → promote → telemetry. The full deployment workflow lives in the [Deployment](../deployment/plan.md) section.
+
+## Definition of done (first iteration)
+
+- [ ] One full project from ingest → export, all stages green.
+- [ ] At least one failure cluster looked at, one remediation applied.
+- [ ] One deployment promoted (against the simulator if no real serving env yet).
+- [ ] You can re-run the whole thing from the project's training manifest — `brewslm train rerun --experiment 1`.
+
+If you can check these four boxes, you've used every layer of BrewSLM.
+
+## What to read next
+
+- [Pipeline overview](../workflows/pipeline-overview.md) — every stage in more depth.
+- [Newbie autopilot](../workflows/newbie-autopilot.md) — when autopilot helps and when to override.
+- [Failure clusters](../observability/failure-clusters.md) — making sense of eval failures.
+- [Measured vs estimated](../reliability/measured-vs-estimated.md) — reading provenance labels.

@@ -1,54 +1,238 @@
 ---
-sidebar_position: 6
-title: Training and Compatibility
+sidebar_position: 4
+title: Training
 ---
 
-# Training and Compatibility
+# Training
 
-Training is where most new users hit blockers. BrewSLM is designed to block unsafe or incompatible runs early.
+Stage 8 of the [pipeline](pipeline-overview.md). BrewSLM treats training as a **first-class resumable + reproducible primitive**: every launch snapshots an immutable manifest, every checkpoint is browsable + promotable, every run is rerun-able from a single id.
 
-## Recommended First Training Run
+## Three ways to start a run
 
-1. Choose a starter pack (optional but useful).
-2. Keep base model in 1B to 7B range.
-3. Use default optimizer/scheduler settings.
-4. Run one short baseline epoch.
-5. Evaluate before scaling up.
+| Want | Surface |
+|---|---|
+| Pick recipe + model interactively, see resolved defaults | UI → Training rail → **Configurations** |
+| Reproduce a known-good run | UI / CLI → `train rerun --experiment N` |
+| Brief in plain English, accept the plan | UI / CLI → Autopilot → [Newbie autopilot](newbie-autopilot.md) |
+| Tweak one config knob | UI → Training Configurations → edit + **Apply + start** |
 
-## Compatibility Checks
+## Start a fresh run
 
-BrewSLM checks model-target compatibility before training starts.
+### UI
 
-Examples:
+Training rail → **Configurations**.
 
-- VRAM over target baseline -> hard blocker
-- Unknown capabilities -> warning or blocker depending on strictness
-- Missing runtime dependencies -> actionable failure
+1. Pick a **Recipe** from the dropdown. Recipes are pre-tuned config templates: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, etc. The picker shows their key knobs at a glance.
+2. **Base model** — defaults to the project default; override here.
+3. **Training mode** — `sft` / `dpo` / `orpo` / `classification` / `seq2seq` (filtered to what the recipe + model support).
+4. **Resolved defaults panel** below shows every field that will be applied with provenance (`recipe` / `domain_pack` / `model_metadata` / `default`).
+5. **Cost estimate card** — gpu_hours, USD, CO2, provenance, confidence band. Pulled from real history when available; estimated otherwise. See [Measured vs estimated](../reliability/measured-vs-estimated.md).
+6. Click **Preflight**. If green, click **Start training**.
 
-## Strict Mode vs Fallback Mode
+### CLI
 
-- **Strict mode**: no hidden fallback behavior; blockers remain blockers.
-- **Standard mode**: safe fallback paths may be used when possible, with explicit provenance.
+```sh
+# Use a named recipe
+brewslm train start --project 1 \
+  --recipe safe-balanced-sft \
+  --base-model 12
 
-## Choosing a Target Profile
+# Or pass an explicit config
+brewslm train start --project 1 \
+  --base-model 12 \
+  --training-mode sft \
+  --learning-rate 2e-4 \
+  --num-epochs 3 \
+  --batch-size 8
 
-Pick target profile based on deployment intent:
+# Autopilot path
+brewslm train start --project 1 --autopilot --one-click \
+  --intent "Support FAQ, deploy on vLLM."
+```
 
-- `mobile_cpu` for on-device CPU
-- `edge_gpu` for local/edge GPU
-- `vllm_server` for server throughput
-- `browser_webgpu` for browser inference
+### API
 
-Do not optimize for every target on day one. Start with one.
+```sh
+# Preflight
+curl -X POST http://localhost:8000/api/projects/1/training/preflight \
+  -H "Content-Type: application/json" \
+  -d '{
+    "base_model_id": 12,
+    "recipe": "safe-balanced-sft",
+    "training_mode": "sft"
+  }'
 
-## Troubleshooting Training Blockers
+# Start
+curl -X POST http://localhost:8000/api/projects/1/experiments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "base_model_id": 12,
+    "recipe": "safe-balanced-sft",
+    "training_mode": "sft",
+    "config": {"learning_rate": 2e-4, "num_epochs": 3}
+  }'
+```
 
-When blocked, collect:
+## Preflight blockers
 
-- blocker reason text,
-- target profile,
-- model name,
-- estimated memory footprint,
-- runtime backend.
+The preflight endpoint catches the common "this won't work" cases **before** the runner starts burning compute.
 
-Then either reduce model size, change target profile, or tune batch/precision strategy.
+| Reason code | Means |
+|---|---|
+| `training_dispatch_error` | The training runtime backend wasn't selectable (Celery down, external command missing). |
+| `training_runtime_error` (preflight) | Tokenizer / chat template / adapter incompatible with the chosen model. |
+| Capability check fail | Model doesn't support the requested training mode (e.g. `dpo` on a base model with no chat template). |
+| VRAM over budget | Model + batch size + context exceeds estimated VRAM for the target. |
+
+The UI's Resolved Defaults panel surfaces each blocker with the actionable fix.
+
+## Reproducibility — the manifest
+
+Every successful training launch writes an **immutable** training manifest to `manifests/exp-<id>.json`:
+
+```json
+{
+  "experiment_id": 42,
+  "base_model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "training_mode": "sft",
+  "recipe": "safe-balanced-sft",
+  "config": {"learning_rate": 2e-4, "num_epochs": 3, "batch_size": 8},
+  "dataset_version_id": 17,
+  "tokenized_dir": "DATA_DIR/projects/1/prepared/tokenized_v3",
+  "adapter": {"id": "qa-pair", "version": 2},
+  "domain_pack": {"pack_id": "support-pack-v1", "version": 1},
+  "target_profile": "vllm_server",
+  "seed": 42,
+  "git_sha": "f3dccd8…",
+  "captured_at": "2026-05-12T10:23:00Z"
+}
+```
+
+Once written it's append-only. Modifying it doesn't change the run; rerun reads from this file.
+
+## Rerun an experiment
+
+The single fastest path to a reproducible run.
+
+### UI
+
+Pipeline → **Pipeline Runs** → click an experiment row → **Rerun**. The manifest is replayed verbatim into a new experiment id.
+
+### CLI
+
+```sh
+brewslm train rerun --experiment 42
+brewslm train rerun --experiment 42 --run-name "phase-a-rerun"
+```
+
+### API
+
+```sh
+curl -X POST http://localhost:8000/api/projects/1/experiments/rerun \
+  -H "Content-Type: application/json" \
+  -d '{"experiment_id": 42, "run_name": "phase-a-rerun"}'
+```
+
+## Clone with overrides
+
+When you want "the same run but with one knob changed":
+
+### CLI
+
+```sh
+brewslm train clone --experiment 42 \
+  --name "lr-3e-4" \
+  --config-overrides '{"learning_rate": 3e-4}'
+```
+
+### API
+
+```sh
+curl -X POST http://localhost:8000/api/projects/1/experiments/clone \
+  -H "Content-Type: application/json" \
+  -d '{
+    "experiment_id": 42,
+    "name": "lr-3e-4",
+    "config_overrides": {"learning_rate": 3e-4}
+  }'
+```
+
+The clone gets its own manifest. Both parent + clone manifests are queryable.
+
+## Live monitoring
+
+While a run is in flight:
+
+- **UI** — Training Configurations page swaps to live mode: loss curves, per-step metrics, GPU memory, telemetry, stop / pause / resume buttons.
+- **CLI** — `brewslm logs tail --project 1 --run-id exp-42` streams events.
+- **API** — `GET /api/run-events/run/exp-42`.
+
+## Pause + resume + cancel
+
+Long runs can be paused (writes a checkpoint, releases GPU) and resumed from the same step later.
+
+### UI
+
+Live training page → **Pause**. Later, **Resume** picks up at the next step.
+
+### CLI
+
+```sh
+brewslm train pause --project 1 --experiment 42
+brewslm train resume --project 1 --experiment 42
+brewslm train cancel --project 1 --experiment 42 --reason "wrong recipe"
+```
+
+### API
+
+```sh
+curl -X POST http://localhost:8000/api/projects/1/experiments/42/pause
+curl -X POST http://localhost:8000/api/projects/1/experiments/42/resume
+curl -X POST http://localhost:8000/api/projects/1/experiments/42/cancel \
+  -d '{"reason": "wrong recipe"}'
+```
+
+## Checkpoint browser
+
+Every N steps the runtime saves a checkpoint. The browser lets you promote a non-final one (useful when training overfit late) or resume from any past step.
+
+### UI
+
+Training rail → **Models** → click the experiment row → **Checkpoints** drawer. Each row has actions:
+
+- **Promote** — mark this checkpoint as the run's `final` (replaces what eval will use).
+- **Resume from** — kick off a continuation from this step.
+
+### CLI
+
+```sh
+brewslm train checkpoints --project 1 --experiment 42
+brewslm train checkpoints --project 1 --experiment 42 --promote-step 200
+brewslm train checkpoints --project 1 --experiment 42 --resume-from-step 150
+```
+
+### API
+
+```sh
+curl "http://localhost:8000/api/projects/1/experiments/42/checkpoints"
+curl -X POST http://localhost:8000/api/projects/1/experiments/42/checkpoints/200/promote
+curl -X POST http://localhost:8000/api/projects/1/experiments/42/checkpoints/150/resume
+```
+
+## Reason codes you might hit
+
+| Code | Means |
+|---|---|
+| `training_dispatch_error` | Runtime backend couldn't launch (Celery down, external command missing). |
+| `training_runtime_error` | Generic runtime failure inside the training loop. |
+| `training_oom` | GPU out of memory. The CUDA OOM auto-retry planner may have already tried smaller batch sizes; see the decision log. |
+| `training_timeout` | Wallclock budget exhausted. |
+| `training_cancelled` | Operator action (UI / CLI / autopilot strict-mode refusal). |
+
+For walk-throughs of each, see [Common blockers](../reliability/common-blockers.md).
+
+## Next
+
+- [Evaluation + remediation](evaluation-and-remediation.md) — what to do with the trained checkpoint.
+- [Export + deployment](export-and-deployment.md) — shipping it.
+- [Measured vs estimated](../reliability/measured-vs-estimated.md) — reading the cost estimate.
