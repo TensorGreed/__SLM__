@@ -8,8 +8,10 @@ from app.database import get_db
 from app.services.synthetic_service import (
     generate_conversation_dialogues,
     generate_qa_pairs,
-    save_synthetic_conversation_batch,
+    generate_span_extraction_rows,
     save_synthetic_batch,
+    save_synthetic_conversation_batch,
+    save_synthetic_span_batch,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/synthetic", tags=["Synthetic"])
@@ -110,5 +112,60 @@ async def save_conversations(
         project_id,
         req.conversations,
         req.min_confidence,
+    )
+    return result
+
+
+class GenerateSpanRequest(BaseModel):
+    source_text: str = Field(..., min_length=10)
+    num_rows: int = Field(5, ge=1, le=50)
+    entity_types: list[str] = Field(default_factory=list)
+    api_url: str = ""
+    api_key: str = ""
+    model_name: str = "llama3"
+
+
+class SaveSpanBatchRequest(BaseModel):
+    rows: list[dict]
+    min_confidence: float = Field(0.4, ge=0, le=1.0)
+
+
+@router.post("/generate-spans")
+async def generate_spans(
+    project_id: int,
+    req: GenerateSpanRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate `{text, entities: [...]}` rows for PII / NER /
+    structured-extraction span_set training. Uses the teacher model
+    when configured, falls back to a regex-based heuristic on the
+    source text otherwise."""
+    try:
+        rows = await generate_span_extraction_rows(
+            db,
+            project_id,
+            req.source_text,
+            req.num_rows,
+            req.entity_types or None,
+            req.api_url,
+            req.api_key,
+            req.model_name,
+        )
+        return {"rows": rows, "count": len(rows)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Span generation failed: {str(e)}")
+
+
+@router.post("/save-spans")
+async def save_spans(
+    project_id: int,
+    req: SaveSpanBatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Save approved span-extraction rows to the synthetic dataset."""
+    result = await save_synthetic_span_batch(
+        db, project_id, req.rows, req.min_confidence
     )
     return result

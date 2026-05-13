@@ -460,6 +460,19 @@ async def get_project_runtime_readiness(project_id: int):
     return await get_project_readiness(project_id)
 
 
+@router.get("/{project_id}/prepared-manifest")
+async def get_prepared_manifest(project_id: int):
+    """Return the project's prepared/manifest.json contents (or `{}`
+    when missing). Lets UI surfaces — the SyntheticPanel in particular
+    — auto-detect task_profile / scoring_mode / labels / entity_types /
+    output_schema without having to scan the filesystem themselves.
+    """
+
+    from app.services.eval_task_handler_service import read_prepared_manifest
+
+    return read_prepared_manifest(project_id)
+
+
 @router.delete("/{project_id}", status_code=204)
 async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     """Delete a project and all associated data."""

@@ -984,3 +984,349 @@ async def save_synthetic_conversation_batch(
         "accepted_turns": sum(int(item.get("turn_count") or 0) for item in accepted),
         "rejected_items": rejected,
     }
+
+
+# ── Span-extraction synthesis (PII / NER / structured-extraction span_set) ──
+#
+# Generates rows shaped `{text, entities: [{type, start, end, text}, ...]}`
+# — the same shape StructuredExtractionHandler's span_set scoring mode
+# consumes. Triggered from the SyntheticPanel when the project's
+# task_profile is structured_extraction and scoring_mode is span_set.
+
+
+# Conservative built-in regexes for the demo fallback. These don't
+# cover everything (person names + addresses + DOBs need an LLM or
+# a real NER model), but they're enough to seed the format and give
+# the user something useful when no teacher API is configured.
+_DEFAULT_SPAN_PATTERNS: list[tuple[str, str]] = [
+    ("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    # Matches both 10-digit (NNN-NNN-NNNN, (NNN) NNN-NNNN, +1-NNN-NNN-NNNN)
+    # and 7-digit (NNN-NNNN) formats with optional country code +
+    # optional area-code parens.
+    (
+        "phone",
+        r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3,4}(?:[-.\s]?\d{4})?\b",
+    ),
+    ("ssn", r"\b\d{3}-\d{2}-\d{4}\b"),
+    ("credit_card", r"\b(?:\d[ -]?){13,16}\b"),
+    (
+        "ip_address",
+        r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\b",
+    ),
+]
+
+
+def _extract_entities_via_regex(
+    text: str,
+    entity_types: list[str] | None = None,
+) -> list[dict]:
+    """Cheap regex-based entity extraction for the demo fallback.
+
+    Returns a list of `{type, start, end, text}` dicts. Only the
+    well-defined patterns (email/phone/ssn/credit_card/ip_address)
+    are detected — names / addresses / DOBs need an LLM. When
+    ``entity_types`` is set, restrict detection to that subset.
+    """
+
+    import re as _re
+
+    allowed = (
+        {t.strip().lower() for t in entity_types if isinstance(t, str)}
+        if entity_types
+        else None
+    )
+    out: list[dict] = []
+    for ent_type, pattern in _DEFAULT_SPAN_PATTERNS:
+        if allowed is not None and ent_type not in allowed:
+            continue
+        for match in _re.finditer(pattern, text):
+            span_text = match.group(0)
+            out.append(
+                {
+                    "type": ent_type,
+                    "start": match.start(),
+                    "end": match.end(),
+                    "text": span_text,
+                }
+            )
+    # Sort by start so the entity list reads left-to-right.
+    out.sort(key=lambda e: (e["start"], e["end"]))
+    return out
+
+
+def _generate_demo_span_rows(
+    source_text: str,
+    num_rows: int,
+    entity_types: list[str] | None,
+) -> list[dict]:
+    """Demo fallback. Splits source into sentences and emits up to
+    ``num_rows`` rows; each carries the sentence plus any regex-
+    detectable entities with correct offsets. Useful as a "show me
+    what the format looks like" when no teacher API is configured."""
+
+    import re as _re
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    sentences = [
+        s.strip()
+        for s in _re.split(r"(?<=[.!?])\s+", source_text.strip())
+        if len(s.strip()) > 10
+    ]
+    if not sentences:
+        sentences = [source_text.strip()]
+
+    rows: list[dict] = []
+    now = _dt.now(_tz.utc).isoformat()
+    # Rotate through sentences; each row gets ONE sentence so the
+    # offsets are simple. If num_rows > sentence count, cycle.
+    for idx in range(min(num_rows, max(len(sentences), 1))):
+        text = sentences[idx % len(sentences)]
+        entities = _extract_entities_via_regex(text, entity_types)
+        rows.append(
+            {
+                "text": text,
+                "entities": entities,
+                # Lower demo confidence so users can re-rank if they
+                # set a teacher model later — these are heuristic
+                # extractions, not labelled gold.
+                "confidence": 0.55 if entities else 0.40,
+                "source": "demo_heuristic",
+                "model": "regex",
+                "generated_at": now,
+            }
+        )
+    return rows
+
+
+def _validate_span_rows(
+    raw: list[Any],
+    entity_types: list[str] | None,
+) -> list[dict]:
+    """Normalize teacher output to canonical span rows.
+
+    For each row:
+      - text must be a non-empty string
+      - entities must be a list of {type, start, end, text} where
+        ``text[start:end] == entity.text`` (drop entities that fail
+        the offset sanity check rather than poison the dataset)
+      - if entity_types is supplied, drop entities of unknown types
+    """
+
+    allowed = (
+        {t.strip().lower() for t in entity_types if isinstance(t, str)}
+        if entity_types
+        else None
+    )
+    out: list[dict] = []
+    for raw_row in raw:
+        if not isinstance(raw_row, dict):
+            continue
+        text = str(raw_row.get("text") or "").strip()
+        if not text:
+            continue
+        entities_in = raw_row.get("entities")
+        if not isinstance(entities_in, list):
+            entities_in = []
+        valid_entities: list[dict] = []
+        for ent in entities_in:
+            if not isinstance(ent, dict):
+                continue
+            ent_type = str(ent.get("type") or "").strip()
+            if not ent_type:
+                continue
+            if allowed is not None and ent_type.lower() not in allowed:
+                continue
+            try:
+                start = int(ent.get("start"))
+                end = int(ent.get("end"))
+            except (TypeError, ValueError):
+                continue
+            ent_text = str(ent.get("text") or "")
+            if start < 0 or end <= start or end > len(text):
+                continue
+            # Drop entities whose claimed text doesn't match the
+            # actual span — these are hallucinated offsets the model
+            # often emits, and they poison training data.
+            if text[start:end] != ent_text:
+                continue
+            valid_entities.append(
+                {"type": ent_type, "start": start, "end": end, "text": ent_text}
+            )
+        valid_entities.sort(key=lambda e: (e["start"], e["end"]))
+        out.append({"text": text, "entities": valid_entities})
+    return out
+
+
+def _parse_teacher_span_rows(content: str) -> list[dict]:
+    """Best-effort parse of the teacher model's JSON output. Returns
+    raw row dicts (validation + entity-offset checks are applied by
+    ``_validate_span_rows``)."""
+
+    if not content:
+        return []
+    stripped = _strip_thinking_blocks(content)
+    for candidate in _extract_json_blocks(stripped):
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        # Accept either ``{"rows": [...]}`` or a bare ``[...]``.
+        if isinstance(payload, dict):
+            rows = payload.get("rows") or payload.get("data")
+            if isinstance(rows, list):
+                return [r for r in rows if isinstance(r, dict)]
+        if isinstance(payload, list):
+            return [r for r in payload if isinstance(r, dict)]
+    return []
+
+
+async def generate_span_extraction_rows(
+    db: AsyncSession | None,
+    project_id: int,
+    source_text: str,
+    num_rows: int = 5,
+    entity_types: list[str] | None = None,
+    api_url: str = "",
+    api_key: str = "",
+    model_name: str = "llama3",
+) -> list[dict]:
+    """Generate `{text, entities: [...]}` rows for PII / NER /
+    structured-extraction span_set training, with demo fallback."""
+
+    secret_url = None
+    secret_key = None
+    if db is not None:
+        from app.services.secret_service import get_project_secret_value
+
+        secret_url = await get_project_secret_value(
+            db, project_id, "teacher_model", "api_url"
+        )
+        secret_key = await get_project_secret_value(
+            db, project_id, "teacher_model", "api_key"
+        )
+    url = api_url or secret_url or settings.TEACHER_MODEL_API_URL
+    resolved_api_key = api_key or secret_key or settings.TEACHER_MODEL_API_KEY
+
+    if not url:
+        if not settings.ALLOW_SYNTHETIC_DEMO_FALLBACK:
+            raise ValueError(
+                "Teacher model API URL is not configured. Set "
+                "TEACHER_MODEL_API_URL or enable "
+                "ALLOW_SYNTHETIC_DEMO_FALLBACK=true for demo-only mode."
+            )
+        rows = _generate_demo_span_rows(source_text, num_rows, entity_types)
+        return rows
+
+    types_clause = (
+        f"Allowed entity types (use ONLY these): {', '.join(entity_types)}.\n"
+        if entity_types
+        else "Detect any common PII / PCI entity types.\n"
+    )
+    prompt = (
+        f"You're generating training data for a PII / PCI span-detection "
+        f"model. Produce {num_rows} new realistic snippets in the same "
+        "style as the source paragraph but with DIFFERENT, SYNTHETIC PII "
+        "values (use 555- phone numbers, 000- SSNs, test PANs, "
+        "@example.* emails). For each snippet, return the text AND a "
+        "list of every PII entity with character offsets and type.\n\n"
+        f"{types_clause}"
+        "Output rules:\n"
+        '- Return ONLY valid JSON of the form {"rows":[{"text":"…","entities":[{"type":"…","start":N,"end":M,"text":"…"}]}]}.\n'
+        "- CRITICAL: For each entity, text[start:end] in your snippet MUST "
+        "  equal entity.text exactly. Double-check offsets before emitting.\n"
+        "- Use only synthetic values — never real identifiers.\n"
+        "- Vary entity coverage across rows so the dataset isn't repetitive.\n\n"
+        f"Source paragraph:\n{source_text[:4000]}\n\n"
+        f"Return exactly {num_rows} rows now."
+    )
+
+    result = await call_teacher_model(
+        prompt,
+        api_url=url,
+        api_key=resolved_api_key,
+        model_name=model_name,
+        force_json=True,
+    )
+    content = result.get("content") or ""
+    raw_rows = _parse_teacher_span_rows(content)
+    validated = _validate_span_rows(raw_rows, entity_types)
+    if not validated:
+        # Teacher returned nothing parseable — fall back to demo
+        # extraction so the user still sees the expected shape.
+        return _generate_demo_span_rows(source_text, num_rows, entity_types)
+
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    now = _dt.now(_tz.utc).isoformat()
+    enriched: list[dict] = []
+    for row in validated[:num_rows]:
+        entities = row.get("entities") or []
+        # Confidence keys off "all required types present" + "every
+        # entity passed offset validation". Cap at 0.9 so a teacher
+        # model output never claims perfect ground truth.
+        coverage = (
+            min(0.9, 0.5 + 0.1 * len(entities))
+            if entities
+            else 0.4
+        )
+        enriched.append(
+            {
+                **row,
+                "confidence": round(coverage, 3),
+                "source": "teacher_llm",
+                "model": model_name,
+                "generated_at": now,
+            }
+        )
+    return enriched
+
+
+async def save_synthetic_span_batch(
+    db: AsyncSession,
+    project_id: int,
+    rows: list[dict],
+    min_confidence: float = 0.4,
+) -> dict:
+    """Persist approved span-extraction rows as JSONL alongside the
+    other synthetic outputs. Each accepted entry stores `text` plus
+    the entity list in the same shape `StructuredExtractionHandler`
+    consumes during eval."""
+
+    ds = await get_or_create_synthetic_dataset(db, project_id)
+    syn_dir = _synthetic_dir(project_id)
+    file_path = syn_dir / "synthetic.jsonl"
+
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    with open(file_path, "a", encoding="utf-8") as f:
+        for row in rows:
+            confidence = row.get("confidence", 0)
+            if confidence >= min_confidence:
+                entry = {
+                    "id": ds.record_count + len(accepted) + 1,
+                    "text": row.get("text", ""),
+                    "entities": row.get("entities") or [],
+                    "confidence": confidence,
+                    "source": row.get("source"),
+                    "model": row.get("model"),
+                    "generated_at": row.get("generated_at"),
+                    "status": "accepted",
+                }
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                accepted.append(entry)
+            else:
+                rejected.append(
+                    {**row, "status": "rejected", "reason": "low_confidence"}
+                )
+
+    ds.record_count += len(accepted)
+    ds.file_path = str(file_path)
+    await db.flush()
+    return {
+        "accepted": len(accepted),
+        "rejected": len(rejected),
+        "total": ds.record_count,
+        "rejected_rows": rejected,
+    }

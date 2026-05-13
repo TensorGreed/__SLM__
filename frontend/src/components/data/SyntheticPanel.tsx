@@ -14,7 +14,22 @@ interface Chunk {
     selected?: boolean;
 }
 
-type GenerationMode = 'qa' | 'conversation';
+type GenerationMode = 'qa' | 'conversation' | 'span_extraction';
+
+interface SpanEntity {
+    type?: string;
+    start?: number;
+    end?: number;
+    text?: string;
+}
+
+interface SpanRow {
+    text?: string;
+    entities?: SpanEntity[];
+    confidence?: number;
+    source?: string;
+    model?: string;
+}
 
 function extractErrorMessage(error: unknown): string {
     if (typeof error === 'object' && error !== null) {
@@ -71,6 +86,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const [modelName, setModelName] = useState('llama3');
     const [generatedPairs, setGeneratedPairs] = useState<any[]>([]);
     const [generatedConversations, setGeneratedConversations] = useState<any[]>([]);
+    const [generatedSpans, setGeneratedSpans] = useState<SpanRow[]>([]);
+    const [numSpans, setNumSpans] = useState(5);
+    // Comma-separated list shown in the UI; parsed to a string[] when
+    // calling the backend. Pre-filled from the project's prepared
+    // manifest when task_profile is structured_extraction.
+    const [entityTypesInput, setEntityTypesInput] = useState('');
+    // Set to true when the prepared manifest declares span_set scoring
+    // — drives the auto-switch to span_extraction mode and the warning
+    // banner on the QA / conversation modes.
+    const [projectIsSpanExtraction, setProjectIsSpanExtraction] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [saveResult, setSaveResult] = useState<any>(null);
     const [prefillSourceStage, setPrefillSourceStage] = useState('');
@@ -79,6 +104,47 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const [chunks, setChunks] = useState<Chunk[]>([]);
     const [isLoadingChunks, setIsLoadingChunks] = useState(false);
     const [showChunkPicker, setShowChunkPicker] = useState(false);
+
+    // Auto-detect span_extraction projects from the prepared manifest
+    // so the panel doesn't ship Q&A pairs into a PII / NER dataset.
+    useEffect(() => {
+        let cancelled = false;
+        const detectSpanExtraction = async () => {
+            try {
+                const res = await api.get(
+                    `/projects/${projectId}/prepared-manifest`,
+                );
+                if (cancelled) return;
+                const manifest = res.data || {};
+                const taskProfile = String(manifest.task_profile || '').trim().toLowerCase();
+                const outputSchema = manifest.output_schema || {};
+                const scoringMode =
+                    String(outputSchema.scoring_mode || '').trim().toLowerCase();
+                const isSpanSet =
+                    taskProfile === 'structured_extraction' &&
+                    scoringMode === 'span_set';
+                if (isSpanSet) {
+                    setProjectIsSpanExtraction(true);
+                    setGenerationMode('span_extraction');
+                    const entityTypes = Array.isArray(manifest.entity_types)
+                        ? manifest.entity_types.filter(
+                              (e: unknown) => typeof e === 'string' && e.trim(),
+                          )
+                        : [];
+                    if (entityTypes.length > 0) {
+                        setEntityTypesInput(entityTypes.join(', '));
+                    }
+                }
+            } catch {
+                // Manifest endpoint missing or project not seeded yet —
+                // not fatal, panel falls back to today's behavior.
+            }
+        };
+        void detectSpanExtraction();
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
 
     useEffect(() => {
         let cancelled = false;
@@ -89,7 +155,15 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             }
             const cfg = prefill.config || {};
             const modeToken = String(cfg.mode || '').trim().toLowerCase();
-            if (prefill.stage === 'synthetic_conversation' || modeToken.includes('conversation')) {
+            // Don't let workflow prefill override the span_extraction
+            // auto-pick — that one's keyed off the manifest's
+            // declared scoring_mode and is the load-bearing default.
+            if (projectIsSpanExtraction) {
+                // Skip mode setting; keep span_extraction.
+            } else if (
+                prefill.stage === 'synthetic_conversation'
+                || modeToken.includes('conversation')
+            ) {
                 setGenerationMode('conversation');
             } else if (prefill.stage === 'synthetic') {
                 setGenerationMode('qa');
@@ -183,6 +257,13 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         setShowChunkPicker(false);
     };
 
+    const parseEntityTypes = (raw: string): string[] => {
+        return raw
+            .split(',')
+            .map((token) => token.trim())
+            .filter((token) => token.length > 0);
+    };
+
     const handleGenerate = async () => {
         if (!sourceText.trim()) return;
         setIsGenerating(true);
@@ -197,6 +278,19 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 });
                 setGeneratedPairs(res.data.pairs || []);
                 setGeneratedConversations([]);
+                setGeneratedSpans([]);
+            } else if (generationMode === 'span_extraction') {
+                const res = await api.post(`/projects/${projectId}/synthetic/generate-spans`, {
+                    source_text: sourceText,
+                    num_rows: numSpans,
+                    entity_types: parseEntityTypes(entityTypesInput),
+                    api_url: apiUrl,
+                    api_key: apiKey,
+                    model_name: modelName,
+                });
+                setGeneratedSpans(res.data.rows || []);
+                setGeneratedPairs([]);
+                setGeneratedConversations([]);
             } else {
                 const res = await api.post(`/projects/${projectId}/synthetic/generate-conversations`, {
                     source_text: sourceText,
@@ -209,6 +303,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 });
                 setGeneratedConversations(res.data.conversations || []);
                 setGeneratedPairs([]);
+                setGeneratedSpans([]);
             }
             setSaveResult(null);
         } catch (err: any) {
@@ -227,6 +322,14 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             setSaveResult(res.data);
             return;
         }
+        if (generationMode === 'span_extraction') {
+            const res = await api.post(`/projects/${projectId}/synthetic/save-spans`, {
+                rows: generatedSpans,
+                min_confidence: 0.4,
+            });
+            setSaveResult(res.data);
+            return;
+        }
         const res = await api.post(`/projects/${projectId}/synthetic/save-conversations`, {
             conversations: generatedConversations,
             min_confidence: 0.4,
@@ -235,10 +338,18 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     };
 
     const selectedCount = chunks.filter(c => c.selected).length;
-    const activeGeneratedCount = generationMode === 'qa' ? generatedPairs.length : generatedConversations.length;
-    const isDemoMode = generationMode === 'qa'
-        ? generatedPairs.some(p => p.source === 'demo_heuristic')
-        : generatedConversations.some(c => c.source === 'demo_heuristic');
+    const activeGeneratedCount =
+        generationMode === 'qa'
+            ? generatedPairs.length
+            : generationMode === 'span_extraction'
+                ? generatedSpans.length
+                : generatedConversations.length;
+    const isDemoMode =
+        generationMode === 'qa'
+            ? generatedPairs.some((p) => p.source === 'demo_heuristic')
+            : generationMode === 'span_extraction'
+                ? generatedSpans.some((r) => r.source === 'demo_heuristic')
+                : generatedConversations.some((c) => c.source === 'demo_heuristic');
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
@@ -260,12 +371,37 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 setGenerationMode(nextMode);
                                 setGeneratedPairs([]);
                                 setGeneratedConversations([]);
+                                setGeneratedSpans([]);
                                 setSaveResult(null);
                             }}
                         >
                             <option value="qa">Single-turn Q&A</option>
                             <option value="conversation">Multi-turn Conversations</option>
+                            <option value="span_extraction">
+                                PII / NER span extraction
+                            </option>
                         </select>
+                        {projectIsSpanExtraction && generationMode !== 'span_extraction' && (
+                            <div
+                                style={{
+                                    marginTop: 'var(--space-sm)',
+                                    padding: '8px 12px',
+                                    background: 'rgba(239, 68, 68, 0.08)',
+                                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                                    borderRadius: 'var(--radius-md)',
+                                    fontSize: 'var(--font-size-sm)',
+                                    color: 'rgb(153, 27, 27)',
+                                }}
+                            >
+                                <strong>Heads up:</strong> this project is tagged{' '}
+                                <code>task_profile: structured_extraction</code> with{' '}
+                                <code>scoring_mode: span_set</code>. Q&A or conversation
+                                output won't match the eval schema —{' '}
+                                <strong>switch to "PII / NER span extraction"</strong> to
+                                generate <code>{'{text, entities: […]}'}</code> rows
+                                that the StructuredExtractionHandler can score.
+                            </div>
+                        )}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: provider === 'ollama' ? '1fr 1fr' : '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
                         <div className="form-group">
@@ -326,6 +462,39 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 style={{ width: 120 }}
                             />
                         </div>
+                    ) : generationMode === 'span_extraction' ? (
+                        <>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label className="form-label">Rows to Generate</label>
+                                <input
+                                    className="input"
+                                    type="number"
+                                    value={numSpans}
+                                    onChange={(e) =>
+                                        setNumSpans(
+                                            Math.max(1, Math.min(50, Number(e.target.value) || 1)),
+                                        )
+                                    }
+                                    min={1}
+                                    max={50}
+                                    style={{ width: 120 }}
+                                />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 280 }}>
+                                <label className="form-label">
+                                    Entity types{' '}
+                                    <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
+                                        (comma-separated)
+                                    </span>
+                                </label>
+                                <input
+                                    className="input"
+                                    value={entityTypesInput}
+                                    onChange={(e) => setEntityTypesInput(e.target.value)}
+                                    placeholder="email, phone, ssn, credit_card, person_name"
+                                />
+                            </div>
+                        </>
                     ) : (
                         <>
                             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -466,6 +635,72 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     </div>
                                 </div>
                             ))
+                        ) : generationMode === 'span_extraction' ? (
+                            generatedSpans.map((row, idx) => {
+                                const entities = Array.isArray(row.entities) ? row.entities : [];
+                                const confidence = typeof row.confidence === 'number' ? row.confidence : 0;
+                                return (
+                                    <div
+                                        key={idx}
+                                        style={{
+                                            background: 'var(--bg-tertiary)',
+                                            borderRadius: 'var(--radius-md)',
+                                            padding: 'var(--space-md)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 8,
+                                        }}
+                                    >
+                                        <div style={{ fontSize: 'var(--font-size-sm)', whiteSpace: 'pre-wrap' }}>
+                                            <strong>Text:</strong> {row.text || '—'}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                            {entities.length === 0 ? (
+                                                <span
+                                                    style={{
+                                                        fontSize: 'var(--font-size-xs)',
+                                                        color: 'var(--text-tertiary)',
+                                                        fontStyle: 'italic',
+                                                    }}
+                                                >
+                                                    no entities detected
+                                                </span>
+                                            ) : (
+                                                entities.map((ent, ei) => (
+                                                    <span
+                                                        key={ei}
+                                                        className="badge badge-accent"
+                                                        title={`${ent.start}–${ent.end}`}
+                                                        style={{ fontFamily: 'monospace' }}
+                                                    >
+                                                        {ent.type || '?'}: {ent.text || '—'}
+                                                    </span>
+                                                ))
+                                            )}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                            <span
+                                                className={`badge ${confidence >= 0.7
+                                                    ? 'badge-success'
+                                                    : confidence >= 0.4
+                                                        ? 'badge-warning'
+                                                        : 'badge-error'
+                                                    }`}
+                                            >
+                                                Confidence: {(confidence * 100).toFixed(0)}%
+                                            </span>
+                                            <span
+                                                style={{
+                                                    fontSize: 'var(--font-size-xs)',
+                                                    color: 'var(--text-tertiary)',
+                                                }}
+                                            >
+                                                {entities.length} entit{entities.length === 1 ? 'y' : 'ies'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })
                         ) : (
                             generatedConversations.map((conversation, index) => (
                                 <div key={conversation.conversation_id || index} style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)' }}>
@@ -502,9 +737,13 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     nextStep="Dataset Prep"
                     nextStepIcon="📋"
                     isComplete={activeGeneratedCount > 0}
-                    hint={generationMode === 'qa'
-                        ? 'Generate and save synthetic Q&A pairs to continue'
-                        : 'Generate and save synthetic multi-turn conversations to continue'}
+                    hint={
+                        generationMode === 'qa'
+                            ? 'Generate and save synthetic Q&A pairs to continue'
+                            : generationMode === 'span_extraction'
+                                ? 'Generate and save synthetic span-extraction rows to continue'
+                                : 'Generate and save synthetic multi-turn conversations to continue'
+                    }
                     onNext={onNextStep}
                 />
             )}
