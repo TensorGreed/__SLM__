@@ -480,6 +480,17 @@ class ClassificationHandler:
 
         return min(max(1, int(default or 1)), self.MAX_NEW_TOKENS_CAP)
 
+    def stop_sequences(self, ctx: EvalContext) -> list[str]:
+        """Stop after the label. Two newlines = "I emitted my answer and
+        am starting another block" — almost always rambling."""
+
+        return [
+            "\n\n",
+            "\nText:",
+            "\nLabel:",
+            "\nExercise",
+        ]
+
 
 # ── QAHandler (Phase 5.3.2) ───────────────────────────────────────────
 
@@ -626,6 +637,20 @@ class QAHandler:
             "total": total,
             "correct": int(sum(em_scores)),
         }
+
+    def stop_sequences(self, ctx: EvalContext) -> list[str]:
+        """Stop on QA-style follow-up patterns — model restarting with a
+        new question is "I'm done with this one, here's another"."""
+
+        return [
+            "\nQuestion:",
+            "\n\nQuestion:",
+            "\nQ:",
+            "\n\nQ:",
+            "\nInput:",
+            "\n\nInput:",
+            "\nExercise",
+        ]
 
 
 # ── StructuredExtractionHandler (Phase 5.3.4) ─────────────────────────
@@ -892,6 +917,36 @@ class StructuredExtractionHandler:
 
         baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
         return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    def stop_sequences(self, ctx: EvalContext) -> list[str]:
+        """Halt generation when the model starts rambling past the JSON.
+
+        Untuned models often emit valid JSON and then continue with
+        worksheet-style content ("Exercise 3: …", "Input: …",
+        "Question: …") because they treat the prompt as a homework
+        problem with follow-ups. These stops cut the rambling so the
+        JSON parser sees clean output. After fine-tuning these stops
+        are mostly inert because the model emits a single JSON object
+        and halts on its own — they exist for the zero-shot / partially-
+        trained cases."""
+
+        return [
+            # Worksheet-style continuation patterns the screenshot showed.
+            "\nExercise",
+            "\n\nExercise",
+            # Model restarting with a fresh prompt block.
+            "\nInput:",
+            "\n\nInput:",
+            "\nText:",
+            "\n\nText:",
+            "\nQuestion:",
+            "\n\nQuestion:",
+            # Markdown / docstring section separators.
+            "\n\n---",
+            "\n\n##",
+            # Closing code fence after a ```json … ``` block.
+            "\n```\n",
+        ]
 
     # ── Scoring ──
 
@@ -1422,6 +1477,19 @@ class RAGHandler:
 
         baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
         return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    def stop_sequences(self, ctx: EvalContext) -> list[str]:
+        """Stop when the model restarts the Context/Question pattern —
+        that's the model rambling into "here's another grounded QA
+        example" mode after giving its answer."""
+
+        return [
+            "\nContext:",
+            "\n\nContext:",
+            "\nQuestion:",
+            "\n\nQuestion:",
+            "\nExercise",
+        ]
 
     # ── Token helpers ──
 

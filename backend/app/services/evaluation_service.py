@@ -544,6 +544,7 @@ def _run_transformers_inference(
     pairs: list[dict],
     max_new_tokens: int,
     temperature: float,
+    stop_sequences: list[str] | None = None,
 ) -> tuple[list[dict], dict]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -571,6 +572,42 @@ def _run_transformers_inference(
     model.eval()
     load_seconds = perf_counter() - load_started
 
+    # Build a transformers StoppingCriteria from the handler's stop list,
+    # if any. Newer transformers (>=4.41) ships StopStringCriteria which
+    # accepts a tokenizer + string list directly. Older versions need a
+    # custom criterion that decodes-and-checks each step.
+    stops_clean = [s for s in (stop_sequences or []) if s]
+    stopping_criteria = None
+    if stops_clean:
+        try:
+            from transformers import StoppingCriteriaList, StopStringCriteria
+
+            stopping_criteria = StoppingCriteriaList(
+                [StopStringCriteria(tokenizer=tokenizer, stop_strings=stops_clean)]
+            )
+        except Exception:
+            # Fallback: custom criterion. Decodes generated tokens at
+            # every step and checks for any stop string as a substring.
+            from transformers import StoppingCriteria, StoppingCriteriaList
+
+            class _StringStop(StoppingCriteria):
+                def __init__(self, tk, prompt_len, stops):
+                    super().__init__()
+                    self.tk = tk
+                    self.prompt_len = prompt_len
+                    self.stops = stops
+
+                def __call__(self, input_ids, scores, **kwargs):  # noqa: ARG002
+                    generated = input_ids[0][self.prompt_len :]
+                    if generated.shape[-1] == 0:
+                        return False
+                    decoded = self.tk.decode(generated, skip_special_tokens=True)
+                    return any(s in decoded for s in self.stops)
+
+            # NB: the prompt length depends on the row, so we'll build
+            # the criterion fresh per row inside the loop below.
+            stopping_criteria = ("fallback_custom", stops_clean, StoppingCriteriaList, _StringStop)
+
     predictions: list[dict] = []
     latencies_s: list[float] = []
     generated_tokens_total = 0
@@ -593,15 +630,31 @@ def _run_transformers_inference(
             inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
         prompt_tokens = int(inputs["input_ids"].shape[-1])
+        # Resolve stopping criteria for this row. The top-level
+        # `stopping_criteria` is either a built StoppingCriteriaList
+        # (StopStringCriteria available) or a tuple flagged as
+        # "fallback_custom" carrying the parts needed to instantiate a
+        # per-row criterion that knows this row's prompt length.
+        active_stopping = None
+        if stopping_criteria is not None:
+            if isinstance(stopping_criteria, tuple) and stopping_criteria[0] == "fallback_custom":
+                _flag, stops, criteria_list_cls, criterion_cls = stopping_criteria
+                active_stopping = criteria_list_cls(
+                    [criterion_cls(tokenizer, prompt_tokens, stops)]
+                )
+            else:
+                active_stopping = stopping_criteria
         started = perf_counter()
         with torch.inference_mode():
-            output_ids = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature if temperature > 0 else 1.0,
-                do_sample=temperature > 0,
-                pad_token_id=tokenizer.pad_token_id,
-            )
+            gen_kwargs: dict[str, Any] = {
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature if temperature > 0 else 1.0,
+                "do_sample": temperature > 0,
+                "pad_token_id": tokenizer.pad_token_id,
+            }
+            if active_stopping is not None:
+                gen_kwargs["stopping_criteria"] = active_stopping
+            output_ids = model.generate(**inputs, **gen_kwargs)
         elapsed = perf_counter() - started
         latencies_s.append(elapsed)
 
@@ -609,6 +662,18 @@ def _run_transformers_inference(
         generated_tokens = int(generated.shape[-1])
         generated_tokens_total += generated_tokens
         prediction = tokenizer.decode(generated, skip_special_tokens=True).strip()
+        # Trim anything after the first stop sequence so the eval
+        # downstream sees only the "real" output, not the trailing
+        # text that triggered the stop. (StopStringCriteria stops
+        # generation but still leaves the stop string in the decoded
+        # output.)
+        if stops_clean and prediction:
+            earliest_cut = len(prediction)
+            for stop_str in stops_clean:
+                idx = prediction.find(stop_str)
+                if 0 <= idx < earliest_cut:
+                    earliest_cut = idx
+            prediction = prediction[:earliest_cut].rstrip()
         predictions.append(
             {
                 "prompt": prompt,
@@ -644,6 +709,7 @@ def _run_llama_cpp_inference(
     pairs: list[dict],
     max_new_tokens: int,
     temperature: float,
+    stop_sequences: list[str] | None = None,
 ) -> tuple[list[dict], dict]:
     from llama_cpp import Llama
 
@@ -657,6 +723,7 @@ def _run_llama_cpp_inference(
     chat_handler_available = bool(getattr(llm, "chat_handler", None)) or bool(
         getattr(llm, "chat_format", None)
     )
+    stops_clean = [s for s in (stop_sequences or []) if s]
 
     predictions: list[dict] = []
     latencies_s: list[float] = []
@@ -672,11 +739,14 @@ def _run_llama_cpp_inference(
         used_chat_path = False
         if chat_handler_available:
             try:
-                output = llm.create_chat_completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=max_new_tokens,
-                    temperature=temperature,
-                )
+                chat_kwargs: dict[str, Any] = {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_new_tokens,
+                    "temperature": temperature,
+                }
+                if stops_clean:
+                    chat_kwargs["stop"] = stops_clean
+                output = llm.create_chat_completion(**chat_kwargs)
                 choice = output.get("choices", [{}])[0]
                 message = choice.get("message") or {}
                 prediction_text = str(message.get("content", "")).strip()
@@ -686,9 +756,25 @@ def _run_llama_cpp_inference(
                 # GGUF without a parseable chat template falls through.
                 used_chat_path = False
         if not used_chat_path:
-            output = llm(prompt, max_tokens=max_new_tokens, temperature=temperature)
+            completion_kwargs: dict[str, Any] = {
+                "max_tokens": max_new_tokens,
+                "temperature": temperature,
+            }
+            if stops_clean:
+                completion_kwargs["stop"] = stops_clean
+            output = llm(prompt, **completion_kwargs)
             choice = output.get("choices", [{}])[0]
             prediction_text = str(choice.get("text", "")).strip()
+        # llama.cpp's `stop` halts generation just before the stop
+        # string but doesn't include it. Belt-and-suspenders trim
+        # anyway for the rare case a stop slipped through.
+        if stops_clean and prediction_text:
+            earliest_cut = len(prediction_text)
+            for stop_str in stops_clean:
+                idx = prediction_text.find(stop_str)
+                if 0 <= idx < earliest_cut:
+                    earliest_cut = idx
+            prediction_text = prediction_text[:earliest_cut].rstrip()
         elapsed = perf_counter() - started
         latencies_s.append(elapsed)
 
@@ -730,11 +816,16 @@ def _run_local_inference(
     pairs: list[dict],
     max_new_tokens: int,
     temperature: float,
+    stop_sequences: list[str] | None = None,
 ) -> tuple[list[dict], dict]:
     model_path = Path(model_ref).expanduser()
     if model_path.exists() and model_path.suffix.lower() == ".gguf":
-        return _run_llama_cpp_inference(model_ref, pairs, max_new_tokens, temperature)
-    return _run_transformers_inference(model_ref, pairs, max_new_tokens, temperature)
+        return _run_llama_cpp_inference(
+            model_ref, pairs, max_new_tokens, temperature, stop_sequences
+        )
+    return _run_transformers_inference(
+        model_ref, pairs, max_new_tokens, temperature, stop_sequences
+    )
 
 
 async def run_heldout_evaluation(
@@ -792,12 +883,26 @@ async def run_heldout_evaluation(
             )
         except Exception:
             effective_max_new_tokens = max(1, max_new_tokens)
+    # Handlers can also declare stop sequences to halt generation when
+    # the model starts rambling past the asked-for output (e.g. the
+    # "Exercise 3:" continuation seen on untrained PII models).
+    handler_stop_sequences: list[str] = []
+    if hasattr(task_handler, "stop_sequences"):
+        try:
+            raw_stops = task_handler.stop_sequences(eval_ctx)
+            if isinstance(raw_stops, list):
+                handler_stop_sequences = [
+                    str(s) for s in raw_stops if isinstance(s, str) and s
+                ]
+        except Exception:
+            handler_stop_sequences = []
     predictions, runtime = await asyncio.to_thread(
         _run_local_inference,
         model_ref,
         pairs,
         effective_max_new_tokens,
         max(0.0, float(temperature)),
+        handler_stop_sequences,
     )
     modality_counts: dict[str, int] = {}
     for idx, pair in enumerate(pairs):
@@ -873,6 +978,7 @@ async def run_heldout_evaluation(
         "samples": len(predictions),
         "task_profile_resolved": eval_ctx.task_profile,
         "handler_id": eval_ctx.handler_id,
+        "stop_sequences": handler_stop_sequences,
     }
     details["predictions_preview"] = [
         {
