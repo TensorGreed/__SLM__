@@ -1,0 +1,200 @@
+/* DatasetFitCard — newbie UX Phase 5.1. Monochrome / Vercel-airy. */
+
+.dataset-fit-card {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.dataset-fit-card.is-blocked {
+    border-color: var(--gray-300, var(--border-default));
+    background: var(--bg-secondary);
+}
+
+.dataset-fit-card__head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.dataset-fit-card__head svg {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}
+
+.dataset-fit-card.is-ready .dataset-fit-card__head svg {
+    color: var(--text-primary);
+}
+
+.dataset-fit-card__head h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
+.dataset-fit-card__lede {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+.dataset-fit-card__lede strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.dataset-fit-card__shape-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.dataset-fit-card__shape-list strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.dataset-fit-card__stats {
+    border-top: 1px dashed var(--border-default);
+    padding-top: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dataset-fit-card__stats-title {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.dataset-fit-card__shape-counts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12.5px;
+}
+
+.dataset-fit-card__shape-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 24%) 1fr minmax(60px, auto);
+    align-items: center;
+    gap: var(--space-sm);
+    color: var(--text-secondary);
+}
+
+.dataset-fit-card__shape-row.is-required .dataset-fit-card__shape-name {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.dataset-fit-card__shape-name {
+    color: var(--text-secondary);
+}
+
+.dataset-fit-card__shape-bar {
+    height: 6px;
+    background: var(--gray-100, var(--bg-tertiary));
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+}
+
+.dataset-fit-card__shape-bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--text-tertiary);
+    transition: width var(--transition-fast);
+}
+
+.dataset-fit-card.is-ready .dataset-fit-card__shape-row.is-required .dataset-fit-card__shape-bar-fill {
+    background: var(--text-primary);
+}
+
+.dataset-fit-card__shape-count {
+    text-align: right;
+    font-family: var(--font-mono);
+    color: var(--text-tertiary);
+    font-size: 12px;
+}
+
+.dataset-fit-card__coverage {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.dataset-fit-card__coverage strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.dataset-fit-card__branches {
+    border-top: 1px dashed var(--border-default);
+    padding-top: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dataset-fit-card__branches-title {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.dataset-fit-card__branches-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dataset-fit-card__branch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 8px var(--space-sm);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    text-decoration: none;
+    background: var(--bg-primary);
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.dataset-fit-card__branch:hover,
+.dataset-fit-card__branch:focus-visible {
+    border-color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.dataset-fit-card__branch strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.dataset-fit-card__branch svg {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+}

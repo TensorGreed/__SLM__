@@ -6,6 +6,7 @@ import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { Term } from '../shared/Term';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
+import DatasetFitCard from './DatasetFitCard';
 import ExperimentCompare from './ExperimentCompare';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
@@ -3555,6 +3556,24 @@ export default function TrainingPanel({
                         {preflightPreview.ok ? 'PASS' : 'BLOCKED'}
                       </span>
                     </div>
+                    {(() => {
+                      const ds = (preflightPreview.capability_summary as Record<string, unknown> | undefined)?.dataset as
+                        | Record<string, unknown>
+                        | undefined;
+                      const contract = ds?.contract as Record<string, unknown> | undefined;
+                      if (!contract || typeof contract !== 'object') return null;
+                      const sampled = Number((contract as { sampled_rows?: number }).sampled_rows || 0);
+                      const errs = (contract as { errors?: string[] }).errors || [];
+                      // Only render when the contract actually ran (sampled_rows > 0) and
+                      // either flagged an error or has a coverage worth surfacing.
+                      if (sampled <= 0 && (!errs || errs.length === 0)) return null;
+                      return (
+                        <DatasetFitCard
+                          contract={contract as Parameters<typeof DatasetFitCard>[0]['contract']}
+                          projectId={projectId}
+                        />
+                      );
+                    })()}
                     {preflightPreview.errors.length > 0 && (
                       <div className="training-preflight-panel__section">
                         <div className="training-preflight-panel__section-title">Blocking Issues</div>
