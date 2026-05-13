@@ -419,6 +419,10 @@ class Phase87DemoProjectTests(unittest.TestCase):
         schema = payload["output_schema"]
         self.assertIn("entities", schema["properties"])
         self.assertIn("entities", schema["required"])
+        # Phase 5.3.4b: PII demo declares span_set scoring so the
+        # StructuredExtractionHandler routes per-row P/R/F1 + per-class
+        # breakdown (load-bearing for compliance-grade PII metrics).
+        self.assertEqual(schema.get("scoring_mode"), "span_set")
         # Entity types echoed for the UI / docs.
         self.assertIn("email", payload["entity_types"])
         self.assertIn("credit_card", payload["entity_types"])

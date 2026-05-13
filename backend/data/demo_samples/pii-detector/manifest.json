@@ -11,6 +11,7 @@
   "dataset_input_field": "text",
   "dataset_output_field": "entities_json",
   "output_schema": {
+    "scoring_mode": "span_set",
     "properties": {
       "entities": {
         "type": "array",

@@ -672,6 +672,18 @@ class StructuredExtractionHandler:
     MAX_NEW_TOKENS_FLOOR: int = 128
     MAX_NEW_TOKENS_HARDCAP: int = 512
 
+    # Scoring modes within structured_extraction. ``field_match`` is
+    # today's per-field EM/F1 (invoice-style extraction). ``span_set``
+    # is for outputs whose shape is a list of typed spans (PII / NER /
+    # medical / legal / financial entity extraction) — same general
+    # handler, internal dispatch so we don't fork per domain.
+    SCORING_MODE_FIELD_MATCH: str = "field_match"
+    SCORING_MODE_SPAN_SET: str = "span_set"
+    _SUPPORTED_SCORING_MODES: set[str] = {
+        SCORING_MODE_FIELD_MATCH,
+        SCORING_MODE_SPAN_SET,
+    }
+
     def __init__(self) -> None:
         self._schema: dict[str, Any] | None = None
 
@@ -686,7 +698,11 @@ class StructuredExtractionHandler:
             return self._schema
 
         manifest_schema = ctx.manifest.get("output_schema")
+        scoring_mode = self.SCORING_MODE_FIELD_MATCH
         if isinstance(manifest_schema, dict):
+            raw_mode = str(manifest_schema.get("scoring_mode") or "").strip().lower()
+            if raw_mode in self._SUPPORTED_SCORING_MODES:
+                scoring_mode = raw_mode
             properties = manifest_schema.get("properties")
             required = manifest_schema.get("required")
             if isinstance(properties, dict) and properties:
@@ -696,7 +712,11 @@ class StructuredExtractionHandler:
                     if isinstance(required, list) and required
                     else list(fields)
                 )
-                self._schema = {"fields": fields, "required": req_list}
+                self._schema = {
+                    "fields": fields,
+                    "required": req_list,
+                    "scoring_mode": scoring_mode,
+                }
                 return self._schema
 
         # Derive from references.
@@ -707,7 +727,11 @@ class StructuredExtractionHandler:
             if isinstance(parsed, dict):
                 seen.update(str(k) for k in parsed.keys())
         fields = sorted(seen)
-        self._schema = {"fields": fields, "required": list(fields)}
+        self._schema = {
+            "fields": fields,
+            "required": list(fields),
+            "scoring_mode": scoring_mode,
+        }
         return self._schema
 
     # ── Field extraction ──
@@ -876,9 +900,21 @@ class StructuredExtractionHandler:
         predictions: list[dict[str, Any]],
         ctx: EvalContext,
     ) -> dict[str, Any]:
+        schema = self._resolve_schema(predictions, ctx)
+        scoring_mode = schema.get("scoring_mode", self.SCORING_MODE_FIELD_MATCH)
+        if scoring_mode == self.SCORING_MODE_SPAN_SET:
+            return self._score_span_set(predictions, schema)
+        return self._score_field_match(predictions, schema)
+
+    # ── Field-match scoring (default — today's invoice-style flow) ──
+
+    def _score_field_match(
+        self,
+        predictions: list[dict[str, Any]],
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
         from app.services.evaluation_service import exact_match, f1_score
 
-        schema = self._resolve_schema(predictions, ctx)
         fields = schema["fields"]
         required = schema["required"]
         total = len(predictions)
@@ -995,6 +1031,7 @@ class StructuredExtractionHandler:
         overall_em_rate = round(overall_em_count / total, 4)
 
         return {
+            "scoring_mode": self.SCORING_MODE_FIELD_MATCH,
             "json_validity_rate": round(valid_count / total, 4),
             "schema_compliance_rate": round(compliant_count / total, 4),
             "field_exact_match_rate": field_em_avg,
@@ -1010,6 +1047,256 @@ class StructuredExtractionHandler:
             "schema": schema,
             "total": total,
             "correct": overall_em_count,
+        }
+
+    # ── Span-set scoring (Phase 5.3.4b — for entity-list outputs) ──
+    #
+    # The PII/PCI demo motivates this, but the scoring mode is general
+    # across span-extraction tasks: medical entity extraction, legal
+    # clause extraction, financial entity extraction, generic NER —
+    # anything whose output is a list of typed spans
+    # ``[{type, start, end, text}, ...]``. Triggered by
+    # ``output_schema.scoring_mode == "span_set"``; otherwise the
+    # default field_match path runs (invoice-style extraction, etc.).
+
+    @staticmethod
+    def _entities_from_payload(parsed: Any) -> list[tuple[str, int, int, str]]:
+        """Pull a list of (type, start, end, text) tuples from a parsed
+        prediction or reference dict. Tolerant of bad rows: skips entries
+        that aren't dicts or are missing required fields, so a malformed
+        entity doesn't blow up the whole row's scoring."""
+
+        if not isinstance(parsed, dict):
+            return []
+        raw = parsed.get("entities")
+        if not isinstance(raw, list):
+            return []
+        out: list[tuple[str, int, int, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            ent_type = str(item.get("type") or "").strip()
+            try:
+                start = int(item.get("start"))
+                end = int(item.get("end"))
+            except (TypeError, ValueError):
+                continue
+            text = str(item.get("text") or "")
+            if not ent_type:
+                continue
+            out.append((ent_type, start, end, text))
+        return out
+
+    @staticmethod
+    def _entity_dict(entity: tuple[str, int, int, str]) -> dict[str, Any]:
+        return {
+            "type": entity[0],
+            "start": entity[1],
+            "end": entity[2],
+            "text": entity[3],
+        }
+
+    @staticmethod
+    def _tally_to_metrics(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
+        """Standard NER P/R/F1 from TP/FP/FN counts. Edge cases follow
+        the CoNLL / SemEval convention: empty-on-empty is trivially
+        correct (1.0); empty prediction with non-empty gold gets 0;
+        non-empty prediction with empty gold gets 0."""
+
+        if tp == 0 and fp == 0 and fn == 0:
+            return 1.0, 1.0, 1.0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = (
+            2 * precision * recall / (precision + recall)
+            if (precision + recall) > 0
+            else 0.0
+        )
+        return precision, recall, f1
+
+    def _score_span_set(
+        self,
+        predictions: list[dict[str, Any]],
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        total = len(predictions)
+        if total == 0:
+            return {
+                "scoring_mode": self.SCORING_MODE_SPAN_SET,
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "exact_match": 0.0,
+                "json_validity_rate": 0.0,
+                "schema_compliance_rate": 0.0,
+                "per_class": {},
+                "total": 0,
+                "correct": 0,
+                "schema": schema,
+            }
+
+        # Required field set still drives schema compliance — for span_set
+        # the required field is typically the entity list (e.g. "entities").
+        required = schema.get("required") or []
+
+        global_tp = 0
+        global_fp = 0
+        global_fn = 0
+        per_class_counts: dict[str, dict[str, int]] = {}
+        valid_count = 0
+        compliant_count = 0
+        overall_em_count = 0
+
+        for prediction in predictions:
+            raw_output = prediction.get("prediction") or ""
+            raw_ref = prediction.get("reference") or ""
+            parsed_pred = self._parse_json_safely(raw_output)
+            parsed_ref = self._parse_json_safely(raw_ref)
+            is_valid = isinstance(parsed_pred, dict)
+            if is_valid:
+                valid_count += 1
+
+            missing: list[str] = []
+            if is_valid and required:
+                missing = [f for f in required if f not in parsed_pred]
+            is_compliant = is_valid and not missing
+            if is_compliant:
+                compliant_count += 1
+
+            pred_entities = self._entities_from_payload(parsed_pred) if is_valid else []
+            gold_entities = self._entities_from_payload(parsed_ref)
+
+            # Strict matching: same (type, start, end). Use Counters so
+            # duplicates count correctly — if the same email appears
+            # twice in the text and both are gold, the model has to
+            # find both.
+            from collections import Counter
+
+            pred_keys = [(t, s, e) for (t, s, e, _) in pred_entities]
+            gold_keys = [(t, s, e) for (t, s, e, _) in gold_entities]
+            pred_counter = Counter(pred_keys)
+            gold_counter = Counter(gold_keys)
+            common = pred_counter & gold_counter
+            row_tp = sum(common.values())
+            row_fp = sum(pred_counter.values()) - row_tp
+            row_fn = sum(gold_counter.values()) - row_tp
+
+            global_tp += row_tp
+            global_fp += row_fp
+            global_fn += row_fn
+
+            # Per-class tallies — union over all classes seen in either
+            # side, per row.
+            row_classes = set(t for (t, _, _) in pred_keys) | set(
+                t for (t, _, _) in gold_keys
+            )
+            for cls in row_classes:
+                if cls not in per_class_counts:
+                    per_class_counts[cls] = {"tp": 0, "fp": 0, "fn": 0}
+                cls_pred = Counter(k for k in pred_keys if k[0] == cls)
+                cls_gold = Counter(k for k in gold_keys if k[0] == cls)
+                cls_common = cls_pred & cls_gold
+                cls_tp = sum(cls_common.values())
+                per_class_counts[cls]["tp"] += cls_tp
+                per_class_counts[cls]["fp"] += sum(cls_pred.values()) - cls_tp
+                per_class_counts[cls]["fn"] += sum(cls_gold.values()) - cls_tp
+
+            # Row-level matched / missed / hallucinated lists for the UI.
+            common_keys_remaining = Counter(common)
+            row_matched: list[dict[str, Any]] = []
+            row_missed: list[dict[str, Any]] = []
+            row_hallucinated: list[dict[str, Any]] = []
+            for ent in gold_entities:
+                key = (ent[0], ent[1], ent[2])
+                if common_keys_remaining.get(key, 0) > 0:
+                    common_keys_remaining[key] -= 1
+                    row_matched.append(self._entity_dict(ent))
+                else:
+                    row_missed.append(self._entity_dict(ent))
+            # FP: predicted entities whose key isn't in the (already-
+            # consumed) common set.
+            common_for_fp = Counter(common)
+            for ent in pred_entities:
+                key = (ent[0], ent[1], ent[2])
+                if common_for_fp.get(key, 0) > 0:
+                    common_for_fp[key] -= 1
+                else:
+                    row_hallucinated.append(self._entity_dict(ent))
+
+            row_p, row_r, row_f1 = self._tally_to_metrics(row_tp, row_fp, row_fn)
+            row_em = 1.0 if (row_fp == 0 and row_fn == 0) else 0.0
+            if row_em == 1.0:
+                overall_em_count += 1
+
+            # In-place enrichment for predictions_preview → UI.
+            prediction["parsed_prediction"] = parsed_pred
+            prediction["parsed_reference"] = parsed_ref
+            prediction["is_valid_json"] = is_valid
+            prediction["missing_required_fields"] = missing
+            prediction["scoring_mode"] = self.SCORING_MODE_SPAN_SET
+            prediction["row_matched_entities"] = row_matched
+            prediction["row_missed_entities"] = row_missed
+            prediction["row_hallucinated_entities"] = row_hallucinated
+            prediction["row_precision"] = round(row_p, 4)
+            prediction["row_recall"] = round(row_r, 4)
+            prediction["row_f1"] = round(row_f1, 4)
+            prediction["row_exact_match"] = row_em
+
+        precision, recall, f1 = self._tally_to_metrics(global_tp, global_fp, global_fn)
+        per_class_summary: dict[str, dict[str, Any]] = {}
+        for cls in sorted(per_class_counts.keys()):
+            counts = per_class_counts[cls]
+            p, r, c_f1 = self._tally_to_metrics(
+                counts["tp"], counts["fp"], counts["fn"]
+            )
+            per_class_summary[cls] = {
+                "precision": round(p, 4),
+                "recall": round(r, 4),
+                "f1": round(c_f1, 4),
+                "support": counts["tp"] + counts["fn"],
+                "tp": counts["tp"],
+                "fp": counts["fp"],
+                "fn": counts["fn"],
+            }
+        # Macro = unweighted mean across classes (treat every class
+        # equally — important for PII where SSN and email have wildly
+        # different supports but both matter).
+        macro_p = (
+            round(sum(v["precision"] for v in per_class_summary.values()) / len(per_class_summary), 4)
+            if per_class_summary
+            else 0.0
+        )
+        macro_r = (
+            round(sum(v["recall"] for v in per_class_summary.values()) / len(per_class_summary), 4)
+            if per_class_summary
+            else 0.0
+        )
+        macro_f1 = (
+            round(sum(v["f1"] for v in per_class_summary.values()) / len(per_class_summary), 4)
+            if per_class_summary
+            else 0.0
+        )
+
+        return {
+            "scoring_mode": self.SCORING_MODE_SPAN_SET,
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1": round(f1, 4),
+            "precision_macro": macro_p,
+            "recall_macro": macro_r,
+            "f1_macro": macro_f1,
+            # Legacy gate-compat aliases — exact_match means "row had
+            # zero FP and zero FN", the strictest possible signal.
+            "exact_match": round(overall_em_count / total, 4),
+            "json_validity_rate": round(valid_count / total, 4),
+            "schema_compliance_rate": round(compliant_count / total, 4),
+            "per_class": per_class_summary,
+            "total": total,
+            "correct": overall_em_count,
+            "tp_total": global_tp,
+            "fp_total": global_fp,
+            "fn_total": global_fn,
+            "schema": schema,
         }
 
 

@@ -311,6 +311,75 @@ the right field values.
 
 ---
 
+## Phase 5.3.4b — Span-set scoring mode (PII / NER / span-extraction)
+
+**Goal**: production-grade entity-level evaluation for tasks whose
+output is a list of typed spans `[{type, start, end, text}, ...]` —
+PII / PCI, medical NER, legal clause extraction, financial entity
+extraction, generic NER. Critically **not a new handler class** — it
+lives inside `StructuredExtractionHandler` as a second scoring mode,
+so the handler registry / dispatcher stay stable and BrewSLM doesn't
+drift toward one-task-per-handler proliferation.
+
+### User stories
+- *As a compliance officer evaluating a PII detector*, I want
+  per-class recall ("99.7% credit_card, 99.5% SSN, 98% email")
+  rather than a single overall F1, because that's what shippable
+  PII claims look like and the only way to gate the risky classes.
+- *As an ML engineer tuning a span detector*, I want per-row P/R/F1
+  + lists of which entities matched / were missed / were
+  hallucinated, so I can spot where the model is weak instead of
+  flying blind on a coarse exact-match.
+- *As a developer integrating with LlamaFirewall*, I want strict
+  span matching (same type + same offsets) since redaction breaks
+  when boundaries are off — a "John" prediction for a gold "John
+  Smith Jr." span shouldn't score the same as a full match.
+
+### Work
+- New scoring mode `span_set` inside `StructuredExtractionHandler`,
+  triggered by `manifest.output_schema.scoring_mode == "span_set"`.
+  Default stays `field_match` so invoice-style extraction is
+  byte-for-byte unchanged.
+- Strict matching: TP requires identical `(type, start, end)`.
+  Counter semantics so duplicates count correctly (model has to
+  find both emails if both are gold).
+- Per-class P/R/F1 reported as `per_class: {type: {p, r, f1,
+  support, tp, fp, fn}}`. Micro aggregate as `precision/recall/f1`,
+  macro as `precision_macro/recall_macro/f1_macro`.
+- `exact_match` legacy alias = row-level whole-set EM (every
+  predicted entity matched + no entities missed). Gate compat.
+- Per-row enrichment lands `row_matched_entities /
+  row_missed_entities / row_hallucinated_entities` + per-row
+  `row_precision / row_recall / row_f1` so the UI can render an
+  entity-by-entity breakdown.
+- UI: when `scoring_mode == "span_set"`, the Sample Predictions
+  card swaps the per-field comparison for inline "X matched · Y
+  missed · Z hallucinated" counts plus a "Show entity-by-entity
+  breakdown" disclosure listing every TP / FN / FP entity with
+  type / text / offsets.
+- PII demo manifest sets `scoring_mode: span_set` so the demo
+  immediately benefits.
+
+### Tests
+- 19 backend tests (test_phase94) — scoring mode dispatch,
+  strict matching (perfect / partial / type-mismatch /
+  boundary-mismatch / duplicate semantics), per-class breakdown,
+  macro aggregates, per-row enrichment, edge cases
+  (empty/empty trivially correct, empty pred non-empty gold,
+  malformed entity payload, unparseable JSON, empty list).
+- 4 frontend tests (EvalPanel.spanset.test.tsx) — matched/missed/
+  hallucinated counts inline, entity-by-entity disclosure, missed
+  + hallucinated badges, field_match mode regression guard.
+
+### Out of scope
+- Partial-credit matching (token-IoU for boundary errors). Strict
+  is the load-bearing signal for compliance; partial scoring lands
+  in a follow-up if a real use case wants it.
+- Bipartite optimal matching for type-overlap mode. Current
+  matching is exact-key only.
+
+---
+
 ## Phase 5.3.5 — RAG / grounded QA handler
 
 **Goal**: score grounded QA models on **answer quality** + **faithfulness

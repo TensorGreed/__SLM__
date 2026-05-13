@@ -879,6 +879,16 @@ async def run_heldout_evaluation(
             "parsed_reference": p.get("parsed_reference"),
             "missing_required_fields": p.get("missing_required_fields"),
             "row_field_results": p.get("row_field_results"),
+            # Phase 5.3.4b: span_set scoring mode adds matched / missed /
+            # hallucinated entity lists per row + per-row P/R/F1, so the
+            # UI can render an entity-by-entity breakdown for PII / NER /
+            # span-extraction tasks.
+            "scoring_mode": p.get("scoring_mode"),
+            "row_matched_entities": p.get("row_matched_entities"),
+            "row_missed_entities": p.get("row_missed_entities"),
+            "row_hallucinated_entities": p.get("row_hallucinated_entities"),
+            "row_precision": p.get("row_precision"),
+            "row_recall": p.get("row_recall"),
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
         }

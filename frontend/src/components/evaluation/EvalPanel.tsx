@@ -70,6 +70,32 @@ interface PredictionPreviewRow {
     parsed_reference?: Record<string, unknown> | null;
     missing_required_fields?: string[] | null;
     row_field_results?: Record<string, { em?: number; f1?: number }> | null;
+    // Phase 5.3.4b: span_set scoring mode adds per-row entity-level
+    // diagnostics for PII / NER / span-extraction tasks. When
+    // scoring_mode === "span_set", the UI renders an entity-by-entity
+    // breakdown (matched / missed / hallucinated) instead of (or
+    // alongside) the per-field comparison.
+    scoring_mode?: string | null;
+    row_matched_entities?: Array<{
+        type?: string;
+        start?: number;
+        end?: number;
+        text?: string;
+    }> | null;
+    row_missed_entities?: Array<{
+        type?: string;
+        start?: number;
+        end?: number;
+        text?: string;
+    }> | null;
+    row_hallucinated_entities?: Array<{
+        type?: string;
+        start?: number;
+        end?: number;
+        text?: string;
+    }> | null;
+    row_precision?: number | null;
+    row_recall?: number | null;
     latency_ms?: number;
     input_modality?: string;
 }
@@ -1651,6 +1677,24 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     const fieldCorrect = Object.values(rowFieldResults).filter(
                                         (entry) => (entry?.em ?? 0) >= 1,
                                     ).length;
+                                    // Phase 5.3.4b: span_set scoring mode swaps the per-field
+                                    // comparison disclosure for an entity-by-entity view
+                                    // (matched / missed / hallucinated). Triggered when the
+                                    // handler stamped scoring_mode === "span_set" on the row.
+                                    const isSpanSetMode = row.scoring_mode === 'span_set';
+                                    const matchedEntities = Array.isArray(row.row_matched_entities)
+                                        ? row.row_matched_entities
+                                        : [];
+                                    const missedEntities = Array.isArray(row.row_missed_entities)
+                                        ? row.row_missed_entities
+                                        : [];
+                                    const hallucinatedEntities = Array.isArray(
+                                        row.row_hallucinated_entities,
+                                    )
+                                        ? row.row_hallucinated_entities
+                                        : [];
+                                    const rowPrecision = row.row_precision;
+                                    const rowRecall = row.row_recall;
                                     const hasRowScores =
                                         (rowEm !== undefined && rowEm !== null) ||
                                         (rowF1 !== undefined && rowF1 !== null);
@@ -1727,7 +1771,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                                 ? 'JSON: valid'
                                                                 : 'JSON: malformed'}
                                                         </span>
-                                                        {isValidJson && fieldCount > 0 && (
+                                                        {!isSpanSetMode && isValidJson && fieldCount > 0 && (
                                                             <span className="eval-sample-predictions-structured__fields">
                                                                 {fieldCorrect}/{fieldCount} fields
                                                             </span>
@@ -1737,7 +1781,104 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                                 missing: {missingRequired.join(', ')}
                                                             </span>
                                                         )}
-                                                        {isValidJson && fieldCount > 0 && (
+                                                        {isSpanSetMode && (
+                                                            <span className="eval-sample-predictions-structured__fields">
+                                                                {matchedEntities.length} matched ·{' '}
+                                                                {missedEntities.length > 0 ? (
+                                                                    <span className="eval-sample-predictions-structured__missing">
+                                                                        {missedEntities.length} missed
+                                                                    </span>
+                                                                ) : (
+                                                                    `${missedEntities.length} missed`
+                                                                )}
+                                                                {' · '}
+                                                                {hallucinatedEntities.length > 0 ? (
+                                                                    <span className="eval-sample-predictions-structured__missing">
+                                                                        {hallucinatedEntities.length} hallucinated
+                                                                    </span>
+                                                                ) : (
+                                                                    `${hallucinatedEntities.length} hallucinated`
+                                                                )}
+                                                                {typeof rowPrecision === 'number' &&
+                                                                    typeof rowRecall === 'number' && (
+                                                                        <span className="eval-sample-predictions-status__metrics">
+                                                                            P {rowPrecision.toFixed(2)} · R{' '}
+                                                                            {rowRecall.toFixed(2)}
+                                                                        </span>
+                                                                    )}
+                                                            </span>
+                                                        )}
+                                                        {isSpanSetMode &&
+                                                            (matchedEntities.length > 0 ||
+                                                                missedEntities.length > 0 ||
+                                                                hallucinatedEntities.length > 0) && (
+                                                                <details className="eval-sample-predictions-fields">
+                                                                    <summary>
+                                                                        Show entity-by-entity breakdown
+                                                                    </summary>
+                                                                    <table className="eval-sample-predictions-fields__table">
+                                                                        <thead>
+                                                                            <tr>
+                                                                                <th>Status</th>
+                                                                                <th>Type</th>
+                                                                                <th>Text</th>
+                                                                                <th>Offset</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            {matchedEntities.map((e, i) => (
+                                                                                <tr key={`m-${i}`}>
+                                                                                    <td>
+                                                                                        <span className="eval-sample-predictions-fields__em is-pass">
+                                                                                            ✓ matched
+                                                                                        </span>
+                                                                                    </td>
+                                                                                    <td>
+                                                                                        <code>{e.type}</code>
+                                                                                    </td>
+                                                                                    <td>{e.text || '—'}</td>
+                                                                                    <td>
+                                                                                        {e.start}–{e.end}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            ))}
+                                                                            {missedEntities.map((e, i) => (
+                                                                                <tr key={`miss-${i}`}>
+                                                                                    <td>
+                                                                                        <span className="eval-sample-predictions-fields__em is-fail">
+                                                                                            ✗ missed
+                                                                                        </span>
+                                                                                    </td>
+                                                                                    <td>
+                                                                                        <code>{e.type}</code>
+                                                                                    </td>
+                                                                                    <td>{e.text || '—'}</td>
+                                                                                    <td>
+                                                                                        {e.start}–{e.end}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            ))}
+                                                                            {hallucinatedEntities.map((e, i) => (
+                                                                                <tr key={`fp-${i}`}>
+                                                                                    <td>
+                                                                                        <span className="eval-sample-predictions-fields__em is-fail">
+                                                                                            ✗ hallucinated
+                                                                                        </span>
+                                                                                    </td>
+                                                                                    <td>
+                                                                                        <code>{e.type}</code>
+                                                                                    </td>
+                                                                                    <td>{e.text || '—'}</td>
+                                                                                    <td>
+                                                                                        {e.start}–{e.end}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </details>
+                                                            )}
+                                                        {!isSpanSetMode && isValidJson && fieldCount > 0 && (
                                                             <details className="eval-sample-predictions-fields">
                                                                 <summary>
                                                                     Show field-by-field comparison
