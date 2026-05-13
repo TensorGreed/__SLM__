@@ -264,43 +264,62 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
             .filter((token) => token.length > 0);
     };
 
+    // Generous per-request timeout for the generate endpoints — local
+    // models on slower GPUs can take several minutes for large batches.
+    // Default axios timeout is no-timeout but intermediaries (Vite proxy,
+    // browser idle detection) can sever earlier; setting it explicitly
+    // signals intent and keeps the request alive long enough.
+    const LONG_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
     const handleGenerate = async () => {
         if (!sourceText.trim()) return;
         setIsGenerating(true);
         try {
             if (generationMode === 'qa') {
-                const res = await api.post(`/projects/${projectId}/synthetic/generate`, {
-                    source_text: sourceText,
-                    num_pairs: numPairs,
-                    api_url: apiUrl,
-                    api_key: apiKey,
-                    model_name: modelName,
-                });
+                const res = await api.post(
+                    `/projects/${projectId}/synthetic/generate`,
+                    {
+                        source_text: sourceText,
+                        num_pairs: numPairs,
+                        api_url: apiUrl,
+                        api_key: apiKey,
+                        model_name: modelName,
+                    },
+                    { timeout: LONG_REQUEST_TIMEOUT_MS },
+                );
                 setGeneratedPairs(res.data.pairs || []);
                 setGeneratedConversations([]);
                 setGeneratedSpans([]);
             } else if (generationMode === 'span_extraction') {
-                const res = await api.post(`/projects/${projectId}/synthetic/generate-spans`, {
-                    source_text: sourceText,
-                    num_rows: numSpans,
-                    entity_types: parseEntityTypes(entityTypesInput),
-                    api_url: apiUrl,
-                    api_key: apiKey,
-                    model_name: modelName,
-                });
+                const res = await api.post(
+                    `/projects/${projectId}/synthetic/generate-spans`,
+                    {
+                        source_text: sourceText,
+                        num_rows: numSpans,
+                        entity_types: parseEntityTypes(entityTypesInput),
+                        api_url: apiUrl,
+                        api_key: apiKey,
+                        model_name: modelName,
+                    },
+                    { timeout: LONG_REQUEST_TIMEOUT_MS },
+                );
                 setGeneratedSpans(res.data.rows || []);
                 setGeneratedPairs([]);
                 setGeneratedConversations([]);
             } else {
-                const res = await api.post(`/projects/${projectId}/synthetic/generate-conversations`, {
-                    source_text: sourceText,
-                    num_dialogues: numDialogues,
-                    min_turns: minTurns,
-                    max_turns: Math.max(minTurns, maxTurns),
-                    api_url: apiUrl,
-                    api_key: apiKey,
-                    model_name: modelName,
-                });
+                const res = await api.post(
+                    `/projects/${projectId}/synthetic/generate-conversations`,
+                    {
+                        source_text: sourceText,
+                        num_dialogues: numDialogues,
+                        min_turns: minTurns,
+                        max_turns: Math.max(minTurns, maxTurns),
+                        api_url: apiUrl,
+                        api_key: apiKey,
+                        model_name: modelName,
+                    },
+                    { timeout: LONG_REQUEST_TIMEOUT_MS },
+                );
                 setGeneratedConversations(res.data.conversations || []);
                 setGeneratedPairs([]);
                 setGeneratedSpans([]);
@@ -543,6 +562,23 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                         {isGenerating ? '⏳ Generating...' : '🧪 Generate'}
                     </button>
                 </div>
+                {isGenerating && (
+                    <div
+                        style={{
+                            marginTop: 'var(--space-md)',
+                            padding: '8px 12px',
+                            background: 'rgba(59, 130, 246, 0.08)',
+                            border: '1px solid rgba(59, 130, 246, 0.25)',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: 'var(--font-size-sm)',
+                            color: 'var(--text-secondary)',
+                        }}
+                    >
+                        ⏳ Generation can take several minutes for large batches on
+                        local models. The GPU is working even if this page looks
+                        idle — please don't refresh.
+                    </div>
+                )}
             </div>
 
             {/* Chunk Picker Modal */}

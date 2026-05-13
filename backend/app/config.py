@@ -69,12 +69,21 @@ class Settings(BaseSettings):
     # that honor a disable-thinking directive can set this — e.g. Qwen3 accepts
     # "/no_think". DeepSeek-R1 and o1 have no such directive, so leave blank.
     TEACHER_MODEL_NO_THINK_SUFFIX: str = ""
+    # HTTP timeout for the teacher-model call. Default 10 minutes —
+    # synthetic-generation batches with 10+ rows on local Ollama / slower
+    # GPUs frequently exceed the previous 60-second cap, surfacing as a
+    # "network error" on the frontend while the GPU was still actively
+    # working. Adjust via env when running against a faster cloud model.
+    TEACHER_MODEL_TIMEOUT_SECONDS: float = 600.0
     ALLOW_SYNTHETIC_DEMO_FALLBACK: bool = False
     DOMAIN_BLUEPRINT_ENABLE_LLM_ENRICHMENT: bool = False
 
     # ── Judge Model (for evaluation) ────────────────────────────────────
     JUDGE_MODEL_API_URL: str = ""
     JUDGE_MODEL_API_KEY: str = ""
+    # Same rationale as TEACHER_MODEL_TIMEOUT_SECONDS — eval batches with
+    # 100+ rows on local hardware easily exceed the previous 90s cap.
+    JUDGE_MODEL_TIMEOUT_SECONDS: float = 600.0
     SECRETS_ENCRYPTION_KEY: str = ""
 
     # ── Ingestion Strictness ────────────────────────────────────────────

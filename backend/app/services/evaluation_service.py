@@ -1511,7 +1511,12 @@ async def evaluate_with_llm_judge(
             auto_stop_local_run = bool(local_spec.get("auto_stop"))
             local_judge_notes.append("auto_started_serve_run")
         judge_provider = "local_serve"
-        judge_client = httpx.AsyncClient(timeout=90.0)
+        # Generous timeout for local judge — eval batches with 100+ rows
+        # on slower hardware easily exceed the previous 90s cap and
+        # surface as "network error" while the GPU is still working.
+        # Configurable via JUDGE_MODEL_TIMEOUT_SECONDS.
+        judge_timeout = max(30.0, float(settings.JUDGE_MODEL_TIMEOUT_SECONDS or 600.0))
+        judge_client = httpx.AsyncClient(timeout=judge_timeout)
     else:
         secret_api_url = await get_project_secret_value(db, project_id, "judge_model", "api_url")
         secret_api_key = await get_project_secret_value(db, project_id, "judge_model", "api_key")
@@ -1521,7 +1526,8 @@ async def evaluate_with_llm_judge(
         use_remote_judge = bool(judge_endpoint)
         if use_remote_judge:
             judge_provider = "remote_api"
-            judge_client = httpx.AsyncClient(timeout=60.0)
+            judge_timeout = max(30.0, float(settings.JUDGE_MODEL_TIMEOUT_SECONDS or 600.0))
+            judge_client = httpx.AsyncClient(timeout=judge_timeout)
 
     try:
         for row in predictions:

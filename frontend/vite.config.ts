@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// 10 minutes — large synth / eval batches against a local model can
+// hold the connection open for several minutes. The default proxy
+// timeout used to sever the request and surface as "network error"
+// on the frontend while the GPU was still actively working.
+const PROXY_TIMEOUT_MS = 10 * 60 * 1000
+
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -10,6 +16,8 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         ws: true,
+        timeout: PROXY_TIMEOUT_MS,
+        proxyTimeout: PROXY_TIMEOUT_MS,
       },
     },
   },

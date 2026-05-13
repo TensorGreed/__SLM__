@@ -133,7 +133,11 @@ async def call_teacher_model(
         # when it's exactly "json" — harmless to servers that don't know it.
         payload["format"] = "json"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    # Generous timeout so larger batches on local Ollama / slower GPUs
+    # don't get cut off while the GPU is still actively generating.
+    # Configurable via TEACHER_MODEL_TIMEOUT_SECONDS — see backend/app/config.py.
+    timeout_seconds = max(30.0, float(settings.TEACHER_MODEL_TIMEOUT_SECONDS or 600.0))
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
