@@ -138,9 +138,17 @@ A concrete action surfaced by the eval failure cluster card — "add 20 rows", "
 
 Single observability row written by every pipeline stage. Schema: `(run_id, parent_run_id, stage, severity, reason_code, actor, summary, payload, ts)`. See [Run events](../observability/run-events.md).
 
+## Scoring mode
+
+Sub-mode of a task handler that picks the metric shape without changing which handler runs. Today's modes live inside `StructuredExtractionHandler`: `field_match` (per-field EM/F1 — invoice / form extraction) and `span_set` (entity-level P/R/F1 — PII / NER / span extraction). Declared as `output_schema.scoring_mode` on the prepared manifest. Same general handler, internal dispatch — BrewSLM doesn't add a new handler per domain. See [PII detector demo](../demos/pii-detector.md#how-scoring-works).
+
 ## SLM
 
 Small Language Model. The 1B–10B parameter range that BrewSLM is optimised for. Small enough to fine-tune on a single GPU; useful enough to ship in production.
+
+## Span-set scoring
+
+Entity-level precision/recall/F1 for tasks whose output is a list of typed spans (`[{type, start, end, text}, ...]`). True positives require identical `(type, start, end)`; off-by-one boundaries count as miss + hallucination. Produces per-class P/R/F1 alongside micro and macro aggregates — the metric shape compliance teams need ("99% credit_card recall before ship"). Triggered by `output_schema.scoring_mode: "span_set"`. See [PII detector demo](../demos/pii-detector.md).
 
 ## Snapshot
 

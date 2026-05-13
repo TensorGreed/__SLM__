@@ -19,15 +19,20 @@ land in a fully-seeded project:
 - **61 training rows** of synthetic chat / log / form / DM-style
   snippets with entity offsets pre-labelled.
 - **25 gold rows** for held-out evaluation.
-- **`task_profile: structured_extraction`** so the evaluation pipeline
-  routes through the `StructuredExtractionHandler` and scores at three
-  layers: JSON validity, schema compliance, and field-level F1.
+- **`task_profile: structured_extraction`** with
+  **`scoring_mode: span_set`** — eval automatically produces
+  per-class precision / recall / F1 per entity type (the
+  compliance-grade signal) alongside JSON validity and schema
+  compliance. No further config needed.
 - **Pre-filled Autopilot brief** — open the Autopilot tab and click
   Preview Plan; the brief is already in the textarea.
 - **Adapter preset**: `structured-extraction` data adapter, mapped to
   `text → entities_json`.
 - **Target profile**: `vllm_server` with the `balanced` plan profile —
   optimised for recall over latency since false negatives leak PII.
+- **Sample Predictions card** shows the entity-by-entity breakdown
+  per row (matched / missed / hallucinated) so failure modes are
+  visible without leaving the Evaluation tab.
 
 ## Entity types covered
 
@@ -77,26 +82,118 @@ hallucinate.
 
 ## How scoring works
 
-The `StructuredExtractionHandler` (introduced in Phase 5.3.4) scores
-three independent layers — each is a separate gate-able metric, so you
-can tell apart "model emits garbage JSON" from "model emits clean JSON
-with the wrong values":
+The PII demo's `output_schema` declares
+**`scoring_mode: "span_set"`**, which switches the
+`StructuredExtractionHandler` (Phase 5.3.4 + 5.3.4b) into entity-level
+NER scoring instead of the default whole-blob field comparison. This
+is the load-bearing config — without it, you'd see a single coarse F1
+that hides which entity type is weak. With it, you get the per-class
+metrics compliance teams actually evaluate.
 
-- **`json_validity_rate`** — fraction of rows where the model's output
-  parses as JSON (after stripping ` ```json ` code fences). A 30%
-  malformed rate makes the model unshippable regardless of accuracy.
+### Metrics emitted per eval run
+
+**JSON-shape gates** (same in both scoring modes):
+
+- **`json_validity_rate`** — fraction of rows where the model's
+  output parses as JSON, after stripping ` ```json ` code fences and
+  pulling the first balanced `{…}` block out of prose-and-JSON
+  mixes. A 30% malformed rate makes the model unshippable regardless
+  of entity accuracy.
 - **`schema_compliance_rate`** — fraction of rows where the parsed
   object has every required field (here: `entities`).
-- **`exact_match`** — whole-blob equality of the predicted JSON vs the
-  gold. With span-level offsets, this is the most demanding metric.
-- **`f1`** — mean per-field F1 (here: F1 on the `entities` field's
-  string-rendered list). Looser than exact_match; useful for tracking
-  progress between checkpoints.
 
-The Sample Predictions card on the Evaluation tab shows per-row
-**"JSON: valid · X/Y fields"** badges and a **"Show field-by-field
-comparison"** disclosure so you can eyeball failures without leaving
-the UI.
+**Entity-level matching** (`span_set` mode):
+
+- **`precision`** — micro precision over all entities across all
+  rows. *Of every entity the model claimed, how many were real?* Low
+  precision = false positives = redaction destroys legitimate text.
+- **`recall`** — micro recall. *Of every entity in the gold, how
+  many did the model find?* Low recall = PII leaks the firewall
+  failed to catch. **This is the metric compliance cares about most.**
+- **`f1`** — micro F1 (harmonic mean of P and R).
+- **`precision_macro` / `recall_macro` / `f1_macro`** — unweighted
+  means across entity types. Treats every type equally regardless of
+  support count, which is right for PII: SSN matters even if rare
+  in your dataset.
+- **`exact_match`** — row-level whole-set equality (every gold entity
+  matched, none missed, none hallucinated). Strictest possible
+  signal; useful as a ship/no-ship gate.
+
+**Per-class breakdown** (the headline diagnostic):
+
+```json
+"per_class": {
+  "email":          { "precision": 0.99, "recall": 0.98, "f1": 0.985, "support": 312, "tp": 305, "fp": 3,  "fn": 7  },
+  "credit_card":    { "precision": 1.00, "recall": 0.997, "f1": 0.999, "support": 89,  "tp": 89,  "fp": 0,  "fn": 0  },
+  "ssn":            { "precision": 0.91, "recall": 0.62, "f1": 0.737, "support": 47,  "tp": 29,  "fp": 3,  "fn": 18 },
+  "person_name":    { "precision": 0.92, "recall": 0.95, "f1": 0.935, "support": 410, "tp": 388, "fp": 32, "fn": 22 }
+}
+```
+
+This is what you stare at to improve the model. The fictional row
+above says SSN recall is 62% — that's a leak. You'd:
+
+1. Add more SSN training examples (use the [bundle generator](#bundle-generator-synthetic-expansion) or import from one of the [HF datasets](#huggingface-datasets) filtered for SSN-heavy rows).
+2. Re-train.
+3. Check `per_class.ssn.recall` next eval, not overall F1.
+
+### What "strict matching" means
+
+A predicted entity counts as a true positive **only if** there's a
+gold entity with the **same `(type, start, end)`**. Off-by-one
+boundary errors count as a miss + a hallucination. Type mismatches
+(same span, wrong type) likewise. This is the right contract for
+redaction: a "John" prediction for a gold "John Smith Jr." span
+breaks redaction just as badly as missing the span entirely.
+
+Duplicate entities use multiset semantics — if the same email
+appears twice in the text and both are gold, the model has to find
+both. One prediction can't free-pass two gold spans.
+
+### Compliance-grade gating
+
+To gate on per-class recall (e.g. "minimum 99% credit_card recall
+before ship"), add a gate to your eval pack that keys on the
+per-class metric path:
+
+```yaml
+gates:
+  - id: min_credit_card_recall
+    metric: per_class.credit_card.recall
+    operator: gte
+    threshold: 0.99
+    required: true
+  - id: min_ssn_recall
+    metric: per_class.ssn.recall
+    operator: gte
+    threshold: 0.995
+    required: true
+  - id: min_email_recall
+    metric: per_class.email.recall
+    operator: gte
+    threshold: 0.98
+    required: true
+```
+
+These gates compose with the strict-mode autopilot — if any required
+gate fails, deployment promotion is blocked.
+
+### Sample Predictions card
+
+The Evaluation tab's Sample Predictions card swaps into entity-level
+mode automatically when `scoring_mode: span_set` is detected on the
+preview rows:
+
+- Inline counts per row: *"3 matched · 1 missed · 0 hallucinated · P 1.00 · R 0.75"*. Missed/hallucinated counts render in red when > 0.
+- "Show entity-by-entity breakdown" disclosure: per-entity table
+  with status badge (**✓ matched** in green, **✗ missed** /
+  **✗ hallucinated** in red), entity type, text, and offset range.
+  Every failure mode is visible without leaving the page.
+
+Plus the JSON-shape badges still render:
+**"JSON: valid"** / **"JSON: malformed"** badge for the parser
+result, and a red *"missing: entities"* note if the model emits an
+object that doesn't even have the required field.
 
 ## Expanding the dataset
 
@@ -195,23 +292,44 @@ Sketch:
 ```python
 from llamafirewall import Firewall, ScannerConfig
 from brewslm.runtime import LocalModel  # or your serving endpoint
+import json
 
 model = LocalModel.load("exports/pii-detector/onnx-int8")
+
+# Per-class confidence thresholds — set these from your eval pack's
+# per_class metrics. The numbers below are illustrative; pull yours
+# from your latest eval run's metrics.per_class report.
+PER_CLASS_THRESHOLD = {
+    "credit_card": 1.00,   # at 99.7% recall, near-zero FP — accept all
+    "ssn":         1.00,
+    "email":       0.98,   # high precision; some FP risk — slight discount
+    "person_name": 0.85,   # lower precision; common false positives
+}
 
 def brewslm_scanner(text: str) -> list[dict]:
     """Conforms to LlamaFirewall's scanner interface."""
     response = model.generate(text, max_new_tokens=512)
-    parsed = json.loads(response)
-    return [
-        {
+    try:
+        parsed = json.loads(response)
+    except json.JSONDecodeError:
+        return []  # malformed output — let downstream regex scanners catch the obvious ones
+    out: list[dict] = []
+    for e in parsed.get("entities", []):
+        start, end = e.get("start"), e.get("end")
+        # Hallucinated-offset guard: the trained model's strict
+        # exact_match metric enforces this on eval data, but a
+        # production text might still trip it. Drop entities whose
+        # claimed text doesn't match the actual span.
+        if text[start:end] != e.get("text"):
+            continue
+        out.append({
             "category": e["type"],
-            "start": e["start"],
-            "end": e["end"],
+            "start": start,
+            "end": end,
             "matched_text": e["text"],
-            "score": 1.0,
-        }
-        for e in parsed.get("entities", [])
-    ]
+            "score": PER_CLASS_THRESHOLD.get(e["type"], 0.9),
+        })
+    return out
 
 fw = Firewall(
     input_scanners=[ScannerConfig(name="brewslm_pii", scanner=brewslm_scanner)],
@@ -222,10 +340,16 @@ result = fw.scan_input("Hi, I'm Jane Doe at jane@example.com")
 
 The contract on BrewSLM's side: emit valid JSON, every entity has
 `{type, start, end, text}`, and `text == input[start:end]`. The
-`StructuredExtractionHandler`'s gates already enforce the first two;
-the third is checked by post-processing in your scanner wrapper (the
-example above can add `if response[e["start"]:e["end"]] != e["text"]:
-continue` to drop hallucinated offsets).
+`StructuredExtractionHandler`'s gates enforce the first two on eval
+data (`json_validity_rate`, `schema_compliance_rate`); the third is
+the offset-sanity check in the scanner wrapper above.
+
+**Why per-class thresholds matter**: a class with 99%+ recall on
+your eval should be trusted (low score discount); a class with 85%
+precision should have its score discounted before LlamaFirewall
+decides whether to redact. Read the per-class numbers directly off
+your eval and update the threshold table — there's no substitute for
+measuring on representative data.
 
 ## End-to-end recipe
 
@@ -242,27 +366,56 @@ brewslm demo seed pii-detector
 # 4. Run eval on the gold set
 brewslm eval run --project pii-detector --dataset gold_dev --eval-type f1
 
-# 5. Inspect Sample Predictions — every row should show "JSON: valid"
-#    and ideally "1/1 fields" with the entities matching.
-#    If you see "JSON: malformed" rates above 5%, raise max_new_tokens
-#    on the training config and re-run.
+# 5. Inspect the metrics on the Evaluation tab. The headline you
+#    care about is `per_class.<type>.recall` — overall F1 hides
+#    which type is weak.
+#       - credit_card recall ≥ 0.99 → shippable
+#       - ssn recall ≥ 0.99      → shippable
+#       - email recall ≥ 0.98    → shippable
+#       - person_name recall ≥ 0.92 → acceptable
+#    If any class is below its target, look at Sample Predictions →
+#    "Show entity-by-entity breakdown" to see what the model missed
+#    or hallucinated for that class, then add training examples
+#    (synthetic via the bundle generator, or import more from HF /
+#    Kaggle for that specific class) and re-train.
 
-# 6. Export
+# 6. Set per-class gates on your eval pack (see "Compliance-grade
+#    gating" above) so the autopilot blocks ship if any class
+#    regresses below threshold.
+
+# 7. Export
 brewslm export onnx --project pii-detector --quantize int8
 
-# 7. Drop the exported model into your LlamaFirewall scanner config.
+# 8. Drop the exported model into your LlamaFirewall scanner config,
+#    setting PER_CLASS_THRESHOLD from your final eval's per_class
+#    precision numbers.
 ```
 
 ## What's not in the demo (yet)
 
-- **Entity-level span scoring** — the current handler scores whole-blob
-  equality on the entities list. A future phase (5.3.X) will add a
-  dedicated NER handler that computes precision/recall/F1 at the span
-  level so partial-credit (one entity right, one missed) is visible.
+Entity-level span scoring **is** in the demo (Phase 5.3.4b — see
+[How scoring works](#how-scoring-works) above). Genuine remaining gaps:
+
+- **Partial-credit / token-IoU boundary scoring** — the current
+  matching is strict: same `(type, start, end)` or it's a miss.
+  Off-by-one boundary errors get no partial credit. For tuning
+  early checkpoints, a token-IoU partial-match metric would give
+  a smoother optimization signal. Strict is the right contract for
+  shipping; partial would be a useful diagnostic alongside.
+- **Bipartite optimal matching for type-overlap mode** — strict
+  matching is exact-key only. A "looser" mode (type matches +
+  spans overlap, but boundaries differ) needs bipartite matching
+  to avoid double-counting and isn't shipped.
 - **Multi-language coverage** — the bundle is English-only. The HF
-  datasets above ship multi-language data; the same handler works
-  unchanged, just feed it different rows.
-- **Production rate-limits** — if you plug into LlamaFirewall and the
-  scanner becomes a hotspot, consider exporting to ONNX-INT8 and
-  serving on CPU; latency is ~10ms / row for short snippets after
-  quantisation.
+  datasets in [Expanding the dataset](#huggingface-datasets) ship
+  multi-language data; the span_set handler works unchanged on
+  non-English rows, just feed it different inputs.
+- **Production rate-limits** — if you plug into LlamaFirewall and
+  the scanner becomes a hotspot, export to ONNX-INT8 and serve on
+  CPU; latency is ~10ms / row for short snippets after quantisation.
+- **PII-specific eval pack** — the demo defaults to
+  `evalpack.general.default`. A dedicated `evalpack.pii.default`
+  with per-class recall gates pre-configured (see [Compliance-grade
+  gating](#compliance-grade-gating)) would let users ship with a
+  one-line pack reference instead of writing their own gates. Easy
+  follow-up; not in this commit.
