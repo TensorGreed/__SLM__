@@ -529,6 +529,101 @@
     overflow-y: auto;
 }
 
+/* Phase 5.3.6 — alignment (DPO/ORPO) inline surface */
+
+.eval-sample-predictions-alignment {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+.eval-sample-predictions-alignment-badge {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border-default);
+}
+
+.eval-sample-predictions-alignment-badge.is-correct {
+    background: rgba(34, 197, 94, 0.10);
+    border-color: rgba(34, 197, 94, 0.30);
+    color: rgb(21, 128, 61);
+}
+
+.eval-sample-predictions-alignment-badge.is-wrong {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.30);
+    color: rgb(153, 27, 27);
+}
+
+.eval-sample-predictions-alignment__sims {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.eval-sample-predictions-alignment__sims > strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.eval-sample-predictions-alignment-pair > summary {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    margin-top: 4px;
+}
+
+.eval-sample-predictions-alignment-pair__body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.eval-sample-predictions-alignment-pair__body pre {
+    font-size: 11.5px;
+    padding: 6px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    max-height: 160px;
+    overflow-y: auto;
+    margin: 4px 0 0;
+}
+
+.eval-sample-predictions-alignment-pair__label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.eval-sample-predictions-alignment-pair__label.is-chosen {
+    color: rgb(21, 128, 61);
+}
+
+.eval-sample-predictions-alignment-pair__label.is-chosen + pre {
+    background: rgba(34, 197, 94, 0.06);
+}
+
+.eval-sample-predictions-alignment-pair__label.is-rejected {
+    color: rgb(153, 27, 27);
+}
+
+.eval-sample-predictions-alignment-pair__label.is-rejected + pre {
+    background: rgba(239, 68, 68, 0.06);
+}
+
 @media (max-width: 980px) {
     .eval-pack-controls {
         grid-template-columns: 1fr;

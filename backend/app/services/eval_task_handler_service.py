@@ -1581,6 +1581,200 @@ class RAGHandler:
         }
 
 
+# ── AlignmentHandler (Phase 5.3.6) ────────────────────────────────────
+
+
+class AlignmentHandler:
+    """Task handler for alignment / preference-trained models (DPO, ORPO).
+
+    Row shape requires ``prompt``, ``chosen``, ``rejected``. After DPO/
+    ORPO training, the model is expected to generate outputs that
+    resemble ``chosen`` more than ``rejected``. This handler measures
+    that by:
+
+    1. **Similarity-to-chosen vs similarity-to-rejected**: token-level
+       F1 of the model's output against both completions. Cheap,
+       deterministic, and works with the existing generation
+       pipeline. A row's "preference correct" if F1(output, chosen) >
+       F1(output, rejected).
+    2. **Mean alignment margin**: average gap between similarity-to-
+       chosen and similarity-to-rejected across all rows. Positive
+       margin = model learned the preference; near-zero = model
+       didn't differentiate; negative = model preferred the rejected.
+
+    Note: this is a similarity-based proxy for "judge win-rate".
+    A heavier judge-based mode (LLM compares output to {chosen,
+    rejected} pairwise) would land as an opt-in mode in a follow-up.
+    Log-prob-margin mode (compute logp(chosen|prompt) -
+    logp(rejected|prompt) on the trained model) is the gold standard
+    for DPO eval but requires inference-path changes to expose
+    per-completion log-probs — also a follow-up.
+    """
+
+    profile_id: str = "alignment"
+
+    # Generation cap. Alignment outputs can be moderately long
+    # (paragraphs of preferred-style response). 256 is a defensible
+    # ceiling that matches typical chat / instruction-tuned outputs.
+    MAX_NEW_TOKENS_FLOOR: int = 64
+    MAX_NEW_TOKENS_HARDCAP: int = 256
+
+    # ── Row-field extraction ──
+
+    def _extract_prompt(self, row: dict[str, Any]) -> str:
+        for key in ("prompt", "question", "instruction", "input"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_chosen(self, row: dict[str, Any]) -> str:
+        for key in ("chosen", "preferred", "accepted", "response_chosen", "answer"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_rejected(self, row: dict[str, Any]) -> str:
+        for key in ("rejected", "dispreferred", "response_rejected", "negative"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    # ── Prompt assembly ──
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        built: list[BuiltPrompt] = []
+        for row in rows:
+            prompt_text = self._extract_prompt(row)
+            chosen = self._extract_chosen(row)
+            rejected = self._extract_rejected(row)
+            # Reference is the chosen completion — preserves SQuAD-style
+            # EM/F1 against the preferred completion (legacy gate compat).
+            built.append(
+                BuiltPrompt(
+                    prompt=prompt_text,
+                    reference=chosen,
+                    extras={
+                        "alignment_chosen": chosen,
+                        "alignment_rejected": rejected,
+                        "alignment_has_pair": bool(chosen and rejected),
+                    },
+                )
+            )
+        return built
+
+    def max_new_tokens_override(self, default: int) -> int:
+        baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    # ── Scoring ──
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        from app.services.evaluation_service import exact_match, f1_score
+
+        total = len(predictions)
+        if total == 0:
+            return {
+                "preference_accuracy": 0.0,
+                "mean_alignment_margin": 0.0,
+                "chosen_alignment_mean": 0.0,
+                "rejected_alignment_mean": 0.0,
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "total": 0,
+                "correct": 0,
+                "rows_with_pair": 0,
+            }
+
+        em_scores: list[float] = []
+        f1_scores: list[float] = []
+        chosen_sims: list[float] = []
+        rejected_sims: list[float] = []
+        margins: list[float] = []
+        correct_preference = 0
+        rows_with_pair = 0
+
+        for prediction in predictions:
+            pred_text = str(prediction.get("prediction") or "")
+            chosen = str(prediction.get("alignment_chosen") or prediction.get("reference") or "")
+            rejected = str(prediction.get("alignment_rejected") or "")
+            has_pair = bool(prediction.get("alignment_has_pair") or (chosen and rejected))
+
+            row_em = exact_match(pred_text, chosen)
+            row_f1 = f1_score(pred_text, chosen)
+            em_scores.append(row_em)
+            f1_scores.append(row_f1)
+
+            row_chosen_sim: float | None = None
+            row_rejected_sim: float | None = None
+            row_margin: float | None = None
+            row_preference_correct: bool | None = None
+
+            if has_pair and chosen and rejected:
+                rows_with_pair += 1
+                row_chosen_sim = f1_score(pred_text, chosen)
+                row_rejected_sim = f1_score(pred_text, rejected)
+                row_margin = row_chosen_sim - row_rejected_sim
+                row_preference_correct = row_chosen_sim > row_rejected_sim
+                chosen_sims.append(row_chosen_sim)
+                rejected_sims.append(row_rejected_sim)
+                margins.append(row_margin)
+                if row_preference_correct:
+                    correct_preference += 1
+
+            # In-place enrichment for predictions_preview → UI.
+            prediction["row_exact_match"] = row_em
+            prediction["row_f1"] = row_f1
+            prediction["alignment_has_pair"] = has_pair
+            if row_chosen_sim is not None:
+                prediction["alignment_chosen_sim"] = round(row_chosen_sim, 4)
+                prediction["alignment_rejected_sim"] = round(row_rejected_sim, 4)
+                prediction["alignment_margin"] = round(row_margin, 4)
+                prediction["alignment_preference_correct"] = bool(row_preference_correct)
+
+        preference_accuracy = (
+            round(correct_preference / rows_with_pair, 4) if rows_with_pair > 0 else 0.0
+        )
+        mean_margin = round(sum(margins) / len(margins), 4) if margins else 0.0
+        chosen_mean = round(sum(chosen_sims) / len(chosen_sims), 4) if chosen_sims else 0.0
+        rejected_mean = (
+            round(sum(rejected_sims) / len(rejected_sims), 4) if rejected_sims else 0.0
+        )
+
+        return {
+            "preference_accuracy": preference_accuracy,
+            "mean_alignment_margin": mean_margin,
+            "chosen_alignment_mean": chosen_mean,
+            "rejected_alignment_mean": rejected_mean,
+            # Legacy aliases for gate compat — EM/F1 against the
+            # CHOSEN completion (the preferred output).
+            "exact_match": round(sum(em_scores) / total, 4),
+            "f1": round(sum(f1_scores) / total, 4),
+            "total": total,
+            "correct": correct_preference,
+            "rows_with_pair": rows_with_pair,
+        }
+
+
 # ── Seq2SeqHandler (Phase 5.3.3) ──────────────────────────────────────
 
 
@@ -2007,9 +2201,15 @@ register_handler("extraction", StructuredExtractionHandler)
 register_handler("rag_qa", RAGHandler)
 register_handler("rag", RAGHandler)
 register_handler("grounded_qa", RAGHandler)
+# Alignment / preference (DPO, ORPO) — similarity-based preference scoring.
+register_handler("dpo", AlignmentHandler)
+register_handler("orpo", AlignmentHandler)
+register_handler("alignment", AlignmentHandler)
+register_handler("preference", AlignmentHandler)
 
 
 __all__ = [
+    "AlignmentHandler",
     "BuiltPrompt",
     "ClassificationHandler",
     "EvalContext",

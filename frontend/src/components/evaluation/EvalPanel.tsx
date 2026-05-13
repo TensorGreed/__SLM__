@@ -109,6 +109,17 @@ interface PredictionPreviewRow {
     rag_context_recall?: number | null;
     rag_unsupported_rate?: number | null;
     rag_is_faithful?: boolean | null;
+    // Phase 5.3.6: AlignmentHandler enrichments for DPO / ORPO. The
+    // model's output is compared to BOTH the chosen and rejected
+    // completions; the per-row preference_correct flag indicates
+    // whether the model preferred the right one.
+    alignment_chosen?: string | null;
+    alignment_rejected?: string | null;
+    alignment_has_pair?: boolean | null;
+    alignment_chosen_sim?: number | null;
+    alignment_rejected_sim?: number | null;
+    alignment_margin?: number | null;
+    alignment_preference_correct?: boolean | null;
     latency_ms?: number;
     input_modality?: string;
 }
@@ -1718,6 +1729,14 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     const ragContextRecall = row.rag_context_recall;
                                     const ragUnsupportedRate = row.rag_unsupported_rate;
                                     const ragIsFaithful = row.rag_is_faithful;
+                                    // Phase 5.3.6: alignment (DPO/ORPO) per-row diagnostics.
+                                    const hasAlignmentPair = Boolean(row.alignment_has_pair);
+                                    const alignmentChosen = String(row.alignment_chosen || '').trim();
+                                    const alignmentRejected = String(row.alignment_rejected || '').trim();
+                                    const alignmentChosenSim = row.alignment_chosen_sim;
+                                    const alignmentRejectedSim = row.alignment_rejected_sim;
+                                    const alignmentMargin = row.alignment_margin;
+                                    const alignmentPreferenceCorrect = row.alignment_preference_correct;
                                     const hasRowScores =
                                         (rowEm !== undefined && rowEm !== null) ||
                                         (rowF1 !== undefined && rowF1 !== null);
@@ -2027,6 +2046,62 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                                     model was given)
                                                                 </summary>
                                                                 <pre>{ragContext}</pre>
+                                                            </details>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {hasAlignmentPair && (
+                                                    <div className="eval-sample-predictions-alignment">
+                                                        {alignmentPreferenceCorrect !== null &&
+                                                            alignmentPreferenceCorrect !== undefined && (
+                                                                <span
+                                                                    className={`eval-sample-predictions-alignment-badge ${
+                                                                        alignmentPreferenceCorrect
+                                                                            ? 'is-correct'
+                                                                            : 'is-wrong'
+                                                                    }`}
+                                                                >
+                                                                    {alignmentPreferenceCorrect
+                                                                        ? 'Preferred chosen'
+                                                                        : 'Preferred rejected'}
+                                                                </span>
+                                                            )}
+                                                        {typeof alignmentChosenSim === 'number' &&
+                                                            typeof alignmentRejectedSim === 'number' && (
+                                                                <span className="eval-sample-predictions-alignment__sims">
+                                                                    chosen sim {alignmentChosenSim.toFixed(2)} ·
+                                                                    rejected sim{' '}
+                                                                    {alignmentRejectedSim.toFixed(2)}
+                                                                    {typeof alignmentMargin === 'number' && (
+                                                                        <>
+                                                                            {' '}· margin{' '}
+                                                                            <strong>
+                                                                                {alignmentMargin >= 0 ? '+' : ''}
+                                                                                {alignmentMargin.toFixed(2)}
+                                                                            </strong>
+                                                                        </>
+                                                                    )}
+                                                                </span>
+                                                            )}
+                                                        {(alignmentChosen || alignmentRejected) && (
+                                                            <details className="eval-sample-predictions-alignment-pair">
+                                                                <summary>
+                                                                    Show chosen vs rejected completions
+                                                                </summary>
+                                                                <div className="eval-sample-predictions-alignment-pair__body">
+                                                                    <div>
+                                                                        <span className="eval-sample-predictions-alignment-pair__label is-chosen">
+                                                                            chosen
+                                                                        </span>
+                                                                        <pre>{alignmentChosen || '—'}</pre>
+                                                                    </div>
+                                                                    <div>
+                                                                        <span className="eval-sample-predictions-alignment-pair__label is-rejected">
+                                                                            rejected
+                                                                        </span>
+                                                                        <pre>{alignmentRejected || '—'}</pre>
+                                                                    </div>
+                                                                </div>
                                                             </details>
                                                         )}
                                                     </div>

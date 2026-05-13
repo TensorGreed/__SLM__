@@ -819,6 +819,14 @@ async def run_heldout_evaluation(
                 predictions[idx]["rag_context"] = pair.get("rag_context")
             if pair.get("rag_has_context") is not None:
                 predictions[idx]["rag_has_context"] = pair.get("rag_has_context")
+            # Phase 5.3.6: AlignmentHandler needs the chosen / rejected
+            # completions at score time to compute preference accuracy.
+            if pair.get("alignment_chosen"):
+                predictions[idx]["alignment_chosen"] = pair.get("alignment_chosen")
+            if pair.get("alignment_rejected"):
+                predictions[idx]["alignment_rejected"] = pair.get("alignment_rejected")
+            if pair.get("alignment_has_pair") is not None:
+                predictions[idx]["alignment_has_pair"] = pair.get("alignment_has_pair")
 
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":
@@ -911,6 +919,17 @@ async def run_heldout_evaluation(
             "rag_context_recall": p.get("rag_context_recall"),
             "rag_unsupported_rate": p.get("rag_unsupported_rate"),
             "rag_is_faithful": p.get("rag_is_faithful"),
+            # Phase 5.3.6: AlignmentHandler — per-row similarity to
+            # chosen/rejected + preference-correct flag so the UI can
+            # render a "preferred chosen / preferred rejected" badge
+            # for DPO / ORPO evaluations.
+            "alignment_chosen": p.get("alignment_chosen"),
+            "alignment_rejected": p.get("alignment_rejected"),
+            "alignment_has_pair": p.get("alignment_has_pair"),
+            "alignment_chosen_sim": p.get("alignment_chosen_sim"),
+            "alignment_rejected_sim": p.get("alignment_rejected_sim"),
+            "alignment_margin": p.get("alignment_margin"),
+            "alignment_preference_correct": p.get("alignment_preference_correct"),
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
         }
