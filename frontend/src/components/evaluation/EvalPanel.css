@@ -219,6 +219,18 @@
     margin-bottom: var(--space-md);
 }
 
+.eval-sample-predictions__provenance {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    letter-spacing: 0;
+}
+
+.eval-sample-predictions__run {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+}
+
 .eval-sample-predictions-table td {
     vertical-align: top;
 }

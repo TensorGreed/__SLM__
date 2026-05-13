@@ -693,31 +693,37 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     const scoredPredictions = llmJudgeResults[0]?.metrics.scored_predictions ?? [];
 
     // Phase 5.2a: surface the per-row predictions the eval runner already
-    // stores in result.details.predictions_preview. Pick the most recent
-    // non-judge eval result that has a sample (judge results have their own
-    // side-by-side card). This is the smoking-gun view when EM/F1 score 0.
-    const samplePredictions = useMemo<PredictionPreviewRow[]>(() => {
-        for (let i = evalResults.length - 1; i >= 0; i -= 1) {
+    // stores in result.details.predictions_preview. The API returns results
+    // newest-first (order_by created_at.desc), so iterate forward — picking
+    // the FIRST result that carries a preview gives us the most recent
+    // sample. Falling back to older runs would let the card mismatch the
+    // headline metric without warning.
+    const samplePredictionsResult = useMemo(() => {
+        for (let i = 0; i < evalResults.length; i += 1) {
             const preview = evalResults[i].details?.predictions_preview;
             if (Array.isArray(preview) && preview.length > 0) {
-                return preview as PredictionPreviewRow[];
+                return evalResults[i];
             }
         }
-        return [];
+        return null;
     }, [evalResults]);
 
-    const samplePredictionsEvalType = useMemo(() => {
-        for (let i = evalResults.length - 1; i >= 0; i -= 1) {
-            const preview = evalResults[i].details?.predictions_preview;
-            if (Array.isArray(preview) && preview.length > 0) {
-                return evalResults[i].eval_type;
-            }
-        }
-        return '';
-    }, [evalResults]);
+    const samplePredictions = useMemo<PredictionPreviewRow[]>(() => {
+        const preview = samplePredictionsResult?.details?.predictions_preview;
+        return Array.isArray(preview) ? (preview as PredictionPreviewRow[]) : [];
+    }, [samplePredictionsResult]);
+
+    const samplePredictionsEvalType = samplePredictionsResult?.eval_type ?? '';
+    const samplePredictionsDatasetName =
+        samplePredictionsResult?.dataset_name ?? '';
+    const samplePredictionsResultId = samplePredictionsResult?.id ?? null;
+    const samplePredictionsIsLatestRun =
+        samplePredictionsResult != null &&
+        evalResults.length > 0 &&
+        samplePredictionsResult.id === evalResults[0].id;
 
     const latestInference = useMemo(() => {
-        for (let i = evalResults.length - 1; i >= 0; i -= 1) {
+        for (let i = 0; i < evalResults.length; i += 1) {
             const inference = evalResults[i].metrics.inference;
             if (inference) {
                 return inference;
@@ -1544,12 +1550,28 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             {samplePredictions.length > 0 && (
                 <div className="card eval-sample-predictions">
                     <h3>
-                        Sample predictions ({samplePredictionsEvalType.replace('_', ' ') || 'eval'})
+                        Sample predictions
+                        {samplePredictionsDatasetName && (
+                            <span className="eval-sample-predictions__provenance">
+                                {' · '}
+                                {samplePredictionsDatasetName}
+                                {' · '}
+                                {samplePredictionsEvalType.replace('_', ' ') || 'eval'}
+                                {samplePredictionsResultId != null && (
+                                    <span className="eval-sample-predictions__run">
+                                        {' '}
+                                        (run #{samplePredictionsResultId})
+                                    </span>
+                                )}
+                            </span>
+                        )}
                     </h3>
                     <p className="eval-sample-predictions__lede">
-                        First {samplePredictions.length} rows from the most recent eval. When
-                        metrics look surprisingly low, eyeball these — a prompt/format mismatch is
-                        usually visible at a glance.
+                        First {samplePredictions.length} rows from the
+                        {samplePredictionsIsLatestRun ? ' most recent ' : ' most recent run that captured predictions (an older run — '}
+                        eval{!samplePredictionsIsLatestRun ? '). ' : '. '}
+                        When metrics look surprisingly low, eyeball these — a prompt/format mismatch
+                        is usually visible at a glance.
                     </p>
                     <div className="table-container">
                         <table className="docs-table eval-sample-predictions-table">
