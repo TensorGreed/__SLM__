@@ -1581,6 +1581,378 @@ class RAGHandler:
         }
 
 
+# ── Multimodal handlers (Phase 5.3.7) ─────────────────────────────────
+
+
+class VisionLanguageHandler:
+    """Task handler for vision-language tasks (captioning + VQA).
+
+    Two sub-tasks routed by ``manifest.subtask``:
+
+    - ``captioning`` (default): model gets an image, emits a caption.
+      Scored with BLEU-4 and ROUGE-L against the gold caption +
+      legacy EM/F1. Mean prediction-token / reference-token ratio
+      reported as ``length_ratio`` for spotting over-/under-generation.
+    - ``vqa``: model gets an image plus a question, emits an answer.
+      Scored with SQuAD EM/F1.
+
+    Image path flows through ``image_path`` on each row (set by the
+    existing modality-detection in ``_load_heldout_pairs``). The
+    handler does NOT load images itself — that's the inference path's
+    job for a real vision-language model. The handler is correct on
+    any caller that uses a multimodal-aware inference runtime
+    (vision2seq, PaliGemma, etc.); for plain-text inference it scores
+    correctly but the input image is invisible to the model.
+
+    CIDEr scoring (the classic captioning metric) is intentionally
+    deferred — ``pycocoevalcap`` has a Java dependency on some
+    sub-scorers. BLEU + ROUGE are decent caption-quality signal and
+    install clean.
+    """
+
+    profile_id: str = "vision_language"
+
+    SUBTASK_CAPTIONING: str = "captioning"
+    SUBTASK_VQA: str = "vqa"
+    DEFAULT_SUBTASK: str = "captioning"
+    _SUPPORTED_SUBTASKS: set[str] = {SUBTASK_CAPTIONING, SUBTASK_VQA}
+
+    MAX_NEW_TOKENS_FLOOR: int = 32
+    MAX_NEW_TOKENS_HARDCAP: int = 256
+
+    def __init__(self) -> None:
+        self._cached_subtask: str | None = None
+
+    def _resolve_subtask(self, ctx: EvalContext) -> str:
+        if self._cached_subtask is not None:
+            return self._cached_subtask
+        raw = str(ctx.manifest.get("subtask") or "").strip().lower()
+        self._cached_subtask = (
+            raw if raw in self._SUPPORTED_SUBTASKS else self.DEFAULT_SUBTASK
+        )
+        return self._cached_subtask
+
+    def _extract_question(self, row: dict[str, Any]) -> str:
+        for key in ("question", "prompt", "instruction", "query"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_caption_or_answer(self, row: dict[str, Any]) -> str:
+        for key in (
+            "caption",
+            "answer",
+            "reference",
+            "target_text",
+            "completion",
+            "response",
+            "output",
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_image_path(self, row: dict[str, Any]) -> str:
+        for key in ("image_path", "image", "image_url"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        subtask = self._resolve_subtask(ctx)
+        built: list[BuiltPrompt] = []
+        for row in rows:
+            image_path = self._extract_image_path(row)
+            reference = self._extract_caption_or_answer(row)
+            if subtask == self.SUBTASK_VQA:
+                question = self._extract_question(row)
+                # Vision-language inference paths usually expect the
+                # image to be passed alongside the prompt, not embedded
+                # in it. We carry the image_path through extras and emit
+                # a token reference in the prompt for plain-text models
+                # that still want to know an image was attached.
+                prompt = (
+                    f"Question: {question}\n"
+                    f"Image: <image:{image_path}>\nAnswer:"
+                    if image_path
+                    else question
+                )
+            else:
+                prompt = (
+                    f"Describe the image: <image:{image_path}>\nCaption:"
+                    if image_path
+                    else "Describe the image:"
+                )
+            extras: dict[str, Any] = {
+                "vl_subtask": subtask,
+                "vl_image_path": image_path,
+            }
+            built.append(BuiltPrompt(prompt=prompt, reference=reference, extras=extras))
+        return built
+
+    def max_new_tokens_override(self, default: int) -> int:
+        baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    def _score_captioning(
+        self, predictions: list[str], references: list[str]
+    ) -> dict[str, float]:
+        if not predictions:
+            return {"bleu_4": 0.0, "rouge_l": 0.0}
+        from sacrebleu.metrics import BLEU
+        from rouge_score import rouge_scorer
+
+        bleu = BLEU(effective_order=True)
+        bleu_result = bleu.corpus_score(list(predictions), [list(references)])
+        scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
+        rouge_l_total = 0.0
+        for pred, ref in zip(predictions, references):
+            rouge_l_total += float(
+                scorer.score(ref or "", pred or "")["rougeL"].fmeasure
+            )
+        return {
+            "bleu_4": round(float(bleu_result.score) / 100.0, 4),
+            "rouge_l": round(rouge_l_total / len(predictions), 4),
+        }
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        from app.services.evaluation_service import exact_match, f1_score
+
+        subtask = self._resolve_subtask(ctx)
+        total = len(predictions)
+        if total == 0:
+            return {
+                "subtask": subtask,
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "total": 0,
+            }
+
+        pred_texts = [str(p.get("prediction") or "") for p in predictions]
+        ref_texts = [str(p.get("reference") or "") for p in predictions]
+        em_scores = [exact_match(p, r) for p, r in zip(pred_texts, ref_texts)]
+        f1_scores = [f1_score(p, r) for p, r in zip(pred_texts, ref_texts)]
+
+        # In-place enrichment for per-row badges.
+        for idx, prediction in enumerate(predictions):
+            prediction["row_exact_match"] = em_scores[idx]
+            prediction["row_f1"] = f1_scores[idx]
+            prediction["vl_subtask"] = subtask
+
+        metrics: dict[str, Any] = {
+            "subtask": subtask,
+            "exact_match": round(sum(em_scores) / total, 4),
+            "f1": round(sum(f1_scores) / total, 4),
+            "total": total,
+            "correct": int(sum(em_scores)),
+        }
+        if subtask == self.SUBTASK_CAPTIONING:
+            pred_token_total = sum(len((p or "").split()) for p in pred_texts)
+            ref_token_total = sum(len((r or "").split()) for r in ref_texts)
+            metrics["length_ratio"] = (
+                round(pred_token_total / ref_token_total, 4)
+                if ref_token_total > 0
+                else 0.0
+            )
+            metrics.update(self._score_captioning(pred_texts, ref_texts))
+        return metrics
+
+
+class AudioTranscriptHandler:
+    """Task handler for audio transcription + audio-conditioned QA.
+
+    Two sub-tasks:
+
+    - ``transcription`` (default): model emits a transcript. Scored
+      with WER (word error rate) and CER (character error rate) via
+      ``jiwer``, plus legacy F1 / EM for gate compat.
+    - ``audio_qa``: model gets an audio clip + question, emits an
+      answer. Scored with SQuAD EM/F1.
+
+    Same boundary as VisionLanguageHandler: the handler doesn't load
+    audio; that's the inference runtime's job. Scoring is correct on
+    any caller using an audio-aware runtime (Whisper, SeamlessM4T,
+    etc.) and falls back to text-only scoring for plain runtimes.
+    """
+
+    profile_id: str = "audio_transcript"
+
+    SUBTASK_TRANSCRIPTION: str = "transcription"
+    SUBTASK_AUDIO_QA: str = "audio_qa"
+    DEFAULT_SUBTASK: str = "transcription"
+    _SUPPORTED_SUBTASKS: set[str] = {SUBTASK_TRANSCRIPTION, SUBTASK_AUDIO_QA}
+
+    MAX_NEW_TOKENS_FLOOR: int = 64
+    MAX_NEW_TOKENS_HARDCAP: int = 512
+
+    def __init__(self) -> None:
+        self._cached_subtask: str | None = None
+
+    def _resolve_subtask(self, ctx: EvalContext) -> str:
+        if self._cached_subtask is not None:
+            return self._cached_subtask
+        raw = str(ctx.manifest.get("subtask") or "").strip().lower()
+        self._cached_subtask = (
+            raw if raw in self._SUPPORTED_SUBTASKS else self.DEFAULT_SUBTASK
+        )
+        return self._cached_subtask
+
+    def _extract_question(self, row: dict[str, Any]) -> str:
+        for key in ("question", "prompt", "instruction", "query"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_transcript_or_answer(self, row: dict[str, Any]) -> str:
+        for key in (
+            "transcript",
+            "answer",
+            "reference",
+            "target_text",
+            "completion",
+            "response",
+            "output",
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_audio_path(self, row: dict[str, Any]) -> str:
+        for key in ("audio_path", "audio", "audio_url"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        subtask = self._resolve_subtask(ctx)
+        built: list[BuiltPrompt] = []
+        for row in rows:
+            audio_path = self._extract_audio_path(row)
+            reference = self._extract_transcript_or_answer(row)
+            if subtask == self.SUBTASK_AUDIO_QA:
+                question = self._extract_question(row)
+                prompt = (
+                    f"Question: {question}\n"
+                    f"Audio: <audio:{audio_path}>\nAnswer:"
+                    if audio_path
+                    else question
+                )
+            else:
+                prompt = (
+                    f"Transcribe the audio: <audio:{audio_path}>\nTranscript:"
+                    if audio_path
+                    else "Transcribe the audio:"
+                )
+            extras: dict[str, Any] = {
+                "audio_subtask": subtask,
+                "audio_path": audio_path,
+            }
+            built.append(BuiltPrompt(prompt=prompt, reference=reference, extras=extras))
+        return built
+
+    def max_new_tokens_override(self, default: int) -> int:
+        baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    def _score_wer_cer(
+        self, predictions: list[str], references: list[str]
+    ) -> dict[str, float]:
+        if not predictions:
+            return {"wer": 0.0, "cer": 0.0}
+        # jiwer is lazy-imported so the rest of the eval pipeline
+        # doesn't pay the load cost when nobody runs audio eval.
+        import jiwer
+
+        # jiwer expects non-empty references for WER; replace empties
+        # with a single-char marker so the metric doesn't crash, and
+        # rely on per-row WER values being clearly bad in that case.
+        refs = [r if r else "<empty>" for r in references]
+        preds = [p if p else "" for p in predictions]
+        try:
+            wer = float(jiwer.wer(refs, preds))
+        except Exception:
+            wer = 1.0
+        try:
+            cer = float(jiwer.cer(refs, preds))
+        except Exception:
+            cer = 1.0
+        return {"wer": round(wer, 4), "cer": round(cer, 4)}
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        from app.services.evaluation_service import exact_match, f1_score
+
+        subtask = self._resolve_subtask(ctx)
+        total = len(predictions)
+        if total == 0:
+            return {
+                "subtask": subtask,
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "total": 0,
+            }
+
+        pred_texts = [str(p.get("prediction") or "") for p in predictions]
+        ref_texts = [str(p.get("reference") or "") for p in predictions]
+        em_scores = [exact_match(p, r) for p, r in zip(pred_texts, ref_texts)]
+        f1_scores = [f1_score(p, r) for p, r in zip(pred_texts, ref_texts)]
+
+        for idx, prediction in enumerate(predictions):
+            prediction["row_exact_match"] = em_scores[idx]
+            prediction["row_f1"] = f1_scores[idx]
+            prediction["audio_subtask"] = subtask
+
+        metrics: dict[str, Any] = {
+            "subtask": subtask,
+            "exact_match": round(sum(em_scores) / total, 4),
+            "f1": round(sum(f1_scores) / total, 4),
+            "total": total,
+            "correct": int(sum(em_scores)),
+        }
+        if subtask == self.SUBTASK_TRANSCRIPTION:
+            metrics.update(self._score_wer_cer(pred_texts, ref_texts))
+        return metrics
+
+
 # ── AlignmentHandler (Phase 5.3.6) ────────────────────────────────────
 
 
@@ -2206,10 +2578,18 @@ register_handler("dpo", AlignmentHandler)
 register_handler("orpo", AlignmentHandler)
 register_handler("alignment", AlignmentHandler)
 register_handler("preference", AlignmentHandler)
+# Multimodal — vision-language (captioning / VQA) and audio (transcription / QA).
+register_handler("vision_language", VisionLanguageHandler)
+register_handler("image_captioning", VisionLanguageHandler)
+register_handler("vqa", VisionLanguageHandler)
+register_handler("audio_transcript", AudioTranscriptHandler)
+register_handler("audio_transcription", AudioTranscriptHandler)
+register_handler("speech_to_text", AudioTranscriptHandler)
 
 
 __all__ = [
     "AlignmentHandler",
+    "AudioTranscriptHandler",
     "BuiltPrompt",
     "ClassificationHandler",
     "EvalContext",
@@ -2219,6 +2599,7 @@ __all__ = [
     "Seq2SeqHandler",
     "StructuredExtractionHandler",
     "TaskHandler",
+    "VisionLanguageHandler",
     "build_eval_context",
     "list_registered_profiles",
     "read_prepared_manifest",
