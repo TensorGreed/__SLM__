@@ -870,6 +870,15 @@ async def run_heldout_evaluation(
             "span_marker": p.get("span_marker"),
             "row_exact_match": p.get("row_exact_match"),
             "row_f1": p.get("row_f1"),
+            # Phase 5.3.4: StructuredExtractionHandler writes these so the
+            # UI can show "JSON: valid · X/Y fields" + a per-field
+            # comparison disclosure. Other handlers don't write them and
+            # the UI hides the column then.
+            "is_valid_json": p.get("is_valid_json"),
+            "parsed_prediction": p.get("parsed_prediction"),
+            "parsed_reference": p.get("parsed_reference"),
+            "missing_required_fields": p.get("missing_required_fields"),
+            "row_field_results": p.get("row_field_results"),
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
         }

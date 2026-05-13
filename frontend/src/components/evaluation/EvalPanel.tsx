@@ -61,6 +61,15 @@ interface PredictionPreviewRow {
     span_marker?: string | null;
     row_exact_match?: number | null;
     row_f1?: number | null;
+    // Phase 5.3.4: StructuredExtractionHandler enrichments. JSON
+    // validity status + per-field comparison drive an inline note
+    // ("JSON: valid · 3/3 fields") and a "Show field-by-field
+    // comparison" disclosure beneath the prediction.
+    is_valid_json?: boolean | null;
+    parsed_prediction?: Record<string, unknown> | null;
+    parsed_reference?: Record<string, unknown> | null;
+    missing_required_fields?: string[] | null;
+    row_field_results?: Record<string, { em?: number; f1?: number }> | null;
     latency_ms?: number;
     input_modality?: string;
 }
@@ -1620,6 +1629,28 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                         answerSpan !== predictionText;
                                     const rowEm = row.row_exact_match;
                                     const rowF1 = row.row_f1;
+                                    // Phase 5.3.4: structured extraction rows
+                                    // carry these enrichments. is_valid_json
+                                    // being a boolean is the signal that the
+                                    // run was an extraction (not just QA).
+                                    const hasStructured =
+                                        row.is_valid_json !== undefined &&
+                                        row.is_valid_json !== null;
+                                    const isValidJson = Boolean(row.is_valid_json);
+                                    const missingRequired = Array.isArray(
+                                        row.missing_required_fields,
+                                    )
+                                        ? row.missing_required_fields
+                                        : [];
+                                    const rowFieldResults =
+                                        row.row_field_results &&
+                                        typeof row.row_field_results === 'object'
+                                            ? row.row_field_results
+                                            : {};
+                                    const fieldCount = Object.keys(rowFieldResults).length;
+                                    const fieldCorrect = Object.values(rowFieldResults).filter(
+                                        (entry) => (entry?.em ?? 0) >= 1,
+                                    ).length;
                                     const hasRowScores =
                                         (rowEm !== undefined && rowEm !== null) ||
                                         (rowF1 !== undefined && rowF1 !== null);
@@ -1682,6 +1713,111 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                             <code>{answerSpan}</code>
                                                         </div>
                                                     </details>
+                                                )}
+                                                {hasStructured && (
+                                                    <div className="eval-sample-predictions-structured">
+                                                        <span
+                                                            className={`eval-sample-predictions-json-badge ${
+                                                                isValidJson
+                                                                    ? 'is-valid'
+                                                                    : 'is-invalid'
+                                                            }`}
+                                                        >
+                                                            {isValidJson
+                                                                ? 'JSON: valid'
+                                                                : 'JSON: malformed'}
+                                                        </span>
+                                                        {isValidJson && fieldCount > 0 && (
+                                                            <span className="eval-sample-predictions-structured__fields">
+                                                                {fieldCorrect}/{fieldCount} fields
+                                                            </span>
+                                                        )}
+                                                        {missingRequired.length > 0 && (
+                                                            <span className="eval-sample-predictions-structured__missing">
+                                                                missing: {missingRequired.join(', ')}
+                                                            </span>
+                                                        )}
+                                                        {isValidJson && fieldCount > 0 && (
+                                                            <details className="eval-sample-predictions-fields">
+                                                                <summary>
+                                                                    Show field-by-field comparison
+                                                                </summary>
+                                                                <table className="eval-sample-predictions-fields__table">
+                                                                    <thead>
+                                                                        <tr>
+                                                                            <th>Field</th>
+                                                                            <th>Expected</th>
+                                                                            <th>Got</th>
+                                                                            <th>EM</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {Object.entries(rowFieldResults).map(
+                                                                            ([fieldName, scores]) => {
+                                                                                const expected =
+                                                                                    row.parsed_reference &&
+                                                                                    typeof row.parsed_reference ===
+                                                                                        'object'
+                                                                                        ? String(
+                                                                                              (
+                                                                                                  row.parsed_reference as Record<
+                                                                                                      string,
+                                                                                                      unknown
+                                                                                                  >
+                                                                                              )[fieldName] ??
+                                                                                                  '',
+                                                                                          )
+                                                                                        : '';
+                                                                                const got =
+                                                                                    row.parsed_prediction &&
+                                                                                    typeof row.parsed_prediction ===
+                                                                                        'object'
+                                                                                        ? String(
+                                                                                              (
+                                                                                                  row.parsed_prediction as Record<
+                                                                                                      string,
+                                                                                                      unknown
+                                                                                                  >
+                                                                                              )[fieldName] ??
+                                                                                                  '',
+                                                                                          )
+                                                                                        : '';
+                                                                                const em =
+                                                                                    typeof scores?.em ===
+                                                                                    'number'
+                                                                                        ? scores.em
+                                                                                        : 0;
+                                                                                return (
+                                                                                    <tr
+                                                                                        key={`field-${fieldName}`}
+                                                                                    >
+                                                                                        <td>
+                                                                                            <code>
+                                                                                                {fieldName}
+                                                                                            </code>
+                                                                                        </td>
+                                                                                        <td>{expected || '—'}</td>
+                                                                                        <td>{got || '—'}</td>
+                                                                                        <td>
+                                                                                            <span
+                                                                                                className={`eval-sample-predictions-fields__em ${
+                                                                                                    em >= 1
+                                                                                                        ? 'is-pass'
+                                                                                                        : 'is-fail'
+                                                                                                }`}
+                                                                                            >
+                                                                                                {em >= 1 ? '✓' : '✗'}
+                                                                                            </span>
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                );
+                                                                            },
+                                                                        )}
+                                                                    </tbody>
+                                                                </table>
+                                                            </details>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </td>
                                             {samplePredictionsHasRowScores && (

@@ -628,6 +628,391 @@ class QAHandler:
         }
 
 
+# ── StructuredExtractionHandler (Phase 5.3.4) ─────────────────────────
+
+
+class StructuredExtractionHandler:
+    """Task handler for structured / JSON extraction.
+
+    Wraps each row with a "Extract these fields as JSON" instruction,
+    parses the model's output as JSON (stripping common code-fence
+    artifacts), and scores at three layers:
+
+    1. **JSON validity** — did the model produce a parseable object?
+       A 30% malformed-JSON rate makes the model unshippable
+       regardless of field accuracy, so this gets its own metric.
+    2. **Schema compliance** — did the parsed object include every
+       required field?
+    3. **Field-level EM / F1** — per declared field, averaged over
+       rows where the field appears in both prediction and reference.
+
+    Whole-blob ``exact_match`` and ``f1`` aliases are also produced
+    so eval-pack gates keyed on those metric IDs keep resolving
+    (``f1`` is set to the mean per-field F1, which is the most useful
+    aggregate for extraction).
+
+    Schema source priority:
+      1. ``manifest.output_schema`` (JSON Schema with properties +
+         required). Authoritative when present.
+      2. Otherwise, derive the field set by scanning up to the first
+         20 references — implicit but lets the handler work on
+         untagged datasets.
+
+    The handler enriches each prediction in place with
+    ``parsed_prediction``, ``parsed_reference``, ``is_valid_json``,
+    ``missing_required_fields``, ``row_field_results``, plus the
+    standard ``row_exact_match`` / ``row_f1`` that the QAHandler also
+    writes. The UI reads these to render inline JSON validity notes
+    and a per-field comparison disclosure.
+    """
+
+    profile_id: str = "structured_extraction"
+
+    SCHEMA_SAMPLE_SIZE: int = 20
+    MAX_NEW_TOKENS_FLOOR: int = 128
+    MAX_NEW_TOKENS_HARDCAP: int = 512
+
+    def __init__(self) -> None:
+        self._schema: dict[str, Any] | None = None
+
+    # ── Schema resolution ──
+
+    def _resolve_schema(
+        self,
+        records: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        if self._schema is not None:
+            return self._schema
+
+        manifest_schema = ctx.manifest.get("output_schema")
+        if isinstance(manifest_schema, dict):
+            properties = manifest_schema.get("properties")
+            required = manifest_schema.get("required")
+            if isinstance(properties, dict) and properties:
+                fields = sorted(properties.keys())
+                req_list = (
+                    list(required)
+                    if isinstance(required, list) and required
+                    else list(fields)
+                )
+                self._schema = {"fields": fields, "required": req_list}
+                return self._schema
+
+        # Derive from references.
+        seen: set[str] = set()
+        for record in records[: self.SCHEMA_SAMPLE_SIZE]:
+            ref_raw = self._read_reference_raw(record)
+            parsed = self._parse_json_safely(ref_raw)
+            if isinstance(parsed, dict):
+                seen.update(str(k) for k in parsed.keys())
+        fields = sorted(seen)
+        self._schema = {"fields": fields, "required": list(fields)}
+        return self._schema
+
+    # ── Field extraction ──
+
+    def _extract_input_text(self, row: dict[str, Any]) -> str:
+        for key in (
+            "text",
+            "source_text",
+            "input",
+            "prompt",
+            "instruction",
+            "question",
+            "body",
+            "content",
+            "document",
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _read_reference_raw(self, row: dict[str, Any]) -> Any:
+        """Return the raw reference value (dict or string)."""
+
+        for key in (
+            "reference",
+            "target_text",
+            "expected",
+            "output",
+            "answer",
+            "structured_output",
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            if isinstance(value, dict):
+                return value
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _reference_as_string(self, row: dict[str, Any]) -> str:
+        raw = self._read_reference_raw(row)
+        if isinstance(raw, dict):
+            return json.dumps(raw, ensure_ascii=False, sort_keys=True)
+        return str(raw or "")
+
+    # ── JSON parsing ──
+
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        s = text.strip()
+        if not s.startswith("```"):
+            return s
+        lines = s.splitlines()
+        # Drop the opening fence (may carry a language tag like ```json).
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        # Drop the closing fence if present.
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+
+    def _parse_json_safely(self, value: Any) -> Any:
+        """Best-effort JSON parse. Returns the parsed dict, or ``None`` if
+        nothing parseable is found. Handles raw dicts (passthrough),
+        triple-backtick code fences, and prose-then-JSON outputs by
+        extracting the first balanced ``{…}`` block."""
+
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        text = self._strip_code_fences(text)
+        # Try a clean parse first.
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        # Fall back to first balanced {…} block.
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : idx + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                    except Exception:
+                        return None
+                    return parsed if isinstance(parsed, dict) else None
+        return None
+
+    # ── Prompt assembly ──
+
+    def _build_prompt_text(self, input_text: str, fields: list[str]) -> str:
+        if fields:
+            field_list = ", ".join(fields)
+            return (
+                "Extract the following fields as JSON: "
+                f"{field_list}.\n"
+                "Reply with a single JSON object, nothing else.\n"
+                f"Input: {input_text}\n"
+                "Output:"
+            )
+        return (
+            "Extract the relevant fields from the input as a single JSON "
+            "object, nothing else.\n"
+            f"Input: {input_text}\n"
+            "Output:"
+        )
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        schema = self._resolve_schema(rows, ctx)
+        fields = schema["fields"]
+        built: list[BuiltPrompt] = []
+        for row in rows:
+            input_text = self._extract_input_text(row)
+            reference = self._reference_as_string(row)
+            wrapped = self._build_prompt_text(input_text, fields)
+            built.append(
+                BuiltPrompt(
+                    prompt=wrapped,
+                    reference=reference,
+                    extras={
+                        "structured_fields": list(fields),
+                        "structured_input": input_text,
+                    },
+                )
+            )
+        return built
+
+    # ── Generation hint ──
+
+    def max_new_tokens_override(self, default: int) -> int:
+        """JSON outputs need room (a 5-field object is ~50–80 tokens)
+        but should be bounded — extraction isn't a place for rambling.
+        Raise tiny defaults to a sane floor; cap at the hard limit."""
+
+        baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    # ── Scoring ──
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        from app.services.evaluation_service import exact_match, f1_score
+
+        schema = self._resolve_schema(predictions, ctx)
+        fields = schema["fields"]
+        required = schema["required"]
+        total = len(predictions)
+
+        if total == 0:
+            return {
+                "json_validity_rate": 0.0,
+                "schema_compliance_rate": 0.0,
+                "field_exact_match_rate": 0.0,
+                "field_f1": 0.0,
+                "overall_em": 0.0,
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "total": 0,
+                "correct": 0,
+                "per_field": {},
+                "schema": schema,
+            }
+
+        valid_count = 0
+        compliant_count = 0
+        overall_em_count = 0
+        per_field_em: dict[str, dict[str, int]] = {
+            f: {"correct": 0, "total": 0} for f in fields
+        }
+        per_field_f1: dict[str, list[float]] = {f: [] for f in fields}
+
+        for prediction in predictions:
+            raw_output = prediction.get("prediction") or ""
+            raw_ref = prediction.get("reference") or ""
+            parsed_pred = self._parse_json_safely(raw_output)
+            parsed_ref = self._parse_json_safely(raw_ref)
+            is_valid = isinstance(parsed_pred, dict)
+            if is_valid:
+                valid_count += 1
+
+            missing: list[str] = []
+            if is_valid and required:
+                missing = [f for f in required if f not in parsed_pred]
+            is_compliant = is_valid and not missing
+            if is_compliant:
+                compliant_count += 1
+
+            row_field_results: dict[str, dict[str, float]] = {}
+            if is_valid and isinstance(parsed_ref, dict):
+                for field_name in fields:
+                    if field_name not in parsed_ref:
+                        continue
+                    per_field_em[field_name]["total"] += 1
+                    ref_val = str(parsed_ref.get(field_name, ""))
+                    if field_name in parsed_pred:
+                        pred_val = str(parsed_pred.get(field_name, ""))
+                        em = exact_match(pred_val, ref_val)
+                        f1 = f1_score(pred_val, ref_val)
+                        per_field_em[field_name]["correct"] += int(em)
+                        per_field_f1[field_name].append(f1)
+                        row_field_results[field_name] = {"em": em, "f1": f1}
+                    else:
+                        per_field_f1[field_name].append(0.0)
+                        row_field_results[field_name] = {"em": 0.0, "f1": 0.0}
+
+            overall_em = 0.0
+            if is_valid and isinstance(parsed_ref, dict) and parsed_pred == parsed_ref:
+                overall_em = 1.0
+                overall_em_count += 1
+
+            row_f1 = (
+                round(
+                    sum(r["f1"] for r in row_field_results.values())
+                    / len(row_field_results),
+                    4,
+                )
+                if row_field_results
+                else 0.0
+            )
+            # In-place enrichment for predictions_preview → UI.
+            prediction["parsed_prediction"] = parsed_pred
+            prediction["parsed_reference"] = parsed_ref
+            prediction["is_valid_json"] = is_valid
+            prediction["missing_required_fields"] = missing
+            prediction["row_field_results"] = row_field_results
+            prediction["row_exact_match"] = overall_em
+            prediction["row_f1"] = row_f1
+
+        per_field_summary: dict[str, dict[str, Any]] = {}
+        for field_name in fields:
+            tot = per_field_em[field_name]["total"]
+            cor = per_field_em[field_name]["correct"]
+            em_rate = round(cor / tot, 4) if tot > 0 else 0.0
+            f1_list = per_field_f1[field_name]
+            f1_mean = round(sum(f1_list) / len(f1_list), 4) if f1_list else 0.0
+            per_field_summary[field_name] = {
+                "em": em_rate,
+                "f1": f1_mean,
+                "support": tot,
+            }
+
+        field_em_avg = (
+            round(
+                sum(v["em"] for v in per_field_summary.values()) / len(per_field_summary),
+                4,
+            )
+            if per_field_summary
+            else 0.0
+        )
+        field_f1_avg = (
+            round(
+                sum(v["f1"] for v in per_field_summary.values()) / len(per_field_summary),
+                4,
+            )
+            if per_field_summary
+            else 0.0
+        )
+        overall_em_rate = round(overall_em_count / total, 4)
+
+        return {
+            "json_validity_rate": round(valid_count / total, 4),
+            "schema_compliance_rate": round(compliant_count / total, 4),
+            "field_exact_match_rate": field_em_avg,
+            "field_f1": field_f1_avg,
+            "overall_em": overall_em_rate,
+            # Legacy aliases for gate compat — exact_match keeps its
+            # "whole-blob equality" meaning so existing gates don't
+            # silently swap underneath them. f1 maps to the most useful
+            # aggregate for extraction: mean per-field F1.
+            "exact_match": overall_em_rate,
+            "f1": field_f1_avg,
+            "per_field": per_field_summary,
+            "schema": schema,
+            "total": total,
+            "correct": overall_em_count,
+        }
+
+
 # ── Seq2SeqHandler (Phase 5.3.3) ──────────────────────────────────────
 
 
@@ -1047,6 +1432,9 @@ register_handler("qa", QAHandler)
 register_handler("instruction_sft", QAHandler)
 register_handler("chat_sft", QAHandler)
 register_handler("language_modeling", QAHandler)
+# Structured extraction (JSON outputs, field-level scoring).
+register_handler("structured_extraction", StructuredExtractionHandler)
+register_handler("extraction", StructuredExtractionHandler)
 
 
 __all__ = [
@@ -1056,6 +1444,7 @@ __all__ = [
     "GenericHandler",
     "QAHandler",
     "Seq2SeqHandler",
+    "StructuredExtractionHandler",
     "TaskHandler",
     "build_eval_context",
     "list_registered_profiles",

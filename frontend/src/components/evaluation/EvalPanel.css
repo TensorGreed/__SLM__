@@ -364,6 +364,101 @@
     color: var(--text-tertiary);
 }
 
+/* Phase 5.3.4 — structured extraction inline note + per-field table */
+
+.eval-sample-predictions-structured {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+.eval-sample-predictions-json-badge {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border-default);
+}
+
+.eval-sample-predictions-json-badge.is-valid {
+    background: rgba(34, 197, 94, 0.10);
+    border-color: rgba(34, 197, 94, 0.30);
+    color: rgb(21, 128, 61);
+}
+
+.eval-sample-predictions-json-badge.is-invalid {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.30);
+    color: rgb(153, 27, 27);
+}
+
+.eval-sample-predictions-structured__fields {
+    font-family: var(--font-mono);
+    color: var(--text-tertiary);
+}
+
+.eval-sample-predictions-structured__missing {
+    color: rgb(153, 27, 27);
+    font-style: italic;
+}
+
+.eval-sample-predictions-fields > summary {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    margin-top: 4px;
+}
+
+.eval-sample-predictions-fields__table {
+    width: 100%;
+    margin-top: 4px;
+    border-collapse: collapse;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.eval-sample-predictions-fields__table th,
+.eval-sample-predictions-fields__table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-default);
+    text-align: left;
+    vertical-align: top;
+}
+
+.eval-sample-predictions-fields__table thead th {
+    background: var(--bg-secondary);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+    font-weight: 600;
+}
+
+.eval-sample-predictions-fields__table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.eval-sample-predictions-fields__em.is-pass {
+    color: rgb(21, 128, 61);
+    font-weight: 600;
+}
+
+.eval-sample-predictions-fields__em.is-fail {
+    color: rgb(153, 27, 27);
+    font-weight: 600;
+}
+
 @media (max-width: 980px) {
     .eval-pack-controls {
         grid-template-columns: 1fr;
