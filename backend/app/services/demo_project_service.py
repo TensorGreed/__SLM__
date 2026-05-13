@@ -434,7 +434,7 @@ async def seed_demo_project(
     _write_jsonl(val_path, val_rows)
     _write_jsonl(test_path, test_rows)
 
-    prepared_manifest = {
+    prepared_manifest: dict[str, Any] = {
         "project_id": project.id,
         "created_at": now_iso,
         "seed": 42,
@@ -456,6 +456,12 @@ async def seed_demo_project(
         "task_profile": task_profile,
         "demo_slug": slug,
     }
+    # Phase 5.3.1: forward the candidate label set into the prepared
+    # manifest so the ClassificationHandler can read it from a single
+    # canonical source instead of scanning the dataset on every eval.
+    bundle_labels = manifest.get("labels")
+    if isinstance(bundle_labels, list) and bundle_labels:
+        prepared_manifest["labels"] = [str(l).strip() for l in bundle_labels if str(l).strip()]
     manifest_path = prepared_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(prepared_manifest, indent=2), encoding="utf-8"

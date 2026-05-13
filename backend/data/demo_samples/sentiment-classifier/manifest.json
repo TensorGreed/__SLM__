@@ -10,6 +10,7 @@
   "dataset_filename": "reviews.csv",
   "dataset_input_field": "text",
   "dataset_output_field": "label",
+  "labels": ["positive", "neutral", "negative"],
   "gold_filename": "gold.jsonl",
   "suggested_brief": "Train a tiny 3-way sentiment classifier (positive / neutral / negative) on short product reviews. Target on-device mobile CPU inference. Macro-F1 above 0.75 is the bar."
 }

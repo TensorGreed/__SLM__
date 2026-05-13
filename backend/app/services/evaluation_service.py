@@ -781,11 +781,22 @@ async def run_heldout_evaluation(
         )
 
     model_ref = _resolve_model_reference(exp, model_path)
+    # Handlers may cap generation length for short-answer tasks
+    # (classification: a label is a few tokens; letting the model emit
+    # 128 new tokens just gives it room to ramble).
+    effective_max_new_tokens = max(1, max_new_tokens)
+    if hasattr(task_handler, "max_new_tokens_override"):
+        try:
+            effective_max_new_tokens = int(
+                task_handler.max_new_tokens_override(effective_max_new_tokens)
+            )
+        except Exception:
+            effective_max_new_tokens = max(1, max_new_tokens)
     predictions, runtime = await asyncio.to_thread(
         _run_local_inference,
         model_ref,
         pairs,
-        max(1, max_new_tokens),
+        effective_max_new_tokens,
         max(0.0, float(temperature)),
     )
     modality_counts: dict[str, int] = {}
@@ -836,7 +847,10 @@ async def run_heldout_evaluation(
     }
     details["inference"] = {
         "model_path": model_ref,
-        "max_new_tokens": max(1, max_new_tokens),
+        "max_new_tokens": effective_max_new_tokens,
+        "max_new_tokens_requested": max(1, max_new_tokens),
+        "max_new_tokens_capped_by_handler": effective_max_new_tokens
+        != max(1, max_new_tokens),
         "temperature": max(0.0, float(temperature)),
         "samples": len(predictions),
         "task_profile_resolved": eval_ctx.task_profile,

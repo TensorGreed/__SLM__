@@ -348,6 +348,25 @@ class Phase87DemoProjectTests(unittest.TestCase):
 
         asyncio.run(_inspect())
 
+        # Phase 5.3.1: sentiment-classifier is a classification demo, so
+        # its prepared manifest must carry the candidate `labels` list.
+        # The ClassificationHandler reads this to (a) wrap eval prompts
+        # with the candidate set and (b) drive per-class P/R/F1.
+        prepared_manifest = (
+            settings.DATA_DIR
+            / "projects"
+            / str(id1)
+            / "prepared"
+            / "manifest.json"
+        )
+        self.assertTrue(prepared_manifest.exists())
+        import json as _json
+        payload = _json.loads(prepared_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["task_profile"], "classification")
+        self.assertEqual(
+            payload["labels"], ["positive", "neutral", "negative"]
+        )
+
     # ------------------------------------------------------------------
     # 4. Errors
     # ------------------------------------------------------------------
