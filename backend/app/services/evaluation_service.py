@@ -3,6 +3,8 @@
 import asyncio
 import json
 import re
+import string
+from collections import Counter
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -33,29 +35,98 @@ async def _get_experiment_for_project(
     return result.scalar_one_or_none()
 
 
+# ── Prompt template handling ───────────────────────────────────────────
+
+
+def _apply_chat_template_if_present(
+    tokenizer: Any, prompt: str
+) -> tuple[str, bool]:
+    """Wrap a bare user prompt with the tokenizer's chat template if it has one.
+
+    Returns ``(formatted_prompt, applied)``. Falls back to the raw prompt for
+    tokenizers with no ``chat_template`` (some bare base models, some
+    legacy checkpoints).
+
+    Why this exists: at eval time we used to feed the raw question string,
+    which is a textbook prompt-template mismatch — SFT-trained models that
+    expect ``[INST]…[/INST]`` / ChatML / Alpaca wrappers will produce
+    near-zero EM/F1 against gold answers because they were never asked to
+    "answer" in a recognisable format. ``tokenizer.apply_chat_template`` is
+    the universal contract: it works for Llama 2/3, Mistral, Qwen,
+    Phi, and anything that saves a ``chat_template`` field on the
+    tokenizer (which virtually every modern HF checkpoint does).
+    """
+
+    template = getattr(tokenizer, "chat_template", None)
+    if not template or not hasattr(tokenizer, "apply_chat_template"):
+        return prompt, False
+    try:
+        formatted = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    except Exception:
+        return prompt, False
+    if not isinstance(formatted, str) or not formatted.strip():
+        return prompt, False
+    return formatted, True
+
+
 # ── Metric Computations ────────────────────────────────────────────────
 
+_ARTICLES_RE = re.compile(r"\b(a|an|the)\b", flags=re.UNICODE)
+_PUNCT_TRANSLATE = str.maketrans("", "", string.punctuation)
+
+
+def _normalize_answer(text: str) -> str:
+    """SQuAD-style normalization for EM/F1 scoring.
+
+    Lowercases, strips articles (``a``, ``an``, ``the``), strips
+    ASCII punctuation, and collapses whitespace. This is the exact
+    pipeline the original SQuAD ``compute_em_and_f1`` script uses —
+    without it, ``"Paris."`` vs ``"Paris"`` scores 0/0 from naive
+    string comparison, which silently inflates the apparent failure
+    rate of any QA-style eval.
+    """
+
+    if text is None:
+        return ""
+    s = str(text).lower()
+    s = _ARTICLES_RE.sub(" ", s)
+    s = s.translate(_PUNCT_TRANSLATE)
+    s = " ".join(s.split())
+    return s
+
+
 def exact_match(prediction: str, reference: str) -> float:
-    """Exact match score (0 or 1)."""
-    return 1.0 if prediction.strip().lower() == reference.strip().lower() else 0.0
+    """SQuAD-style exact match (0 or 1) after answer normalization."""
+
+    return 1.0 if _normalize_answer(prediction) == _normalize_answer(reference) else 0.0
 
 
 def f1_score(prediction: str, reference: str) -> float:
-    """Token-level F1 score."""
-    pred_tokens = set(prediction.lower().split())
-    ref_tokens = set(reference.lower().split())
+    """SQuAD-style token-level F1 over normalized multisets.
+
+    Uses ``Counter`` intersection so duplicate tokens count correctly
+    (e.g. predicting "the the the" no longer matches a single "the").
+    """
+
+    pred_tokens = _normalize_answer(prediction).split()
+    ref_tokens = _normalize_answer(reference).split()
 
     if not ref_tokens:
         return 1.0 if not pred_tokens else 0.0
     if not pred_tokens:
         return 0.0
 
-    common = pred_tokens & ref_tokens
-    if not common:
+    common = Counter(pred_tokens) & Counter(ref_tokens)
+    num_common = sum(common.values())
+    if num_common == 0:
         return 0.0
 
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(ref_tokens)
+    precision = num_common / len(pred_tokens)
+    recall = num_common / len(ref_tokens)
     return round(2 * precision * recall / (precision + recall), 4)
 
 
@@ -485,12 +556,21 @@ def _run_transformers_inference(
     predictions: list[dict] = []
     latencies_s: list[float] = []
     generated_tokens_total = 0
+    chat_template_applied_count = 0
     generation_started = perf_counter()
     for row in pairs:
         prompt = row["prompt"]
         reference = row["reference"]
 
-        inputs = tokenizer(prompt, return_tensors="pt")
+        # Wrap with the model's own chat template when present so the model
+        # sees the same prompt shape it was trained against.
+        formatted_prompt, template_applied = _apply_chat_template_if_present(
+            tokenizer, prompt
+        )
+        if template_applied:
+            chat_template_applied_count += 1
+
+        inputs = tokenizer(formatted_prompt, return_tensors="pt")
         if use_cuda:
             inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
@@ -514,6 +594,7 @@ def _run_transformers_inference(
         predictions.append(
             {
                 "prompt": prompt,
+                "formatted_prompt": formatted_prompt if template_applied else "",
                 "reference": reference,
                 "prediction": prediction,
                 "generated_tokens": generated_tokens,
@@ -533,6 +614,8 @@ def _run_transformers_inference(
         "generation_seconds": round(total_generation_seconds, 3),
         "average_latency_ms": round(avg_latency_ms, 3),
         "token_throughput_tps": round(token_tps, 3),
+        "chat_template_applied_count": chat_template_applied_count,
+        "chat_template_applied": chat_template_applied_count > 0,
         "total_generated_tokens": generated_tokens_total,
     }
     return predictions, runtime
@@ -550,27 +633,56 @@ def _run_llama_cpp_inference(
     llm = Llama(model_path=model_ref, n_ctx=4096)
     load_seconds = perf_counter() - load_started
 
+    # Prefer create_chat_completion when llama.cpp has a chat handler
+    # (i.e. the GGUF carries a chat template in its metadata, or one was
+    # supplied at load time). Falling back to raw completion when not.
+    chat_handler_available = bool(getattr(llm, "chat_handler", None)) or bool(
+        getattr(llm, "chat_format", None)
+    )
+
     predictions: list[dict] = []
     latencies_s: list[float] = []
     generated_tokens_total = 0
+    chat_template_applied_count = 0
     generation_started = perf_counter()
     for row in pairs:
         prompt = row["prompt"]
         reference = row["reference"]
         started = perf_counter()
-        output = llm(prompt, max_tokens=max_new_tokens, temperature=temperature)
+        formatted_prompt = ""
+        prediction_text = ""
+        used_chat_path = False
+        if chat_handler_available:
+            try:
+                output = llm.create_chat_completion(
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_new_tokens,
+                    temperature=temperature,
+                )
+                choice = output.get("choices", [{}])[0]
+                message = choice.get("message") or {}
+                prediction_text = str(message.get("content", "")).strip()
+                used_chat_path = True
+                chat_template_applied_count += 1
+            except Exception:
+                # GGUF without a parseable chat template falls through.
+                used_chat_path = False
+        if not used_chat_path:
+            output = llm(prompt, max_tokens=max_new_tokens, temperature=temperature)
+            choice = output.get("choices", [{}])[0]
+            prediction_text = str(choice.get("text", "")).strip()
         elapsed = perf_counter() - started
         latencies_s.append(elapsed)
 
-        choice = output.get("choices", [{}])[0]
-        usage = output.get("usage", {})
+        usage = output.get("usage", {}) if isinstance(output, dict) else {}
         generated_tokens = int(usage.get("completion_tokens", 0))
         generated_tokens_total += generated_tokens
         predictions.append(
             {
                 "prompt": prompt,
+                "formatted_prompt": formatted_prompt,
                 "reference": reference,
-                "prediction": str(choice.get("text", "")).strip(),
+                "prediction": prediction_text,
                 "generated_tokens": generated_tokens,
                 "latency_ms": round(elapsed * 1000, 3),
             }
@@ -588,6 +700,8 @@ def _run_llama_cpp_inference(
         "generation_seconds": round(total_generation_seconds, 3),
         "average_latency_ms": round(avg_latency_ms, 3),
         "token_throughput_tps": round(token_tps, 3),
+        "chat_template_applied_count": chat_template_applied_count,
+        "chat_template_applied": chat_template_applied_count > 0,
         "total_generated_tokens": generated_tokens_total,
     }
     return predictions, runtime
@@ -700,6 +814,7 @@ async def run_heldout_evaluation(
     details["predictions_preview"] = [
         {
             "prompt": p.get("prompt", "")[:160],
+            "formatted_prompt": p.get("formatted_prompt", "")[:400],
             "reference": p.get("reference", "")[:160],
             "prediction": p.get("prediction", "")[:160],
             "latency_ms": p.get("latency_ms"),

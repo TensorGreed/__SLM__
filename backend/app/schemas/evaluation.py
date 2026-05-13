@@ -38,6 +38,7 @@ class EvalResultResponse(BaseModel):
     metrics: dict
     pass_rate: float | None
     risk_severity: str | None
+    details: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

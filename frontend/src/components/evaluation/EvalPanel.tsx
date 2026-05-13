@@ -44,12 +44,25 @@ interface EvalMetrics {
     inference?: InferenceMetrics;
 }
 
+interface PredictionPreviewRow {
+    prompt?: string;
+    reference?: string;
+    prediction?: string;
+    formatted_prompt?: string;
+    latency_ms?: number;
+    input_modality?: string;
+}
+
 interface EvalResult {
     id: number;
     dataset_name: string;
     eval_type: string;
     pass_rate: number | null;
     metrics: EvalMetrics;
+    details?: {
+        predictions_preview?: PredictionPreviewRow[];
+        [key: string]: unknown;
+    } | null;
 }
 
 interface SafetyScorecard {
@@ -678,6 +691,30 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
     );
 
     const scoredPredictions = llmJudgeResults[0]?.metrics.scored_predictions ?? [];
+
+    // Phase 5.2a: surface the per-row predictions the eval runner already
+    // stores in result.details.predictions_preview. Pick the most recent
+    // non-judge eval result that has a sample (judge results have their own
+    // side-by-side card). This is the smoking-gun view when EM/F1 score 0.
+    const samplePredictions = useMemo<PredictionPreviewRow[]>(() => {
+        for (let i = evalResults.length - 1; i >= 0; i -= 1) {
+            const preview = evalResults[i].details?.predictions_preview;
+            if (Array.isArray(preview) && preview.length > 0) {
+                return preview as PredictionPreviewRow[];
+            }
+        }
+        return [];
+    }, [evalResults]);
+
+    const samplePredictionsEvalType = useMemo(() => {
+        for (let i = evalResults.length - 1; i >= 0; i -= 1) {
+            const preview = evalResults[i].details?.predictions_preview;
+            if (Array.isArray(preview) && preview.length > 0) {
+                return evalResults[i].eval_type;
+            }
+        }
+        return '';
+    }, [evalResults]);
 
     const latestInference = useMemo(() => {
         for (let i = evalResults.length - 1; i >= 0; i -= 1) {
@@ -1500,6 +1537,74 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {samplePredictions.length > 0 && (
+                <div className="card eval-sample-predictions">
+                    <h3>
+                        Sample predictions ({samplePredictionsEvalType.replace('_', ' ') || 'eval'})
+                    </h3>
+                    <p className="eval-sample-predictions__lede">
+                        First {samplePredictions.length} rows from the most recent eval. When
+                        metrics look surprisingly low, eyeball these — a prompt/format mismatch is
+                        usually visible at a glance.
+                    </p>
+                    <div className="table-container">
+                        <table className="docs-table eval-sample-predictions-table">
+                            <thead>
+                                <tr>
+                                    <th>Prompt</th>
+                                    <th>Expected</th>
+                                    <th>Model prediction</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {samplePredictions.map((row, idx) => {
+                                    const promptText = String(row.prompt || '').trim();
+                                    const referenceText = String(row.reference || '').trim();
+                                    const predictionText = String(row.prediction || '').trim();
+                                    const formattedPrompt = String(row.formatted_prompt || '').trim();
+                                    const promptDiffers =
+                                        formattedPrompt && formattedPrompt !== promptText;
+                                    return (
+                                        <tr key={`sample-prediction-${idx}`}>
+                                            <td>
+                                                <div className="eval-sample-predictions-cell">
+                                                    {promptText || '—'}
+                                                </div>
+                                                {promptDiffers && (
+                                                    <details className="eval-sample-predictions-templated">
+                                                        <summary>
+                                                            Show templated prompt (what the model
+                                                            actually saw)
+                                                        </summary>
+                                                        <pre>{formattedPrompt}</pre>
+                                                    </details>
+                                                )}
+                                            </td>
+                                            <td>
+                                                <div className="eval-sample-predictions-cell eval-sample-predictions-cell--reference">
+                                                    {referenceText || '—'}
+                                                </div>
+                                            </td>
+                                            <td>
+                                                {predictionText ? (
+                                                    <div className="eval-sample-predictions-cell eval-sample-predictions-cell--prediction">
+                                                        {predictionText}
+                                                    </div>
+                                                ) : (
+                                                    <div className="eval-sample-predictions-cell eval-sample-predictions-cell--prediction-empty">
+                                                        (empty output)
+                                                    </div>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
