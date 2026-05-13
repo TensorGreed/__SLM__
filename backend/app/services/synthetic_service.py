@@ -1008,11 +1008,30 @@ _DEFAULT_SPAN_PATTERNS: list[tuple[str, str]] = [
         r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3,4}(?:[-.\s]?\d{4})?\b",
     ),
     ("ssn", r"\b\d{3}-\d{2}-\d{4}\b"),
-    ("credit_card", r"\b(?:\d[ -]?){13,16}\b"),
+    # Catches 16-digit (Visa/MC/Discover) and 15-digit (Amex) PANs
+    # with optional space/dash separators.
+    ("credit_card", r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b"),
+    # Amex: 4-6-5 grouping with 15 digits total.
+    ("credit_card", r"\b\d{4}[ -]?\d{6}[ -]?\d{5}\b"),
     (
         "ip_address",
         r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\b",
     ),
+    # Common API-key shapes: sk-..., sk_live_..., sk_test_..., ghp_...,
+    # AKIA..., xoxb-..., xoxp-..., plus JWT prefixes (eyJ...). These
+    # patterns are intentionally conservative — they match strings with
+    # the right shape, not arbitrary tokens.
+    (
+        "api_key",
+        r"\b(?:sk[-_](?:live|test)[-_][A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{20,}|"
+        r"ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xoxb-[A-Za-z0-9-]{20,}|"
+        r"xoxp-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_.-]{20,})\b",
+    ),
+    # Dates of birth: ISO (YYYY-MM-DD) and US (MM/DD/YYYY) formats.
+    # Restricted to plausible years (19XX or 20XX) to cut down on
+    # false positives from invoice numbers etc.
+    ("date_of_birth", r"\b(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b"),
+    ("date_of_birth", r"\b(?:0[1-9]|1[0-2])/(?:0[1-9]|[12]\d|3[01])/(?:19|20)\d{2}\b"),
 ]
 
 
@@ -1052,6 +1071,57 @@ def _extract_entities_via_regex(
     # Sort by start so the entity list reads left-to-right.
     out.sort(key=lambda e: (e["start"], e["end"]))
     return out
+
+
+def _merge_regex_entities(
+    text: str,
+    existing: list[dict],
+    entity_types: list[str] | None,
+) -> tuple[list[dict], bool]:
+    """Augment a row's entity list with regex-detected entities the
+    teacher missed.
+
+    Small teacher models (llama3 / mistral 7B) reliably produce diverse
+    text snippets but struggle to compute valid character offsets. The
+    fix is hybrid: keep the teacher's text + entities, then run the
+    regex extractor on the text and add any regex hits that DON'T
+    overlap the teacher's. Result: high-quality text from the LLM,
+    deterministic offsets from regex.
+
+    Returns ``(merged_entities, augmented_flag)``. ``augmented_flag``
+    is True when regex contributed at least one new entity (so callers
+    can tag the row's source for transparency).
+    """
+
+    regex_hits = _extract_entities_via_regex(text, entity_types)
+    if not regex_hits:
+        return list(existing), False
+
+    # Build occupied-range list from existing entities (multiset across
+    # spans). A regex hit is added only when it doesn't overlap any
+    # existing entity at all.
+    occupied: list[tuple[int, int]] = [
+        (int(e["start"]), int(e["end"])) for e in existing
+    ]
+
+    def _overlaps_any(span: tuple[int, int]) -> bool:
+        s, e = span
+        for os_, oe in occupied:
+            if s < oe and os_ < e:
+                return True
+        return False
+
+    merged = list(existing)
+    augmented = False
+    for hit in regex_hits:
+        span = (int(hit["start"]), int(hit["end"]))
+        if _overlaps_any(span):
+            continue
+        merged.append(hit)
+        occupied.append(span)
+        augmented = True
+    merged.sort(key=lambda e: (e["start"], e["end"]))
+    return merged, augmented
 
 
 def _generate_demo_span_rows(
@@ -1223,18 +1293,39 @@ async def generate_span_extraction_rows(
         if entity_types
         else "Detect any common PII / PCI entity types.\n"
     )
+    # Few-shot example. Small teacher models (llama3 7B) follow concrete
+    # patterns much better than abstract instructions; one worked example
+    # cuts the "teacher emits text but skips the entities" failure mode
+    # by a lot.
+    example = (
+        'Example output for one row:\n'
+        '{"text": "Email Jane Doe at jane@example.com or call 555-0173.", '
+        '"entities": ['
+        '{"type":"person_name","start":6,"end":14,"text":"Jane Doe"},'
+        '{"type":"email","start":18,"end":34,"text":"jane@example.com"},'
+        '{"type":"phone","start":43,"end":51,"text":"555-0173"}'
+        ']}\n\n'
+    )
     prompt = (
         f"You're generating training data for a PII / PCI span-detection "
         f"model. Produce {num_rows} new realistic snippets in the same "
         "style as the source paragraph but with DIFFERENT, SYNTHETIC PII "
-        "values (use 555- phone numbers, 000- SSNs, test PANs, "
-        "@example.* emails). For each snippet, return the text AND a "
-        "list of every PII entity with character offsets and type.\n\n"
+        "values (use 555- phone numbers, 000- SSNs, test PANs like "
+        "4242424242424242, @example.* emails). For each snippet, return "
+        "the text AND a list of every PII entity with character offsets "
+        "and type.\n\n"
         f"{types_clause}"
+        f"{example}"
         "Output rules:\n"
         '- Return ONLY valid JSON of the form {"rows":[{"text":"…","entities":[{"type":"…","start":N,"end":M,"text":"…"}]}]}.\n'
-        "- CRITICAL: For each entity, text[start:end] in your snippet MUST "
-        "  equal entity.text exactly. Double-check offsets before emitting.\n"
+        "- start/end are 0-indexed CHARACTER offsets in `text` (not "
+        "  word offsets). text[start:end] in your snippet MUST equal "
+        "  entity.text exactly. Count characters carefully.\n"
+        "- If you're not sure about an entity's offsets, omit it from "
+        "  the entities array rather than guess — a downstream regex "
+        "  pass will catch the obvious ones (email/phone/SSN/credit_card/"
+        "  ip_address/api_key/date_of_birth). Focus on getting the "
+        "  TEXT right and only emit entities you're confident about.\n"
         "- Use only synthetic values — never real identifiers.\n"
         "- Vary entity coverage across rows so the dataset isn't repetitive.\n\n"
         f"Source paragraph:\n{source_text[:4000]}\n\n"
@@ -1262,20 +1353,46 @@ async def generate_span_extraction_rows(
     now = _dt.now(_tz.utc).isoformat()
     enriched: list[dict] = []
     for row in validated[:num_rows]:
-        entities = row.get("entities") or []
-        # Confidence keys off "all required types present" + "every
-        # entity passed offset validation". Cap at 0.9 so a teacher
-        # model output never claims perfect ground truth.
-        coverage = (
-            min(0.9, 0.5 + 0.1 * len(entities))
-            if entities
-            else 0.4
+        teacher_entities = row.get("entities") or []
+        # Hybrid annotation: teacher's entities + regex-detected hits
+        # the teacher missed. This is the load-bearing fix for small
+        # models like llama3-7B that produce great text but unreliable
+        # offsets — regex deterministically catches the well-defined
+        # types (email/phone/ssn/credit_card/ip_address/api_key/
+        # date_of_birth) so users see entities even when the teacher
+        # skipped them.
+        merged_entities, regex_augmented = _merge_regex_entities(
+            row.get("text", ""), teacher_entities, entity_types
         )
+        # Confidence reflects entity coverage AND whether annotations
+        # came from the teacher only vs. teacher+regex hybrid.
+        if merged_entities:
+            base = 0.5 + 0.1 * len(merged_entities)
+            if regex_augmented and not teacher_entities:
+                # Teacher gave text, regex gave entities — text is still
+                # high quality but cap confidence lower so the user
+                # reviews these rows more carefully.
+                base = min(base, 0.65)
+            coverage = min(0.9, base)
+        else:
+            coverage = 0.4
+        # Source label is transparent about hybrid origin so reviewers
+        # know to spot-check regex-only entities (especially for the
+        # types regex can't catch — person_name, street_address, etc.).
+        if teacher_entities and regex_augmented:
+            source_label = "teacher_llm+regex"
+        elif teacher_entities:
+            source_label = "teacher_llm"
+        elif regex_augmented:
+            source_label = "teacher_text+regex_entities"
+        else:
+            source_label = "teacher_llm"
         enriched.append(
             {
-                **row,
+                "text": row.get("text", ""),
+                "entities": merged_entities,
                 "confidence": round(coverage, 3),
-                "source": "teacher_llm",
+                "source": source_label,
                 "model": model_name,
                 "generated_at": now,
             }

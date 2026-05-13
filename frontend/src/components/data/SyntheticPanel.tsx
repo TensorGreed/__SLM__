@@ -600,7 +600,11 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 <div className="card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
                         <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600 }}>
-                            {generationMode === 'qa' ? 'Generated Pairs' : 'Generated Conversations'}
+                            {generationMode === 'qa'
+                                ? 'Generated Pairs'
+                                : generationMode === 'span_extraction'
+                                    ? 'Generated Spans'
+                                    : 'Generated Conversations'}
                             {' '}
                             <span className="badge badge-accent">{activeGeneratedCount}</span>
                         </h3>

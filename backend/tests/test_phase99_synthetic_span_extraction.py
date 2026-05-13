@@ -39,6 +39,145 @@ from app.services.synthetic_service import (  # noqa: E402
 )
 
 
+class ExtendedRegexCoverageTests(unittest.TestCase):
+    """New patterns added after the llama3-via-ollama feedback: api_key
+    (Stripe / GitHub / AWS / Slack / JWT prefixes) + date_of_birth
+    (ISO + US formats). These types are common in real PII text but the
+    initial cut shipped without them, leading to "0 entities detected"
+    on visibly entity-bearing rows."""
+
+    def test_detects_stripe_secret_keys(self):
+        text = "Rotate sk_live_4eC39HqLyjWDarjtT1zdp7dc immediately."
+        ents = _extract_entities_via_regex(text)
+        keys = [e for e in ents if e["type"] == "api_key"]
+        self.assertEqual(len(keys), 1)
+        self.assertEqual(text[keys[0]["start"] : keys[0]["end"]], keys[0]["text"])
+
+    def test_detects_github_personal_tokens(self):
+        text = "Token leaked: ghp_16C7e42F292c6912E7710c838347Ae178B4a"
+        ents = _extract_entities_via_regex(text)
+        keys = [e for e in ents if e["type"] == "api_key"]
+        self.assertEqual(len(keys), 1)
+
+    def test_detects_aws_access_keys(self):
+        text = "AKIAIOSFODNN7EXAMPLE is the access key."
+        ents = _extract_entities_via_regex(text)
+        keys = [e for e in ents if e["type"] == "api_key"]
+        self.assertEqual(len(keys), 1)
+        self.assertEqual(keys[0]["text"], "AKIAIOSFODNN7EXAMPLE")
+
+    def test_detects_slack_tokens(self):
+        text = "API key: xoxb-11111-22222-33333-abcde."
+        ents = _extract_entities_via_regex(text)
+        keys = [e for e in ents if e["type"] == "api_key"]
+        self.assertEqual(len(keys), 1)
+
+    def test_detects_jwt_prefixes(self):
+        text = "Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature"
+        ents = _extract_entities_via_regex(text)
+        keys = [e for e in ents if e["type"] == "api_key"]
+        self.assertEqual(len(keys), 1)
+
+    def test_detects_iso_date_of_birth(self):
+        text = "DOB: 1989-03-14."
+        ents = _extract_entities_via_regex(text)
+        dobs = [e for e in ents if e["type"] == "date_of_birth"]
+        self.assertEqual(len(dobs), 1)
+        self.assertEqual(dobs[0]["text"], "1989-03-14")
+
+    def test_detects_us_date_of_birth(self):
+        text = "Born 03/14/1989."
+        ents = _extract_entities_via_regex(text)
+        dobs = [e for e in ents if e["type"] == "date_of_birth"]
+        self.assertEqual(len(dobs), 1)
+        self.assertEqual(dobs[0]["text"], "03/14/1989")
+
+    def test_detects_amex_15_digit_credit_card(self):
+        # Amex PANs are 15 digits in 4-6-5 grouping. Critical for PCI
+        # coverage; without it amex test PANs go undetected.
+        text = "Card: 378282246310005 (test Amex)."
+        ents = _extract_entities_via_regex(text)
+        cards = [e for e in ents if e["type"] == "credit_card"]
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["text"], "378282246310005")
+
+    def test_detects_spaced_credit_card(self):
+        text = "Credit card: 6012 3456 7890 1245."
+        ents = _extract_entities_via_regex(text)
+        cards = [e for e in ents if e["type"] == "credit_card"]
+        self.assertEqual(len(cards), 1)
+        # Offset sanity.
+        self.assertEqual(text[cards[0]["start"] : cards[0]["end"]], cards[0]["text"])
+
+
+class TeacherPlusRegexMergeTests(unittest.TestCase):
+    """The load-bearing fix for small-model teachers (llama3 7B etc.):
+    the teacher produces high-quality text but unreliable offsets, so
+    we run the regex extractor on the text and merge in any non-
+    overlapping entities the teacher missed."""
+
+    def test_empty_teacher_entities_get_filled_by_regex(self):
+        from app.services.synthetic_service import _merge_regex_entities
+
+        text = "Call (555) 0156 for help. SSN: 000-38-9214."
+        merged, augmented = _merge_regex_entities(text, [], entity_types=None)
+        self.assertTrue(augmented)
+        types = {e["type"] for e in merged}
+        self.assertIn("phone", types)
+        self.assertIn("ssn", types)
+        for ent in merged:
+            self.assertEqual(text[ent["start"] : ent["end"]], ent["text"])
+
+    def test_teacher_entities_preserved_regex_fills_gaps(self):
+        # Teacher caught the email; regex adds the phone the teacher
+        # missed. Both end up in the output, sorted by offset.
+        from app.services.synthetic_service import _merge_regex_entities
+
+        text = "Email me at jane@example.com or call 555-0173 today."
+        teacher = [
+            {"type": "email", "start": 12, "end": 28, "text": "jane@example.com"}
+        ]
+        merged, augmented = _merge_regex_entities(text, teacher, entity_types=None)
+        self.assertTrue(augmented)
+        types = [e["type"] for e in merged]
+        self.assertIn("email", types)
+        self.assertIn("phone", types)
+        # Sorted by start offset.
+        starts = [e["start"] for e in merged]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_regex_hit_overlapping_teacher_entity_is_dropped(self):
+        # Teacher already marked the phone — regex should NOT add a
+        # duplicate entity that overlaps it.
+        from app.services.synthetic_service import _merge_regex_entities
+
+        text = "Call 555-123-4567 now."
+        # Teacher slightly off-by-one but inside the phone range.
+        teacher = [
+            {"type": "phone", "start": 5, "end": 17, "text": "555-123-4567"}
+        ]
+        merged, _augmented = _merge_regex_entities(text, teacher, entity_types=None)
+        # Only the teacher's phone remains (regex match would overlap).
+        phones = [e for e in merged if e["type"] == "phone"]
+        self.assertEqual(len(phones), 1)
+        self.assertEqual(phones[0]["start"], 5)
+
+    def test_credit_card_wins_over_overlapping_phone(self):
+        # Inside a credit-card span the phone regex can match a
+        # sub-pattern (e.g. "012 3456 7890" inside
+        # "6012 3456 7890 1245"). The merge logic adds entities in
+        # start-offset order, so credit_card at position 0 is added
+        # first and the phone sub-match is filtered out.
+        from app.services.synthetic_service import _merge_regex_entities
+
+        text = "Credit card: 6012 3456 7890 1245."
+        merged, _augmented = _merge_regex_entities(text, [], entity_types=None)
+        types = [e["type"] for e in merged]
+        # Should see exactly one credit_card and zero phones.
+        self.assertIn("credit_card", types)
+        self.assertNotIn("phone", types)
+
+
 class RegexExtractorTests(unittest.TestCase):
     def test_extracts_email_with_correct_offsets(self):
         text = "Email me at jane@example.com please."
