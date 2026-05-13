@@ -2987,7 +2987,15 @@ export default function TrainingPanel({
 
           <div className="training-active-head">
             <div>
-              <h3 className="training-active-title">{activeExperiment.name}</h3>
+              <h3 className="training-active-title">
+                {activeExperiment.name}
+                <span
+                  className="training-experiment-id"
+                  title="Experiment ID — use this for SQL queries / log greps / artifact paths"
+                >
+                  #{activeExperiment.id}
+                </span>
+              </h3>
               <div className="training-active-meta">
                 {activeExperiment.base_model} • {activeExperiment.training_mode}
               </div>
@@ -5705,7 +5713,15 @@ export default function TrainingPanel({
                       className="training-checkbox"
                     />
                     <div>
-                      <div className="training-experiment-name">{exp.name}</div>
+                      <div className="training-experiment-name">
+                        {exp.name}
+                        <span
+                          className="training-experiment-id"
+                          title="Experiment ID — use this for SQL queries / log greps / artifact paths"
+                        >
+                          #{exp.id}
+                        </span>
+                      </div>
                       <div className="training-experiment-meta">
                         {exp.base_model} • {exp.training_mode}
                       </div>

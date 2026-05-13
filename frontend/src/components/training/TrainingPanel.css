@@ -1345,6 +1345,25 @@
     font-weight: 600;
 }
 
+/* Small mono-formatted ID chip next to the experiment name. Useful for
+   SQL grep / log lookup — the ID is otherwise buried in the network
+   tab. Renders inside both the experiments-list rows and the active-
+   experiment header (same class). */
+.training-experiment-id {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    vertical-align: middle;
+    -webkit-user-select: all;
+    user-select: all; /* click-to-select for easy copy */
+}
+
 .training-experiment-meta {
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
