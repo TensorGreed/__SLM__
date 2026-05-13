@@ -1581,6 +1581,173 @@ class RAGHandler:
         }
 
 
+# ── SafetyHandler (Phase 5.3.8) ───────────────────────────────────────
+
+
+class SafetyHandler:
+    """Task handler for safety / refusal evaluation.
+
+    Brings the existing ``SAFETY_PROMPTS`` + ``evaluate_safety_response``
+    flow under the dispatcher arch so it lives next to every other
+    eval shape and renders in the same Sample Predictions card.
+
+    Row shape: each row carries a ``prompt`` and an optional
+    ``test_type`` (``prompt_injection`` / ``secret_extraction`` /
+    ``pii_regurgitation`` / ``jailbreak`` / ``unknown_answer`` /
+    ``unknown``). The model's job is to refuse — emit a refusal-style
+    response. The handler scores each row as refused / complied /
+    ambiguous via the existing keyword heuristics and aggregates per
+    test_type so the UI can show *"prompt_injection_resistance:
+    98%, jailbreak_resistance: 85%"* instead of one coarse pass rate.
+
+    Metrics produced: a top-line ``pass_rate`` (legacy gate compat)
+    plus per-test-type rates so operators can gate on the categories
+    that matter for their threat model.
+    """
+
+    profile_id: str = "safety"
+
+    MAX_NEW_TOKENS_FLOOR: int = 64
+    MAX_NEW_TOKENS_HARDCAP: int = 256
+
+    def _extract_prompt(self, row: dict[str, Any]) -> str:
+        for key in ("prompt", "question", "instruction", "input", "test_prompt"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_test_type(self, row: dict[str, Any]) -> str:
+        raw = str(row.get("test_type") or "unknown").strip().lower()
+        return raw or "unknown"
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        built: list[BuiltPrompt] = []
+        for row in rows:
+            prompt_text = self._extract_prompt(row)
+            test_type = self._extract_test_type(row)
+            # Reference is a sentinel — safety eval doesn't have a
+            # "gold answer", it checks the model's response shape.
+            # Keep the sentinel as the test_type label so per-row UI
+            # can see the category.
+            built.append(
+                BuiltPrompt(
+                    prompt=prompt_text,
+                    reference=test_type,
+                    extras={"safety_test_type": test_type},
+                )
+            )
+        return built
+
+    def max_new_tokens_override(self, default: int) -> int:
+        baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        from app.services.evaluation_service import evaluate_safety_response
+
+        total = len(predictions)
+        if total == 0:
+            return {
+                "pass_rate": 0.0,
+                "total_tests": 0,
+                "passed": 0,
+                "failed": 0,
+                "per_test_type": {},
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "total": 0,
+                "correct": 0,
+            }
+
+        per_type_counts: dict[str, dict[str, int]] = {}
+        passed_total = 0
+
+        for prediction in predictions:
+            # Safety evaluator looks at the raw response — predictions
+            # from the inference path land in `prediction`; legacy
+            # safety code path uses `response`. Accept either so this
+            # handler works both as the eval pipeline scorer and as a
+            # drop-in for the existing `eval_type=safety` flow.
+            response = str(
+                prediction.get("response") or prediction.get("prediction") or ""
+            )
+            test_type = str(
+                prediction.get("safety_test_type")
+                or prediction.get("test_type")
+                or prediction.get("reference")
+                or "unknown"
+            ).lower()
+            verdict = evaluate_safety_response(response, test_type)
+            passed = bool(verdict.get("passed"))
+            if passed:
+                passed_total += 1
+
+            per_type_counts.setdefault(
+                test_type, {"passed": 0, "failed": 0, "total": 0}
+            )
+            per_type_counts[test_type]["total"] += 1
+            if passed:
+                per_type_counts[test_type]["passed"] += 1
+            else:
+                per_type_counts[test_type]["failed"] += 1
+
+            # In-place enrichment: per-row pass/fail + verdict reason
+            # for the UI's status badge + tooltip.
+            prediction["safety_test_type"] = test_type
+            prediction["safety_passed"] = passed
+            prediction["safety_reason"] = str(verdict.get("reason") or "")
+            prediction["row_exact_match"] = 1.0 if passed else 0.0
+            prediction["row_f1"] = 1.0 if passed else 0.0
+
+        per_test_type: dict[str, dict[str, Any]] = {}
+        for tt, counts in per_type_counts.items():
+            rate = (
+                round(counts["passed"] / counts["total"], 4)
+                if counts["total"] > 0
+                else 0.0
+            )
+            per_test_type[tt] = {
+                "pass_rate": rate,
+                "passed": counts["passed"],
+                "failed": counts["failed"],
+                "total": counts["total"],
+            }
+
+        pass_rate = round(passed_total / total, 4)
+        return {
+            "pass_rate": pass_rate,
+            "total_tests": total,
+            "passed": passed_total,
+            "failed": total - passed_total,
+            "per_test_type": per_test_type,
+            # Convenience headlines for the most-gated subcategories,
+            # so eval-pack gates can key on them without per_test_type
+            # path lookups.
+            **{
+                f"{tt}_pass_rate": data["pass_rate"]
+                for tt, data in per_test_type.items()
+            },
+            # Legacy aliases so existing safety gates keyed on
+            # exact_match / f1 keep resolving without a pack migration.
+            "exact_match": pass_rate,
+            "f1": pass_rate,
+            "total": total,
+            "correct": passed_total,
+        }
+
+
 # ── Multimodal handlers (Phase 5.3.7) ─────────────────────────────────
 
 
@@ -2585,6 +2752,9 @@ register_handler("vqa", VisionLanguageHandler)
 register_handler("audio_transcript", AudioTranscriptHandler)
 register_handler("audio_transcription", AudioTranscriptHandler)
 register_handler("speech_to_text", AudioTranscriptHandler)
+# Safety — refusal-rate eval with per-test-type breakdown.
+register_handler("safety", SafetyHandler)
+register_handler("refusal", SafetyHandler)
 
 
 __all__ = [
@@ -2596,6 +2766,7 @@ __all__ = [
     "GenericHandler",
     "QAHandler",
     "RAGHandler",
+    "SafetyHandler",
     "Seq2SeqHandler",
     "StructuredExtractionHandler",
     "TaskHandler",

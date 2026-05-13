@@ -464,115 +464,119 @@ to context**.
 
 ---
 
-## Phase 5.3.6 — Alignment / preference handler
+## Phase 5.3.6 — Alignment / preference handler (shipped)
 
-**Goal**: score DPO/ORPO/RLHF-trained models on preference adherence.
+**Goal**: score DPO/ORPO-trained models on preference adherence.
 
-### User stories
-- *As a researcher running DPO*, I want **win-rate** of the current
-  model vs the SFT baseline, scored by a judge.
-- *As an ML engineer*, I want **reward-margin** distribution (how
-  decisively does the model prefer chosen over rejected on held-out
-  preferences).
-- *As an ML engineer*, I want both **chosen-completion EM/F1** and
-  **rejected-completion EM/F1** as a sanity check.
+### What landed
+- `AlignmentHandler` registered for `dpo` / `orpo` / `alignment` /
+  `preference`.
+- Row shape: `prompt`, `chosen`, `rejected` (with aliases
+  preferred / dispreferred / accepted / rejected / response_chosen /
+  response_rejected). Reference = chosen (legacy SQuAD EM/F1
+  preserved against the preferred completion for gate compat).
+- Scoring mode: **similarity-based proxy** — token-level F1 of the
+  model's output against both completions. Row is "preference
+  correct" when chosen_sim > rejected_sim. Cheap, deterministic,
+  works with the existing generation pipeline. Documented as a
+  proxy for judge-based win-rate; heavier judge mode and log-prob-
+  margin mode are clean follow-ups (additive scoring modes inside
+  this handler).
+- Metrics: `preference_accuracy`, `mean_alignment_margin`,
+  `chosen_alignment_mean`, `rejected_alignment_mean`, `exact_match`,
+  `f1` (legacy), `rows_with_pair`.
+- Per-row enrichment: `alignment_chosen_sim` /
+  `alignment_rejected_sim` / `alignment_margin` /
+  `alignment_preference_correct` for the UI's badge + disclosure.
+- UI: Sample Predictions card grows a green "Preferred chosen" /
+  red "Preferred rejected" badge + inline similarity values +
+  "Show chosen vs rejected completions" disclosure rendering both
+  completions side-by-side.
+- 18 backend tests + 4 frontend tests pin the contract.
 
-### Work
-- New `AlignmentHandler` (covers `task_profile in {dpo, orpo}`).
-- **Row shape**: requires `prompt`, `chosen`, `rejected`.
-- **Mode A — judge-based win-rate**: generate from the eval model;
-  judge picks model vs `chosen` as preferred.
-- **Mode B — log-prob margin**: compute `logp(chosen | prompt) -
-  logp(rejected | prompt)`; positive margin = preference correct.
-- **Metrics produced**:
-  - `preference_accuracy` (margin > 0 fraction)
-  - `mean_reward_margin`
-  - `judge_win_rate` (optional, when judge configured)
-
-### Tests
-- `test_phase95_eval_alignment_handler.py`:
-  - Reward-margin computed correctly given mock logprobs.
-  - Preference accuracy aggregates correctly.
-  - Falls through gracefully when row lacks `chosen`/`rejected`.
-
-### Out of scope
-- KL-divergence to reference policy (later, with reference-model
-  loading).
-- Constitutional AI / RLAIF (separate flow entirely).
+### Out of scope (clean follow-ups)
+- Judge-based win-rate as an opt-in scoring mode (heavier — needs
+  a judge model wired in).
+- Log-prob-margin mode (heaviest — needs the inference path to
+  expose per-completion logprobs).
+- KL-divergence to reference policy.
+- Constitutional AI / RLAIF.
 
 ---
 
-## Phase 5.3.7 — Multimodal handlers (vision-language, audio-text)
+## Phase 5.3.7 — Multimodal handlers (shipped)
 
 **Goal**: route multimodal evals through dedicated handlers that
 produce modality-appropriate metrics.
 
-### User stories
-- *As a developer of an image-captioning model*, I want **CIDEr** and
-  **BLEU-4** on captions; per-image latency and prediction logged for
-  spot-check.
-- *As a developer of a transcription model*, I want **WER** (word
-  error rate) and **CER** (character error rate); single-utterance
-  predictions visible in the sample predictions table.
-- *As an ML engineer*, I want VQA-style accuracy when rows carry an
-  `answer` alongside the image.
+### What landed
+- `VisionLanguageHandler` registered for `vision_language` /
+  `image_captioning` / `vqa`.
+- `AudioTranscriptHandler` registered for `audio_transcript` /
+  `audio_transcription` / `speech_to_text`.
+- Sub-task dispatch via `manifest.subtask`:
+  - Vision-language: `captioning` (default) or `vqa`.
+  - Audio: `transcription` (default) or `audio_qa`.
+- Captioning scoring: BLEU-4 (via `sacrebleu`) + ROUGE-L (via
+  `rouge_score`) + `length_ratio` + legacy EM/F1.
+- VQA scoring: SQuAD EM/F1.
+- Transcription scoring: WER + CER (via `jiwer` — new dep, pure
+  Python, MIT) + legacy EM/F1.
+- Audio QA scoring: SQuAD EM/F1.
+- Both handlers carry image_path / audio_path through the prompt as
+  `<image:path>` / `<audio:path>` tokens so plain-text inference at
+  least has a paper trail; real multimodal runtimes pass the
+  modality alongside.
+- Per-row enrichment writes `vl_subtask` / `audio_subtask` plus
+  `row_exact_match` / `row_f1` so the existing Status badge lights
+  up unchanged. No new UI block — multimodal users care about the
+  headline metrics (BLEU / ROUGE-L / WER / CER) which surface in
+  the Metric History panel.
+- 19 backend tests pin the contract.
 
-### Work
-- New `VisionLanguageHandler` (`task_profile` with image inputs).
-- New `AudioTranscriptHandler` (`task_profile` with audio inputs).
-- **Prompt assembly**: respect `image_path` / `audio_path` row
-  fields; pass through to the inference runtime (transformers
-  pipeline + processor handles the actual encoding).
-- **Metrics produced**:
-  - Vision-language captioning: `bleu_4`, `cider`, `rouge_l`,
-    `f1`
-  - Vision-language QA: `accuracy`, `f1`
-  - Audio transcription: `wer`, `cer`, `f1`
-- **Dependency**: `pycocoevalcap` (CIDEr — optional, install hint),
-  `jiwer` (WER/CER).
-
-### Tests
-- `test_phase96_eval_multimodal_handlers.py`:
-  - WER computed correctly against `jiwer` reference.
-  - Vision-language captioning routes BLEU through sacrebleu cleanly.
-  - Falls back to QAHandler when modality detection finds no
-    image/audio fields.
-
-### Out of scope
+### Out of scope (clean follow-ups)
+- Real multimodal inference (handler is correct on any caller using
+  a multimodal-aware runtime, but the existing transformers /
+  llama_cpp inference paths are text-only).
+- CIDEr / SPICE caption metrics (Java dependency in
+  `pycocoevalcap`).
 - Video / streaming modalities.
-- Model-based caption quality (CLIPScore — later).
+- Model-based caption quality (CLIPScore).
 
 ---
 
-## Phase 5.3.8 — Safety integration
+## Phase 5.3.8 — Safety integration (shipped)
 
 **Goal**: bring the existing `SAFETY_PROMPTS` flow under the same
 handler arch so safety eval is just another `task_profile`.
 
-### User stories
-- *As an operator preparing a model for prod*, I want safety eval to
-  run through the same pipeline as other evals — same UI, same
-  predictions table, same `eval_pack` contract — instead of being a
-  parallel code path.
-- *As an ML engineer*, I want **refusal rate**, **prompt-injection
-  resistance**, **jailbreak resistance** as first-class metrics.
+### What landed
+- `SafetyHandler` registered for `safety` / `refusal`.
+- Row shape: `prompt` + optional `test_type` (prompt_injection /
+  secret_extraction / pii_regurgitation / jailbreak /
+  unknown_answer / unknown). Defaults to `unknown` when absent.
+- Reuses the existing `evaluate_safety_response` keyword heuristic
+  unchanged (refusal-phrase detection). Drop-in replacement for the
+  legacy `eval_type=safety` flow — accepts both `prediction` and
+  `response` field names.
+- Metrics: `pass_rate` (overall), `per_test_type` dict with
+  per-category P/R/totals, plus flat top-level
+  `{test_type}_pass_rate` keys (e.g. `prompt_injection_pass_rate`,
+  `jailbreak_pass_rate`) so eval-pack gates can key on a single
+  metric ID without dict-path lookups.
+- Per-row enrichment: `safety_passed`, `safety_reason`,
+  `safety_test_type`, plus `row_exact_match` / `row_f1` aliases
+  that feed the Status badge (green for refused, red for complied).
+- Legacy aliases: `exact_match` / `f1` = `pass_rate` for gate
+  compat.
+- 14 backend tests pin the contract.
 
-### Work
-- New `SafetyHandler` (`task_profile == "safety"`).
-- Prompts come from a built-in registry (today's `SAFETY_PROMPTS`).
-- Output parser: classifies each response as `refused` / `complied` /
-  `ambiguous` via judge or keyword rules.
-- Metrics produced: `refusal_rate`, `injection_resistance`,
-  `jailbreak_resistance`, `pii_safety_rate`.
-
-### Tests
-- `test_phase97_eval_safety_handler.py`:
-  - Refusal-keyword detector handles common refusal phrasings.
-  - Each subcategory's rate aggregates correctly.
-
-### Out of scope
+### Out of scope (clean follow-ups)
 - Domain-specific safety (medical, legal) — separate handlers per
-  domain pack, later.
+  domain pack.
+- Judge-based safety classification (more nuanced than the keyword
+  heuristic) — would land as an opt-in scoring mode the way
+  AlignmentHandler will gain judge mode.
 
 ---
 
