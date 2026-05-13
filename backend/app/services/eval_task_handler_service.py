@@ -1300,6 +1300,287 @@ class StructuredExtractionHandler:
         }
 
 
+# ── RAGHandler (Phase 5.3.5) ──────────────────────────────────────────
+
+
+class RAGHandler:
+    """Task handler for grounded QA / retrieval-augmented generation.
+
+    Three signals matter for a grounded bot, and they decompose cleanly:
+
+    1. **Answer quality** — SQuAD EM/F1 of the prediction against the
+       gold answer (the model-side metric). Inherits Phase 5.2's
+       SQuAD-style normalization.
+    2. **Faithfulness** — fraction of prediction tokens that appear
+       in the retrieved context. Low faithfulness means hallucination.
+       This is the model-side metric a grounded bot is *uniquely*
+       judged on; pure QA models don't have it.
+    3. **Context recall** — fraction of gold-answer tokens that
+       appear in the context. Low context recall is a retriever
+       problem, not a model problem — useful diagnostic for
+       separating the two failure modes.
+
+    Each prediction is enriched in place with the per-row signals so
+    the UI can render a "Faithful" / "Hallucinated" badge + "Show
+    context" disclosure and the engineer can debug both retrieval and
+    generation without leaving the page.
+
+    Falls back to QAHandler-style scoring (just EM/F1) when no
+    ``context`` field is present on the row — so a project that
+    transitions from plain QA to RAG can do so by adding a context
+    column without rewriting eval pack gates.
+    """
+
+    profile_id: str = "rag_qa"
+
+    # Per-row faithfulness threshold. A row with token-grounding ≥ this
+    # is marked "faithful"; below is "hallucinated". 0.7 is a defensible
+    # default — high enough to flag rampant hallucination, low enough
+    # that legitimate paraphrasing isn't penalized.
+    FAITHFULNESS_THRESHOLD: float = 0.7
+
+    # Generation cap. Grounded answers should be short — multi-paragraph
+    # answers usually mean the model lost the question.
+    MAX_NEW_TOKENS_FLOOR: int = 64
+    MAX_NEW_TOKENS_HARDCAP: int = 256
+
+    # ── Row-field extraction ──
+
+    def _extract_context(self, row: dict[str, Any]) -> str:
+        for key in ("context", "passage", "document", "evidence", "retrieved_context"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_question(self, row: dict[str, Any]) -> str:
+        for key in ("question", "query", "prompt", "instruction", "input"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_answer(self, row: dict[str, Any]) -> str:
+        for key in ("answer", "reference", "completion", "response", "output", "target_text"):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    # ── Prompt assembly ──
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        built: list[BuiltPrompt] = []
+        for row in rows:
+            context = self._extract_context(row)
+            question = self._extract_question(row)
+            answer = self._extract_answer(row)
+
+            if context:
+                wrapped = (
+                    "Answer the question using only the context. If the "
+                    "context does not contain the answer, say you don't "
+                    "know.\n"
+                    f"Context: {context}\n"
+                    f"Question: {question}\n"
+                    "Answer:"
+                )
+                extras: dict[str, Any] = {
+                    "rag_context": context,
+                    "rag_question": question,
+                    "rag_has_context": True,
+                }
+            else:
+                # Fall through to plain QA-style prompting when no context
+                # is available. SQuAD EM/F1 still works; faithfulness /
+                # context_recall just won't be computed.
+                wrapped = question
+                extras = {"rag_has_context": False}
+
+            built.append(BuiltPrompt(prompt=wrapped, reference=answer, extras=extras))
+        return built
+
+    # ── Generation hint ──
+
+    def max_new_tokens_override(self, default: int) -> int:
+        """Grounded answers should be short. Raise tiny defaults to a
+        sane floor; cap at 256 so the model can't ramble into
+        hallucination territory."""
+
+        baseline = max(self.MAX_NEW_TOKENS_FLOOR, int(default or 0))
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    # ── Token helpers ──
+
+    @staticmethod
+    def _normalize_to_tokens(text: str) -> list[str]:
+        """Same SQuAD normalization Phase 5.2 uses for EM/F1, returned as
+        a token list so we can do Counter intersections."""
+
+        from app.services.evaluation_service import _normalize_answer
+
+        normalized = _normalize_answer(text)
+        return normalized.split() if normalized else []
+
+    @staticmethod
+    def _grounding_ratio(
+        candidate_tokens: list[str],
+        haystack_tokens: list[str],
+    ) -> float:
+        """Fraction of ``candidate_tokens`` that have a multiset match
+        in ``haystack_tokens``. Returns 1.0 when candidate is empty
+        (trivially grounded — a "I don't know" answer can't
+        hallucinate).
+        """
+
+        if not candidate_tokens:
+            return 1.0
+        if not haystack_tokens:
+            return 0.0
+        from collections import Counter
+
+        cand_counter = Counter(candidate_tokens)
+        hay_counter = Counter(haystack_tokens)
+        common = cand_counter & hay_counter
+        grounded = sum(common.values())
+        return grounded / len(candidate_tokens)
+
+    # ── Scoring ──
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        from app.services.evaluation_service import exact_match, f1_score
+
+        total = len(predictions)
+        if total == 0:
+            return {
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "faithfulness_rate": 0.0,
+                "faithfulness_score_mean": 0.0,
+                "context_recall_mean": 0.0,
+                "unsupported_token_rate_mean": 0.0,
+                "grounded_rows": 0,
+                "rows_with_context": 0,
+                "total": 0,
+                "correct": 0,
+            }
+
+        em_scores: list[float] = []
+        f1_scores: list[float] = []
+        faithfulness_scores: list[float] = []
+        context_recall_scores: list[float] = []
+        unsupported_rates: list[float] = []
+        rows_with_context = 0
+        faithful_rows = 0
+
+        for prediction in predictions:
+            pred_text = str(prediction.get("prediction") or "")
+            ref_text = str(prediction.get("reference") or "")
+            context = str(prediction.get("rag_context") or "")
+            has_context = bool(prediction.get("rag_has_context"))
+
+            # Always-on: SQuAD EM/F1 on the answer span.
+            row_em = exact_match(pred_text, ref_text)
+            row_f1 = f1_score(pred_text, ref_text)
+            em_scores.append(row_em)
+            f1_scores.append(row_f1)
+
+            row_faithfulness: float | None = None
+            row_context_recall: float | None = None
+            row_unsupported: float | None = None
+
+            if has_context and context:
+                rows_with_context += 1
+                pred_tokens = self._normalize_to_tokens(pred_text)
+                ref_tokens = self._normalize_to_tokens(ref_text)
+                ctx_tokens = self._normalize_to_tokens(context)
+
+                row_faithfulness = self._grounding_ratio(pred_tokens, ctx_tokens)
+                row_context_recall = self._grounding_ratio(ref_tokens, ctx_tokens)
+                row_unsupported = (
+                    1.0 - row_faithfulness if pred_tokens else 0.0
+                )
+
+                faithfulness_scores.append(row_faithfulness)
+                context_recall_scores.append(row_context_recall)
+                unsupported_rates.append(row_unsupported)
+
+                if row_faithfulness >= self.FAITHFULNESS_THRESHOLD:
+                    faithful_rows += 1
+
+            # In-place enrichment for predictions_preview → UI.
+            prediction["row_exact_match"] = row_em
+            prediction["row_f1"] = row_f1
+            prediction["rag_has_context"] = has_context
+            if row_faithfulness is not None:
+                prediction["rag_faithfulness"] = round(row_faithfulness, 4)
+                prediction["rag_context_recall"] = round(row_context_recall, 4)
+                prediction["rag_unsupported_rate"] = round(row_unsupported, 4)
+                prediction["rag_is_faithful"] = (
+                    row_faithfulness >= self.FAITHFULNESS_THRESHOLD
+                )
+
+        em_mean = round(sum(em_scores) / total, 4)
+        f1_mean = round(sum(f1_scores) / total, 4)
+
+        # Faithfulness / context_recall / unsupported are only meaningful
+        # for rows that actually had a context. Report both the mean
+        # over context-rows and the "faithful_rate" (binary at threshold).
+        faithfulness_mean = (
+            round(sum(faithfulness_scores) / len(faithfulness_scores), 4)
+            if faithfulness_scores
+            else 0.0
+        )
+        context_recall_mean = (
+            round(sum(context_recall_scores) / len(context_recall_scores), 4)
+            if context_recall_scores
+            else 0.0
+        )
+        unsupported_mean = (
+            round(sum(unsupported_rates) / len(unsupported_rates), 4)
+            if unsupported_rates
+            else 0.0
+        )
+        faithful_rate = (
+            round(faithful_rows / rows_with_context, 4)
+            if rows_with_context > 0
+            else 0.0
+        )
+
+        return {
+            # Legacy gate aliases — preserve QA-style EM/F1 so eval-pack
+            # gates keyed on those metric IDs keep working.
+            "exact_match": em_mean,
+            "f1": f1_mean,
+            # RAG-specific signals.
+            "faithfulness_rate": faithful_rate,
+            "faithfulness_score_mean": faithfulness_mean,
+            "context_recall_mean": context_recall_mean,
+            "unsupported_token_rate_mean": unsupported_mean,
+            "grounded_rows": faithful_rows,
+            "rows_with_context": rows_with_context,
+            "total": total,
+            "correct": int(sum(em_scores)),
+        }
+
+
 # ── Seq2SeqHandler (Phase 5.3.3) ──────────────────────────────────────
 
 
@@ -1722,6 +2003,10 @@ register_handler("language_modeling", QAHandler)
 # Structured extraction (JSON outputs, field-level scoring).
 register_handler("structured_extraction", StructuredExtractionHandler)
 register_handler("extraction", StructuredExtractionHandler)
+# Grounded QA / RAG — answer quality + faithfulness + context recall.
+register_handler("rag_qa", RAGHandler)
+register_handler("rag", RAGHandler)
+register_handler("grounded_qa", RAGHandler)
 
 
 __all__ = [
@@ -1730,6 +2015,7 @@ __all__ = [
     "EvalContext",
     "GenericHandler",
     "QAHandler",
+    "RAGHandler",
     "Seq2SeqHandler",
     "StructuredExtractionHandler",
     "TaskHandler",

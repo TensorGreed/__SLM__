@@ -61,11 +61,12 @@ class DispatcherRoutingTests(unittest.TestCase):
         self.assertEqual(handler.profile_id, "seq2seq")
 
     def test_other_profiles_unaffected(self):
-        # By Phase 5.3.2, qa routes to QAHandler — generic now only
-        # captures unhandled profiles and None.
+        # By Phase 5.3.2, qa routes to QAHandler. By 5.3.5 rag_qa
+        # routes to RAGHandler. Generic now only captures unhandled
+        # profiles and None.
         self.assertIsInstance(resolve_task_handler(None), GenericHandler)
         self.assertIsInstance(
-            resolve_task_handler("rag_qa"), GenericHandler
+            resolve_task_handler("totally_unknown_profile"), GenericHandler
         )
 
 

@@ -96,6 +96,19 @@ interface PredictionPreviewRow {
     }> | null;
     row_precision?: number | null;
     row_recall?: number | null;
+    // Phase 5.3.5: RAGHandler enrichments. Faithfulness = fraction of
+    // prediction tokens that appear in the context; context_recall =
+    // fraction of gold tokens present in the context (retriever-side
+    // diagnostic); unsupported_rate = fraction of pred tokens NOT in
+    // context. is_faithful is the binary at the handler's threshold.
+    // rag_context flows through so the UI can render a "Show context"
+    // disclosure for grounding-mismatch debugging.
+    rag_context?: string | null;
+    rag_has_context?: boolean | null;
+    rag_faithfulness?: number | null;
+    rag_context_recall?: number | null;
+    rag_unsupported_rate?: number | null;
+    rag_is_faithful?: boolean | null;
     latency_ms?: number;
     input_modality?: string;
 }
@@ -1695,6 +1708,16 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                         : [];
                                     const rowPrecision = row.row_precision;
                                     const rowRecall = row.row_recall;
+                                    // Phase 5.3.5: RAG handler enrichments.
+                                    // We render the RAG surface whenever the
+                                    // handler reported context (whether or
+                                    // not faithfulness > threshold).
+                                    const hasRagContext = Boolean(row.rag_has_context);
+                                    const ragContext = String(row.rag_context || '').trim();
+                                    const ragFaithfulness = row.rag_faithfulness;
+                                    const ragContextRecall = row.rag_context_recall;
+                                    const ragUnsupportedRate = row.rag_unsupported_rate;
+                                    const ragIsFaithful = row.rag_is_faithful;
                                     const hasRowScores =
                                         (rowEm !== undefined && rowEm !== null) ||
                                         (rowF1 !== undefined && rowF1 !== null);
@@ -1956,6 +1979,54 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                                         )}
                                                                     </tbody>
                                                                 </table>
+                                                            </details>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {hasRagContext && (
+                                                    <div className="eval-sample-predictions-rag">
+                                                        {typeof ragFaithfulness === 'number' && (
+                                                            <span
+                                                                className={`eval-sample-predictions-rag-badge ${
+                                                                    ragIsFaithful
+                                                                        ? 'is-faithful'
+                                                                        : 'is-hallucinated'
+                                                                }`}
+                                                            >
+                                                                {ragIsFaithful
+                                                                    ? 'Faithful'
+                                                                    : 'Hallucinated'}{' '}
+                                                                ({ragFaithfulness.toFixed(2)})
+                                                            </span>
+                                                        )}
+                                                        {typeof ragContextRecall === 'number' && (
+                                                            <span className="eval-sample-predictions-rag__metric">
+                                                                context covers gold:{' '}
+                                                                <strong>
+                                                                    {Math.round(
+                                                                        ragContextRecall * 100,
+                                                                    )}
+                                                                    %
+                                                                </strong>
+                                                            </span>
+                                                        )}
+                                                        {typeof ragUnsupportedRate === 'number' &&
+                                                            ragUnsupportedRate > 0 && (
+                                                                <span className="eval-sample-predictions-rag__unsupported">
+                                                                    unsupported tokens:{' '}
+                                                                    {Math.round(
+                                                                        ragUnsupportedRate * 100,
+                                                                    )}
+                                                                    %
+                                                                </span>
+                                                            )}
+                                                        {ragContext && (
+                                                            <details className="eval-sample-predictions-rag-context">
+                                                                <summary>
+                                                                    Show retrieved context (what the
+                                                                    model was given)
+                                                                </summary>
+                                                                <pre>{ragContext}</pre>
                                                             </details>
                                                         )}
                                                     </div>

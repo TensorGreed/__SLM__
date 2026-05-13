@@ -809,6 +809,16 @@ async def run_heldout_evaluation(
                 predictions[idx]["image_path"] = pair.get("image_path")
             if pair.get("audio_path"):
                 predictions[idx]["audio_path"] = pair.get("audio_path")
+            # Phase 5.3.5: RAGHandler needs the retrieved context at
+            # score time to compute faithfulness + context_recall.
+            # The context lives on the pair (via BuiltPrompt extras)
+            # but the inference path doesn't carry it through, so we
+            # copy it across here. Handlers that don't use these keys
+            # just ignore them.
+            if pair.get("rag_context"):
+                predictions[idx]["rag_context"] = pair.get("rag_context")
+            if pair.get("rag_has_context") is not None:
+                predictions[idx]["rag_has_context"] = pair.get("rag_has_context")
 
     eval_dataset_name = dataset.dataset_type.value
     if eval_type == "llm_judge":
@@ -889,6 +899,18 @@ async def run_heldout_evaluation(
             "row_hallucinated_entities": p.get("row_hallucinated_entities"),
             "row_precision": p.get("row_precision"),
             "row_recall": p.get("row_recall"),
+            # Phase 5.3.5: RAGHandler enrichments — the context the
+            # model was given, the row's faithfulness score (token
+            # overlap of pred with context), context recall (gold
+            # tokens present in the context — a retriever-side
+            # diagnostic), and a binary is_faithful flag at the
+            # handler's threshold.
+            "rag_context": p.get("rag_context"),
+            "rag_has_context": p.get("rag_has_context"),
+            "rag_faithfulness": p.get("rag_faithfulness"),
+            "rag_context_recall": p.get("rag_context_recall"),
+            "rag_unsupported_rate": p.get("rag_unsupported_rate"),
+            "rag_is_faithful": p.get("rag_is_faithful"),
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
         }

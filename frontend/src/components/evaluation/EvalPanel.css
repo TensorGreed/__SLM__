@@ -459,6 +459,76 @@
     font-weight: 600;
 }
 
+/* Phase 5.3.5 — RAG / grounded-QA inline surface */
+
+.eval-sample-predictions-rag {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+.eval-sample-predictions-rag-badge {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border-default);
+}
+
+.eval-sample-predictions-rag-badge.is-faithful {
+    background: rgba(34, 197, 94, 0.10);
+    border-color: rgba(34, 197, 94, 0.30);
+    color: rgb(21, 128, 61);
+}
+
+.eval-sample-predictions-rag-badge.is-hallucinated {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.30);
+    color: rgb(153, 27, 27);
+}
+
+.eval-sample-predictions-rag__metric {
+    color: var(--text-tertiary);
+}
+
+.eval-sample-predictions-rag__metric > strong {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
+.eval-sample-predictions-rag__unsupported {
+    color: rgb(153, 27, 27);
+    font-style: italic;
+}
+
+.eval-sample-predictions-rag-context > summary {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    margin-top: 4px;
+}
+
+.eval-sample-predictions-rag-context > pre {
+    font-size: 11.5px;
+    background: rgba(59, 130, 246, 0.06);
+    padding: 8px;
+    border-radius: 4px;
+    margin-top: 4px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
 @media (max-width: 980px) {
     .eval-pack-controls {
         grid-template-columns: 1fr;

@@ -396,36 +396,71 @@ to context**.
 - *As an ML engineer*, I want SQuAD EM/F1 on the answer span on top of
   the grounding metrics.
 
-### Work
-- New `RAGHandler` (covers `task_profile == "rag_qa"`).
-- **Row shape**: requires `context` (or `passage`/`document`) field
-  alongside `question` and `answer`.
+### Work (shipped)
+- New `RAGHandler` covers `task_profile in {rag_qa, rag,
+  grounded_qa}`.
+- **Row shape**: reads `context` (or `passage` / `document` /
+  `evidence` / `retrieved_context`) alongside `question` and
+  `answer`. Falls back to plain QA when no context field is present
+  — same project can mix context-bearing and context-less rows.
 - **Prompt template**:
   ```
-  Answer the question using only the context.
+  Answer the question using only the context. If the context does
+  not contain the answer, say you don't know.
   Context: {context}
   Question: {question}
   Answer:
   ```
+- **Generation cap**: 64-token floor, 256-token hardcap. Grounded
+  answers should be short; long answers usually mean the model
+  lost the question.
 - **Metrics produced**:
-  - `exact_match`, `f1` (answer quality, SQuAD-style)
-  - `faithfulness_rate` (token overlap of answer with context,
-    thresholded)
-  - `context_recall` (token overlap of gold answer with context)
-  - `unsupported_token_rate` (tokens in prediction not in context,
-    after stop-word strip)
+  - `exact_match`, `f1` — SQuAD-style on the answer span. Gate
+    compat preserved.
+  - `faithfulness_rate` — fraction of context-bearing rows scoring
+    above the 0.7 token-grounding threshold. Binary at-threshold
+    rate for gates.
+  - `faithfulness_score_mean` — continuous mean for monitoring.
+  - `context_recall_mean` — retriever-side diagnostic. Token
+    overlap of the gold answer with the context.
+  - `unsupported_token_rate_mean` — mean fraction of prediction
+    tokens NOT in the context. Catches the "London is the capital
+    of France" case where most tokens are grounded but the
+    critical wrong one is not.
+  - `grounded_rows` / `rows_with_context` — denominators for the
+    rate metrics.
+- Per-row enrichment lands `rag_faithfulness`, `rag_context_recall`,
+  `rag_unsupported_rate`, `rag_is_faithful`, `rag_context` on each
+  prediction so the UI can render the inline surface.
+- UI: Sample Predictions card grows a RAG inline surface beneath
+  each prediction — green "Faithful (1.00)" or red "Hallucinated
+  (0.40)" badge, "context covers gold: X%" inline diagnostic, red
+  "unsupported tokens: X%" when > 0, and a "Show retrieved
+  context" disclosure with the context the model was given.
 
-### Tests
-- `test_phase94_eval_rag_handler.py`:
-  - Faithfulness: answer fully in context → 1.0; answer fully
-    extraneous → 0.0.
-  - Context recall is dataset-level diagnostic, not gating.
-  - Falls back to QAHandler when `context` field absent (with a
-    warning logged).
+### Tests (shipped)
+- 23 backend tests in `test_phase95_eval_rag_handler.py` cover
+  dispatcher routing (rag_qa / rag / grounded_qa aliases all route
+  here, other profiles unaffected), prompt assembly (context
+  included, alternative field names, no-context fallback),
+  generation cap, faithfulness (perfect / partial / fully
+  extraneous / empty pred trivially faithful), context recall as
+  retriever-side signal, per-row enrichment, mixed datasets
+  (context-bearing + context-less rows in same eval), and a
+  full build_prompts → score pipeline.
+- 5 frontend tests in `EvalPanel.rag.test.tsx` lock in the new
+  UI: green Faithful badge, red Hallucinated badge with
+  unsupported-tokens note, "Show retrieved context" disclosure,
+  hide-unsupported-when-zero, regression guard that non-RAG runs
+  don't accidentally render the surface.
 
 ### Out of scope
-- Retriever evaluation (separate concern, separate dataset structure).
-- Reference-free faithfulness via NLI (heavy; add later).
+- Retriever evaluation (separate concern, separate dataset
+  structure).
+- Reference-free faithfulness via NLI (heavy; add later if the
+  token-overlap heuristic misses too many cases).
+- Multi-hop grounding (answer requires combining two passages).
+  Current scoring is single-context-blob only.
 
 ---
 
