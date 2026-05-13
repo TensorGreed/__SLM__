@@ -18,6 +18,7 @@ the repo root.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
@@ -480,6 +481,153 @@ class ClassificationHandler:
         return min(max(1, int(default or 1)), self.MAX_NEW_TOKENS_CAP)
 
 
+# ── QAHandler (Phase 5.3.2) ───────────────────────────────────────────
+
+
+class QAHandler:
+    """Task handler for short-answer QA / instruction-following.
+
+    Preserves today's chat-template-only behavior on the prompt side
+    (Phase 5.2 already wrapped bare questions with the tokenizer's
+    chat template at inference time). The handler adds two things on
+    top:
+
+    1. **CoT answer-span extraction.** Chain-of-thought-trained models
+       emit ``"…reasoning… Therefore: Paris."`` rather than just
+       ``"Paris"``. Without extraction, SQuAD F1 scores the whole
+       paragraph against the single-word reference and reports near
+       zero. The handler scans for common end-of-reasoning markers
+       (``Final answer:``, ``Answer:``, ``Therefore:``, ``The answer
+       is …``) and scores the extracted span instead. Falls through
+       to the raw prediction when no marker matches.
+
+    2. **Per-row score capture.** Each prediction dict gets
+       ``answer_span``, ``span_marker``, ``row_exact_match``, and
+       ``row_f1`` written onto it before the aggregate is computed.
+       The UI reads these in ``predictions_preview`` to render a
+       per-row pass/fail badge + "Show extracted answer span"
+       disclosure — so the user can see exactly which rows the model
+       got wrong without leaving the page.
+
+    Metrics produced: ``exact_match``, ``f1`` (mean of per-row scores
+    against the extracted span), ``answer_span_extracted_rate`` (the
+    fraction of rows where a CoT marker was found), ``total``,
+    ``correct``. EM and F1 metric IDs preserve gate compatibility.
+    """
+
+    profile_id: str = "qa"
+
+    # CoT answer-marker patterns. Ordered longer-first / more-specific-
+    # first so ``Final answer: 42`` doesn't accidentally match the
+    # shorter ``Answer:`` rule. Each pattern captures the span up to
+    # the first period or newline or end of string.
+    _SPAN_PATTERNS: tuple[re.Pattern[str], ...] = (
+        re.compile(
+            r"final\s+answer\s*[:\-]\s*(.+?)(?:\.\s|\n|$)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        re.compile(
+            r"\banswer\s*[:\-]\s*(.+?)(?:\.\s|\n|$)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        re.compile(
+            r"\btherefore\s*[:,\-]?\s*(.+?)(?:\.\s|\n|$)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        re.compile(
+            r"\bin\s+conclusion\s*[:,\-]?\s*(.+?)(?:\.\s|\n|$)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        re.compile(
+            r"\bthe\s+answer\s+is\s+(.+?)(?:\.\s|\n|$)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    )
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        # QA inherits GenericHandler's field extraction — the only
+        # behavior we change is at score time. Delegate to keep the
+        # field-precedence rules in one place.
+        return GenericHandler().build_prompts(rows, ctx)
+
+    def extract_answer_span(self, text: str) -> tuple[str, str | None]:
+        """Return ``(span, marker_pattern)`` if a CoT marker matched,
+        else ``(text, None)``.
+
+        Uses ``re.findall`` and keeps the LAST match per pattern, since
+        CoT outputs typically place the conclusion at the end of the
+        reasoning. Tries each pattern in order — first one that matches
+        wins.
+        """
+
+        haystack = str(text or "")
+        if not haystack.strip():
+            return haystack, None
+        for pattern in self._SPAN_PATTERNS:
+            matches = pattern.findall(haystack)
+            if not matches:
+                continue
+            # Last match = final occurrence in the text (CoT
+            # conclusion at the end of reasoning). Trailing terminal
+            # punctuation isn't part of the answer ("Paris." → "Paris").
+            span = str(matches[-1]).strip().rstrip(".,!?;:").strip()
+            if span:
+                return span, pattern.pattern
+        return haystack, None
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        # Lazy import to dodge the cyclic dependency
+        # (evaluation_service imports this module too).
+        from app.services.evaluation_service import exact_match, f1_score
+
+        total = len(predictions)
+        if total == 0:
+            return {
+                "exact_match": 0.0,
+                "f1": 0.0,
+                "answer_span_extracted_rate": 0.0,
+                "total": 0,
+                "correct": 0,
+            }
+
+        em_scores: list[float] = []
+        f1_scores: list[float] = []
+        extracted_count = 0
+        for prediction in predictions:
+            full_text = str(prediction.get("prediction") or "")
+            reference = str(prediction.get("reference") or "")
+            span, marker = self.extract_answer_span(full_text)
+            if marker is not None:
+                extracted_count += 1
+            row_em = exact_match(span, reference)
+            row_f1 = f1_score(span, reference)
+            em_scores.append(row_em)
+            f1_scores.append(row_f1)
+            # Enrich each prediction in place so the predictions_preview
+            # writer in evaluation_service can flow these into the UI
+            # without re-doing the work.
+            prediction["answer_span"] = span
+            prediction["span_marker"] = marker
+            prediction["row_exact_match"] = row_em
+            prediction["row_f1"] = row_f1
+
+        return {
+            "exact_match": round(sum(em_scores) / total, 4),
+            "f1": round(sum(f1_scores) / total, 4),
+            "answer_span_extracted_rate": round(extracted_count / total, 4),
+            "total": total,
+            "correct": int(sum(em_scores)),
+        }
+
+
 # ── Seq2SeqHandler (Phase 5.3.3) ──────────────────────────────────────
 
 
@@ -891,6 +1039,14 @@ def build_eval_context(
 
 register_handler("classification", ClassificationHandler)
 register_handler("seq2seq", Seq2SeqHandler)
+# QAHandler covers short-answer QA + instruction following + chat-SFT +
+# generic language modeling. They all share the same "score the last
+# answer-shaped span against the reference" semantics, so one handler
+# serves all four manifest tags.
+register_handler("qa", QAHandler)
+register_handler("instruction_sft", QAHandler)
+register_handler("chat_sft", QAHandler)
+register_handler("language_modeling", QAHandler)
 
 
 __all__ = [
@@ -898,6 +1054,7 @@ __all__ = [
     "ClassificationHandler",
     "EvalContext",
     "GenericHandler",
+    "QAHandler",
     "Seq2SeqHandler",
     "TaskHandler",
     "build_eval_context",

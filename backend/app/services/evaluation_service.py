@@ -862,6 +862,14 @@ async def run_heldout_evaluation(
             "formatted_prompt": p.get("formatted_prompt", "")[:400],
             "reference": p.get("reference", "")[:160],
             "prediction": p.get("prediction", "")[:160],
+            # Phase 5.3.2: QAHandler enriches each prediction with the
+            # extracted answer span (CoT-aware), the matched marker, and
+            # per-row scores. They flow into predictions_preview so the
+            # UI can render per-row pass/fail + "Show extracted span".
+            "answer_span": p.get("answer_span", "")[:160] if isinstance(p.get("answer_span"), str) else None,
+            "span_marker": p.get("span_marker"),
+            "row_exact_match": p.get("row_exact_match"),
+            "row_f1": p.get("row_f1"),
             "latency_ms": p.get("latency_ms"),
             "input_modality": p.get("input_modality"),
         }

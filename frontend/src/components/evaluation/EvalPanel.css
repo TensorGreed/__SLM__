@@ -279,6 +279,91 @@
     white-space: pre-wrap;
 }
 
+/* Phase 5.3.2 — answer-span disclosure + per-row status badge */
+
+.eval-sample-predictions-span {
+    margin-top: 6px;
+}
+
+.eval-sample-predictions-span > summary {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+}
+
+.eval-sample-predictions-span__body {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 6px;
+    background: rgba(99, 102, 241, 0.06);
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.eval-sample-predictions-span__marker {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.eval-sample-predictions-span__body > code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.eval-sample-predictions-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.eval-sample-predictions-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+}
+
+.eval-sample-predictions-badge.is-pass {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.35);
+    color: rgb(21, 128, 61);
+}
+
+.eval-sample-predictions-badge.is-partial {
+    background: rgba(234, 179, 8, 0.12);
+    border-color: rgba(234, 179, 8, 0.35);
+    color: rgb(133, 77, 14);
+}
+
+.eval-sample-predictions-badge.is-fail {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.30);
+    color: rgb(153, 27, 27);
+}
+
+.eval-sample-predictions-status__metrics {
+    display: flex;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
 @media (max-width: 980px) {
     .eval-pack-controls {
         grid-template-columns: 1fr;

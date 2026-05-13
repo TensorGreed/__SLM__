@@ -49,6 +49,18 @@ interface PredictionPreviewRow {
     reference?: string;
     prediction?: string;
     formatted_prompt?: string;
+    // Phase 5.3.2: QAHandler enriches predictions with these per-row
+    // diagnostics. When the handler is the QA / instruction-following
+    // family, every row carries:
+    //   - answer_span: what got scored (extracted from CoT outputs when
+    //     a marker like "Final answer:" or "Therefore:" matched).
+    //   - span_marker: the regex that matched (null when no marker).
+    //   - row_exact_match / row_f1: this row's per-row scores so the
+    //     UI can paint a green/yellow/red status per row.
+    answer_span?: string | null;
+    span_marker?: string | null;
+    row_exact_match?: number | null;
+    row_f1?: number | null;
     latency_ms?: number;
     input_modality?: string;
 }
@@ -721,6 +733,15 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         samplePredictionsResult != null &&
         evalResults.length > 0 &&
         samplePredictionsResult.id === evalResults[0].id;
+    // Phase 5.3.2: when the QAHandler ran, every preview row carries
+    // row_exact_match / row_f1 so we can show a status badge column.
+    // Detect at the run level so the table shape is consistent across
+    // all rows in the same run.
+    const samplePredictionsHasRowScores = samplePredictions.some(
+        (row) =>
+            (row.row_exact_match !== undefined && row.row_exact_match !== null) ||
+            (row.row_f1 !== undefined && row.row_f1 !== null),
+    );
 
     const latestInference = useMemo(() => {
         for (let i = 0; i < evalResults.length; i += 1) {
@@ -1580,6 +1601,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     <th>Prompt</th>
                                     <th>Expected</th>
                                     <th>Model prediction</th>
+                                    {samplePredictionsHasRowScores && <th>Score</th>}
                                 </tr>
                             </thead>
                             <tbody>
@@ -1590,6 +1612,32 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     const formattedPrompt = String(row.formatted_prompt || '').trim();
                                     const promptDiffers =
                                         formattedPrompt && formattedPrompt !== promptText;
+                                    const answerSpan = String(row.answer_span || '').trim();
+                                    const spanMarker = row.span_marker ?? null;
+                                    const spanDiffers =
+                                        spanMarker !== null &&
+                                        answerSpan.length > 0 &&
+                                        answerSpan !== predictionText;
+                                    const rowEm = row.row_exact_match;
+                                    const rowF1 = row.row_f1;
+                                    const hasRowScores =
+                                        (rowEm !== undefined && rowEm !== null) ||
+                                        (rowF1 !== undefined && rowF1 !== null);
+                                    // Status: EM=1 → pass, F1≥0.5 → partial, else fail.
+                                    let statusClass = '';
+                                    let statusLabel = '';
+                                    if (hasRowScores) {
+                                        if (rowEm === 1 || rowEm === 1.0) {
+                                            statusClass = 'is-pass';
+                                            statusLabel = 'pass';
+                                        } else if (typeof rowF1 === 'number' && rowF1 >= 0.5) {
+                                            statusClass = 'is-partial';
+                                            statusLabel = 'partial';
+                                        } else {
+                                            statusClass = 'is-fail';
+                                            statusLabel = 'fail';
+                                        }
+                                    }
                                     return (
                                         <tr key={`sample-prediction-${idx}`}>
                                             <td>
@@ -1621,7 +1669,50 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                         (empty output)
                                                     </div>
                                                 )}
+                                                {spanDiffers && (
+                                                    <details className="eval-sample-predictions-span">
+                                                        <summary>
+                                                            Show extracted answer span (what got
+                                                            scored)
+                                                        </summary>
+                                                        <div className="eval-sample-predictions-span__body">
+                                                            <span className="eval-sample-predictions-span__marker">
+                                                                marker matched
+                                                            </span>
+                                                            <code>{answerSpan}</code>
+                                                        </div>
+                                                    </details>
+                                                )}
                                             </td>
+                                            {samplePredictionsHasRowScores && (
+                                                <td>
+                                                    {hasRowScores ? (
+                                                        <div className="eval-sample-predictions-status">
+                                                            <span
+                                                                className={`eval-sample-predictions-badge ${statusClass}`}
+                                                            >
+                                                                {statusLabel}
+                                                            </span>
+                                                            <div className="eval-sample-predictions-status__metrics">
+                                                                {typeof rowEm === 'number' && (
+                                                                    <span>
+                                                                        EM {rowEm.toFixed(0)}
+                                                                    </span>
+                                                                )}
+                                                                {typeof rowF1 === 'number' && (
+                                                                    <span>
+                                                                        F1 {rowF1.toFixed(2)}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="eval-sample-predictions-cell--prediction-empty">
+                                                            —
+                                                        </span>
+                                                    )}
+                                                </td>
+                                            )}
                                         </tr>
                                     );
                                 })}
