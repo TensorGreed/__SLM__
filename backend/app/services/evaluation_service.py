@@ -18,6 +18,12 @@ from app.config import settings
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
 from app.services.domain_hook_service import apply_evaluator_hook, resolve_project_domain_hooks
+from app.services.eval_task_handler_service import (
+    EvalContext,
+    GenericHandler,
+    TaskHandler,
+    build_eval_context,
+)
 from app.services.record_normalization import canonicalize_record
 
 
@@ -212,41 +218,18 @@ async def run_evaluation(
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
 
-    metrics = {}
-
-    if eval_type == "exact_match":
-        scores = [
-            exact_match(p.get("prediction", ""), p.get("reference", ""))
-            for p in predictions
-        ]
-        metrics = {
-            "exact_match": round(sum(scores) / len(scores), 4) if scores else 0,
-            "total": len(scores),
-            "correct": int(sum(scores)),
-        }
-    elif eval_type == "f1":
-        scores = [
-            f1_score(p.get("prediction", ""), p.get("reference", ""))
-            for p in predictions
-        ]
-        metrics = {
-            "f1": round(sum(scores) / len(scores), 4) if scores else 0,
-            "total": len(scores),
-        }
-    elif eval_type == "safety":
-        results = []
-        for p in predictions:
-            test_type = p.get("test_type", "unknown")
-            result = evaluate_safety_response(p.get("response", ""), test_type)
-            results.append(result)
-
-        passed = sum(1 for r in results if r["passed"])
-        metrics = {
-            "pass_rate": round(passed / len(results), 4) if results else 0,
-            "total_tests": len(results),
-            "passed": passed,
-            "failed": len(results) - passed,
-        }
+    # Phase 5.3.0: route scoring through the task-handler dispatcher.
+    # Today only GenericHandler is registered, so this preserves the
+    # exact metric values produced by the pre-dispatcher if/elif chain.
+    # Phase 5.3.1+ (classification, seq2seq, …) override .score on
+    # their handler to produce task-appropriate metrics.
+    eval_ctx, task_handler = build_eval_context(
+        project_id=project_id,
+        experiment_id=experiment_id,
+        eval_type=eval_type,
+        dataset_name=dataset_name,
+    )
+    metrics = dict(task_handler.score(predictions, eval_ctx))
 
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(
@@ -270,6 +253,8 @@ async def run_evaluation(
             "domain_pack_applied": hook_state.get("domain_pack_applied"),
             "domain_profile_applied": hook_state.get("domain_profile_applied"),
             "evaluator_hook_id": hook_state.get("evaluator", {}).get("id"),
+            "task_profile_resolved": eval_ctx.task_profile,
+            "handler_id": eval_ctx.handler_id,
         },
     )
     db.add(eval_result)
@@ -474,27 +459,60 @@ def _infer_row_modality(row: dict, prompt: str) -> str:
     return "text"
 
 
-def _load_heldout_pairs(dataset_path: Path, max_samples: int) -> list[dict]:
+def _load_heldout_pairs(
+    dataset_path: Path,
+    max_samples: int,
+    *,
+    handler: TaskHandler | None = None,
+    ctx: EvalContext | None = None,
+) -> list[dict]:
     rows = _load_eval_rows(dataset_path)
+    active_handler: TaskHandler = handler or GenericHandler()
+    if ctx is None:
+        ctx = EvalContext(
+            project_id=0,
+            experiment_id=0,
+            eval_type="",
+            task_profile=None,
+            handler_id=active_handler.profile_id,
+            prepared_dir=Path("."),
+            dataset_name="",
+        )
+    built = active_handler.build_prompts(rows, ctx)
     sample_cap = max(1, max_samples)
     pairs: list[dict] = []
-    for idx, row in enumerate(rows):
-        prompt, reference = _extract_prompt_and_reference(row)
-        if not prompt or not reference:
+    for idx, (row, bp) in enumerate(zip(rows, built)):
+        if not bp.prompt or not bp.reference:
             continue
-        image_path = str(row.get("image_path") or row.get("image") or row.get("image_url") or "").strip()
-        audio_path = str(row.get("audio_path") or row.get("audio") or row.get("audio_url") or "").strip()
-        modality = _infer_row_modality(row, prompt)
-        pairs.append(
-            {
-                "prompt": prompt,
-                "reference": reference,
-                "_row_index": idx,
-                "input_modality": modality,
-                "image_path": image_path or None,
-                "audio_path": audio_path or None,
-            }
-        )
+        image_path = str(
+            bp.extras.get("image_path")
+            or row.get("image_path")
+            or row.get("image")
+            or row.get("image_url")
+            or ""
+        ).strip()
+        audio_path = str(
+            bp.extras.get("audio_path")
+            or row.get("audio_path")
+            or row.get("audio")
+            or row.get("audio_url")
+            or ""
+        ).strip()
+        modality = _infer_row_modality(row, bp.prompt)
+        pair: dict[str, Any] = {
+            "prompt": bp.prompt,
+            "reference": bp.reference,
+            "_row_index": idx,
+            "input_modality": modality,
+            "image_path": image_path or None,
+            "audio_path": audio_path or None,
+        }
+        # Allow handlers to attach task-specific extras (label sets,
+        # context spans, …) that downstream scoring will read.
+        for key, value in bp.extras.items():
+            if key not in pair:
+                pair[key] = value
+        pairs.append(pair)
         if len(pairs) >= sample_cap:
             break
     return pairs
@@ -744,7 +762,18 @@ async def run_heldout_evaluation(
     if not dataset.file_path:
         raise ValueError(f"Dataset '{dataset.name}' has no file path")
     dataset_path = Path(dataset.file_path).expanduser().resolve()
-    pairs = _load_heldout_pairs(dataset_path, max_samples=max_samples)
+    eval_ctx, task_handler = build_eval_context(
+        project_id=project_id,
+        experiment_id=experiment_id,
+        eval_type=eval_type,
+        dataset_name=dataset_name,
+    )
+    pairs = _load_heldout_pairs(
+        dataset_path,
+        max_samples=max_samples,
+        handler=task_handler,
+        ctx=eval_ctx,
+    )
     if not pairs:
         raise ValueError(
             f"No valid evaluation rows found in {dataset_path}. "
@@ -810,6 +839,8 @@ async def run_heldout_evaluation(
         "max_new_tokens": max(1, max_new_tokens),
         "temperature": max(0.0, float(temperature)),
         "samples": len(predictions),
+        "task_profile_resolved": eval_ctx.task_profile,
+        "handler_id": eval_ctx.handler_id,
     }
     details["predictions_preview"] = [
         {
