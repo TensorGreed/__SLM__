@@ -19,3 +19,5 @@ transformers
 accelerate
 peft
 trl>=0.9
+sacrebleu
+rouge_score

@@ -57,9 +57,10 @@ class DispatcherRoutingTests(unittest.TestCase):
 
     def test_other_profile_still_routes_to_generic(self):
         # Regression: ClassificationHandler registration must not steal
-        # other profiles.
+        # profiles that don't have their own handler. (seq2seq now has
+        # one via Phase 5.3.3; qa + None still route to generic.)
         self.assertIsInstance(resolve_task_handler("qa"), GenericHandler)
-        self.assertIsInstance(resolve_task_handler("seq2seq"), GenericHandler)
+        self.assertIsInstance(resolve_task_handler("instruction_sft"), GenericHandler)
         self.assertIsInstance(resolve_task_handler(None), GenericHandler)
 
 

@@ -480,6 +480,290 @@ class ClassificationHandler:
         return min(max(1, int(default or 1)), self.MAX_NEW_TOKENS_CAP)
 
 
+# ── Seq2SeqHandler (Phase 5.3.3) ──────────────────────────────────────
+
+
+class Seq2SeqHandler:
+    """Task handler for seq2seq tasks (translation, summarization, paraphrase).
+
+    Wraps each row with a sub-task-specific instruction template, generates
+    a free-form completion, then scores with sub-task-appropriate metrics:
+
+    - translation  → BLEU + chrF (via ``sacrebleu``) + legacy EM/F1.
+    - summarization → ROUGE-1/2/L (via ``rouge_score``) + legacy EM/F1.
+    - paraphrase   → BLEU + ROUGE (paraphrase wants both lexical and
+                     structural overlap signal) + legacy EM/F1.
+
+    All sub-tasks additionally report ``length_ratio`` (mean prediction
+    tokens / mean reference tokens) — useful for spotting models that
+    over- or under-generate independently of content quality. Legacy
+    ``exact_match`` / ``f1`` aliases are produced so eval-pack gates
+    keyed on those IDs keep resolving without a pack migration.
+
+    Sub-task is read from ``prepared/manifest.json`` (``subtask`` field).
+    Missing / unknown sub-task defaults to summarization, which is the
+    most common case and a safe ROUGE-based fallback.
+    """
+
+    profile_id: str = "seq2seq"
+
+    SUBTASK_TRANSLATION: str = "translation"
+    SUBTASK_SUMMARIZATION: str = "summarization"
+    SUBTASK_PARAPHRASE: str = "paraphrase"
+    DEFAULT_SUBTASK: str = "summarization"
+    _SUPPORTED_SUBTASKS: set[str] = {
+        SUBTASK_TRANSLATION,
+        SUBTASK_SUMMARIZATION,
+        SUBTASK_PARAPHRASE,
+    }
+
+    # Cap generation at 1.5× the longest reference, hard-bounded so a
+    # pathological row can't blow the budget. The caller's max_new_tokens
+    # acts as a floor — we never *reduce* below what the caller asked for.
+    LENGTH_MULTIPLIER: float = 1.5
+    MAX_NEW_TOKENS_HARDCAP: int = 512
+
+    def __init__(self) -> None:
+        self._max_ref_tokens: int = 0
+        self._cached_subtask: str | None = None
+
+    # ── Sub-task resolution ──
+
+    def _resolve_subtask(self, ctx: EvalContext) -> str:
+        if self._cached_subtask is not None:
+            return self._cached_subtask
+        raw = str(ctx.manifest.get("subtask") or "").strip().lower()
+        if raw in self._SUPPORTED_SUBTASKS:
+            self._cached_subtask = raw
+        else:
+            self._cached_subtask = self.DEFAULT_SUBTASK
+        return self._cached_subtask
+
+    def _resolve_tgt_lang(self, ctx: EvalContext) -> str:
+        raw = ctx.manifest.get("tgt_lang") or ctx.manifest.get("target_language")
+        text = str(raw or "").strip()
+        return text or "the target language"
+
+    # ── Row-field extraction ──
+
+    def _extract_input_text(self, row: dict[str, Any]) -> str:
+        for key in (
+            "source_text",
+            "text",
+            "input",
+            "source",
+            "prompt",
+            "question",
+            "instruction",
+            "body",
+            "content",
+            "article",
+            "document",
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _extract_reference(self, row: dict[str, Any]) -> str:
+        for key in (
+            "target_text",
+            "reference",
+            "target",
+            "completion",
+            "output",
+            "response",
+            "answer",
+            "summary",
+            "translation",
+            "paraphrase",
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    # ── Prompt assembly ──
+
+    def _build_prompt_text(self, input_text: str, subtask: str, tgt_lang: str) -> str:
+        if subtask == self.SUBTASK_TRANSLATION:
+            return f"Translate the following to {tgt_lang}.\nText: {input_text}\nTranslation:"
+        if subtask == self.SUBTASK_PARAPHRASE:
+            return f"Paraphrase the following text in different words.\nText: {input_text}\nParaphrase:"
+        # Default: summarization.
+        return f"Summarize the following text concisely.\nText: {input_text}\nSummary:"
+
+    def build_prompts(
+        self,
+        rows: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        subtask = self._resolve_subtask(ctx)
+        tgt_lang = self._resolve_tgt_lang(ctx)
+        built: list[BuiltPrompt] = []
+        max_ref_tokens = 0
+        for row in rows:
+            input_text = self._extract_input_text(row)
+            reference = self._extract_reference(row)
+            ref_tokens = len(reference.split())
+            if ref_tokens > max_ref_tokens:
+                max_ref_tokens = ref_tokens
+            wrapped = self._build_prompt_text(input_text, subtask, tgt_lang)
+            extras: dict[str, Any] = {
+                "seq2seq_subtask": subtask,
+                "seq2seq_input": input_text,
+            }
+            if subtask == self.SUBTASK_TRANSLATION:
+                extras["seq2seq_tgt_lang"] = tgt_lang
+            built.append(
+                BuiltPrompt(prompt=wrapped, reference=reference, extras=extras)
+            )
+        self._max_ref_tokens = max_ref_tokens
+        return built
+
+    # ── Generation hint ──
+
+    def max_new_tokens_override(self, default: int) -> int:
+        """Ensure generation has room for the longest reference, capped
+        at the hard limit. Unlike ClassificationHandler this only raises
+        a too-low default — never reduces it — because seq2seq outputs
+        legitimately need length to be correct.
+        """
+
+        baseline = max(1, int(default or 1))
+        if self._max_ref_tokens > 0:
+            suggested = int(self._max_ref_tokens * self.LENGTH_MULTIPLIER)
+            baseline = max(baseline, suggested)
+        return min(self.MAX_NEW_TOKENS_HARDCAP, baseline)
+
+    # ── Scoring ──
+
+    def _score_bleu_chrf(
+        self,
+        predictions: list[str],
+        references: list[str],
+    ) -> dict[str, float]:
+        """Corpus-level BLEU + chrF via sacrebleu. Sentinel zeros when
+        the dataset is empty (consistent with other metrics here)."""
+
+        if not predictions:
+            return {"bleu": 0.0, "chrf": 0.0}
+        # sacrebleu is imported lazily so the rest of the eval pipeline
+        # doesn't pay the import cost when nobody runs seq2seq.
+        from sacrebleu.metrics import BLEU, CHRF
+
+        bleu = BLEU(effective_order=True)
+        chrf = CHRF()
+        # sacrebleu expects refs as list-of-lists ([refs_per_system]).
+        ref_lists = [list(references)]
+        bleu_result = bleu.corpus_score(list(predictions), ref_lists)
+        chrf_result = chrf.corpus_score(list(predictions), ref_lists)
+        # sacrebleu reports 0–100; normalize to 0–1 so it aligns with our
+        # other metric IDs (accuracy, f1, rouge) which are all 0–1.
+        return {
+            "bleu": round(float(bleu_result.score) / 100.0, 4),
+            "chrf": round(float(chrf_result.score) / 100.0, 4),
+        }
+
+    def _score_rouge(
+        self,
+        predictions: list[str],
+        references: list[str],
+    ) -> dict[str, float]:
+        """Mean ROUGE-1 / ROUGE-2 / ROUGE-L across rows."""
+
+        if not predictions:
+            return {"rouge_1": 0.0, "rouge_2": 0.0, "rouge_l": 0.0}
+        from rouge_score import rouge_scorer
+
+        scorer = rouge_scorer.RougeScorer(
+            ["rouge1", "rouge2", "rougeL"], use_stemmer=True
+        )
+        r1_total = 0.0
+        r2_total = 0.0
+        rl_total = 0.0
+        for pred, ref in zip(predictions, references):
+            scores = scorer.score(ref or "", pred or "")
+            r1_total += float(scores["rouge1"].fmeasure)
+            r2_total += float(scores["rouge2"].fmeasure)
+            rl_total += float(scores["rougeL"].fmeasure)
+        n = len(predictions)
+        return {
+            "rouge_1": round(r1_total / n, 4),
+            "rouge_2": round(r2_total / n, 4),
+            "rouge_l": round(rl_total / n, 4),
+        }
+
+    def _legacy_em_f1(
+        self,
+        predictions: list[str],
+        references: list[str],
+    ) -> dict[str, float]:
+        # Lazy import to avoid the cyclic dependency (evaluation_service
+        # imports this module too).
+        from app.services.evaluation_service import exact_match, f1_score
+
+        if not predictions:
+            return {"exact_match": 0.0, "f1": 0.0}
+        em_scores = [exact_match(p, r) for p, r in zip(predictions, references)]
+        f1_scores = [f1_score(p, r) for p, r in zip(predictions, references)]
+        n = len(predictions)
+        return {
+            "exact_match": round(sum(em_scores) / n, 4),
+            "f1": round(sum(f1_scores) / n, 4),
+        }
+
+    def _length_ratio(
+        self,
+        predictions: list[str],
+        references: list[str],
+    ) -> float:
+        if not predictions:
+            return 0.0
+        pred_tokens = sum(len((p or "").split()) for p in predictions)
+        ref_tokens = sum(len((r or "").split()) for r in references)
+        if ref_tokens == 0:
+            return 0.0
+        return round(pred_tokens / ref_tokens, 4)
+
+    def score(
+        self,
+        predictions: list[dict[str, Any]],
+        ctx: EvalContext,
+    ) -> dict[str, Any]:
+        subtask = self._resolve_subtask(ctx)
+        pred_texts: list[str] = [str(p.get("prediction") or "") for p in predictions]
+        ref_texts: list[str] = [str(p.get("reference") or "") for p in predictions]
+        total = len(predictions)
+
+        metrics: dict[str, Any] = {
+            "subtask": subtask,
+            "total": total,
+            "length_ratio": self._length_ratio(pred_texts, ref_texts),
+        }
+        # Always alongside: legacy EM/F1 so gates keyed on those keep
+        # working without a pack migration.
+        metrics.update(self._legacy_em_f1(pred_texts, ref_texts))
+
+        if subtask == self.SUBTASK_TRANSLATION:
+            metrics.update(self._score_bleu_chrf(pred_texts, ref_texts))
+        elif subtask == self.SUBTASK_PARAPHRASE:
+            # Paraphrase wants both lexical (BLEU) and structural (ROUGE)
+            # signal — produce both.
+            metrics.update(self._score_bleu_chrf(pred_texts, ref_texts))
+            metrics.update(self._score_rouge(pred_texts, ref_texts))
+        else:  # summarization (default)
+            metrics.update(self._score_rouge(pred_texts, ref_texts))
+
+        return metrics
+
+
 # ── Registry + dispatcher ─────────────────────────────────────────────
 
 
@@ -606,6 +890,7 @@ def build_eval_context(
 # New handlers register themselves here as they land (Phase 5.3.2+).
 
 register_handler("classification", ClassificationHandler)
+register_handler("seq2seq", Seq2SeqHandler)
 
 
 __all__ = [
@@ -613,6 +898,7 @@ __all__ = [
     "ClassificationHandler",
     "EvalContext",
     "GenericHandler",
+    "Seq2SeqHandler",
     "TaskHandler",
     "build_eval_context",
     "list_registered_profiles",
