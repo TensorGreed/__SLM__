@@ -116,11 +116,13 @@ class Phase87DemoProjectTests(unittest.TestCase):
         slugs = {a["slug"] for a in archetypes}
         self.assertIn("support-faq", slugs)
         self.assertIn("sentiment-classifier", slugs)
+        self.assertIn("pii-detector", slugs)
         by_slug = {a["slug"]: a for a in archetypes}
         self.assertTrue(by_slug["support-faq"]["headline"])
         self.assertTrue(by_slug["support-faq"]["suggested_brief"])
         self.assertEqual(by_slug["sentiment-classifier"]["task_profile"], "classification")
         self.assertEqual(by_slug["sentiment-classifier"]["target_profile"], "mobile_cpu")
+        self.assertEqual(by_slug["pii-detector"]["task_profile"], "structured_extraction")
 
     # ------------------------------------------------------------------
     # 2. Seeder writes project + dataset + gold set
@@ -366,6 +368,101 @@ class Phase87DemoProjectTests(unittest.TestCase):
         self.assertEqual(
             payload["labels"], ["positive", "neutral", "negative"]
         )
+
+    # ------------------------------------------------------------------
+    # 3b. PII / PCI detector demo (structured_extraction)
+    # ------------------------------------------------------------------
+
+    def test_seed_pii_detector_full_bundle(self):
+        async def _seed():
+            async with async_session_factory() as db:
+                project, summary = await seed_demo_project(db, "pii-detector")
+                await db.commit()
+                return project.id, summary
+
+        project_id, summary = asyncio.run(_seed())
+        self.assertEqual(summary["slug"], "pii-detector")
+        self.assertEqual(summary["adapter_id"], "structured-extraction")
+        self.assertEqual(summary["task_profile"], "structured_extraction")
+        # The bundle ships 61 training rows and 25 gold rows.
+        self.assertEqual(summary["source_row_count"], 61)
+        self.assertEqual(summary["gold_row_count"], 25)
+
+        async def _inspect():
+            async with async_session_factory() as db:
+                project = await db.get(Project, project_id)
+                self.assertIsNotNone(project)
+                self.assertTrue(project.beginner_mode)
+                preset = project.dataset_adapter_preset or {}
+                self.assertEqual(preset["demo_slug"], "pii-detector")
+                self.assertEqual(preset["adapter_id"], "structured-extraction")
+                self.assertEqual(preset["task_profile"], "structured_extraction")
+
+        asyncio.run(_inspect())
+
+        # Prepared manifest carries the structured_extraction shape:
+        # task_profile + output_schema + entity_types. The
+        # StructuredExtractionHandler reads output_schema to drive its
+        # field-level metrics + prompt template.
+        import json as _json
+        prepared_manifest = (
+            settings.DATA_DIR
+            / "projects"
+            / str(project_id)
+            / "prepared"
+            / "manifest.json"
+        )
+        self.assertTrue(prepared_manifest.exists())
+        payload = _json.loads(prepared_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["task_profile"], "structured_extraction")
+        self.assertIn("output_schema", payload)
+        schema = payload["output_schema"]
+        self.assertIn("entities", schema["properties"])
+        self.assertIn("entities", schema["required"])
+        # Entity types echoed for the UI / docs.
+        self.assertIn("email", payload["entity_types"])
+        self.assertIn("credit_card", payload["entity_types"])
+        self.assertIn("ssn", payload["entity_types"])
+
+        # Each prepared/train.jsonl row has a JSON-string target_text
+        # (the gold entities payload) — the StructuredExtractionHandler
+        # parses this at eval time.
+        train_path = (
+            settings.DATA_DIR
+            / "projects"
+            / str(project_id)
+            / "prepared"
+            / "train.jsonl"
+        )
+        with train_path.open("r", encoding="utf-8") as fh:
+            train_rows = [
+                _json.loads(line) for line in fh if line.strip()
+            ]
+        self.assertGreater(len(train_rows), 0)
+        for row in train_rows[:5]:
+            # input/output shape preserved
+            self.assertTrue(row.get("text"))
+            self.assertTrue(row.get("target_text"))
+            # target_text parses as JSON with an "entities" key
+            parsed = _json.loads(row["target_text"])
+            self.assertIn("entities", parsed)
+            self.assertIsInstance(parsed["entities"], list)
+
+        # Gold JSONL: legacy {id, question, answer} shape with answer
+        # holding the JSON-stringified entities list (not Python repr).
+        gold_path = (
+            settings.DATA_DIR
+            / "projects"
+            / str(project_id)
+            / "gold"
+            / "gold_dev.jsonl"
+        )
+        with gold_path.open("r", encoding="utf-8") as fh:
+            first_gold = _json.loads(fh.readline())
+        self.assertTrue(first_gold["question"])
+        # answer must be valid JSON with single quotes nowhere
+        parsed_answer = _json.loads(first_gold["answer"])
+        self.assertIn("entities", parsed_answer)
 
     # ------------------------------------------------------------------
     # 4. Errors

@@ -16,6 +16,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Demo projects',
+      items: [
+        'demos/pii-detector',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Concepts',
       items: [
         'concepts/architecture',

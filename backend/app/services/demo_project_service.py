@@ -147,6 +147,8 @@ def _adapter_for_task(task_profile: str) -> str:
     task = str(task_profile or "").strip().lower()
     if task == "classification":
         return "classification-label"
+    if task in ("structured_extraction", "extraction"):
+        return "structured-extraction"
     return "qa-pair"
 
 
@@ -338,21 +340,37 @@ async def seed_demo_project(
         # Map the bundle's input / expected dicts onto the legacy
         # question / answer fields the UI hardcodes. For sentiment we
         # use input.text / expected.label; for support-faq we use
-        # input.question / expected.answer.
+        # input.question / expected.answer; for PII we use
+        # input.text / expected.entities (a list, JSON-encoded below).
         question = (
             inp.get("question")
             or inp.get("text")
             or next(iter(inp.values()), "")
         )
-        answer = (
-            exp.get("answer")
-            or exp.get("label")
-            or next(iter(exp.values()), "")
-        )
+        # Pick the most specific scalar field first (answer/label). For
+        # structured-extraction gold rows whose `expected` is a typed
+        # dict like `{"entities": [...]}`, preserve the whole dict so
+        # the reference structure round-trips through to scoring.
+        if exp.get("answer") is not None:
+            answer_raw = exp["answer"]
+        elif exp.get("label") is not None:
+            answer_raw = exp["label"]
+        elif isinstance(exp, dict) and exp:
+            answer_raw = exp
+        else:
+            answer_raw = ""
+        # JSON-encode complex answers (lists, dicts) so the gold panel
+        # shows valid JSON instead of Python repr. Strings pass through.
+        if isinstance(answer_raw, str):
+            answer = answer_raw
+        elif answer_raw is None:
+            answer = ""
+        else:
+            answer = json.dumps(answer_raw, ensure_ascii=False)
         legacy_entries.append({
             "id": idx + 1,
             "question": str(question),
-            "answer": str(answer),
+            "answer": answer,
             "difficulty": "medium",
             "criticality": "normal",
             "is_hallucination_trap": False,
@@ -462,6 +480,19 @@ async def seed_demo_project(
     bundle_labels = manifest.get("labels")
     if isinstance(bundle_labels, list) and bundle_labels:
         prepared_manifest["labels"] = [str(l).strip() for l in bundle_labels if str(l).strip()]
+    # Phase 5.3.4: same idea for structured-extraction demos —
+    # StructuredExtractionHandler reads `output_schema` from the
+    # prepared manifest to drive per-field metrics + the prompt
+    # template's field list. Forward `entity_types` too as a
+    # diagnostic hint for the UI / docs.
+    bundle_schema = manifest.get("output_schema")
+    if isinstance(bundle_schema, dict) and bundle_schema:
+        prepared_manifest["output_schema"] = bundle_schema
+    bundle_entity_types = manifest.get("entity_types")
+    if isinstance(bundle_entity_types, list) and bundle_entity_types:
+        prepared_manifest["entity_types"] = [
+            str(t).strip() for t in bundle_entity_types if str(t).strip()
+        ]
     manifest_path = prepared_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(prepared_manifest, indent=2), encoding="utf-8"

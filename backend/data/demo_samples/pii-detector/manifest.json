@@ -1,0 +1,46 @@
+{
+  "slug": "pii-detector",
+  "name": "Demo · PII / PCI Detector",
+  "headline": "Span-level PII / PCI detector for redaction & guardrails",
+  "description": "Pre-loaded with 60 synthetic chat / log / form snippets and a 25-row gold set. Each row's gold answer is a JSON object listing every PII / PCI span found in the text — type, start offset, end offset, and the raw value — so the trained model can plug into LlamaFirewall or any redaction pipeline that needs structured entity output. Covers email, phone, SSN, credit card, person_name, street_address, date_of_birth, ip_address, api_key, bank_account.",
+  "task_profile": "structured_extraction",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "pii_records.csv",
+  "dataset_input_field": "text",
+  "dataset_output_field": "entities_json",
+  "output_schema": {
+    "properties": {
+      "entities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "start": { "type": "integer" },
+            "end": { "type": "integer" },
+            "text": { "type": "string" }
+          },
+          "required": ["type", "start", "end", "text"]
+        }
+      }
+    },
+    "required": ["entities"]
+  },
+  "entity_types": [
+    "email",
+    "phone",
+    "ssn",
+    "credit_card",
+    "person_name",
+    "street_address",
+    "date_of_birth",
+    "ip_address",
+    "api_key",
+    "bank_account"
+  ],
+  "gold_filename": "gold.jsonl",
+  "suggested_brief": "Train a span-level PII / PCI detector that takes a snippet of text and emits a JSON object {\"entities\": [{type, start, end, text}, ...]} naming every sensitive value it finds. Targets covered: email, phone, SSN, credit card, person_name, street_address, date_of_birth, ip_address, api_key, bank_account. Output must be valid JSON so it can drop into a LlamaFirewall scanner or any redaction pipeline. Optimize for recall — false negatives leak PII; false positives are cheaper to dismiss.",
+  "docs_path": "demos/pii-detector"
+}
