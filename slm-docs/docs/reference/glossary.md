@@ -184,7 +184,20 @@ Redacted zip export of recent RunEvents + failure clusters + deployment state + 
 
 ## Target mapper (dataset import)
 
-Pluggable transform that turns raw source rows into one of BrewSLM's canonical task shapes. Domain-agnostic by design — a single `bio_to_spans` mapper serves PII, medical, legal, and financial NER; the per-row [Schema introspection](#schema-introspection) result picks the right one and fills the field map. Built-ins ship for `bio_to_spans` (→ structured_extraction) and `label_to_classification` (→ classification); the planned mapper catalog adds `preference_pair`, `rag_passthrough`, `qa_pair_passthrough`, `chat_messages_passthrough`, `kv_to_structured`, and `text_only`. Every mapper declares its target task profile so the orchestrator validates project/mapper compatibility before a row lands.
+Pluggable transform that turns raw source rows into one of BrewSLM's canonical task shapes. Domain-agnostic by design — a single `bio_to_spans` mapper serves PII, medical, legal, and financial NER; the per-row [Schema introspection](#schema-introspection) result picks the right one and fills the field map. Every mapper declares its target task profile so the orchestrator validates project/mapper compatibility before a row lands. Catalog today (one file per mapper, registered at import time):
+
+| Mapper id | Target task profile | Use when the row carries… |
+|---|---|---|
+| `bio_to_spans` | `structured_extraction` (span_set) | BIO-tagged tokens + labels (NER / PII) |
+| `label_to_classification` | `classification` | `{text, label}` |
+| `text_only` | `language_modeling` | a single text column, no labels |
+| `qa_pair_passthrough` | `qa` | `{question, answer}` |
+| `chat_messages_passthrough` | `chat_sft` | a `messages` list of `{role, content}` dicts |
+| `preference_pair` | `dpo` | `{prompt, chosen, rejected}` (RLHF / DPO / ORPO) |
+| `rag_passthrough` | `rag_qa` | `{question, context, answer}` (grounded QA) |
+| `kv_to_structured` | `structured_extraction` (field_match) | flat key-value extractions (invoices / forms) |
+
+The introspector's `--auto` flow detects every shape above *except* `kv_to_structured` — that one needs an explicit `fields` config the introspector can't infer. Plugin mappers via Phase H.
 
 ## Target profile
 

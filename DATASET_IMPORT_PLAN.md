@@ -318,38 +318,68 @@ threshold the CLI exits with a message naming the override path.
 
 ---
 
-## Phase C — Mapper catalog expansion
+## Phase C — Mapper catalog expansion (shipped)
 
 **Goal**: cover the common dataset shapes BrewSLM cares about. Each
 mapper is a thin wrapper around a well-understood transform.
 
-### User stories
-- *As a developer with a CSV of `(prompt, chosen, rejected)` rows
-  from an RLHF dataset*, I want `--mapper preference_pair` to feed
-  the AlignmentHandler directly.
-- *As a developer with a JSONL of `{question, context, answer}`
-  rows*, I want `--mapper rag_passthrough` to land them in a
-  RAGHandler-shaped project.
-- *As a developer with a CSV of structured invoice extractions*,
-  I want `--mapper kv_to_structured` to wrap field values into the
-  `{entities: [{field, value}]}` shape the
-  StructuredExtractionHandler consumes.
+### What landed
+- Six new mappers, one file each, registered at import time:
+  - `text_only` (`language_modeling`) — single-column LM passthrough,
+    optional `min_chars` gate.
+  - `qa_pair_passthrough` (`qa`) — `{question, answer}` with fallback
+    column precedence (prompt / instruction / input,
+    response / completion / output / target_text) mirroring
+    `evaluation_service._extract_prompt_and_reference`.
+  - `chat_messages_passthrough` (`chat_sft`) — list of
+    `{role, content}` dicts; alt `value` / `text` keys; rejects
+    no-assistant-reply turns by default; emits `prompt` (rendered
+    history) + `reference` (final assistant content) + the cleaned
+    `messages` list for chat-template inference.
+  - `preference_pair` (`dpo`) — `{prompt, chosen, rejected}` with
+    DPO/ORPO-friendly fallback names; rejects degenerate
+    `identical_pair` rows.
+  - `rag_passthrough` (`rag_qa`) — `{question, context, answer}` with
+    legacy `prompt` / `reference` aliases for non-RAG handlers
+    reading the same row.
+  - `kv_to_structured` (`structured_extraction`) — flat key-value
+    extractions → `{"entities":[{"field","value"}]}`; supports list-
+    or dict-form field config; `skip_empty_fields` toggle.
+- Each mapper's `declared_target()` is registered in the eval task
+  handler dispatcher — no fall-through to `GenericHandler`. A test
+  pins the mapper → handler-profile mapping so it can't drift.
+- Introspector detection rules added (`backend/app/services/dataset_import/introspector.py`):
+  - chat_messages column → `chat_messages_passthrough` (0.95).
+  - `{prompt, chosen, rejected}` triple → `preference_pair` (~0.92).
+  - `{question, context, answer}` triple → `rag_passthrough` (~0.85+);
+    `context` column name is the strong signal so RAG outranks
+    classification even when the answer is short enough to be sniffed
+    as categorical.
+  - `{question, answer}` *without* a context column →
+    `qa_pair_passthrough` (~0.92).
+  - Single text column + no labels / structured columns → `text_only`
+    (~0.85+). Stays below the stronger hypotheses when those are
+    present.
+  - `kv_to_structured` is deliberately NOT detection-eligible —
+    it needs an explicit `fields` config the introspector can't
+    invent. The UI wizard (Phase F) will surface it as a "build
+    my own" option.
+- Tests: `backend/tests/test_phase103_dataset_import_mapper_catalog.py`
+  — 31 tests covering each mapper's happy path + rejection codes,
+  the new detection rules, and an end-to-end `--auto` CLI
+  preview on a preference dataset.
+- Docs: mapper catalog refreshed in
+  [glossary "Target mapper" entry](slm-docs/docs/reference/glossary.md#target-mapper-dataset-import);
+  data-ingestion workflow callout enumerates the new mapper ids;
+  this Phase C section marked shipped.
 
-### Work
-- Mappers:
-  - `qa_pair_passthrough` (the simplest case — `{question, answer}`
-    columns straight through)
-  - `chat_messages_passthrough`
-  - `preference_pair` (DPO / ORPO)
-  - `rag_passthrough` (`question + context + answer`)
-  - `kv_to_structured` (flat fields → JSON object in `entities_json`)
-  - `text_only` (for plain LM training — single `text` column)
-- Each mapper's `declared_target()` aligns with one of the task
-  handlers from `TASK_AWARE_EVAL_PLAN.md`.
-
-### Out of scope
-- Custom mappers via plugin system (Phase H).
-- Multi-stage mappers (chain two transforms).
+### Out of scope (later phases)
+- Custom mappers via plugin system → Phase H.
+- Multi-stage mappers (chain two transforms) — not planned; the
+  pipeline contract treats each row as a single source → mapper hop.
+- Detection rules for `kv_to_structured` — would require schema
+  hints the introspector can't infer; deferred to Phase F's UI
+  wizard.
 
 ---
 

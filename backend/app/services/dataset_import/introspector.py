@@ -372,6 +372,30 @@ def _column_lengths_match(
     return pairs >= 1 and matching == pairs
 
 
+def _find_column(
+    signatures: dict[str, ColumnSignature],
+    names: tuple[str, ...],
+    column_types: tuple[str, ...] | None = None,
+) -> ColumnSignature | None:
+    """Return the first signature whose name is in ``names`` (case
+    insensitive) and whose type (if filtered) matches one of
+    ``column_types``.
+
+    Used by the convention-driven hypothesis builders (preference_pair,
+    rag_passthrough, qa_pair, chat_messages_passthrough) so the
+    detection rules read top-to-bottom rather than via deeply nested
+    loops."""
+
+    lower = {n.lower() for n in names}
+    for sig in signatures.values():
+        if sig.name.lower() not in lower:
+            continue
+        if column_types is not None and sig.column_type not in column_types:
+            continue
+        return sig
+    return None
+
+
 def detect_shape(
     signatures: dict[str, ColumnSignature],
     sample_rows: list[dict[str, Any]],
@@ -382,10 +406,12 @@ def detect_shape(
     the top one for ``--auto``; users can override by passing a
     specific ``mapper_id`` to bypass detection entirely.
 
-    Phase B has two registered mappers (bio_to_spans,
-    label_to_classification), so the detector returns hypotheses
-    keyed on those. Phase C's mapper expansion adds detection rules
-    for preference_pair / rag_passthrough / qa_pair / etc.
+    Detection rules cover the Phase B + C mappers — bio_to_spans,
+    label_to_classification, chat_messages_passthrough, preference_pair,
+    rag_passthrough, qa_pair_passthrough, text_only. The
+    ``kv_to_structured`` mapper isn't detection-eligible (it requires
+    an explicit ``fields`` list the introspector can't infer); the UI
+    wizard will expose it as a "build my own" option.
     """
 
     hypotheses: list[ShapeHypothesis] = []
@@ -401,6 +427,9 @@ def detect_shape(
     ]
     categorical_columns = [
         s for s in signatures.values() if s.column_type == CATEGORICAL
+    ]
+    chat_columns = [
+        s for s in signatures.values() if s.column_type == CHAT_MESSAGES
     ]
 
     # ── bio_to_spans (NER) ──
@@ -493,6 +522,160 @@ def detect_shape(
                     + ")"
                 ),
                 warnings=warnings,
+            )
+        )
+
+    # ── chat_messages_passthrough ──
+    # A column already shaped as a list of {role, content} dicts is
+    # an unambiguous chat-data signal.
+    for chat_sig in chat_columns:
+        hypotheses.append(
+            ShapeHypothesis(
+                mapper_id="chat_messages_passthrough",
+                target_task_profile="chat_sft",
+                field_map={"messages_field": chat_sig.name},
+                confidence=0.95,
+                rationale=(
+                    f"detected chat-messages column '{chat_sig.name}' "
+                    "(list of {role, content} dicts)"
+                ),
+            )
+        )
+
+    # ── preference_pair ──
+    # Convention-driven: a {prompt, chosen, rejected} triple of text
+    # columns. The mapper's per-row fallbacks (preferred/accepted/etc)
+    # widen the input space, but the introspector keys off the
+    # canonical names to avoid false positives.
+    prompt_sig = _find_column(
+        signatures, ("prompt", "question", "instruction", "input"),
+        column_types=(TEXT_LIKE,),
+    )
+    chosen_sig = _find_column(
+        signatures, ("chosen", "preferred", "accepted", "response_chosen"),
+        column_types=(TEXT_LIKE,),
+    )
+    rejected_sig = _find_column(
+        signatures, ("rejected", "dispreferred", "response_rejected", "negative"),
+        column_types=(TEXT_LIKE,),
+    )
+    if prompt_sig and chosen_sig and rejected_sig:
+        confidence = min(
+            0.95,
+            (prompt_sig.confidence + chosen_sig.confidence + rejected_sig.confidence) / 3
+            + 0.1,  # convention bonus — these names are load-bearing
+        )
+        hypotheses.append(
+            ShapeHypothesis(
+                mapper_id="preference_pair",
+                target_task_profile="dpo",
+                field_map={
+                    "prompt_field": prompt_sig.name,
+                    "chosen_field": chosen_sig.name,
+                    "rejected_field": rejected_sig.name,
+                },
+                confidence=confidence,
+                rationale=(
+                    f"detected preference triple: prompt='{prompt_sig.name}', "
+                    f"chosen='{chosen_sig.name}', rejected='{rejected_sig.name}'"
+                ),
+            )
+        )
+
+    # ── rag_passthrough ──
+    # {question, context, answer} triple. Context is the discriminator
+    # against plain QA — without it we'd land on qa_pair_passthrough.
+    question_sig = _find_column(
+        signatures, ("question", "query", "prompt", "instruction", "input"),
+        column_types=(TEXT_LIKE,),
+    )
+    context_sig = _find_column(
+        signatures, ("context", "passage", "document", "evidence", "retrieved_context"),
+        column_types=(TEXT_LIKE,),
+    )
+    # Answer can be short ("Paris", "1945") and get classified as
+    # categorical on a small sample — accept either type here. The
+    # presence of a conventionally-named context column is already
+    # the strong RAG signal; we just need *some* answer column.
+    answer_sig = _find_column(
+        signatures, ("answer", "reference", "completion", "response", "output", "target_text"),
+        column_types=(TEXT_LIKE, CATEGORICAL),
+    )
+    if question_sig and context_sig and answer_sig:
+        confidence = min(
+            0.95,
+            (question_sig.confidence + context_sig.confidence + answer_sig.confidence) / 3
+            + 0.1,
+        )
+        hypotheses.append(
+            ShapeHypothesis(
+                mapper_id="rag_passthrough",
+                target_task_profile="rag_qa",
+                field_map={
+                    "question_field": question_sig.name,
+                    "context_field": context_sig.name,
+                    "answer_field": answer_sig.name,
+                },
+                confidence=confidence,
+                rationale=(
+                    f"detected RAG triple: question='{question_sig.name}', "
+                    f"context='{context_sig.name}', answer='{answer_sig.name}'"
+                ),
+            )
+        )
+
+    # ── qa_pair_passthrough ──
+    # {question, answer} WITHOUT a context column. We deliberately
+    # don't propose QA when context exists — rag_passthrough is the
+    # stronger interpretation in that case.
+    if question_sig and answer_sig and not context_sig:
+        confidence = min(
+            0.92,
+            (question_sig.confidence + answer_sig.confidence) / 2 + 0.1,
+        )
+        hypotheses.append(
+            ShapeHypothesis(
+                mapper_id="qa_pair_passthrough",
+                target_task_profile="qa",
+                field_map={
+                    "question_field": question_sig.name,
+                    "answer_field": answer_sig.name,
+                },
+                confidence=confidence,
+                rationale=(
+                    f"detected QA pair: question='{question_sig.name}', "
+                    f"answer='{answer_sig.name}'"
+                ),
+            )
+        )
+
+    # ── text_only ──
+    # Fallback for pure LM corpora: exactly one text column, nothing
+    # else useful to anchor on. Confidence stays modest so any of the
+    # stronger hypotheses above outranks it.
+    if (
+        len(text_columns) == 1
+        and not categorical_columns
+        and not bio_columns
+        and not chat_columns
+        and not (question_sig and answer_sig)
+    ):
+        text_sig = text_columns[0]
+        # If column is named "text" convention bonus; otherwise the
+        # underlying text_confidence carries the proposal.
+        name_bonus = 0.05 if text_sig.name.lower() == "text" else 0.0
+        confidence = min(0.9, text_sig.confidence + name_bonus)
+        hypotheses.append(
+            ShapeHypothesis(
+                mapper_id="text_only",
+                target_task_profile="language_modeling",
+                field_map={"text_field": text_sig.name},
+                confidence=confidence,
+                rationale=(
+                    f"single text column '{text_sig.name}' with no "
+                    "label / structured-extraction signal — best fit for "
+                    "plain LM training"
+                ),
             )
         )
 

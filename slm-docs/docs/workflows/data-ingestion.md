@@ -79,7 +79,18 @@ python -m app.cli.dataset_import run \
   --map-json '{"entity_type_map": {"NAME_STUDENT": "person_name"}}'
 ```
 
-See [Schema introspection](../reference/glossary.md#schema-introspection) and the [PII demo `--auto` walkthrough](../demos/pii-detector.md#skip-the-converter-with---auto).
+The introspector auto-detects every mapper in the catalog except `kv_to_structured` (which needs an explicit `fields` config). Current built-ins:
+
+- `bio_to_spans` — BIO-tagged tokens → entity spans (NER / PII).
+- `label_to_classification` — `{text, label}` for sentiment / intent.
+- `text_only` — single text column for plain LM training.
+- `qa_pair_passthrough` — `{question, answer}` for short-answer QA.
+- `chat_messages_passthrough` — `messages` list for chat SFT.
+- `preference_pair` — `{prompt, chosen, rejected}` for DPO / ORPO.
+- `rag_passthrough` — `{question, context, answer}` for grounded QA.
+- `kv_to_structured` — flat key-value extractions for invoices / forms (manual `--map-json '{"fields":[...]}'`).
+
+See [Schema introspection](../reference/glossary.md#schema-introspection), [Target mapper](../reference/glossary.md#target-mapper-dataset-import), and the [PII demo `--auto` walkthrough](../demos/pii-detector.md#skip-the-converter-with---auto).
 
 ## Step 2 — Clean
 
