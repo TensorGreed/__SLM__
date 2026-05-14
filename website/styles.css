@@ -1030,6 +1030,14 @@ main {
 
 
 /* ── Reveal animation ───────────────────────────────────────────────── */
+/*
+ * script.js owns the visibility toggle: an IntersectionObserver adds
+ * the `.show` class as each `.reveal` element scrolls into view.
+ * Until then the element is at opacity 0 + 8px down.
+ *
+ * Fallback (no JS): the @media query below restores visibility for
+ * users who disabled JS or for crawlers reading the DOM pre-script.
+ */
 
 .reveal {
   opacity: 0;
@@ -1037,7 +1045,7 @@ main {
   transition: opacity 360ms ease, transform 360ms ease;
 }
 
-.reveal.is-visible {
+.reveal.show {
   opacity: 1;
   transform: translateY(0);
 }
@@ -1045,6 +1053,10 @@ main {
 @media (prefers-reduced-motion: reduce) {
   .reveal { opacity: 1; transform: none; transition: none; }
 }
+
+/* If JS is disabled, IntersectionObserver never fires. Show
+ * everything so the page is still readable. */
+html.no-js .reveal { opacity: 1; transform: none; }
 
 
 /* ── Print ──────────────────────────────────────────────────────────── */
