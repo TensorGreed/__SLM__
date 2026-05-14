@@ -171,8 +171,9 @@ Pluggable loader for an external dataset system — one file per source, registe
 | `jsonl` | `jsonl:/path/to/file.jsonl` | One JSON object per line. Unparseable lines surface as `__parse_error__` sentinel rows. |
 | `csv` | `csv:/path/to/file.csv` | First row is the header. Every cell is a string; mappers handle type coercion. |
 | `hf` | `hf:<dataset_id>[:<split>[:<revision>]]` | Wraps `datasets.load_dataset` with `streaming=True`. Auth via `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`. Multi-split DatasetDict picks first key when split isn't pinned. |
+| `kaggle` | `kaggle:competition:<slug>` / `kaggle:dataset:<owner/slug>` (optional `?file=<path>`) | Downloads + extracts via the Kaggle Python API. Cache under `$BREWSLM_KAGGLE_CACHE` (default `~/.cache/brewslm/kaggle/`). Auth via `KAGGLE_USERNAME` + `KAGGLE_KEY` or `~/.kaggle/kaggle.json`. |
 
-Planned: `kaggle` (Phase E — wraps the Kaggle CLI). Plugin sources via Phase H.
+Plugin sources via Phase H.
 
 ## Starter pack
 

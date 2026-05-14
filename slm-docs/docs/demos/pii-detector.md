@@ -282,6 +282,30 @@ brewslm dataset import \
   --adapter-preset structured-extraction
 ```
 
+#### Faster path: `kaggle:` locator + `--auto`
+
+The generic dataset-import pipeline can fetch + extract + introspect
+the same competition in one command — no unzip, no bespoke converter:
+
+```sh
+# Auth once (or drop a kaggle.json into ~/.kaggle/).
+export KAGGLE_USERNAME=<user>
+export KAGGLE_KEY=<key>
+
+# Inspect first — streams the first 20 rows for the sniffer.
+python -m app.cli.dataset_import introspect \
+  --locator 'kaggle:competition:pii-detection-removal-from-educational-data'
+
+# Land 5k rows directly into the project's synthetic dataset.
+python -m app.cli.dataset_import run \
+  --locator 'kaggle:competition:pii-detection-removal-from-educational-data' \
+  --project <id> --auto --limit 5000
+```
+
+The connector caches the download under `~/.cache/brewslm/kaggle/`,
+so re-runs skip the network. Multi-file archives get disambiguated
+via `?file=<path>` on the locator.
+
 The converter ships alongside the demo bundle generator at
 [backend/data/demo_samples/pii-detector/kaggle_pii_to_brewslm.py](https://github.com/anugram/__SLM__/blob/main/backend/data/demo_samples/pii-detector/kaggle_pii_to_brewslm.py).
 It walks each essay's BIO-tagged tokens, merges B-X / I-X runs into

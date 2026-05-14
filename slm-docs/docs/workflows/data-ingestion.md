@@ -67,6 +67,7 @@ Source locators today:
 - `jsonl:/path/to/file.jsonl`
 - `csv:/path/to/file.csv`
 - `hf:<dataset_id>[:<split>[:<revision>]]` — fetches directly from the HuggingFace Hub via the `datasets` library (set `HF_TOKEN` for gated datasets).
+- `kaggle:competition:<slug>` / `kaggle:dataset:<owner/slug>` — downloads + extracts via the Kaggle API (set `KAGGLE_USERNAME` + `KAGGLE_KEY` or drop a `~/.kaggle/kaggle.json`). Append `?file=<path>` to disambiguate multi-file archives.
 
 ```sh
 # Sniff a JSONL file and print the proposed mapping (no writes).
@@ -76,6 +77,10 @@ python -m app.cli.dataset_import introspect \
 # Same, but from HuggingFace — streams the first 20 rows for sniffing.
 python -m app.cli.dataset_import introspect \
   --locator hf:imdb:train
+
+# Or from Kaggle — downloads + extracts on first run, cached for re-runs.
+python -m app.cli.dataset_import introspect \
+  --locator 'kaggle:competition:pii-detection-removal-from-educational-data'
 
 # Run with --auto: the introspector picks the mapper + field_map
 # when confidence ≥ 0.8. Falls back to --force below the threshold.

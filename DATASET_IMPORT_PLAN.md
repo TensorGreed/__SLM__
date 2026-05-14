@@ -451,31 +451,80 @@ HF_TOKEN=hf_… python -m app.cli.dataset_import preview \
 
 ---
 
-## Phase E — Kaggle source connector
+## Phase E — Kaggle source connector (shipped)
 
 **Goal**: import Kaggle competition + dataset data via the Kaggle CLI.
 
-### User stories
-- *As a developer doing the Kaggle PII competition*, I want
-  `--source kaggle:competition:pii-detection-removal-from-educational-data`
-  to download + extract + introspect + map + import — same one-line
-  flow as HuggingFace.
-- *As a developer with a Kaggle dataset (not competition)*, I want
-  `--source kaggle:dataset:user/dataset-name` to work the same way.
+### What landed
+- New connector `backend/app/services/dataset_import/sources/kaggle.py`
+  registered under `source_id = "kaggle"`.
+- Locator format:
+  - `kaggle:competition:<slug>`
+  - `kaggle:dataset:<owner/slug>`
+  - Optional `?file=<path-inside-archive>` suffix to disambiguate
+    multi-file archives.
+- Uses the `kaggle` Python API directly (`KaggleApi.authenticate()` +
+  `competition_download_files` / `dataset_download_files`) — cheaper
+  + cleaner than subprocess. The `kaggle` package's hostile
+  ``sys.exit(1)`` on import (when creds are missing) is sidestepped
+  by importing it lazily inside `describe()` / `load()` *after* a
+  pre-flight `_check_auth()` runs.
+- Auth: reads `KAGGLE_USERNAME` + `KAGGLE_KEY` env vars, or falls
+  back to `~/.kaggle/kaggle.json`. Missing creds raise
+  `PermissionError` with a link to the API-token page.
+- Cache: archives extracted under `$BREWSLM_KAGGLE_CACHE` (default
+  `~/.cache/brewslm/kaggle/`). Slug-scoped subdirs
+  (`competition__<slug>/` / `dataset__<owner_slug>/`). Re-runs skip
+  the network when extracted data files are already present.
+- File picking heuristic (one place, deterministic):
+  1. Explicit `?file=` in the locator.
+  2. `train.*` when exactly one match exists.
+  3. Single `.jsonl` / `.json` / `.csv` / `.tsv` file in the archive.
+  4. Otherwise: clear error listing candidates + the `?file=` hint.
+- Row iteration covers `.jsonl` (line-per-object), `.json` (top-level
+  array — Kaggle's PII competition's `train.json` shape), `.csv`, and
+  `.tsv`. Unparseable JSONL lines surface as the same
+  `__parse_error__` sentinel the jsonl source uses, so downstream
+  mappers handle them via the existing per-row accountability path.
+- Tests: `backend/tests/test_phase105_dataset_import_kaggle_source.py`
+  — 33 tests covering locator parsing variants, slug sanitization,
+  auth pre-flight (env + kaggle.json + missing), file-picking
+  heuristic (8 cases), format iteration (jsonl / json / csv / tsv +
+  rejection paths), registry wiring, missing-package error contract,
+  and an end-to-end load/describe through a pre-extracted cache dir
+  (no network).
+- Docs: workflow callout in
+  [data-ingestion](slm-docs/docs/workflows/data-ingestion.md);
+  glossary [Source connector](slm-docs/docs/reference/glossary.md#source-connector-dataset-import)
+  table refreshed; PII demo gets a `kaggle:` example alongside the
+  bespoke converter path.
 
-### Work
-- New connector `dataset_import/sources/kaggle.py`. Shells out to
-  `kaggle competitions download` / `kaggle datasets download`.
-- Locator format: `kaggle:competition:<slug>` /
-  `kaggle:dataset:<user/slug>`.
-- Auth: reads `KAGGLE_USERNAME` + `KAGGLE_KEY` from settings /
-  project secrets. Surfaces clear error when missing.
-- Auto-extracts the downloaded zip; finds the train.json / .csv
-  inside.
+### Manual smoke test (online — needs Kaggle auth)
+```sh
+# Set creds first (or drop ~/.kaggle/kaggle.json).
+export KAGGLE_USERNAME=<user>
+export KAGGLE_KEY=<key>
+
+# Public competition data.
+python -m app.cli.dataset_import introspect \
+  --locator 'kaggle:competition:pii-detection-removal-from-educational-data'
+
+# Or a community dataset.
+python -m app.cli.dataset_import preview \
+  --locator 'kaggle:dataset:ekohrt/pii-data-detection-dataset' \
+  --auto --sample-cap 5
+
+# Disambiguate a multi-file archive.
+python -m app.cli.dataset_import run \
+  --locator 'kaggle:competition:<slug>?file=data/train.json' \
+  --project 1 --auto --limit 5000
+```
 
 ### Out of scope
 - Kaggle submission (one-way).
 - Kaggle kernels.
+- Kaggle creds surfaced via project secrets / settings UI — defer to
+  Phase F's UI wizard.
 
 ---
 
