@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     """Global application settings."""
 
     # ── App ─────────────────────────────────────────────────────────────
-    APP_NAME: str = "SLM Platform"
+    APP_NAME: str = "BrewSLM"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
 

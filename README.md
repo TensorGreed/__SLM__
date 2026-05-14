@@ -1,4 +1,8 @@
-# SLM Platform
+<p align="center">
+  <img src="./assets/brewslm-logo.svg" alt="BrewSLM" width="240" />
+</p>
+
+# BrewSLM
 
 > Build, evaluate, compress, govern, and export domain-specific Small Language Models (SLMs) with a guided full-stack workflow.
 

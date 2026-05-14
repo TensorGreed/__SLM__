@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 48" role="img" aria-labelledby="brand-title brand-desc">
+  <title id="brand-title">BrewSLM</title>
+  <desc id="brand-desc">BrewSLM wordmark: steam-wisps-over-cup-rim mark with the BrewSLM wordmark to the right.</desc>
+  <!-- Repo-root copy of the canonical BrandMark + wordmark. Used by
+       README.md so GitHub renders the same brand the in-app
+       BrandMark / marketing site / docs site display. Dark ink so
+       it reads on both light + dark GitHub themes. -->
+  <g transform="translate(4 4)" fill="none" stroke="#0a0a0a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 15 5.8 Q 12.5 10 15 14.2 Q 17.5 18.3 15 22.5"/>
+    <path d="M 25 5.8 Q 22.5 10 25 14.2 Q 27.5 18.3 25 22.5"/>
+    <path d="M 6.7 26.7 L 33.3 26.7" stroke-width="3"/>
+  </g>
+  <text x="56" y="32" font-family="Outfit, 'Geist', 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#0a0a0a" letter-spacing="-0.01em">BrewSLM</text>
+</svg>

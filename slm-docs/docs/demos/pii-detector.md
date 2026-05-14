@@ -350,7 +350,7 @@ python -m app.cli.dataset_import run \
   --map-json '{"entity_type_map": {"NAME_STUDENT": "person_name", "EMAIL": "email", "PHONE_NUM": "phone_number"}}'
 ```
 
-See the [Schema introspection](../glossary.md#schema-introspection)
+See the [Schema introspection](../reference/glossary.md#schema-introspection)
 glossary entry for the architecture.
 
 ### Bundle generator (synthetic expansion)

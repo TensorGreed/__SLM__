@@ -1,12 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">BrewSLM</title>
   <desc id="desc">BrewSLM favicon — steam wisps over flat cup rim on a rounded dark chip.</desc>
-  <!-- Rounded chip background so the mark stays legible at 16-32px
-       in the browser tab regardless of theme. -->
+  <!-- Same chip shape as the marketing + docs favicons so the browser
+       tab matches the product / website / docs at a glance. -->
   <rect x="4" y="4" width="56" height="56" rx="14" fill="#0a0f0c"/>
-  <!-- Two steam wisps + cup rim, scaled into the chip's safe area
-       (centered at 32 32 with ~24-unit drawing region from the
-       BrandMark's 24x24 grid). -->
   <g transform="translate(11.3 5.3) scale(1.72)" fill="none" stroke="#e8f0ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <path d="M 9 3.5 Q 7.5 6 9 8.5 Q 10.5 11 9 13.5"/>
     <path d="M 15 3.5 Q 13.5 6 15 8.5 Q 16.5 11 15 13.5"/>
