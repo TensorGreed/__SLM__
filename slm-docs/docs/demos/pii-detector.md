@@ -249,7 +249,7 @@ Pull via the Kaggle CLI then import:
 ```sh
 kaggle competitions download pii-detection-removal-from-educational-data
 unzip pii-detection-removal-from-educational-data.zip
-python scripts/kaggle_pii_to_brewslm.py \
+python backend/data/demo_samples/pii-detector/kaggle_pii_to_brewslm.py \
   --input train.json \
   --out backend/data/imports/kaggle-pii.jsonl
 brewslm dataset import \
@@ -258,10 +258,16 @@ brewslm dataset import \
   --adapter-preset structured-extraction
 ```
 
-The `kaggle_pii_to_brewslm.py` converter is a small script — about
-30 lines — that walks each essay's BIO-tagged tokens and emits
-`{type, start, end, text}` records. There's a reference in
-[Adapter Studio examples](../getting-started/adapter-studio-examples.md).
+The converter ships alongside the demo bundle generator at
+[backend/data/demo_samples/pii-detector/kaggle_pii_to_brewslm.py](https://github.com/anugram/__SLM__/blob/main/backend/data/demo_samples/pii-detector/kaggle_pii_to_brewslm.py).
+It walks each essay's BIO-tagged tokens, merges B-X / I-X runs into
+single spans, reconstructs character offsets (preferring `full_text`
+alignment, falling back to token + `trailing_whitespace` reconstruction
+when alignment drifts), and maps Kaggle's tag vocabulary
+(`NAME_STUDENT`, `EMAIL`, `USERNAME`, `ID_NUM`, `PHONE_NUM`,
+`URL_PERSONAL`, `STREET_ADDRESS`) onto the demo's entity types. Pure
+stdlib — no extra installs. Use `--limit N` to test against a small
+sample before running the full ~22k-essay set.
 
 ### Bundle generator (synthetic expansion)
 
