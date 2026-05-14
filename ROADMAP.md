@@ -18,7 +18,7 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 | Epic | Story | Status | Impact |
 |---|---|---|---|
 | 1. Annotation & active learning | 1.1 Annotation foundation (schema + service + API) | SHIPPED · 45e17a2 | 🔥 unblocks "any domain" |
-| 1. Annotation & active learning | 1.2 Text-classification + span annotation UI | NOT STARTED | 🔥 |
+| 1. Annotation & active learning | 1.2 Text-classification + span annotation UI | SHIPPED · a52a164 | 🔥 |
 | 1. Annotation & active learning | 1.3 Preference-pair annotation UI | NOT STARTED | high |
 | 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED | high |
 | 2. Knowledge distillation | 2.1 Teacher logit capture | NOT STARTED | 🔥 differentiator |
@@ -227,7 +227,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ### Story 1.2 — Text-classification + span annotation UI
 
-**Status**: NOT STARTED
+**Status**: SHIPPED · a52a164
 **Depends on**: Story 1.1
 **As a** human labeler
 **I want** a fast, keyboard-driven UI for text-classification and span (NER) tasks
