@@ -62,12 +62,22 @@ curl -X POST http://localhost:8000/api/projects/1/ingest \
 
 The ingest helpers above know about *file formats*. For datasets that already carry task structure (BIO-tagged tokens, classification labels, preference pairs, chat threads, …) BrewSLM also ships a generic three-layer pipeline that introspects the shape and proposes a mapping straight into the project's synthetic dataset — no per-domain converter needed.
 
+#### Via the UI
+
+Pipeline → **Data** → **Import dataset (auto-mapping)** opens a 3-step wizard:
+
+1. **Source** — pick `jsonl` / `csv` / `hf` / `kaggle` from a dropdown and enter the locator. Source-specific helper text shows the format; gated-dataset auth gets a banner reminding you to set env vars or save secrets under Project → Secrets first.
+2. **Map** — column signatures table (detected type + confidence per column), ranked-hypothesis dropdown pre-selected to the top proposal, free-form rationale, and a JSON field-map editor you can override before previewing. A red banner blocks low-confidence proposals until you tick "I've reviewed the proposal — proceed anyway."
+3. **Preview & Confirm** — accepted-row sample + rejected breakdown grouped by reason; tick reasons to bulk-drop them before commit (counts are preserved in the result for audit). Final *Import* button writes the rows to the project's synthetic dataset and surfaces the `written_path`.
+
 Source locators today:
 
 - `jsonl:/path/to/file.jsonl`
 - `csv:/path/to/file.csv`
 - `hf:<dataset_id>[:<split>[:<revision>]]` — fetches directly from the HuggingFace Hub via the `datasets` library (set `HF_TOKEN` for gated datasets).
 - `kaggle:competition:<slug>` / `kaggle:dataset:<owner/slug>` — downloads + extracts via the Kaggle API (set `KAGGLE_USERNAME` + `KAGGLE_KEY` or drop a `~/.kaggle/kaggle.json`). Append `?file=<path>` to disambiguate multi-file archives.
+
+#### Via the CLI
 
 ```sh
 # Sniff a JSONL file and print the proposed mapping (no writes).

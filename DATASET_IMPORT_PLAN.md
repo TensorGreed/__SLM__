@@ -528,36 +528,71 @@ python -m app.cli.dataset_import run \
 
 ---
 
-## Phase F — UI wizard
+## Phase F — UI wizard (shipped)
 
 **Goal**: 3-step wizard that does everything the CLI does, plus a
 visual mapping editor for power users.
 
-### User stories
-- *As a UI-first newbie*, I want a "Import Dataset" button on the
-  Data tab that opens a 3-step wizard: Source → Preview & Mapping →
-  Confirm & Run. No terminal required.
-- *As an ML engineer*, I want the Preview step to show side-by-side
-  source columns ↔ proposed target fields, with editable dropdowns
-  for each mapping I want to override.
-- *As anyone*, I want the Confirm step to show "X rows will be
-  written, Y will be rejected (low confidence), here are 5 sample
-  outputs" before I click Run.
+### What landed
+- New component
+  [`DatasetImportWizard.tsx`](frontend/src/components/data/DatasetImportWizard.tsx)
+  — single-file modal with three steps:
+  1. **Source.** Source dropdown (jsonl / csv / hf / kaggle), locator
+     input with source-specific placeholder + help text, and a
+     server-credential reminder banner for hf / kaggle. Clicking
+     *Introspect* calls `/api/dataset-import/introspect`.
+  2. **Map.** Column-signatures table (column → detected type →
+     confidence → unique values / notes), ranked-hypothesis dropdown
+     pre-selected to the top proposal, free-form rationale, JSON
+     field-map editor pre-filled with the chosen hypothesis's
+     `field_map`, and the **confidence gate**: if `needs_force` is
+     true, a red warning banner appears + the Preview button stays
+     disabled until the user ticks "I've reviewed the proposal —
+     proceed anyway."
+  3. **Preview & Confirm.** Summary cards (accepted, rejected,
+     mapper, target profile), **bulk-drop UX**: rejected rows grouped
+     by reason with per-reason "Drop" checkboxes that flow into
+     `drop_reasons` on the next `/preview` and the final `/run`
+     (counts preserved in `rejection_counts` for audit — matches the
+     [[rejected-rows-selectable]] memory contract). Refresh button
+     re-runs the preview after toggling drops. Accepted sample
+     rendered as JSON. Final *Import* button posts `/run`; success
+     banner replaces the form with the row count + the
+     `written_path` for verification.
+- API client module
+  [`frontend/src/api/datasetImport.ts`](frontend/src/api/datasetImport.ts):
+  typed wrappers for the four endpoints (`listSources`, `listMappers`,
+  `introspectLocator`, `previewImport`, `runImport`) with the full
+  TS types for response shapes (ColumnSignature, ShapeHypothesisDict,
+  ProposalDict, ImportResultDict, etc.) so future UI work has a
+  single source of truth for the wire contract.
+- Entry point: a CTA card at the top of the Data tab's
+  [`IngestionPanel`](frontend/src/components/data/IngestionPanel.tsx) —
+  "Import dataset (auto-mapping) → " — sits *above* the legacy
+  file-upload + huggingface/kaggle/url tabs. The legacy flow stays for
+  RawDocument-style uploads; the wizard's the route for already-
+  task-shaped data going straight to the project's synthetic dataset.
+  On success the panel re-fetches the document list so the user sees
+  the result land.
+- Tests: 7 wizard component tests in
+  [`DatasetImportWizard.test.tsx`](frontend/src/components/data/DatasetImportWizard.test.tsx)
+  cover the happy path (introspect → map → preview → run), the
+  confidence gate (low-conf disables Preview until force checked),
+  the bulk-drop UX (drop_reasons forwarded on refresh), error
+  surfacing (introspect failure stays on step 1), mapper-switch
+  resetting the field_map, and source-specific auth notes for hf /
+  kaggle. Plus an end-to-end smoke test against the live backend
+  (real jsonl fixture, 5 → 5 accepted, written_path returned).
+- Architectural rule preserved: the wizard never auto-runs below
+  the confidence threshold without explicit user confirmation —
+  same contract the CLI's `--auto` / `--force` flow enforces.
 
-### Work
-- `frontend/src/pages/ProjectDatasetImportPage.tsx` with the
-  3-step flow.
-- `SourcePicker` component with source type dropdown +
-  locator input + auth fields (when needed).
-- `MappingPreview` component with editable per-field overrides + a
-  table of the first 5 transformed rows.
-- `ConfirmRun` component with stats + sample + final go button.
-- Wired to the existing `POST /dataset-import/preview` + `/run`
-  endpoints from Phase A.
-
-### Out of scope
-- Mapping config save/load to project state (Phase G).
-- Visual BIO-tag annotator (would be a separate tool).
+### Out of scope (later phases)
+- Mapping config save/load to project state → Phase G.
+- Visual BIO-tag annotator → separate tool.
+- Inline credential-entry UI (HF_TOKEN / KAGGLE_KEY) — wizard tells
+  users to set env vars or use Project → Secrets; full secret-form
+  in the wizard is deferred.
 
 ---
 

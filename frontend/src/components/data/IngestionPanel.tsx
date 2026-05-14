@@ -7,6 +7,7 @@ import { TerminalConsole } from '../shared/TerminalConsole';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
 import { buildWsUrl } from '../../utils/ws';
 import EDADashboard from './EDADashboard';
+import DatasetImportWizard from './DatasetImportWizard';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -120,6 +121,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [isUploading, setIsUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [uploadProgress, setUploadProgress] = useState('');
+    const [showImportWizard, setShowImportWizard] = useState(false);
 
     const [activeTab, setActiveTab] = useState<SourceTab>('upload');
     const [remoteId, setRemoteId] = useState('');
@@ -578,6 +580,47 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     return (
         <div className="ingestion-panel animate-fade-in">
             <ReadinessPanel projectId={projectId} />
+
+            {/* Phase F: generic dataset-import pipeline. Parallel route
+                to the legacy file-format upload tabs below — auto-
+                detects the task shape and lands rows in the project's
+                synthetic dataset. */}
+            <div
+                className="card"
+                style={{
+                    marginBottom: 'var(--space-lg)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 'var(--space-md)',
+                    flexWrap: 'wrap',
+                }}
+            >
+                <div>
+                    <h3 style={{ margin: 0 }}>Import dataset (auto-mapping)</h3>
+                    <p
+                        style={{
+                            margin: '4px 0 0',
+                            color: 'var(--text-secondary)',
+                            fontSize: '0.9rem',
+                            maxWidth: 720,
+                        }}
+                    >
+                        Skip the converter. Point at a JSONL, CSV, HuggingFace dataset, or
+                        Kaggle competition; the introspector sniffs the columns, proposes a
+                        mapping, and lands rows straight in the project's synthetic dataset.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setShowImportWizard(true)}
+                    data-testid="open-import-wizard-btn"
+                >
+                    Import dataset →
+                </button>
+            </div>
+
             <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-md)' }}>
                     {(Object.keys(sourceTabConfig) as SourceTab[]).map((tab) => (
@@ -1004,6 +1047,20 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     isComplete={documents.length > 0}
                     hint="Upload files or import a dataset to continue"
                     onNext={onNextStep}
+                />
+            )}
+
+            {showImportWizard && (
+                <DatasetImportWizard
+                    projectId={projectId}
+                    onClose={() => setShowImportWizard(false)}
+                    onSuccess={() => {
+                        // The wizard writes rows to the project's synthetic
+                        // dataset. Refresh the raw-document list so the
+                        // Data tab reflects whatever the synthetic-service
+                        // surfaces alongside ingested files.
+                        void fetchDocs();
+                    }}
                 />
             )}
         </div>
