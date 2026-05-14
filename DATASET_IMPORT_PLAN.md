@@ -683,29 +683,108 @@ project; re-run later against a refreshed source with one click.
 
 ---
 
-## Phase H — Plugin mappers + LLM-assisted suggestion (optional)
+## Phase H — Plugin mappers + LLM-assisted suggestion (shipped)
 
 **Goal**: power-user extensibility.
 
-### User stories
-- *As a researcher with an unusual dataset shape*, I want to write a
-  custom mapper in Python and register it as a plugin so my
-  team can re-use it.
-- *As a newbie facing an unfamiliar dataset*, I want BrewSLM to ask
-  an LLM ("describe what these rows mean") and get a more confident
-  mapping suggestion than pure column-content sniffing.
+### What landed
+- **Plugin loader** for custom target mappers
+  ([`plugin_loader.py`](backend/app/services/dataset_import/plugin_loader.py))
+  mirroring `data_adapter_service.load_data_adapter_plugins`:
+  - A plugin module exports either `register_dataset_mappers(register)`
+    where `register(mapper_id, factory)` adds one mapper to the
+    registry, OR a top-level `DATASET_MAPPERS = {mapper_id: factory}`
+    dict (declarative form).
+  - `load_dataset_mapper_plugins(modules, *, force_reload=False)` is
+    the test-friendly entry; failures in one module never block the
+    rest of the list — the diagnostic dict surfaces
+    `{module: error_message}` for misconfigured plugins.
+  - `load_dataset_mapper_plugins_from_settings()` reads
+    `DATASET_MAPPER_PLUGIN_MODULES` from settings and runs at boot
+    from `app.main.lifespan`, alongside `load_data_adapter_plugins_from_settings`.
+  - `get_plugin_diagnostics()` exposes loaded + failed modules for
+    later API surfacing.
+- **Settings entry** `DATASET_MAPPER_PLUGIN_MODULES: list[str]` in
+  `app/config.py` — empty by default; opt-in for users who want to
+  ship custom mappers from outside the core package.
+- **LLM-assist** ([`llm_assist.py`](backend/app/services/dataset_import/llm_assist.py)) —
+  the optional teacher-model fallback for the introspector:
+  - Builds a tight system prompt that enumerates every registered
+    mapper + its expected shape, plus a user prompt carrying the
+    column names + truncated sample rows.
+  - Calls `synthetic_service.call_teacher_model` with `force_json=True`
+    — re-uses the same teacher-config + secrets path the synthetic
+    generator uses, so the same `TEACHER_MODEL_API_URL` /
+    `TEACHER_MODEL_API_KEY` settings power both features.
+  - Robust response parser strips markdown fences and extracts JSON
+    blocks embedded in prose (real-world teacher models often wrap
+    their output in `\`\`\`json` blocks or prefixes).
+  - Validates the proposal against the live registry — any mapper
+    name the LLM hallucinated is dropped. Confidence is clamped to
+    `[0, 1]`. The `target_task_profile` is resolved from the chosen
+    mapper, never trusted from the LLM payload.
+  - The proposal is tagged with the `proposal-source: llm-assist`
+    warning so the wizard / CLI can highlight LLM-assisted entries
+    distinctly from the deterministic sniffer's output.
+  - Disabled by default behind `settings.DATASET_IMPORT_LLM_ASSIST_ENABLED`
+    + requires `TEACHER_MODEL_API_URL`. Both gates fail gracefully
+    (return `None`) so callers can opt in without checking config.
+- **Service / API / CLI surface**:
+  - `service.introspect_locator` is now async and accepts
+    `llm_assist: bool = False`. When set, the LLM proposal joins the
+    deterministic ranked hypothesis list and competes on confidence —
+    never overrides a higher-confidence deterministic proposal
+    silently.
+  - `/api/dataset-import/introspect` request body grows
+    `llm_assist: bool` (default `false`).
+  - CLI: `--llm-assist` flag on `introspect`, `preview`, and `run`.
+    When used with `--auto`, the assist runs during the auto-pick
+    flow; the confidence gate still applies.
+- **Tests**:
+  [`test_phase107_dataset_import_plugins_and_llm_assist.py`](backend/tests/test_phase107_dataset_import_plugins_and_llm_assist.py)
+  — 20 tests covering both registration patterns (hook + declarative
+  dict), broken plugins isolated from the rest of the load, the
+  no-export-rejected message, settings loader's no-op + routing
+  paths, LLM response coercion (markdown fences + prose-embedded JSON
+  + empty + array rejected), normalize-proposal validation (unknown
+  mapper rejected, target profile resolved from registry,
+  confidence clamped), LLM-assist gates (disabled setting, missing
+  teacher URL, empty samples, teacher error → all return None), and
+  end-to-end integration through `introspect_locator` (LLM proposal
+  joins the ranked list + carries the source warning).
+- **Migration of existing tests**: `introspect_locator` becoming
+  async required two call-site updates in tests
+  ([`test_phase102_dataset_import_introspector.py`](backend/tests/test_phase102_dataset_import_introspector.py),
+  [`test_phase103_dataset_import_mapper_catalog.py`](backend/tests/test_phase103_dataset_import_mapper_catalog.py),
+  [`test_phase104_dataset_import_hf_source.py`](backend/tests/test_phase104_dataset_import_hf_source.py))
+  and one in the CLI handler — wrapped in `asyncio.run`. All 151
+  prior dataset-import tests pass alongside the 20 new ones (171
+  total).
 
-### Work
-- Plugin contract for mappers: subclass `TargetMapper`, register
-  via a manifest entry. Same plugin pattern BrewSLM already uses
-  for adapters and runtimes.
-- Optional LLM-assist mode: introspector sends sample rows + column
-  names to a teacher model and asks for a mapping suggestion. The
-  LLM's output is a *proposal*, never a silent action — same
-  user-confirms rule.
+### Architectural rule preserved
+The LLM is a *suggestion engine*, never an authority. Its proposal
+goes through the same confidence-threshold gate (`CONFIDENCE_HIGH = 0.8`)
+the deterministic sniffer does, and the same `--auto` / `--force`
+flow gates whether it gets used silently. A hallucinated mapper name
+is rejected at the boundary, never allowed to escape the registry.
 
 ### Out of scope
 - Marketplace / sharing of mappers across organizations.
+- A scaffold generator for new mappers (could land in a follow-up;
+  the existing `scaffold_service` plumbing is the right hook).
+- Auto-tuning the LLM prompt per project (e.g. domain-specific
+  examples in the system prompt) — easy to add later if the default
+  prompt turns out to underperform.
+
+---
+
+## Rollout complete
+
+All eight phases (A foundation → H plugin + LLM-assist) shipped on
+`main`. The pipeline is feature-complete for the rollout scoped in
+this document: pluggable sources, pluggable mappers, automatic shape
+detection with user confirmation, end-to-end UI wizard, persistent
+mapping configs, audit log, and optional teacher-model assist.
 
 ---
 

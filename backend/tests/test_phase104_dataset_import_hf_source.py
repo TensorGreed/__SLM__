@@ -10,6 +10,7 @@ in DATASET_IMPORT_PLAN.md Phase D.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from unittest import mock
@@ -312,7 +313,7 @@ class IntrospectAndPreviewIntegrationTests(unittest.TestCase):
             "app.services.dataset_import.sources.hf._import_datasets",
             return_value=(_stub_loader(rows), Exception),
         ):
-            payload = introspect_locator("hf:my-org/my-dataset")
+            payload = asyncio.run(introspect_locator("hf:my-org/my-dataset"))
 
         self.assertEqual(payload["source_id"], "hf")
         self.assertEqual(payload["proposal"]["mapper_id"], "label_to_classification")

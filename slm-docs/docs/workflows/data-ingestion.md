@@ -74,6 +74,18 @@ A "Save this mapping" card on the Preview step persists the current locator + ma
 
 Every dataset-import run — interactive or re-run from a saved mapping — emits a [run event](../reference/glossary.md#run-event) with `stage=ingestion` and `reason_code=dataset_import_run` (`dataset_import_failed` on errors), carrying the source, locator, mapper, accepted/rejected row counts, `written_path`, and `config_id` if it came from a saved mapping. The Observability page surfaces these automatically — the audit log is just RunEvents you can already filter.
 
+#### Extensibility (Phase H)
+
+- **[Mapper plugins](../reference/glossary.md#mapper-plugin)** — drop a Python module under `DATASET_MAPPER_PLUGIN_MODULES` to register custom `TargetMapper` classes. Two registration shapes (`register_dataset_mappers(register)` hook or top-level `DATASET_MAPPERS` dict). Loaded at boot alongside the data-adapter / training-runtime plugins. A broken plugin module never blocks the rest of the list — failures surface in the loader's diagnostic dict.
+- **[LLM-assisted mapping](../reference/glossary.md#llm-assisted-mapping)** — optional fallback when the deterministic column sniffer can't form a high-confidence hypothesis. Set `DATASET_IMPORT_LLM_ASSIST_ENABLED=true` plus a `TEACHER_MODEL_API_URL`, then pass `--llm-assist` on the CLI (or `llm_assist: true` on the `/introspect` API body). The teacher's proposal joins the ranked hypothesis list with a `proposal-source: llm-assist` warning tag; same confidence gate applies, hallucinated mapper ids are rejected at the registry boundary.
+
+```sh
+# Opt in per call — falls through silently when no teacher is configured.
+python -m app.cli.dataset_import introspect \
+  --locator jsonl:./unknown-shape.jsonl \
+  --llm-assist
+```
+
 Source locators today:
 
 - `jsonl:/path/to/file.jsonl`

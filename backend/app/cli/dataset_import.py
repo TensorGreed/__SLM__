@@ -207,7 +207,13 @@ def _print_introspection(payload: dict[str, Any]) -> None:
 def _cmd_introspect(args: argparse.Namespace) -> int:
     from app.services.dataset_import.service import introspect_locator
 
-    payload = introspect_locator(args.locator, sample_size=args.sample_size)
+    payload = asyncio.run(
+        introspect_locator(
+            args.locator,
+            sample_size=args.sample_size,
+            llm_assist=bool(getattr(args, "llm_assist", False)),
+        )
+    )
     if args.json:
         json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
         print()
@@ -217,7 +223,7 @@ def _cmd_introspect(args: argparse.Namespace) -> int:
 
 
 def _resolve_via_auto(
-    locator: str, force: bool
+    locator: str, force: bool, *, llm_assist: bool = False,
 ) -> tuple[str, dict[str, Any], str]:
     """Run the introspector and return ``(mapper_id, field_map, rationale)``.
 
@@ -230,7 +236,7 @@ def _resolve_via_auto(
     from app.services.dataset_import.introspector import CONFIDENCE_HIGH
     from app.services.dataset_import.service import introspect_locator
 
-    payload = introspect_locator(locator)
+    payload = asyncio.run(introspect_locator(locator, llm_assist=llm_assist))
     proposal = payload.get("proposal")
     if not proposal:
         raise SystemExit(
@@ -270,7 +276,9 @@ def _resolve_mapper_and_map(
         return args.mapper, explicit_field_map
 
     mapper_id, suggested_map, rationale = _resolve_via_auto(
-        args.locator, args.force
+        args.locator,
+        args.force,
+        llm_assist=bool(getattr(args, "llm_assist", False)),
     )
     print(f"--auto picked mapper '{mapper_id}': {rationale}")
     if args.mapper and args.mapper != mapper_id:
@@ -373,6 +381,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit raw JSON instead of the human-readable summary",
     )
+    intro.add_argument(
+        "--llm-assist",
+        dest="llm_assist",
+        action="store_true",
+        help="Phase H: also ask the teacher model for a mapping "
+        "suggestion. Opt-in; falls through silently when "
+        "DATASET_IMPORT_LLM_ASSIST_ENABLED is off or the teacher "
+        "API URL isn't configured.",
+    )
 
     # Shared flag set for `preview` + `run`.
     for cmd_name, help_text, is_run in (
@@ -402,6 +419,15 @@ def _build_parser() -> argparse.ArgumentParser:
             action="store_true",
             help="Allow --auto to proceed even when the proposal's "
             "confidence is below the safe threshold.",
+        )
+        cmd.add_argument(
+            "--llm-assist",
+            dest="llm_assist",
+            action="store_true",
+            help="Phase H: also consult the teacher model during "
+            "--auto introspection. Falls through silently when not "
+            "configured; never overrides a higher-confidence "
+            "deterministic proposal.",
         )
         cmd.add_argument(
             "--map",

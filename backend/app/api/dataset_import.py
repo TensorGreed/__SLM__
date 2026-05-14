@@ -60,6 +60,13 @@ class IntrospectRequest(BaseModel):
         "The introspector samples the source and proposes a mapping.",
     )
     sample_size: int = Field(default=20, ge=1, le=100)
+    llm_assist: bool = Field(
+        default=False,
+        description="Phase H opt-in: also ask the project's teacher "
+        "model for a mapping suggestion. The deterministic sniffer "
+        "still runs; the LLM proposal joins the ranked hypotheses and "
+        "competes on confidence — never overrides them silently.",
+    )
 
 
 class ImportRequest(BaseModel):
@@ -106,8 +113,10 @@ async def introspect(req: IntrospectRequest) -> dict[str, Any]:
     """
 
     try:
-        return introspect_locator(
-            req.locator, sample_size=req.sample_size
+        return await introspect_locator(
+            req.locator,
+            sample_size=req.sample_size,
+            llm_assist=req.llm_assist,
         )
     except KeyError as exc:
         raise HTTPException(400, str(exc))

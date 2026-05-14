@@ -352,19 +352,27 @@ async def run_import(
     )
 
 
-def introspect_locator(
+async def introspect_locator(
     locator: str,
     *,
     sample_size: int = 20,
+    llm_assist: bool = False,
 ) -> dict[str, Any]:
     """Sniff columns + propose a mapping for the dataset behind ``locator``.
 
     Looks up the registered source by the locator's prefix, asks it for
-    a sample (via ``describe``), then runs the introspector to produce
-    a ranked list of mapping hypotheses. The top hypothesis is also
-    materialized as a ``ProposedMapping`` so callers can pass it
-    straight to ``preview_import`` / ``run_import`` after the user
-    confirms.
+    a sample (via ``describe``), then runs the deterministic
+    column-content sniffer + shape detector to produce a ranked list of
+    mapping hypotheses. The top hypothesis is materialized as a
+    ``ProposedMapping`` so callers can pass it straight to
+    ``preview_import`` / ``run_import`` after the user confirms.
+
+    ``llm_assist=True`` (Phase H) additionally asks the project's
+    teacher model for a mapping suggestion. The LLM proposal is
+    merged into the ranked hypothesis list and competes with the
+    deterministic proposals on confidence — never overrides them.
+    Disabled by default + falls through silently when the teacher
+    isn't reachable, so callers can opt in without checking config.
 
     Per the architectural rule: this NEVER picks for the user — it
     just emits proposals with confidence + rationale. The CLI / UI
@@ -378,16 +386,45 @@ def introspect_locator(
 
     signatures = sniff_columns(sample_rows)
     hypotheses = detect_shape(signatures, sample_rows)
+    hypothesis_dicts = [hypothesis_to_dict(h) for h in hypotheses]
+
+    llm_proposal: ProposedMapping | None = None
+    if llm_assist:
+        from app.services.dataset_import.llm_assist import (
+            llm_assisted_proposal,
+        )
+
+        llm_proposal = await llm_assisted_proposal(
+            columns=description.get("columns") or list(signatures.keys()),
+            sample_rows=sample_rows,
+        )
+        if llm_proposal is not None:
+            # Append the LLM proposal to the hypothesis ranking so
+            # callers see it alongside the deterministic ones. The
+            # frontend can highlight LLM-assisted entries via the
+            # "proposal-source: llm-assist" warning.
+            hypothesis_dicts.append(
+                {
+                    "mapper_id": llm_proposal.mapper_id,
+                    "target_task_profile": llm_proposal.target_task_profile,
+                    "field_map": llm_proposal.field_map,
+                    "confidence": round(llm_proposal.confidence, 4),
+                    "rationale": llm_proposal.rationale,
+                    "warnings": list(llm_proposal.warnings),
+                }
+            )
+            hypothesis_dicts.sort(key=lambda h: -h["confidence"])
+
     proposal: ProposedMapping | None = None
-    if hypotheses:
-        top = hypotheses[0]
+    if hypothesis_dicts:
+        top = hypothesis_dicts[0]
         proposal = ProposedMapping(
-            target_task_profile=top.target_task_profile,
-            mapper_id=top.mapper_id,
-            field_map=top.field_map,
-            confidence=top.confidence,
-            rationale=top.rationale,
-            warnings=list(top.warnings),
+            target_task_profile=top["target_task_profile"],
+            mapper_id=top["mapper_id"],
+            field_map=top["field_map"],
+            confidence=top["confidence"],
+            rationale=top["rationale"],
+            warnings=list(top["warnings"]),
         )
 
     return {
@@ -400,9 +437,10 @@ def introspect_locator(
         "column_signatures": [
             signature_to_dict(sig) for sig in signatures.values()
         ],
-        "hypotheses": [hypothesis_to_dict(h) for h in hypotheses],
+        "hypotheses": hypothesis_dicts,
         "proposal": proposal_to_dict(proposal) if proposal else None,
         "confidence_threshold": CONFIDENCE_HIGH,
+        "llm_assist_used": llm_proposal is not None,
     }
 
 

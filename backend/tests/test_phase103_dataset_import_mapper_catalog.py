@@ -16,6 +16,7 @@ hypothesis at high confidence under ``--auto``.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -532,7 +533,7 @@ class IntrospectorPhaseCTests(unittest.TestCase):
         # Even with short answers that look categorical on a small
         # sample, RAG should win because of the conventional "context"
         # column name.
-        payload = introspect_locator(
+        payload = asyncio.run(introspect_locator(
             "jsonl:" + _write_jsonl(
                 [
                     {
@@ -547,7 +548,7 @@ class IntrospectorPhaseCTests(unittest.TestCase):
                     },
                 ]
             )
-        )
+        ))
         self.assertEqual(payload["proposal"]["mapper_id"], "rag_passthrough")
 
 

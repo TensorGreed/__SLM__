@@ -142,6 +142,18 @@ A concrete action surfaced by the eval failure cluster card — "add 20 rows", "
 
 Single observability row written by every pipeline stage. Schema: `(run_id, parent_run_id, stage, severity, reason_code, actor, summary, payload, ts)`. See [Run events](../observability/run-events.md).
 
+## LLM-assisted mapping
+
+Optional teacher-model fallback for the dataset-import introspector (Phase H). When the column-content sniffer can't form a high-confidence hypothesis on its own, the introspector can also ask the project's teacher model "given these column names + sample values, which mapper fits?" and merge the LLM's JSON response into the ranked hypothesis list. The LLM proposal is treated exactly like a deterministic one — same [Confidence threshold](#confidence-threshold-dataset-import) gate, same `--auto` / `--force` flow — and any mapper id the model hallucinates is rejected at the registry boundary. Tagged with `proposal-source: llm-assist` in the warnings list so the UI / CLI can highlight LLM entries distinctly. Disabled by default behind `DATASET_IMPORT_LLM_ASSIST_ENABLED`; requires `TEACHER_MODEL_API_URL` to be set. Opt-in per call via `--llm-assist` on the CLI or `llm_assist: true` on the `/dataset-import/introspect` request body. Implementation: [`backend/app/services/dataset_import/llm_assist.py`](https://github.com/anugram/__SLM__/blob/main/backend/app/services/dataset_import/llm_assist.py).
+
+## Mapper plugin
+
+A user-supplied Python module that registers extra [target mappers](#target-mapper-dataset-import) alongside the built-ins (Phase H). Two registration shapes are accepted:
+- `register_dataset_mappers(register)` hook — preferred. `register(mapper_id, factory)` adds one mapper to the registry; the factory is a zero-arg callable returning an object that satisfies the `TargetMapper` protocol.
+- Top-level `DATASET_MAPPERS: dict[str, factory]` constant — declarative form.
+
+Modules are listed in `settings.DATASET_MAPPER_PLUGIN_MODULES` and imported at app boot (parallel to `DATA_ADAPTER_PLUGIN_MODULES`, `TRAINING_RUNTIME_PLUGIN_MODULES`, etc). A misconfigured plugin module doesn't block the rest of the list — the loader records the error per module and continues.
+
 ## Saved mapping (dataset import)
 
 A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-chosen name. Created via the "Save this mapping" card on the import wizard's Preview step; re-runs go through the **Saved mappings** panel on the Data tab. Re-runs use the same `run_import` code path as a fresh import, so they emit the same audit [run event](#run-event) (`stage=ingestion`, `reason_code=dataset_import_run`) plus a `config_id` link in the payload. `last_run_at` and `last_run_accepted` columns on the config row track the most recent re-run's timestamp and row count for at-a-glance status. Backed by the `dataset_import_configs` table; API: `POST /api/projects/{id}/dataset-import/configs` (create) → `POST /api/projects/{id}/dataset-import/configs/{cfg_id}/run` (re-run).
@@ -153,6 +165,8 @@ Sub-mode of a task handler that picks the metric shape without changing which ha
 ## Schema introspection
 
 The dataset-import pipeline's column sniffer + shape detector + mapping proposer. Reads ~20 sample rows from any registered [source connector](#source-connector), classifies each column by content (`text_like`, `categorical`, `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`, `numeric`, `boolean`, `path_like`), and proposes the best-fit [target mapper](#target-mapper) + field map with a confidence score and rationale. Drives the `--auto` flag on the dataset-import CLI and the import-wizard UI (Pipeline → Data → "Import dataset (auto-mapping)"); never silently auto-picks — the user confirms either by passing `--auto` (when confidence ≥ the [Confidence threshold](#confidence-threshold-dataset-import)), by passing `--force` under it, or by accepting the proposal in the wizard's Map step. CLI: `python -m app.cli.dataset_import introspect --locator <prefix:rest>`.
+
+Optional [LLM-assisted mapping](#llm-assisted-mapping) mode is gated behind `DATASET_IMPORT_LLM_ASSIST_ENABLED`; pass `--llm-assist` on the CLI / `llm_assist: true` in the API body to opt in per-call.
 
 ## SLM
 

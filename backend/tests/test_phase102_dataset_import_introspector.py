@@ -8,6 +8,7 @@ confidence threshold must require ``--force`` before a ``preview`` /
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -222,7 +223,7 @@ class IntrospectLocatorTests(unittest.TestCase):
             ]
         )
         try:
-            payload = introspect_locator(f"jsonl:{path}")
+            payload = asyncio.run(introspect_locator(f"jsonl:{path}"))
             self.assertEqual(payload["source_id"], "jsonl")
             self.assertGreaterEqual(len(payload["hypotheses"]), 1)
             self.assertEqual(

@@ -162,6 +162,21 @@ class Settings(BaseSettings):
     # STARTER_PACK_PLUGIN_MODULES='["app.plugins.starter_packs.acme_domain_starters"]'
     STARTER_PACK_PLUGIN_MODULES: list[str] = []
 
+    # ── Dataset Import Mapper Plugins (Phase H) ─────────────────────────
+    # Custom TargetMapper modules registered alongside the built-ins.
+    # Each module exports either ``register_dataset_mappers(register)``
+    # or a top-level ``DATASET_MAPPERS`` dict.
+    # Example:
+    # DATASET_MAPPER_PLUGIN_MODULES='["app.plugins.dataset_mappers.example_mappers"]'
+    DATASET_MAPPER_PLUGIN_MODULES: list[str] = []
+
+    # ── Dataset Import LLM-assist (Phase H) ─────────────────────────────
+    # When enabled, the introspector can optionally consult the teacher
+    # model for a mapping suggestion via ``introspect_locator(llm_assist=True)``
+    # / ``--llm-assist`` on the CLI. Disabled by default — the column
+    # sniffer's heuristics are deterministic + don't burn teacher tokens.
+    DATASET_IMPORT_LLM_ASSIST_ENABLED: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     @field_validator("DEBUG", mode="before")
