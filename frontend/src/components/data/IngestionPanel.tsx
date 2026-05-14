@@ -1092,7 +1092,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                                     colSpan={8}
                                                 />
                                             )}
-                                        </React.Fragment>
+                                        </Fragment>
                                     );
                                 })}
                             </tbody>
