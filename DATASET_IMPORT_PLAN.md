@@ -187,45 +187,66 @@ frontend/src/components/dataset_import/
 
 ---
 
-## Phase A — Foundation (sources + mappers + service, manual mapping)
+## Phase A — Foundation (shipped)
 
 **Goal**: end-to-end import pipeline working with two sources (jsonl,
 csv) and two mappers (bio_to_spans, label_to_classification). No
 introspection yet — user supplies the mapping config explicitly. Ships
 as a CLI command + a backend service; no UI yet.
 
-### User stories
-- *As a developer with a JSONL file of `{text, label}` rows*, I want
-  `brewslm dataset import --source jsonl:./mydata.jsonl --project
-  sentiment --mapper label_to_classification --map text:text,label:label`
-  to land them in my project's synthetic dataset without writing
-  any code.
-- *As a developer with a Kaggle-format JSONL*, I want
-  `--mapper bio_to_spans --map tokens:tokens,labels:labels` to apply
-  the BIO-to-spans transform with proper offset reconstruction.
-
-### Work
-- Create the `dataset_import/` service package with registry,
-  service entry point, and the `DatasetSource` + `TargetMapper`
-  protocols.
-- Implement two source loaders: `jsonl`, `csv` (stdlib only, streams
-  rows).
-- Implement two target mappers: `bio_to_spans` (generalizes the
-  existing kaggle converter; uses the same offset-reconstruction
-  logic), `label_to_classification` (flat passthrough with
-  type coercion).
-- New API endpoints:
-  - `POST /projects/{id}/dataset-import/preview` → returns first 5
-    transformed rows + mapper diagnostics
-  - `POST /projects/{id}/dataset-import/run` → writes accepted
-    rows to the project's synthetic dataset
-- CLI subcommand `brewslm dataset import` with `--source`,
-  `--mapper`, `--map` (field map), `--limit`, `--dry-run`, `--out`
-  flags.
-- Tests pin each piece in isolation + one end-to-end run.
+### What landed
+- `backend/app/services/dataset_import/` package with
+  `protocols.py` (DatasetSource + TargetMapper Protocols + the
+  RawRow / TransformedRow / RejectedRow / ImportContext /
+  ImportResult dataclasses), `registry.py` (source + mapper
+  dispatchers with locator-prefix parsing), and `service.py`
+  (orchestrator: `preview_import` + `run_import`).
+- Two source loaders:
+  - `sources/jsonl.py` — streams `dict` rows from a JSONL file;
+    unparseable lines become sentinel rows with `__parse_error__`
+    so mappers reject them with a stable reason code rather than
+    silently dropping them.
+  - `sources/csv.py` — wraps `csv.DictReader`; first row is the
+    header.
+- Two target mappers:
+  - `mappers/bio_to_spans.py` — generalizes the kaggle PII
+    converter. Full-text alignment with token+whitespace fallback,
+    B-X / I-X run merging, configurable entity-type mapping.
+    Declared target: `structured_extraction`.
+  - `mappers/label_to_classification.py` — type-coercing
+    passthrough (bool/int labels → canonical strings, whitespace
+    collapsed). Optional `allowed_labels` filter. Declared
+    target: `classification`.
+- API endpoints (registered in `backend/app/main.py`):
+  - `GET /api/dataset-import/sources` — list registered sources
+  - `GET /api/dataset-import/mappers` — list registered mappers
+  - `POST /api/projects/{id}/dataset-import/preview` — dry-run
+  - `POST /api/projects/{id}/dataset-import/run` — persist
+- CLI module at `backend/app/cli/dataset_import.py`, runnable as
+  `python -m app.cli.dataset_import <subcommand>`. Subcommands:
+  `sources`, `mappers`, `preview`, `run`. Flags: `--locator`,
+  `--mapper`, `--map K=V` (repeatable), `--map-json '<json>'` for
+  nested values like `entity_type_map`, `--limit`, `--drop REASON`
+  (repeatable bulk-drop), `--project`, `--json`, `--sample-cap`.
+  Future `brewslm` binary can wrap this module unchanged.
+- Bulk-drop UX contract honored end-to-end:
+  `rejection_counts` always reflects the full tally;
+  `--drop REASON` filters specific reason codes out of the
+  surfaced `rejected_sample` but keeps counts intact.
+- 42 tests (32 service + 10 CLI) covering registry dispatch +
+  unknown-id KeyErrors, source loaders (streaming, parse-error
+  sentinels, limit, describe, missing-file), bio_to_spans
+  (full-text + token-fallback offset reconstruction, B/I merge,
+  rejection codes), label_to_classification (coercion,
+  whitespace collapse, allowed_labels filter, field remapping),
+  preview_import (happy path, rejection grouping, drop-reasons
+  filter, unknown id errors), and CLI (catalog commands, JSON
+  output, field-map pairs + JSON form, drop filter, error
+  messages).
 
 ### Out of scope (lands in later phases)
 - Schema introspection / auto-mapping (Phase B).
+- More target mappers (Phase C).
 - HuggingFace + Kaggle connectors (Phases D, E).
 - UI wizard (Phase F).
 

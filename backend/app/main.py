@@ -25,6 +25,10 @@ from app.api.hardware import router as hardware_router
 from app.api.dataset import router as dataset_router
 from app.api.gold import router as gold_router
 from app.api.synthetic import router as synthetic_router
+from app.api.dataset_import import (
+    catalog_router as dataset_import_catalog_router,
+    project_router as dataset_import_project_router,
+)
 from app.api.tokenization import router as tokenization_router
 from app.api.training import router as training_router
 from app.api.evaluation import router as evaluation_router
@@ -209,6 +213,8 @@ app.include_router(cleaning_router, prefix="/api", dependencies=API_DEPENDENCIES
 app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tokenization_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(training_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(evaluation_router, prefix="/api", dependencies=API_DEPENDENCIES)
