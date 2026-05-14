@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { useToastStore, type ToastMessage } from '../../stores/toastStore';
+import AchievementToast from '../gamification/AchievementToast';
 import './Toast.css';
 
-const ICONS = {
+const ICONS: Record<string, string> = {
     success: '✅',
     error: '❌',
     warning: '⚠️',
-    info: 'ℹ️'
+    info: 'ℹ️',
 };
 
 const ToastItem = ({ toast }: { toast: ToastMessage }) => {
     const removeToast = useToastStore(s => s.removeToast);
     const [isRemoving, setIsRemoving] = useState(false);
+
+    // Gamification toasts get their own CRT-styled renderer. Standard
+    // pill style stays for success / error / info / warning.
+    if (toast.type === 'achievement') {
+        return <AchievementToast toast={toast} />;
+    }
 
     const handleClose = () => {
         setIsRemoving(true);
@@ -20,7 +27,7 @@ const ToastItem = ({ toast }: { toast: ToastMessage }) => {
 
     return (
         <div className={`toast ${toast.type} ${isRemoving ? 'removing' : ''}`} role="alert">
-            <span className="toast-icon">{ICONS[toast.type]}</span>
+            <span className="toast-icon">{ICONS[toast.type] ?? 'ℹ️'}</span>
             <span className="toast-message">{toast.message}</span>
             <button className="toast-close" onClick={handleClose} aria-label="Close">×</button>
         </div>

@@ -7,6 +7,8 @@ import CommandPalette from '../components/layout/CommandPalette';
 import WorkspaceFlowHint from '../components/layout/WorkspaceFlowHint';
 import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
+import ProgressChip from '../components/gamification/ProgressChip';
+import { useGamificationPoller } from '../components/gamification/useProgressionPoll';
 import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 
@@ -29,6 +31,11 @@ export default function ProjectWorkspaceLayout() {
         void fetchProject(projectId);
         void fetchPipelineStatus(projectId);
     }, [projectId, projectIdValid, fetchProject, fetchPipelineStatus]);
+
+    // Lab Journal: drive the gamification poller while a project is
+    // active. Hook is a no-op when projectId is 0 / invalid, so it's
+    // safe to call unconditionally above the early-return guards.
+    useGamificationPoller(projectIdValid ? projectId : 0);
 
     const refreshPipelineStatus = async () => {
         if (!projectIdValid) {
@@ -81,6 +88,7 @@ export default function ProjectWorkspaceLayout() {
                     withSidebar
                     actions={
                         <>
+                            <ProgressChip projectId={projectId} />
                             <ManifestExportButton
                                 projectId={projectId}
                                 projectName={activeProject.name}

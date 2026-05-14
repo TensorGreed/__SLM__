@@ -5,7 +5,19 @@ import api from '../api/client';
 import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { getPipelineStageIndex, getRecommendedAction, PIPELINE_STAGE_LABEL } from '../utils/flowGuide';
+import { useProgressionState } from '../components/gamification/useProgressionPoll';
 import './ProjectGuidePage.css';
+
+// Map each guide step id to the achievement id that, when unlocked,
+// earns the step its Lab Journal stamp. ``domain`` + ``trainconfig``
+// don't have direct first-time achievements today (no RunEvent feeds
+// them) — they just render unstamped.
+const STAMP_ACHIEVEMENT_BY_STEP: Record<string, string | undefined> = {
+    ingest: 'first_ingest',
+    prepare: 'first_clean',
+    train: 'first_train',
+    ship: 'first_export',
+};
 
 interface GuideStep {
     id: string;
@@ -26,6 +38,11 @@ export default function ProjectGuidePage() {
     const recommended = useMemo(
         () => getRecommendedAction(projectId, project, pipelineStatus),
         [projectId, project, pipelineStatus],
+    );
+    const progression = useProgressionState();
+    const unlockedIds = useMemo(
+        () => new Set(progression?.achievements_unlocked ?? []),
+        [progression],
     );
 
     const steps = useMemo<GuideStep[]>(() => {
@@ -144,6 +161,10 @@ export default function ProjectGuidePage() {
             <section className="project-guide-steps">
                 {steps.map((step, idx) => {
                     const isNow = !step.complete && idx === (firstIncompleteIndex >= 0 ? firstIncompleteIndex : steps.length - 1);
+                    const stampAchievement = STAMP_ACHIEVEMENT_BY_STEP[step.id];
+                    const stamped = stampAchievement
+                        ? unlockedIds.has(stampAchievement)
+                        : false;
                     return (
                         <article
                             key={step.id}
@@ -154,6 +175,22 @@ export default function ProjectGuidePage() {
                                 <span className={`badge ${step.complete ? 'badge-success' : isNow ? 'badge-warning' : 'badge-info'}`}>
                                     {step.complete ? 'Done' : isNow ? 'Now' : 'Later'}
                                 </span>
+                                {stamped && (
+                                    <span
+                                        className="terminal-glow"
+                                        title="Lab Journal: achievement unlocked"
+                                        aria-label="Lab Journal stamp"
+                                        data-testid={`guide-stamp-${step.id}`}
+                                        style={{
+                                            fontFamily: 'var(--font-mono)',
+                                            fontSize: '0.85rem',
+                                            marginLeft: 'auto',
+                                            letterSpacing: '0.04em',
+                                        }}
+                                    >
+                                        ▣
+                                    </span>
+                                )}
                             </div>
                             <h5>{step.title}</h5>
                             <p>{step.detail}</p>

@@ -143,6 +143,51 @@
   --nav-text-muted: var(--text-tertiary);
   --nav-active-bg: var(--gray-100);
   --nav-active-border: var(--gray-900);
+
+  /* ── CRT / Lab Journal palette (gamification) ──────────────────
+     Phosphor green + amber + glow tokens for the embedded
+     progression UI. The rest of the platform stays monochrome; CRT
+     tokens are scoped to the .terminal-glow utility class + the
+     gamification components so they don't bleed into normal panels. */
+  --crt-green: #1f9d55;            /* phosphor green, darker than full neon for daylight contrast */
+  --crt-green-bright: #2bd773;     /* hover / accent */
+  --crt-green-dim: #0c4d28;        /* muted glyph for locked items */
+  --crt-amber: #d97706;            /* secondary accent (level-up, warnings) */
+  --crt-surface: #0a0f0c;          /* near-black CRT background */
+  --crt-surface-soft: #0f1612;
+  --crt-border: rgba(31, 157, 85, 0.45);
+  --crt-glow: 0 0 6px rgba(31, 157, 85, 0.55);
+  --crt-glow-bright: 0 0 12px rgba(43, 215, 115, 0.65);
+  --scanline-bg: repeating-linear-gradient(
+    to bottom,
+    rgba(31, 157, 85, 0) 0px,
+    rgba(31, 157, 85, 0) 2px,
+    rgba(31, 157, 85, 0.05) 2px,
+    rgba(31, 157, 85, 0.05) 3px
+  );
+}
+
+/* Utility class used by the ProgressChip / LabJournalDrawer /
+   AchievementToast. Anything that needs the CRT look-and-feel
+   inherits these defaults; the components add their own borders +
+   ascii art. Standard panels never touch this class. */
+.terminal-glow {
+  font-family: var(--font-mono);
+  color: var(--crt-green);
+  text-shadow: var(--crt-glow);
+  letter-spacing: 0.02em;
+}
+
+.terminal-glow-bright {
+  color: var(--crt-green-bright);
+  text-shadow: var(--crt-glow-bright);
+}
+
+.terminal-surface {
+  background-color: var(--crt-surface);
+  background-image: var(--scanline-bg);
+  border: 1px solid var(--crt-border);
+  border-radius: var(--radius-sm);
 }
 
 /* ── Global ─────────────────────────────────────────────────────────── */

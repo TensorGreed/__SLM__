@@ -95,6 +95,14 @@ class Project(Base):
             "auto_cancel": True
         }
     )
+    # Gamification progression state (Lab Journal). Nullable so
+    # existing projects round-trip unchanged; the service
+    # materializes the canonical empty shape on first read.
+    gamification: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

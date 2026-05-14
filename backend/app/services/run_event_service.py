@@ -158,6 +158,21 @@ async def emit_event(
     )
     db.add(row)
     await db.flush()
+
+    # Best-effort gamification tap (Lab Journal). Any failure here is
+    # observability noise — must never break the data write path that
+    # just emitted the RunEvent. Caller's transaction owns the commit.
+    try:
+        from app.services.gamification_service import process_run_event
+
+        await process_run_event(db, row)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"[gamification] process_run_event failed project={project_id} "
+            f"reason={reason_code!r} err={exc!r}",
+            flush=True,
+        )
+
     return row
 
 
