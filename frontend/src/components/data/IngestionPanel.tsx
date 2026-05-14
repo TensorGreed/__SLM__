@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { Fragment, useState, useCallback, useEffect } from 'react';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
@@ -8,6 +8,7 @@ import { ReadinessPanel } from '../shared/ReadinessPanel';
 import { buildWsUrl } from '../../utils/ws';
 import EDADashboard from './EDADashboard';
 import DatasetImportWizard from './DatasetImportWizard';
+import DocumentSampleAccordion from './DocumentSampleAccordion';
 import SavedMappingsPanel from './SavedMappingsPanel';
 import './IngestionPanel.css';
 
@@ -124,6 +125,22 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [uploadProgress, setUploadProgress] = useState('');
     const [showImportWizard, setShowImportWizard] = useState(false);
     const [savedMappingsRefreshKey, setSavedMappingsRefreshKey] = useState(0);
+    // Per-document expand state for the inline 10-random-rows
+    // accordion. Stored as a Set so toggling one document doesn't
+    // re-render every row.
+    const [expandedDocIds, setExpandedDocIds] = useState<Set<number>>(new Set());
+
+    const toggleDocExpanded = (docId: number) => {
+        setExpandedDocIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(docId)) {
+                next.delete(docId);
+            } else {
+                next.add(docId);
+            }
+            return next;
+        });
+    };
 
     const [activeTab, setActiveTab] = useState<SourceTab>('upload');
     const [remoteId, setRemoteId] = useState('');
@@ -1000,6 +1017,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                         <table className="docs-table">
                             <thead>
                                 <tr>
+                                    <th style={{ width: 32 }}></th>
                                     <th>Filename</th>
                                     <th>Source</th>
                                     <th>Type</th>
@@ -1010,42 +1028,73 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                                 </tr>
                             </thead>
                             <tbody>
-                                {documents.map((doc) => (
-                                    <tr key={doc.id} className="doc-row">
-                                        <td className="doc-name">{doc.filename}</td>
-                                        <td>
-                                            <span className="badge badge-info" style={{ fontSize: 10 }}>
-                                                {doc.source || 'upload'}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span className="badge badge-accent">{doc.file_type}</span>
-                                        </td>
-                                        <td className="doc-size">{formatSize(doc.file_size_bytes)}</td>
-                                        <td>
-                                            <span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span>
-                                        </td>
-                                        <td className="doc-date">{new Date(doc.ingested_at).toLocaleDateString()}</td>
-                                        <td className="doc-actions">
-                                            {doc.status === 'pending' && (
-                                                <button
-                                                    className="btn btn-ghost btn-sm"
-                                                    onClick={() => void handleProcess(doc.id)}
-                                                    title="Process"
-                                                >
-                                                    ⚙️
-                                                </button>
+                                {documents.map((doc) => {
+                                    const isExpanded = expandedDocIds.has(doc.id);
+                                    return (
+                                        <Fragment key={doc.id}>
+                                            <tr className="doc-row">
+                                                <td>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-ghost btn-sm"
+                                                        onClick={() => toggleDocExpanded(doc.id)}
+                                                        aria-expanded={isExpanded ? 'true' : 'false'}
+                                                        aria-label={
+                                                            isExpanded
+                                                                ? `Hide sample for ${doc.filename}`
+                                                                : `Show 10 random rows from ${doc.filename}`
+                                                        }
+                                                        title="Preview 10 random rows"
+                                                        data-testid={`expand-doc-${doc.id}`}
+                                                    >
+                                                        {isExpanded ? '▼' : '▶'}
+                                                    </button>
+                                                </td>
+                                                <td className="doc-name">{doc.filename}</td>
+                                                <td>
+                                                    <span className="badge badge-info" style={{ fontSize: 10 }}>
+                                                        {doc.source || 'upload'}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className="badge badge-accent">{doc.file_type}</span>
+                                                </td>
+                                                <td className="doc-size">{formatSize(doc.file_size_bytes)}</td>
+                                                <td>
+                                                    <span className={`badge ${statusBadgeClass(doc.status)}`}>{doc.status}</span>
+                                                </td>
+                                                <td className="doc-date">{new Date(doc.ingested_at).toLocaleDateString()}</td>
+                                                <td className="doc-actions">
+                                                    {doc.status === 'pending' && (
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-ghost btn-sm"
+                                                            onClick={() => void handleProcess(doc.id)}
+                                                            title="Process"
+                                                        >
+                                                            ⚙️
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-ghost btn-sm"
+                                                        onClick={() => void handleDelete(doc.id)}
+                                                        title="Delete"
+                                                    >
+                                                        🗑️
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {isExpanded && (
+                                                <DocumentSampleAccordion
+                                                    projectId={projectId}
+                                                    documentId={doc.id}
+                                                    colSpan={8}
+                                                />
                                             )}
-                                            <button
-                                                className="btn btn-ghost btn-sm"
-                                                onClick={() => void handleDelete(doc.id)}
-                                                title="Delete"
-                                            >
-                                                🗑️
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
+                                        </React.Fragment>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>

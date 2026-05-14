@@ -1,5 +1,6 @@
 """Data Ingestion service — handles file uploads, parsing, and storage."""
 
+import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -1113,4 +1114,214 @@ async def ingest_remote_dataset(
         "domain_hooks": hook_state,
         "validator_report": validator_report,
         "status": "accepted",
+    }
+
+
+# ── Row sampling for the Data-tab accordion preview ────────────────────
+
+
+_JSON_ARRAY_BYTE_LIMIT: int = 64 * 1024 * 1024
+"""Refuse to load JSON-array files larger than this — we'd need to
+hold the entire decoded structure in memory. JSONL is preferred for
+anything > a few MB."""
+
+
+def _reservoir_sample_jsonl(path: Path, k: int) -> tuple[list[dict], int]:
+    """Reservoir-sample ``k`` rows from a JSONL file in one pass.
+
+    O(file_size) time, O(k) memory. Unparseable lines are skipped
+    silently — the sample is for human eyeballing, not validation.
+    Returns ``(sample_rows, total_rows_scanned)``.
+    """
+
+    import random
+
+    reservoir: list[dict] = []
+    scanned = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            scanned += 1
+            if len(reservoir) < k:
+                reservoir.append(row if isinstance(row, dict) else {"value": row})
+                continue
+            j = random.randint(0, scanned - 1)
+            if j < k:
+                reservoir[j] = (
+                    row if isinstance(row, dict) else {"value": row}
+                )
+    return reservoir, scanned
+
+
+def _sample_json_array(path: Path, k: int) -> tuple[list[dict], int]:
+    """Sample from a JSON file whose top-level shape is an array of
+    objects (common HF / Kaggle export shape). Bounded by
+    :data:`_JSON_ARRAY_BYTE_LIMIT` since we have to decode the full
+    document.
+    """
+
+    import random
+
+    if path.stat().st_size > _JSON_ARRAY_BYTE_LIMIT:
+        raise ValueError(
+            f"JSON file is too large to sample ({path.stat().st_size:,} bytes). "
+            "Convert to JSONL for streaming-friendly sampling."
+        )
+    payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    if not isinstance(payload, list):
+        # Single object — return it verbatim.
+        if isinstance(payload, dict):
+            return [payload], 1
+        return [{"value": payload}], 1
+    rows = [r for r in payload if isinstance(r, dict)] or [
+        {"value": r} for r in payload
+    ]
+    if len(rows) <= k:
+        return rows, len(rows)
+    sample_idx = random.sample(range(len(rows)), k)
+    return [rows[i] for i in sample_idx], len(rows)
+
+
+def _sample_csv(path: Path, k: int, *, delimiter: str = ",") -> tuple[list[dict], int]:
+    """Reservoir-sample ``k`` rows from a delimited file."""
+
+    import csv as _csv
+    import random
+
+    reservoir: list[dict] = []
+    scanned = 0
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+        reader = _csv.DictReader(handle, delimiter=delimiter)
+        for row in reader:
+            cleaned = {
+                str(key): (value if value is not None else "")
+                for key, value in row.items()
+                if key is not None
+            }
+            scanned += 1
+            if len(reservoir) < k:
+                reservoir.append(cleaned)
+                continue
+            j = random.randint(0, scanned - 1)
+            if j < k:
+                reservoir[j] = cleaned
+    return reservoir, scanned
+
+
+def _sample_text_lines(path: Path, k: int) -> tuple[list[dict], int]:
+    """Reservoir-sample lines from a plain-text file as
+    ``{"line": <text>}`` rows."""
+
+    import random
+
+    reservoir: list[dict] = []
+    scanned = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            scanned += 1
+            if len(reservoir) < k:
+                reservoir.append({"line": stripped})
+                continue
+            j = random.randint(0, scanned - 1)
+            if j < k:
+                reservoir[j] = {"line": stripped}
+    return reservoir, scanned
+
+
+def _pick_sampler_path(doc: RawDocument) -> tuple[Path | None, str]:
+    """Pick which file on disk to sample for a given document.
+
+    Preference order:
+    1. The raw upload's ``file_path`` (what the user actually pulled).
+    2. The chunks JSONL (post-cleaning) — useful when the raw file
+       was deleted or stored as binary (PDF / DOCX).
+
+    Returns ``(path, source_label)``; ``path=None`` means no readable
+    source is available.
+    """
+
+    raw = Path(doc.file_path) if doc.file_path else None
+    if raw and raw.exists() and raw.is_file():
+        return raw, "raw"
+    chunks = Path(doc.file_path).with_suffix(".chunks.jsonl") if doc.file_path else None
+    if chunks and chunks.exists() and chunks.is_file():
+        return chunks, "chunks"
+    return None, "missing"
+
+
+async def sample_document_rows(
+    db: AsyncSession,
+    project_id: int,
+    document_id: int,
+    *,
+    n: int = 10,
+) -> dict:
+    """Return up to ``n`` random rows from a RawDocument's source file.
+
+    Format dispatch is driven by file extension (``file_type`` on the
+    model is the same string). The sampling is reservoir-based for
+    streaming formats (JSONL, CSV) so memory stays flat on huge
+    100K-row imports. JSON-array files have a size cap; binary /
+    unsupported formats return ``rows: []`` plus a ``note`` so the
+    accordion can show "preview unavailable for PDF" rather than
+    erroring out.
+    """
+
+    doc = await _get_document_for_project(db, project_id, document_id)
+    if doc is None:
+        raise FileNotFoundError(f"Document {document_id} not found")
+
+    path, source_label = _pick_sampler_path(doc)
+    if path is None:
+        return {
+            "document_id": document_id,
+            "filename": doc.filename,
+            "rows": [],
+            "total_rows_scanned": 0,
+            "source": source_label,
+            "note": "Source file not on disk.",
+        }
+
+    ext = path.suffix.lower()
+    note = ""
+    rows: list[dict]
+    scanned: int
+    try:
+        if ext == ".jsonl":
+            rows, scanned = _reservoir_sample_jsonl(path, n)
+        elif ext == ".json":
+            rows, scanned = _sample_json_array(path, n)
+        elif ext == ".csv":
+            rows, scanned = _sample_csv(path, n)
+        elif ext == ".tsv":
+            rows, scanned = _sample_csv(path, n, delimiter="\t")
+        elif ext in {".txt", ".md", ".markdown"}:
+            rows, scanned = _sample_text_lines(path, n)
+        else:
+            rows = []
+            scanned = 0
+            note = f"Preview not available for '{ext}' files."
+    except ValueError as exc:
+        # Surface the message (e.g. JSON-too-large) without crashing.
+        rows = []
+        scanned = 0
+        note = str(exc)
+
+    return {
+        "document_id": document_id,
+        "filename": doc.filename,
+        "rows": rows,
+        "total_rows_scanned": scanned,
+        "source": source_label,
+        "file_type": ext.lstrip("."),
+        "note": note,
     }

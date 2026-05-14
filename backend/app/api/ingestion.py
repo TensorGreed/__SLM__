@@ -342,6 +342,37 @@ async def get_documents(
         raise HTTPException(404, str(e))
 
 
+@router.get("/documents/{document_id}/sample")
+async def get_document_sample(
+    project_id: int,
+    document_id: int,
+    n: int = Query(default=10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return ``n`` random rows from a RawDocument's source file.
+
+    Used by the Data tab's accordion preview so a user who imported
+    100K rows from HuggingFace can eyeball what's actually in the
+    dataset without leaving the page. Supports JSONL, JSON arrays,
+    CSV, TSV, and plain-text files; everything else returns
+    ``{"rows": []}`` with a clear note rather than a 500.
+
+    For large files we reservoir-sample as we scan so memory stays
+    flat regardless of row count. JSON arrays are bounded — files >
+    64MB get rejected (they'd need to load fully into memory).
+    """
+
+    from app.services.ingestion_service import sample_document_rows
+
+    try:
+        result = await sample_document_rows(db, project_id, document_id, n=n)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return result
+
+
 @router.get("/eda")
 async def get_project_eda(
     project_id: int,

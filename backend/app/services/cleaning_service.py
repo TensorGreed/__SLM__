@@ -1,15 +1,22 @@
 """Data Cleaning service — deduplication, PII detection, quality scoring, chunking."""
 
+import asyncio
 import csv
 import hashlib
 import json
 import re
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import async_session_factory
 from app.models.dataset import Dataset, DatasetType, RawDocument
 
 
@@ -457,3 +464,188 @@ async def clean_document(
         "cleaned_chars": len(cleaned),
         "text_hash": text_hash,
     }
+
+
+# ── Background-task plumbing ──────────────────────────────────────────
+#
+# Cleaning a single huge document (e.g. a 100K-row HF import that
+# extracted to one multi-megabyte text dump) can run for several
+# minutes per regex pass + chunk write. When the request stays open
+# for the whole job, the Vite proxy's 10-minute timeout severs the
+# connection and the user sees "Network error" — even though the
+# worker is still happily cleaning. The fix is to detach the work
+# from the request lifetime: the API returns a task_id immediately
+# and the frontend polls a status endpoint.
+#
+# We use FastAPI's existing event loop (``asyncio.create_task``) with
+# an in-memory job registry, mirroring ``cloud_burst_service``'s
+# pattern. No Celery dependency added — cleaning is in-process and
+# its lifecycle ends with the API process, which matches every other
+# cleaning code path today.
+
+
+@dataclass
+class CleaningTask:
+    """In-memory record of a cleaning job. The instance lives in the
+    process-global ``_CLEANING_TASKS`` dict, keyed by task_id; the API
+    layer reads it via :func:`get_clean_task_status`."""
+
+    task_id: str
+    project_id: int
+    document_ids: list[int]
+    chunk_size: int
+    chunk_overlap: int
+    redact_pii: bool
+    redact_toxicity: bool
+
+    status: str = "pending"  # pending | running | completed | failed
+    completed: int = 0
+    total: int = 0
+    results: list[dict] = field(default_factory=list)
+    errors: list[dict] = field(default_factory=list)
+    error: str | None = None
+    current_document_id: int | None = None
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "project_id": self.project_id,
+            "status": self.status,
+            "total": self.total,
+            "completed": self.completed,
+            "current_document_id": self.current_document_id,
+            "results": list(self.results),
+            "errors": list(self.errors),
+            "error": self.error,
+            "started_at": self.started_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "finished_at": (
+                self.finished_at.isoformat() if self.finished_at else None
+            ),
+        }
+
+
+_CLEANING_TASKS: dict[str, CleaningTask] = {}
+_CLEANING_TASKS_LOCK = threading.Lock()
+
+# Cap the in-memory registry so a process running for weeks doesn't
+# accumulate completed task records forever. When we hit the cap we
+# drop the oldest finished tasks; in-flight tasks are always kept.
+_MAX_TRACKED_TASKS: int = 64
+
+
+def _trim_finished_tasks() -> None:
+    """Evict the oldest finished tasks when the registry grows past
+    the cap. Holds the lock; safe to call while holding it
+    (recursive lock semantics from threading.Lock — actually no, this
+    lock is acquired by the caller already)."""
+
+    if len(_CLEANING_TASKS) <= _MAX_TRACKED_TASKS:
+        return
+    finished = sorted(
+        (
+            task
+            for task in _CLEANING_TASKS.values()
+            if task.finished_at is not None
+        ),
+        key=lambda t: t.finished_at,  # type: ignore[arg-type]
+    )
+    overflow = len(_CLEANING_TASKS) - _MAX_TRACKED_TASKS
+    for task in finished[:overflow]:
+        _CLEANING_TASKS.pop(task.task_id, None)
+
+
+async def _run_cleaning_task(task: CleaningTask) -> None:
+    """Run a cleaning batch under its own DB session.
+
+    Catches per-document failures so a bad row in the middle of a
+    batch doesn't sink the whole job (matches the legacy
+    ``clean-batch`` semantics). Updates the in-memory task record on
+    each step so the polling endpoint sees live progress.
+    """
+
+    task.status = "running"
+    task.total = len(task.document_ids)
+    task.updated_at = datetime.now(timezone.utc)
+
+    try:
+        async with async_session_factory() as db:
+            for doc_id in task.document_ids:
+                task.current_document_id = doc_id
+                task.updated_at = datetime.now(timezone.utc)
+                try:
+                    result = await clean_document(
+                        db,
+                        task.project_id,
+                        doc_id,
+                        task.chunk_size,
+                        task.chunk_overlap,
+                        task.redact_pii,
+                        task.redact_toxicity,
+                    )
+                    await db.commit()
+                    task.results.append(result)
+                except Exception as exc:  # noqa: BLE001
+                    # Roll back this document's changes before moving on.
+                    await db.rollback()
+                    task.errors.append({"document_id": doc_id, "error": str(exc)})
+                finally:
+                    task.completed += 1
+                    task.updated_at = datetime.now(timezone.utc)
+        task.status = "completed"
+        task.current_document_id = None
+    except Exception as exc:  # noqa: BLE001
+        # Fatal failure (e.g. DB session couldn't open) — record + exit.
+        task.status = "failed"
+        task.error = str(exc)
+    finally:
+        task.finished_at = datetime.now(timezone.utc)
+        task.updated_at = task.finished_at
+
+
+def start_clean_batch_task(
+    *,
+    project_id: int,
+    document_ids: list[int],
+    chunk_size: int,
+    chunk_overlap: int,
+    redact_pii: bool,
+    redact_toxicity: bool,
+) -> CleaningTask:
+    """Register a new cleaning task + start it on the event loop.
+
+    Returns the task record so the caller can hand its ``task_id``
+    back to the frontend immediately. The actual cleaning runs on
+    ``asyncio.create_task``; the API request returns within
+    milliseconds regardless of batch size.
+    """
+
+    task = CleaningTask(
+        task_id=f"clean-{uuid4().hex[:12]}",
+        project_id=project_id,
+        document_ids=list(document_ids),
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        redact_pii=redact_pii,
+        redact_toxicity=redact_toxicity,
+    )
+    with _CLEANING_TASKS_LOCK:
+        _CLEANING_TASKS[task.task_id] = task
+        _trim_finished_tasks()
+    asyncio.create_task(_run_cleaning_task(task))
+    return task
+
+
+def get_clean_task(task_id: str) -> CleaningTask | None:
+    """Read-only lookup. Returns None when the id is unknown."""
+
+    with _CLEANING_TASKS_LOCK:
+        return _CLEANING_TASKS.get(task_id)
+
+
+def get_clean_task_status(task_id: str) -> dict[str, Any] | None:
+    task = get_clean_task(task_id)
+    return task.to_dict() if task else None

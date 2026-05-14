@@ -5,7 +5,11 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.services.cleaning_service import clean_document
+from app.services.cleaning_service import (
+    clean_document,
+    get_clean_task_status,
+    start_clean_batch_task,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/cleaning", tags=["Cleaning"])
 
@@ -85,6 +89,60 @@ async def clean_batch(
             errors.append({"document_id": doc_id, "error": str(e)})
 
     return {"cleaned": len(results), "errors": errors, "results": results}
+
+
+@router.post("/clean-batch-async", status_code=202)
+async def clean_batch_async(
+    project_id: int,
+    req: CleanBatchRequest,
+):
+    """Start a cleaning batch as a background task; return a task_id.
+
+    The synchronous ``clean-batch`` endpoint holds the HTTP request
+    open for the entire job. With large documents (100K-row HF
+    imports), that exceeds the dev proxy's 10-minute timeout and the
+    frontend sees a "network error" while the worker is still
+    cleaning. This variant detaches the work from the request
+    lifetime — the response returns within milliseconds with a
+    ``task_id`` the frontend polls via :func:`task_status`.
+
+    The job itself runs on the same event loop as the API, against a
+    fresh DB session per the lifecycle pattern used elsewhere
+    (``cloud_burst_service``).
+    """
+
+    task = start_clean_batch_task(
+        project_id=project_id,
+        document_ids=req.document_ids,
+        chunk_size=req.chunk_size,
+        chunk_overlap=req.chunk_overlap,
+        redact_pii=req.redact_pii,
+        redact_toxicity=req.redact_toxicity,
+    )
+    return task.to_dict()
+
+
+@router.get("/tasks/{task_id}")
+async def task_status(
+    project_id: int,
+    task_id: str,
+):
+    """Poll a backgrounded cleaning job for progress + results.
+
+    Returns 404 when the id is unknown (process restarted, registry
+    evicted the record, or the id was never created). The frontend
+    treats 404 the same as a fatal failure — the task can't be
+    resumed.
+    """
+
+    payload = get_clean_task_status(task_id)
+    if payload is None:
+        raise HTTPException(404, f"Cleaning task '{task_id}' not found.")
+    if payload.get("project_id") != project_id:
+        raise HTTPException(
+            404, f"Cleaning task '{task_id}' not found in this project."
+        )
+    return payload
 
 
 @router.get("/chunks")
