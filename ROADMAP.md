@@ -17,7 +17,7 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 
 | Epic | Story | Status | Impact |
 |---|---|---|---|
-| 1. Annotation & active learning | 1.1 Annotation foundation (schema + service + API) | NOT STARTED | 🔥 unblocks "any domain" |
+| 1. Annotation & active learning | 1.1 Annotation foundation (schema + service + API) | SHIPPED · 45e17a2 | 🔥 unblocks "any domain" |
 | 1. Annotation & active learning | 1.2 Text-classification + span annotation UI | NOT STARTED | 🔥 |
 | 1. Annotation & active learning | 1.3 Preference-pair annotation UI | NOT STARTED | high |
 | 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED | high |
@@ -98,7 +98,7 @@ Scope contract for the epic:
 
 ### Story 1.1 — Annotation foundation: schema + service + API
 
-**Status**: NOT STARTED
+**Status**: SHIPPED · 45e17a2
 **As a** project owner
 **I want** to define a label job (task shape, label set, instructions, target N rows)
 **so that** the pipeline knows what we're labeling and the audit log captures it.
