@@ -26,6 +26,7 @@ from app.api.dataset import router as dataset_router
 from app.api.gold import router as gold_router
 from app.api.synthetic import router as synthetic_router
 from app.api.gamification import router as gamification_router
+from app.api.annotation import router as annotation_router
 from app.api.dataset_import import (
     catalog_router as dataset_import_catalog_router,
     project_router as dataset_import_project_router,
@@ -219,6 +220,7 @@ app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gamification_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(annotation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(tokenization_router, prefix="/api", dependencies=API_DEPENDENCIES)

@@ -49,6 +49,13 @@ DATASET_IMPORT_FAILED = "dataset_import_failed"
 """Generic dataset-import pipeline raised before any rows were written.
 Severity is ``error``. Payload carries source, locator, mapper, and
 the error message."""
+ANNOTATION_JOB_CREATED = "annotation_job_created"
+"""Annotation label-job created (Story 1.1). Severity is ``info``;
+payload carries job_id, name, label_type, target_rows."""
+ANNOTATION_LABEL_SUBMITTED = "annotation_label_submitted"
+"""Reviewer submitted a label for one row in an annotation job.
+Severity is ``info``; payload carries job_id, row_id, user_id,
+label_type, and (optionally) the submitted label_payload."""
 
 # -- cleaning -----------------------------------------------------------
 CLEANING_OUTLIER_THRESHOLD_EXCEEDED = "cleaning_outlier_threshold_exceeded"
@@ -126,6 +133,8 @@ REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
         INGEST_VALIDATION_FAILED,
         DATASET_IMPORT_RUN,
         DATASET_IMPORT_FAILED,
+        ANNOTATION_JOB_CREATED,
+        ANNOTATION_LABEL_SUBMITTED,
     }),
     STAGE_CLEANING: frozenset({
         CLEANING_OUTLIER_THRESHOLD_EXCEEDED,

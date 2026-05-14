@@ -35,6 +35,7 @@ from app.models.deployment_telemetry import DeploymentTelemetrySample
 from app.models.deployment_drift_check import DeploymentDriftCheck
 from app.models.deployment_score import DeploymentScore
 from app.models.dataset_import_config import DatasetImportConfig
+from app.models.label_job import LabelJob, LabelRow
 from app.models.run_event import RunEvent
 from app.models.failure_cluster import FailureCluster
 from app.models.support_bundle import SupportBundle
@@ -84,4 +85,6 @@ __all__ = [
     "RunEvent",
     "FailureCluster",
     "SupportBundle",
+    "LabelJob",
+    "LabelRow",
 ]
