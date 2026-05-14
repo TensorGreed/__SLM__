@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrewSLM Capabilities | Developer Controls And Guardrails</title>
+    <title>BrewSLM Capabilities | Sources, mappers, eval handlers, plugins</title>
     <meta
       name="description"
-      content="Detailed BrewSLM capabilities across data ingestion, preflight, benchmarking, training orchestration, and deployment packaging."
+      content="What BrewSLM actually does: four source connectors, eight target mappers, task-aware evaluation, persistent mapping configs, plugin extensibility, LLM-assisted mapping."
     />
     <meta
       name="robots"
@@ -19,22 +19,22 @@
     <meta property="og:site_name" content="BrewSLM" />
     <meta
       property="og:title"
-      content="BrewSLM Capabilities | Developer Controls And Guardrails"
+      content="BrewSLM Capabilities | Sources, mappers, eval handlers, plugins"
     />
     <meta
       property="og:description"
-      content="Explore BrewSLM capabilities across ingestion, preflight, training orchestration, and export."
+      content="What BrewSLM actually does: source connectors, mappers, eval handlers, plugin contracts."
     />
     <meta property="og:url" content="https://brewslm.com/capabilities.html" />
     <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta
       name="twitter:title"
-      content="BrewSLM Capabilities | Developer Controls And Guardrails"
+      content="BrewSLM Capabilities | Sources, mappers, eval handlers, plugins"
     />
     <meta
       name="twitter:description"
-      content="Explore BrewSLM capabilities across ingestion, preflight, training orchestration, and export."
+      content="What BrewSLM actually does: source connectors, mappers, eval handlers, plugin contracts."
     />
     <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
@@ -57,7 +57,7 @@
         <a href="./creation-paths.html">Creation Paths</a>
         <a href="./workflow.html">Workflow</a>
         <a href="./capabilities.html" aria-current="page">Capabilities</a>
-        <a href="./blog.html">Blogs</a>
+        <a href="./blog.html">Blog</a>
         <a href="./faqs.html">FAQs</a>
       </nav>
       <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
@@ -66,115 +66,63 @@
     <main>
       <section class="section page-hero reveal">
         <p class="eyebrow">Capabilities</p>
-        <h1>Control-rich defaults for teams shipping real SLM systems.</h1>
+        <h1>The feature surface, by axis.</h1>
         <p class="page-sub">
-          BrewSLM gives immediate productivity through autopilot presets while preserving full control
-          over data adapters, runtime preflight, training behavior, and deployment packaging.
+          BrewSLM is built as a set of small, well-scoped registries: source connectors, target
+          mappers, task handlers, plugin slots. Each axis is short and complete. No five-layer
+          enterprise diagram; just the things you can actually use.
         </p>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Capability Clusters</p>
-          <h2>What you can do end-to-end</h2>
-        </div>
-        <div class="cluster-grid">
-          <article class="cluster-card reveal">
-            <h3>Data Intake + Mapping</h3>
-            <ul class="capability-list">
-              <li>Ingest local, URL, HF, Kaggle sources in one interface.</li>
-              <li>Generate canonical schema mappings and reusable profiles.</li>
-              <li>Apply validation checks before training visibility.</li>
-            </ul>
-          </article>
-          <article class="cluster-card reveal">
-            <h3>Contract + Runtime Preflight</h3>
-            <ul class="capability-list">
-              <li>Validate task and model compatibility constraints.</li>
-              <li>Check runtime dependencies and memory fit before launch.</li>
-              <li>Choose strict/fail-open policy per environment.</li>
-            </ul>
-          </article>
-          <article class="cluster-card reveal">
-            <h3>Benchmark Intelligence</h3>
-            <ul class="capability-list">
-              <li>Run sampled candidate comparisons from Training UI and model-selection APIs.</li>
-              <li>Rank by quality, latency, and budget dimensions.</li>
-              <li>Persist benchmark traces for reproducible selection.</li>
-            </ul>
-          </article>
-          <article class="cluster-card reveal">
-            <h3>Training Orchestration</h3>
-            <ul class="capability-list">
-              <li>Launch one-click autopilot runs from CLI or Wizard UI.</li>
-              <li>Track checkpoints, logs, retries, and cancellation state.</li>
-              <li>Tune plan choices with intent, runtime, and profile overrides.</li>
-            </ul>
-          </article>
-          <article class="cluster-card reveal">
-            <h3>Artifact Packaging</h3>
-            <ul class="capability-list">
-              <li>Bundle weights, config, metrics, and run metadata.</li>
-              <li>Export to serving targets such as vLLM-compatible flows.</li>
-              <li>Version and verify bundles using checksums.</li>
-            </ul>
-          </article>
-          <article class="cluster-card reveal">
-            <h3>Operational Governance</h3>
-            <ul class="capability-list">
-              <li>Enforce evaluation gates and registry promotion checks.</li>
-              <li>Track run provenance across data and model versions.</li>
-              <li>Standardize handoff between AI and platform teams.</li>
-            </ul>
-          </article>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head reveal">
-          <p class="eyebrow">Control Depth</p>
-          <h2>How much control each mode gives you</h2>
+          <p class="eyebrow">Source connectors</p>
+          <h2>Four built-in, plus a plugin slot</h2>
         </div>
         <div class="table-wrap reveal">
-          <table class="compare-table" aria-label="Capability control matrix">
+          <table class="compare-table" aria-label="Source connectors">
             <thead>
               <tr>
-                <th>Control Area</th>
-                <th>Autopilot Default</th>
-                <th>Manual Override</th>
-                <th>Outcome</th>
+                <th>Source id</th>
+                <th>Locator format</th>
+                <th>What it does</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Schema Mapping</td>
-                <td>Suggested canonical mapping</td>
-                <td>Edit mapping and validation rules</td>
-                <td>Faster setup with traceable field decisions</td>
+                <td><code>jsonl</code></td>
+                <td><code>jsonl:/path/to/file.jsonl</code></td>
+                <td>One JSON object per line. Unparseable lines surface as sentinel rows.</td>
               </tr>
               <tr>
-                <td>Model Selection</td>
-                <td>Benchmark-informed shortlist</td>
-                <td>Pin exact model and constraints</td>
-                <td>Balanced quality, cost, and consistency</td>
+                <td><code>csv</code></td>
+                <td><code>csv:/path/to/file.csv</code></td>
+                <td>First row = header. Every cell is a string; mappers handle coercion.</td>
               </tr>
               <tr>
-                <td>Training Config</td>
-                <td>Generated train plan</td>
-                <td>Tune optimizer, schedule, stop policy</td>
-                <td>Safe baseline with targeted optimization</td>
+                <td><code>hf</code></td>
+                <td><code>hf:&lt;id&gt;[:split[:revision]]</code></td>
+                <td>
+                  Wraps <code>datasets.load_dataset</code> with <code>streaming=True</code>. Auth
+                  via <code>HF_TOKEN</code> for gated datasets.
+                </td>
               </tr>
               <tr>
-                <td>Runtime Placement</td>
-                <td>Recommended local/cloud placement</td>
-                <td>Force local or burst by policy</td>
-                <td>Operational flexibility by workload</td>
+                <td><code>kaggle</code></td>
+                <td><code>kaggle:competition:&lt;slug&gt;</code></td>
+                <td>
+                  Downloads + extracts via the Kaggle API. Cache under
+                  <code>~/.cache/brewslm/kaggle/</code>. Multi-file disambig via
+                  <code>?file=…</code>.
+                </td>
               </tr>
               <tr>
-                <td>Release Gating</td>
-                <td>Default quality checks</td>
-                <td>Define custom promotion thresholds</td>
-                <td>Reduced regression risk on deployment</td>
+                <td><em>your plugin</em></td>
+                <td><code>yourthing:&lt;ref&gt;</code></td>
+                <td>
+                  Register via <code>register_source(id, factory)</code> at module load. Same
+                  contract as built-ins.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -183,30 +131,210 @@
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Automation Playbooks</p>
-          <h2>Starter patterns teams automate in the first month</h2>
+          <p class="eyebrow">Target mappers</p>
+          <h2>Eight built-in, plus a plugin slot</h2>
+        </div>
+        <div class="table-wrap reveal">
+          <table class="compare-table" aria-label="Target mappers">
+            <thead>
+              <tr>
+                <th>Mapper id</th>
+                <th>Task profile</th>
+                <th>Use when the row carries…</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>bio_to_spans</code></td>
+                <td><code>structured_extraction</code> · span_set</td>
+                <td>BIO-tagged tokens + labels (NER / PII)</td>
+              </tr>
+              <tr>
+                <td><code>label_to_classification</code></td>
+                <td><code>classification</code></td>
+                <td><code>{text, label}</code></td>
+              </tr>
+              <tr>
+                <td><code>text_only</code></td>
+                <td><code>language_modeling</code></td>
+                <td>a single text column, no labels</td>
+              </tr>
+              <tr>
+                <td><code>qa_pair_passthrough</code></td>
+                <td><code>qa</code></td>
+                <td><code>{question, answer}</code></td>
+              </tr>
+              <tr>
+                <td><code>chat_messages_passthrough</code></td>
+                <td><code>chat_sft</code></td>
+                <td>a <code>messages</code> list of <code>{role, content}</code> dicts</td>
+              </tr>
+              <tr>
+                <td><code>preference_pair</code></td>
+                <td><code>dpo</code></td>
+                <td><code>{prompt, chosen, rejected}</code> (RLHF / DPO / ORPO)</td>
+              </tr>
+              <tr>
+                <td><code>rag_passthrough</code></td>
+                <td><code>rag_qa</code></td>
+                <td><code>{question, context, answer}</code> (grounded QA)</td>
+              </tr>
+              <tr>
+                <td><code>kv_to_structured</code></td>
+                <td><code>structured_extraction</code> · field_match</td>
+                <td>flat key-value extractions (invoices, forms, receipts)</td>
+              </tr>
+              <tr>
+                <td><em>your plugin</em></td>
+                <td><em>your choice</em></td>
+                <td>
+                  Register via <code>register_dataset_mappers(register)</code>; declare any task
+                  profile that has a registered handler.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Task-aware eval</p>
+          <h2>Metrics that match the task, not the average of every task</h2>
+        </div>
+        <div class="cluster-grid">
+          <article class="cluster-card reveal">
+            <h3>Classification</h3>
+            <ul class="capability-list">
+              <li>Per-class precision / recall / F1 + confusion matrix.</li>
+              <li>Macro + micro aggregates.</li>
+              <li>Legacy <code>exact_match</code> / <code>f1</code> aliases preserved for gate compat.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Span-set scoring (NER / PII)</h3>
+            <ul class="capability-list">
+              <li>Strict <code>(type, start, end)</code> match; off-by-one boundaries count as miss + hallucination.</li>
+              <li>Per-class P/R/F1 next to micro/macro.</li>
+              <li>Triggered by <code>output_schema.scoring_mode: "span_set"</code> on the manifest.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>RAG</h3>
+            <ul class="capability-list">
+              <li>Answer EM/F1 + <strong>faithfulness</strong> (fraction of prediction grounded in context).</li>
+              <li>Context recall — tells retriever bugs from generation bugs.</li>
+              <li>Per-row badge in <em>Predictions Preview</em>.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>DPO / ORPO alignment</h3>
+            <ul class="capability-list">
+              <li>Similarity-to-chosen vs similarity-to-rejected (token-level F1 proxy).</li>
+              <li>Mean alignment margin across rows.</li>
+              <li>Falls back to plain EM/F1 when <code>chosen</code>/<code>rejected</code> are absent.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Seq2Seq</h3>
+            <ul class="capability-list">
+              <li>BLEU + chrF for translation; ROUGE for summarization; both for paraphrase.</li>
+              <li><code>length_ratio</code> reported alongside content metrics.</li>
+              <li>Sub-task pulled from the prepared manifest's <code>subtask</code> field.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Vision + audio</h3>
+            <ul class="capability-list">
+              <li>Image captioning / VQA → vision-language handler.</li>
+              <li>Speech-to-text → audio-transcript handler (WER / CER).</li>
+              <li>Multimodal media flag enforced at preflight.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Reproducibility</p>
+          <h2>Save once, re-run forever, audit every time</h2>
+        </div>
+        <div class="dual-pane">
+          <article class="pane reveal">
+            <p class="pane-title">Saved mappings</p>
+            <p>
+              The wizard's <em>Save this mapping</em> button persists
+              <code>(locator, mapper_id, field_map, drop_reasons)</code> under a name. The
+              <em>Saved mappings</em> panel on the Data tab shows last-run row counts and offers
+              one-click <em>Re-run</em>.
+            </p>
+            <div class="code-block dense">
+              <p><span class="code-key">name</span>: weekly-pii-refresh</p>
+              <p><span class="code-key">locator</span>: kaggle:competition:pii-detection-…</p>
+              <p><span class="code-key">mapper_id</span>: bio_to_spans</p>
+              <p><span class="code-key">last_run_at</span>: 2026-05-13T10:00:00Z</p>
+              <p><span class="code-key">last_run_accepted</span>: 5,012</p>
+            </div>
+          </article>
+          <article class="pane reveal">
+            <p class="pane-title">Audit log</p>
+            <p>
+              Every import — fresh or re-run — emits a RunEvent with stage
+              <code>ingestion</code> and reason code <code>dataset_import_run</code> (or
+              <code>dataset_import_failed</code> on errors). Payload includes the
+              <code>config_id</code> link when the run came from a saved mapping.
+            </p>
+            <div class="terminal-block dense">
+              <p>RunEvent { stage: "ingestion",</p>
+              <p>&nbsp;&nbsp;reason_code: "dataset_import_run",</p>
+              <p>&nbsp;&nbsp;payload: { source_id: "kaggle",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;mapper_id: "bio_to_spans",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;accepted_count: 5012,</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;rejection_counts: {length_mismatch: 18},</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;config_id: 12 } }</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Extensibility</p>
+          <h2>Plugin contracts everywhere it matters</h2>
         </div>
         <div class="playbook-grid">
           <article class="playbook-card reveal">
-            <h3>Nightly Runtime Readiness</h3>
-            <p>Check GPU/dependency/secret readiness before scheduled automation starts.</p>
+            <h3>Source plugins</h3>
+            <p>
+              Register a new connector via <code>register_source(id, factory)</code>; addressed by
+              locator prefix.
+            </p>
             <div class="terminal-block dense">
-              <p>$ ./brewslm doctor --project 1</p>
+              <p># DATA_ADAPTER_PLUGIN_MODULES, KIND_HAS_MODULE_LOADER=true</p>
             </div>
           </article>
           <article class="playbook-card reveal">
-            <h3>Weekly Autopilot Retrain</h3>
-            <p>Kick off a guided one-click run from intent text with project defaults.</p>
+            <h3>Mapper plugins</h3>
+            <p>
+              Drop a module under <code>DATASET_MAPPER_PLUGIN_MODULES</code>; export
+              <code>register_dataset_mappers(register)</code>. Built-in failure isolation: one
+              broken plugin doesn't block the rest of the load.
+            </p>
             <div class="terminal-block dense">
-              <p>$ ./brewslm train --project 1 --autopilot --one-click --intent "Refresh support model"</p>
+              <p>def register_dataset_mappers(register):</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;register("my_mapper", MyMapper)</p>
             </div>
           </article>
           <article class="playbook-card reveal">
-            <h3>Release Candidate Export</h3>
-            <p>Tune for device constraints, then package an export candidate for serving.</p>
+            <h3>LLM-assist (opt-in)</h3>
+            <p>
+              When the deterministic sniffer can't reach 0.8 confidence, the introspector can
+              consult your teacher model for a mapping suggestion. The LLM's proposal goes
+              through the same confidence gate; hallucinated mapper ids are rejected.
+            </p>
             <div class="terminal-block dense">
-              <p>$ ./brewslm optimize --project 1 --target mobile_iphone15</p>
-              <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
+              <p>DATASET_IMPORT_LLM_ASSIST_ENABLED=true \</p>
+              <p>python -m app.cli.dataset_import introspect --locator … --llm-assist</p>
             </div>
           </article>
         </div>
@@ -214,35 +342,40 @@
 
       <section class="section cta reveal">
         <div class="cta-copy">
-          <p class="eyebrow">Capability Test Drive</p>
-          <h2>Validate the core stack with one short run</h2>
+          <p class="eyebrow">See the surface end-to-end</p>
+          <h2>The fastest read is the source</h2>
+          <p>
+            Every capability above is one file you can read. Start with
+            <code>backend/app/services/dataset_import/</code> for the pipeline, or
+            <code>backend/app/services/eval_task_handler_service.py</code> for the task
+            handlers.
+          </p>
           <div class="terminal-block">
-            <p>$ ./brewslm project create --name demo-slm --template general</p>
-            <p>$ ./brewslm dataset import --project 1 --sample general-chat-v1</p>
-            <p>$ ./brewslm preflight --project 1 --task causal_lm</p>
-            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
-            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
+            <p>$ git clone https://github.com/TensorGreed/__SLM__ brewslm</p>
+            <p>$ cd brewslm/backend</p>
+            <p>$ ls app/services/dataset_import/</p>
+            <p>introspector.py  mappers/  plugin_loader.py  sources/  service.py …</p>
           </div>
         </div>
         <aside class="quickstart-notes">
-          <p class="notes-head">After test drive</p>
-          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> inspect each artifact boundary.</p>
-          <p class="form-note"><a class="inline-link" href="./faqs.html">FAQs:</a> clarify rollout and governance details.</p>
-          <a class="btn btn-solid" href="./creation-paths.html">Review Path Options</a>
+          <p class="notes-head">Adjacent reads</p>
+          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> stage-by-stage pipeline.</p>
+          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation paths:</a> CLI / Python / Wizard.</p>
+          <a class="btn btn-solid" href="./faqs.html">Read FAQs</a>
         </aside>
       </section>
     </main>
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Powered by TensorGreed</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
       <p>
         <a
           class="footer-link"
           href="https://github.com/TensorGreed/__SLM__/issues"
           target="_blank"
           rel="noopener noreferrer"
-          >Support &amp; Questions: GitHub Issues</a
+          >Support &amp; questions: GitHub Issues</a
         >
       </p>
     </footer>
@@ -250,4 +383,3 @@
     <script src="./script.js"></script>
   </body>
 </html>
-

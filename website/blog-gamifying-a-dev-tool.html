@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gamifying a dev tool without making it a toy | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="Most gamified dev tools feel infantilizing. We tried it anyway. Here are the design rules we landed on and what we explicitly refused to do."
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-gamifying-a-dev-tool.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Gamifying a dev tool without making it a toy | BrewSLM Blog" />
+    <meta
+      property="og:description"
+      content="Most gamified dev tools feel infantilizing. We tried it anyway. Here are the design rules we landed on and what we explicitly refused to do."
+    />
+    <meta property="og:url" content="https://brewslm.com/blog-gamifying-a-dev-tool.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Gamifying a dev tool without making it a toy | BrewSLM Blog" />
+    <meta
+      name="twitter:description"
+      content="Most gamified dev tools feel infantilizing. We tried it anyway. Here are the design rules we landed on and what we explicitly refused to do."
+    />
+    <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blog</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <article class="section blog-post reveal">
+        <header class="blog-post-head">
+          <p class="eyebrow">Product · Design</p>
+          <h1>Gamifying a dev tool without making it a toy</h1>
+          <p class="page-sub">
+            Most gamified developer tools feel infantilizing. Confetti animations. Cartoon
+            avatars. "Yay, you opened the app today!" We added a progression layer anyway —
+            here are the design rules we kept, and what we explicitly refused to do.
+          </p>
+        </header>
+
+        <h2>What we wanted to fix</h2>
+        <p>
+          BrewSLM is a long-tail tool. Sessions are minutes to hours; the path from
+          "first project" to "production model" plays out over weeks. Between meaningful
+          milestones, the UI goes silent. There's no signal that crossing 90% F1 on a real
+          eval is harder and more valuable than running the demo. No incentive to revisit
+          underused capabilities (RAG, DPO, multi-base-model breadth). No recognition that
+          shipping a deploy version means something.
+        </p>
+        <p>
+          The gap isn't that users don't know they did something good. It's that the tool
+          doesn't acknowledge it.
+        </p>
+
+        <h2>What we refused to ship</h2>
+        <p>
+          Before designing what to build, we listed what to avoid:
+        </p>
+        <ul>
+          <li><strong>No cartoon animations or confetti.</strong> The product is a lab tool, not a mobile game.</li>
+          <li><strong>No cute names.</strong> "Master Wizard," "AI Sensei," "Llama Trainer Pro" — out.</li>
+          <li><strong>No streaks for opening the app.</strong> Showing up isn't an achievement; producing something is.</li>
+          <li><strong>No leaderboards, no social, no cloud sync.</strong> The product is local-first. Gamification stays local.</li>
+          <li><strong>No friction-inducing achievements.</strong> Nothing that makes a user feel "I need this badge before I'm allowed to do X."</li>
+        </ul>
+
+        <h2>What we shipped: the Lab Journal</h2>
+        <p>
+          One persistent chip in the TopBar: <code>▣ L3 · 1,240 XP</code>. Click it for a drawer
+          (right-side overlay) that lists unlocked achievements with timestamps, locked
+          achievements as next milestones, and hidden Discovery achievements as
+          <code>▢ ???</code> until you trip them. Aesthetic: retro CRT terminal, phosphor green
+          on dark, ASCII borders, monospace. Reads as "lab journal," not "kid game."
+        </p>
+
+        <h3>XP feeds off the audit stream</h3>
+        <p>
+          BrewSLM already emits a <code>RunEvent</code> for every meaningful workflow action
+          (import, clean, train, eval, export, deploy). That stream is the perfect XP feedstock
+          — every event is a real action with a structured payload, so we can both
+          (a) award proportional XP and (b) check whether the event represents a first-time
+          milestone. The gamification service is a single function — <code>process_run_event(db, event)</code>
+          — that dispatches on stage + reason code. It's a best-effort tap; a bug in the
+          progression layer can't break the data write path.
+        </p>
+
+        <h3>Levels are named after lab roles</h3>
+        <p>
+          L1 Intern → L2 Lab Tech → L3 ML Engineer → L5 Senior → L8 Staff → L10 Principal →
+          L15 Distinguished. The titles set the tone: this is a career-ladder metaphor, not a
+          wizarding-academy metaphor. The XP curve is <code>floor(100 * level^1.5)</code> —
+          fast onboarding, steep mastery. Total to L10 is ~7,000 XP, which translates to
+          roughly twenty meaningful runs.
+        </p>
+
+        <h3>Achievements track real ML skill</h3>
+        <p>
+          Three tiers:
+        </p>
+        <ul>
+          <li>
+            <strong>Onboarding</strong> mirrors the existing Guide page checklist. First
+            import, first clean, first train, first eval, first export, first deploy. The
+            tutorial-shaped milestones.
+          </li>
+          <li>
+            <strong>Mastery</strong> tracks actual ML thresholds. F1 ≥ 0.80 / 0.90 / 0.95.
+            Trained on three different base models (multi-model breadth).
+            Imported from three different source connectors (multi-dataset breadth). First
+            preference-pair (DPO) run. First RAG pipeline. First compressed export.
+          </li>
+          <li>
+            <strong>Discovery</strong> is the easter-egg tier. Hidden until unlocked. First
+            training run between 00:00–05:00 (Night Owl). Recovered from an OOM via autopilot
+            (OOM Survivor). Used <code>--force</code> on a low-confidence dataset import (With
+            Authority — lampshades the architectural rule). Registered a custom mapper plugin
+            (Modder). Triggered the LLM-assisted mapping mode (Phone a Friend). Cleaned a
+            document end-to-end in under 30 seconds (Speedrunner).
+          </li>
+        </ul>
+        <p>
+          Every achievement gets a one-line description and an XP value. Descriptions are dry.
+          From the catalog: "Eval pass rate crossed 95%. Most teams plateau before this." Or:
+          "Used --force on a low-confidence dataset import. You knew what you were doing."
+        </p>
+
+        <h3>Idempotent unlock, deduped toasts</h3>
+        <p>
+          The unlock path is a set-membership test before grant. The same trigger firing twice
+          never double-pays. For repeated continuous events (dataset_import_run, training
+          completes, eval passes), a 30-second per-(project, reason_code) suppress window means
+          rapid-fire events drip XP silently but only emit one toast. We don't want to spam.
+        </p>
+
+        <h2>What we got right (we think)</h2>
+        <p>
+          Two design choices we're least likely to walk back:
+        </p>
+        <ul>
+          <li>
+            <strong>Anchoring achievements to RunEvents, not pageviews.</strong> Showing up
+            isn't an achievement. Producing a model that passes 90% F1 is. The XP feedstock is
+            the audit stream because that's where the real work is.
+          </li>
+          <li>
+            <strong>Hidden Discovery tier.</strong> When a user stumbles into Night Owl after a
+            late-night training session, the toast lands as a wink, not a tutorial. The hidden
+            tier earns disproportionate engagement — discovery is a stronger signal of
+            mastery than checking off a list.
+          </li>
+        </ul>
+
+        <h2>What we'd still get wrong</h2>
+        <p>
+          If we shipped this for a team product instead of a single-user tool, we'd need to
+          think harder about social comparison. The current design — local-only, no
+          leaderboards — sidesteps the question entirely. The moment achievements become
+          visible to coworkers, "I have to grind X" becomes a real failure mode. We didn't
+          solve that; we deferred it by scoping local.
+        </p>
+        <p>
+          The other thing we'd be cautious about: making the gamification layer load-bearing.
+          The XP can't be the reason someone trains a better model. It's a small extra signal,
+          not the contract. If we caught ourselves designing the next phase of the actual
+          product around an achievement we wanted to ship, that would be a sign to delete the
+          gamification.
+        </p>
+
+        <div class="blog-post-footer">
+          <a class="btn btn-solid" href="./blog.html">Back to blog</a>
+          <a class="btn btn-ghost" href="./capabilities.html">See the capability surface</a>
+        </div>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

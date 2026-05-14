@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrewSLM Workflow | End-to-End SLM Lifecycle</title>
+    <title>BrewSLM Workflow | Ingest → Train → Eval → Export</title>
     <meta
       name="description"
-      content="Technical workflow for BrewSLM: ingest, normalize, preflight, benchmark, train, and export with clear artifact boundaries."
+      content="The BrewSLM workflow, stage by stage. Every step has inputs, outputs, a contract, and a RunEvent it emits. No mystery boxes."
     />
     <meta
       name="robots"
@@ -17,24 +17,18 @@
     <link rel="canonical" href="https://brewslm.com/workflow.html" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="BrewSLM" />
-    <meta
-      property="og:title"
-      content="BrewSLM Workflow | End-to-End SLM Lifecycle"
-    />
+    <meta property="og:title" content="BrewSLM Workflow | Ingest → Train → Eval → Export" />
     <meta
       property="og:description"
-      content="Review the BrewSLM lifecycle from ingestion to export with stage-level guardrails."
+      content="Every stage of the BrewSLM lifecycle, with its inputs, outputs, contract, and audit event."
     />
     <meta property="og:url" content="https://brewslm.com/workflow.html" />
     <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta
-      name="twitter:title"
-      content="BrewSLM Workflow | End-to-End SLM Lifecycle"
-    />
+    <meta name="twitter:title" content="BrewSLM Workflow | Ingest → Train → Eval → Export" />
     <meta
       name="twitter:description"
-      content="Review the BrewSLM lifecycle from ingestion to export with stage-level guardrails."
+      content="Every stage of the BrewSLM lifecycle, with its inputs, outputs, contract, and audit event."
     />
     <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
@@ -57,7 +51,7 @@
         <a href="./creation-paths.html">Creation Paths</a>
         <a href="./workflow.html" aria-current="page">Workflow</a>
         <a href="./capabilities.html">Capabilities</a>
-        <a href="./blog.html">Blogs</a>
+        <a href="./blog.html">Blog</a>
         <a href="./faqs.html">FAQs</a>
       </nav>
       <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
@@ -66,214 +60,166 @@
     <main>
       <section class="section page-hero reveal">
         <p class="eyebrow">Workflow</p>
-        <h1>A deterministic path from source data to deployable SLM artifact.</h1>
+        <h1>Eleven stages. Each emits a RunEvent. None of them lie about what they did.</h1>
         <p class="page-sub">
-          BrewSLM turns model development into a repeatable runbook. Each stage emits explicit inputs,
-          outputs, and checks so teams can inspect and improve the system without guessing.
+          Every step in the BrewSLM lifecycle has explicit inputs, outputs, a contract, and an
+          audit-log entry. The Observability page is just <code>SELECT * FROM run_events ORDER BY ts</code>
+          rendered as a timeline; nothing happens off-stream.
         </p>
       </section>
 
       <section class="section workflow">
         <div class="section-head reveal">
-          <p class="eyebrow">Lifecycle Map</p>
-          <h2>Stage-level execution model</h2>
+          <p class="eyebrow">Lifecycle map</p>
+          <h2>The pipeline, stage by stage</h2>
         </div>
         <div class="workflow-map">
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>01</span>
-              <h3>Source Ingestion</h3>
-            </div>
-            <p><strong>Input:</strong> local files, URL, HF, Kaggle</p>
-            <p><strong>Output:</strong> versioned raw dataset snapshot</p>
-            <p><strong>Guardrail:</strong> malformed record and empty-split detection</p>
+            <div class="step-head"><span>01</span><h3>Ingest</h3></div>
+            <p><strong>Inputs:</strong> source locator (<code>jsonl:/path</code>, <code>hf:id:split</code>, <code>kaggle:competition:slug</code>, etc.)</p>
+            <p><strong>Outputs:</strong> rows on disk in the project's data dir.</p>
+            <p><strong>Contract:</strong> source connectors implement <code>load()</code> + <code>describe()</code>. Unparseable rows surface as sentinel rows, not silent drops.</p>
+            <p><strong>RunEvent:</strong> none here directly — the introspector + run downstream emit one each.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>02</span>
-              <h3>Schema Normalization</h3>
-            </div>
-            <p><strong>Input:</strong> raw records + mapping config</p>
-            <p><strong>Output:</strong> canonical training schema</p>
-            <p><strong>Guardrail:</strong> field coverage and label-shape verification</p>
+            <div class="step-head"><span>02</span><h3>Introspect</h3></div>
+            <p><strong>Inputs:</strong> ~20 sample rows from the source.</p>
+            <p><strong>Outputs:</strong> ranked <code>ShapeHypothesis</code> list + a top <code>ProposedMapping</code> with confidence + rationale.</p>
+            <p><strong>Contract:</strong> never silently auto-picks. Below 0.80 needs <code>--force</code>.</p>
+            <p><strong>RunEvent:</strong> none — introspection is a read.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>03</span>
-              <h3>Contract Preflight</h3>
-            </div>
-            <p><strong>Input:</strong> task type + model candidates + runtime profile</p>
-            <p><strong>Output:</strong> pass/fail launch readiness report</p>
-            <p><strong>Guardrail:</strong> capability, dependency, and memory-fit checks</p>
+            <div class="step-head"><span>03</span><h3>Map (dry-run)</h3></div>
+            <p><strong>Inputs:</strong> locator + mapper + field map + optional drop reasons.</p>
+            <p><strong>Outputs:</strong> sample of accepted rows + full rejection breakdown grouped by reason.</p>
+            <p><strong>Contract:</strong> per-row accountability. Every row is a <code>TransformedRow</code> or a <code>RejectedRow</code> with a stable reason code.</p>
+            <p><strong>RunEvent:</strong> none — dry-run.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>04</span>
-              <h3>Benchmark Sampling</h3>
-            </div>
-            <p><strong>Input:</strong> candidate models + sampled project data</p>
-            <p><strong>Output:</strong> ranked model shortlist with metrics</p>
-            <p><strong>Guardrail:</strong> score confidence floor and run reproducibility tags</p>
+            <div class="step-head"><span>04</span><h3>Map (commit)</h3></div>
+            <p><strong>Inputs:</strong> same as dry-run, after user confirms.</p>
+            <p><strong>Outputs:</strong> rows appended to the project's synthetic JSONL.</p>
+            <p><strong>Contract:</strong> bulk-drop only affects the <em>sample</em> rendered to the user; counts stay in the audit row.</p>
+            <p><strong>RunEvent:</strong> <code>ingestion</code> / <code>dataset_import_run</code> on success, <code>dataset_import_failed</code> on error. Payload: source, mapper, accepted/rejected counts, written_path, config_id.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>05</span>
-              <h3>Training Launch</h3>
-            </div>
-            <p><strong>Input:</strong> selected model + generated train plan</p>
-            <p><strong>Output:</strong> checkpoints + incremental eval metrics</p>
-            <p><strong>Guardrail:</strong> budget cap, early-stop, and retry strategy</p>
+            <div class="step-head"><span>05</span><h3>Clean (optional)</h3></div>
+            <p><strong>Inputs:</strong> the project's RawDocuments.</p>
+            <p><strong>Outputs:</strong> cleaned text + chunks JSONL + per-document metadata (PII findings, quality score, text hash).</p>
+            <p><strong>Contract:</strong> runs as a background task with task_id polling so the HTTP request never blocks past the dev-proxy timeout.</p>
+            <p><strong>RunEvent:</strong> <code>cleaning</code> / info on success; <code>cleaning_outlier_threshold_exceeded</code> / <code>cleaning_pii_block</code> on the named failure modes.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>06</span>
-              <h3>Run Observability</h3>
-            </div>
-            <p><strong>Input:</strong> logs, metrics, worker heartbeats</p>
-            <p><strong>Output:</strong> run timeline and issue diagnostics</p>
-            <p><strong>Guardrail:</strong> stalled worker and metric regression alerts</p>
+            <div class="step-head"><span>06</span><h3>Prepare</h3></div>
+            <p><strong>Inputs:</strong> synthetic + cleaned rows; the project's dataset-adapter preset.</p>
+            <p><strong>Outputs:</strong> <code>prepared/manifest.json</code> + <code>train.jsonl</code> + <code>eval.jsonl</code>. Carries <code>task_profile</code> + <code>output_schema.scoring_mode</code>.</p>
+            <p><strong>Contract:</strong> the manifest is the source of truth for everything downstream; nothing reads from disk paths directly.</p>
+            <p><strong>RunEvent:</strong> dataset-prep summary.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>07</span>
-              <h3>Artifact Packaging</h3>
-            </div>
-            <p><strong>Input:</strong> best checkpoint + metadata + eval summary</p>
-            <p><strong>Output:</strong> deployable artifact bundle</p>
-            <p><strong>Guardrail:</strong> version trace and checksum validation</p>
+            <div class="step-head"><span>07</span><h3>Preflight</h3></div>
+            <p><strong>Inputs:</strong> prepared manifest + base model + runtime profile + hardware.</p>
+            <p><strong>Outputs:</strong> pass/fail + blocker list + a generated train plan.</p>
+            <p><strong>Contract:</strong> dependency, memory-fit, capability, and gate-policy checks. Strict mode blocks; fail-open mode emits warnings.</p>
+            <p><strong>RunEvent:</strong> blockers surface as <code>training</code> / <code>training_dispatch_error</code> when fatal.</p>
           </article>
           <article class="workflow-step reveal">
-            <div class="step-head">
-              <span>08</span>
-              <h3>Delivery + Iteration</h3>
-            </div>
-            <p><strong>Input:</strong> exported bundle + serving target profile</p>
-            <p><strong>Output:</strong> release candidate and next-run backlog</p>
-            <p><strong>Guardrail:</strong> release gate by benchmark and drift policy</p>
+            <div class="step-head"><span>08</span><h3>Train</h3></div>
+            <p><strong>Inputs:</strong> prepared manifest + chosen recipe + checkpoint cadence.</p>
+            <p><strong>Outputs:</strong> checkpoints + per-step loss / eval traces + a final adapter weights blob.</p>
+            <p><strong>Contract:</strong> task-handler dispatcher routes to ClassificationHandler, QAHandler, StructuredExtractionHandler (span_set or field_match), RAGHandler, AlignmentHandler, Seq2SeqHandler, VisionLanguageHandler, AudioTranscriptHandler, or SafetyHandler.</p>
+            <p><strong>RunEvent:</strong> <code>training</code> / info on completion (payload: experiment_id, backend, final_train_loss). <code>training_oom</code> / <code>training_runtime_error</code> / <code>training_timeout</code> / <code>training_cancelled</code> on failure.</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head"><span>09</span><h3>Evaluate</h3></div>
+            <p><strong>Inputs:</strong> trained model + held-out eval set + eval pack.</p>
+            <p><strong>Outputs:</strong> pass rate + task-aware metrics (per-class P/R/F1, span-set, faithfulness, alignment margin, BLEU/ROUGE, WER, etc.).</p>
+            <p><strong>Contract:</strong> the metric shape comes from the handler's <code>score()</code>; gates declared in the eval pack decide promotability.</p>
+            <p><strong>RunEvent:</strong> <code>eval</code> / info, parented to <code>exp-&lt;id&gt;</code>. <code>eval_runtime_error</code> / <code>eval_judge_unavailable</code> / <code>eval_dataset_missing</code> on failure.</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head"><span>10</span><h3>Export</h3></div>
+            <p><strong>Inputs:</strong> trained model + target format (GGUF / safetensors / HF / vLLM-compat).</p>
+            <p><strong>Outputs:</strong> artifact bundle with weights, tokenizer, manifest, smoke-check trace.</p>
+            <p><strong>Contract:</strong> quantization variants (Q4_K_M, AWQ, GPTQ) tracked so the Compression page knows what's available.</p>
+            <p><strong>RunEvent:</strong> <code>export</code> / info on success (payload: format, output_path, file_size_bytes). <code>export_run_failed</code> / <code>export_artifact_missing</code> / <code>export_quantization_failed</code> on the named failures.</p>
+          </article>
+          <article class="workflow-step reveal">
+            <div class="step-head"><span>11</span><h3>Deploy (optional)</h3></div>
+            <p><strong>Inputs:</strong> an export + a target (vLLM endpoint / local runner / cloud burst).</p>
+            <p><strong>Outputs:</strong> a versioned <code>DeploymentVersion</code> with promote / reject / rollback / drift-check actions.</p>
+            <p><strong>Contract:</strong> smoke check at promote time; drift check re-runs the gold set against the live endpoint on a schedule.</p>
+            <p><strong>RunEvent:</strong> <code>deployment</code> / info per action; <code>deployment_smoke_failed</code> / <code>deployment_drift_detected</code> / <code>deployment_promote_blocked</code> on failure.</p>
           </article>
         </div>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Artifact Ledger</p>
-          <h2>What gets produced, where, and why it matters</h2>
+          <p class="eyebrow">Audit spine</p>
+          <h2>One stream powers everything observability-related</h2>
         </div>
-        <div class="table-wrap reveal">
-          <table class="compare-table" aria-label="Workflow artifact ledger">
-            <thead>
-              <tr>
-                <th>Artifact</th>
-                <th>Produced At</th>
-                <th>Used By</th>
-                <th>Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Raw Snapshot</td>
-                <td>Ingest</td>
-                <td>Mapper, audits</td>
-                <td>Preserves original source state for replay</td>
-              </tr>
-              <tr>
-                <td>Canonical Dataset</td>
-                <td>Normalize</td>
-                <td>Preflight, benchmark, train</td>
-                <td>Stable schema for deterministic downstream steps</td>
-              </tr>
-              <tr>
-                <td>Preflight Report</td>
-                <td>Contract Check</td>
-                <td>Launch gate</td>
-                <td>Blocks incompatible runs before compute spend</td>
-              </tr>
-              <tr>
-                <td>Benchmark Summary</td>
-                <td>Benchmark</td>
-                <td>Model selection</td>
-                <td>Data-backed candidate ranking</td>
-              </tr>
-              <tr>
-                <td>Train Plan</td>
-                <td>Train Launch</td>
-                <td>Worker runtime</td>
-                <td>Defines training config with traceability</td>
-              </tr>
-              <tr>
-                <td>Checkpoint Set</td>
-                <td>Training</td>
-                <td>Exporter, evaluation</td>
-                <td>Captures recoverable model state</td>
-              </tr>
-              <tr>
-                <td>Export Bundle</td>
-                <td>Packaging</td>
-                <td>Serving stack</td>
-                <td>Deploy-ready model with metadata</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head reveal">
-          <p class="eyebrow">Operational Gates</p>
-          <h2>Hard stops that prevent avoidable failure modes</h2>
-        </div>
-        <div class="insight-grid">
-          <article class="insight-card reveal">
-            <h3>Gate A: Data Integrity</h3>
-            <p>Reject launches when mapping coverage, label validity, or split quality drops below threshold.</p>
-          </article>
-          <article class="insight-card reveal">
-            <h3>Gate B: Capability Match</h3>
-            <p>Reject task/model pairs that fail compatibility contracts or runtime requirements.</p>
-          </article>
-          <article class="insight-card reveal">
-            <h3>Gate C: Benchmark Floor</h3>
-            <p>Reject long training jobs when candidates fail minimum sampled quality criteria.</p>
-          </article>
-          <article class="insight-card reveal">
-            <h3>Gate D: Release Readiness</h3>
-            <p>Reject export promotion when final metrics regress against previous accepted runs.</p>
-          </article>
-        </div>
+        <article class="architecture-shell reveal" aria-label="RunEvent stream feeds">
+          <div class="arch-lane">
+            <span>Producers</span>
+            <p>Each stage above writes one or more <code>RunEvent</code> rows via <code>emit_event()</code>. Reason codes come from a lint-gated taxonomy; severity is one of info / warning / error / critical.</p>
+          </div>
+          <div class="arch-lane">
+            <span>Consumers</span>
+            <p>The Observability timeline. The failure-cluster surface. The support bundle. The audit explorer. The Lab Journal gamification layer.</p>
+          </div>
+          <div class="arch-lane">
+            <span>Why this matters</span>
+            <p>Adding a new pipeline stage is just: pick a stage constant, add a reason code, emit an event. Every downstream view picks it up automatically.</p>
+          </div>
+          <div class="arch-note">
+            <p>
+              <strong>Best-effort hooks:</strong> the audit emission is wrapped in try/except at
+              every call site. A bug in observability cannot break the data write path.
+            </p>
+          </div>
+        </article>
       </section>
 
       <section class="section cta reveal">
         <div class="cta-copy">
-          <p class="eyebrow">Workflow Starter</p>
-          <h2>Run the full lifecycle in practical order</h2>
+          <p class="eyebrow">Try the path end-to-end</p>
+          <h2>One command per stage. No glue scripts.</h2>
           <div class="terminal-block">
-            <p>$ ./brewslm project create --name workflow-demo --template general</p>
-            <p>$ ./brewslm dataset import --project 1 --sample general-chat-v1</p>
-            <p>$ ./brewslm preflight --project 1 --task causal_lm --plan</p>
-            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
-            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
-            <p>$ ./brewslm optimize --project 1 --target mobile_iphone15</p>
+            <p># ingest + map via the generic pipeline</p>
+            <p>$ python -m app.cli.dataset_import run \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;--locator hf:imdb:train --project 1 --auto --limit 5000</p>
+            <p>&nbsp;</p>
+            <p># or, via the wizard:</p>
+            <p># Pipeline → Data → "Import dataset (auto-mapping)"</p>
+            <p>&nbsp;</p>
+            <p># train via autopilot from the Training Config page</p>
+            <p>&nbsp;</p>
+            <p># or, scripted:</p>
+            <p>$ curl -X POST localhost:8000/api/projects/1/training/run \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;-H 'Content-Type: application/json' \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;-d '{"autopilot": true, "one_click": true}'</p>
           </div>
         </div>
         <aside class="quickstart-notes">
-          <p class="notes-head">Complementary pages</p>
-          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> see all controls and guardrails.</p>
-          <p class="form-note"><a class="inline-link" href="./faqs.html">FAQs:</a> resolve rollout questions before launch.</p>
-          <a class="btn btn-solid" href="./creation-paths.html">Pick Interface Path</a>
+          <p class="notes-head">Related</p>
+          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> registries, mappers, eval handlers.</p>
+          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation paths:</a> CLI vs Python vs Wizard.</p>
+          <a class="btn btn-solid" href="./faqs.html">Read FAQs</a>
         </aside>
       </section>
     </main>
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Powered by TensorGreed</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
       <p>
         <a
           class="footer-link"
           href="https://github.com/TensorGreed/__SLM__/issues"
           target="_blank"
           rel="noopener noreferrer"
-          >Support &amp; Questions: GitHub Issues</a
+          >Support &amp; questions: GitHub Issues</a
         >
       </p>
     </footer>
@@ -281,4 +227,3 @@
     <script src="./script.js"></script>
   </body>
 </html>
-

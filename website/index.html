@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrewSLM | Build Small Language Models Like Production Software</title>
+    <title>BrewSLM | From dataset URL to deployed model in one session</title>
     <meta
       name="description"
-      content="BrewSLM is a production-grade SLM platform for every developer workflow, with a reliable training pipeline to build and deploy faster."
+      content="BrewSLM ingests data from HuggingFace, Kaggle, or any JSONL/CSV, picks the right mapper automatically, trains, evaluates, and exports — all local, all auditable. Open source."
     />
     <meta
       name="robots"
@@ -19,22 +19,22 @@
     <meta property="og:site_name" content="BrewSLM" />
     <meta
       property="og:title"
-      content="BrewSLM | Build Small Language Models Like Production Software"
+      content="BrewSLM | From dataset URL to deployed model in one session"
     />
     <meta
       property="og:description"
-      content="BrewSLM is a production-grade SLM platform for every developer workflow, with a reliable training pipeline to build and deploy faster."
+      content="Auto-map any dataset. Train, eval, export — locally, with a wizard or a CLI. Open source."
     />
     <meta property="og:url" content="https://brewslm.com/" />
     <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta
       name="twitter:title"
-      content="BrewSLM | Build Small Language Models Like Production Software"
+      content="BrewSLM | From dataset URL to deployed model in one session"
     />
     <meta
       name="twitter:description"
-      content="BrewSLM is a production-grade SLM platform for every developer workflow, with a reliable training pipeline to build and deploy faster."
+      content="Auto-map any dataset. Train, eval, export — locally, with a wizard or a CLI. Open source."
     />
     <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
@@ -61,12 +61,16 @@
         "url": "https://brewslm.com/",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Windows, macOS, Linux",
-        "description": "Production-grade SLM platform for every developer workflow with a reliable training pipeline.",
+        "description": "Open-source SLM training platform: ingest from HuggingFace, Kaggle, or JSONL/CSV with auto-mapping; train, eval, and export locally.",
         "featureList": [
-          "BrewSLM CLI for project, ingest, preflight, train, and export workflows",
-          "Python SDK for scripted orchestration and pipeline automation",
-          "Wizard UI for guided setup, benchmarking, and one-click training",
-          "Pipeline guardrails across ingest, schema mapping, preflight, benchmarking, and packaging"
+          "Generic dataset-import pipeline with schema introspection and auto-mapping",
+          "Built-in source connectors for JSONL, CSV, HuggingFace, and Kaggle",
+          "Eight target mappers covering classification, QA, chat SFT, DPO, RAG, NER, structured extraction",
+          "Task-aware evaluation handlers (span_set scoring for NER/PII, RAG faithfulness, DPO preference accuracy)",
+          "Three-step UI wizard with confidence-gated auto-mapping and bulk-drop UX for rejected rows",
+          "Persistent mapping configs with audit log entries on every import",
+          "Plugin mappers and optional LLM-assisted mapping suggestion",
+          "Lab Journal progression layer tracking real ML-skill milestones"
         ],
         "isAccessibleForFree": true,
         "offers": {
@@ -96,7 +100,7 @@
         <a href="./creation-paths.html">Creation Paths</a>
         <a href="./workflow.html">Workflow</a>
         <a href="./capabilities.html">Capabilities</a>
-        <a href="./blog.html">Blogs</a>
+        <a href="./blog.html">Blog</a>
         <a href="./faqs.html">FAQs</a>
       </nav>
       <a class="btn btn-outline" href="#quickstart">Quickstart</a>
@@ -105,150 +109,192 @@
     <main id="top">
       <section class="hero section">
         <div class="hero-panel reveal">
-          <p class="eyebrow">BrewSLM Engineering Control Plane</p>
-          <h1>Create small language models with production-grade discipline, not notebook chaos.</h1>
+          <p class="eyebrow">Open-source SLM training platform</p>
+          <h1>From dataset URL to deployed model in one session.</h1>
           <p class="hero-sub">
-            BrewSLM wraps the <code>__SLM__</code> stack into a developer-native workflow: create a project,
-            ingest or import data, run preflight, launch one-click training, and export from one consistent
-            interface with guardrails and override control built in.
+            Paste a HuggingFace ID, click <em>Import</em>, click <em>Autopilot</em>. BrewSLM's schema
+            introspector picks the right mapper, runs preflight, kicks off training, and packages the
+            export — all on your laptop, all auditable, no converter required.
           </p>
           <div class="metric-row">
             <article class="metric-chip">
-              <strong>5 commands</strong>
-              <span>to first run</span>
+              <strong>4 sources</strong>
+              <span>JSONL, CSV, HuggingFace, Kaggle</span>
             </article>
             <article class="metric-chip">
-              <strong>&lt;10 min</strong>
-              <span>typical setup to train start</span>
+              <strong>8 mappers</strong>
+              <span>classification, QA, chat, DPO, RAG, NER, k-v, LM</span>
             </article>
             <article class="metric-chip">
-              <strong>1 pipeline</strong>
-              <span>CLI, Python API, and Wizard parity</span>
+              <strong>0 converters</strong>
+              <span>auto-introspect + propose</span>
             </article>
           </div>
           <div class="hero-actions">
             <a class="btn btn-solid" href="#quickstart">Run the quickstart</a>
-            <a class="btn btn-ghost" href="./creation-paths.html">Choose an interface path</a>
+            <a
+              class="btn btn-ghost"
+              href="https://github.com/TensorGreed/__SLM__"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Read the source on GitHub</a
+            >
           </div>
         </div>
 
-        <aside class="hero-console reveal" aria-label="BrewSLM launch console">
+        <aside class="hero-console reveal" aria-label="BrewSLM import session">
           <div class="console-top">
-            <p>session: first slm rollout</p>
+            <p>session: import → train → export</p>
             <span>status: ready</span>
           </div>
           <div class="terminal-block">
-            <p>$ ./brewslm project create --name support-intent --template support</p>
-            <p>$ ./brewslm ingest --project 1 --source hf --id mteb/amazon_reviews_multi --split train --wait</p>
-            <p>$ ./brewslm preflight --project 1 --task causal_lm</p>
-            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
-            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
+            <p>$ python -m app.cli.dataset_import introspect \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;--locator hf:ai4privacy/pii-masking-200k:train</p>
+            <p>&nbsp;</p>
+            <p>top proposal: bio_to_spans (confidence 0.95) — safe to --auto</p>
+            <p>&nbsp;</p>
+            <p>$ python -m app.cli.dataset_import run \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;--locator hf:ai4privacy/pii-masking-200k:train \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;--project 1 --auto --limit 5000</p>
+            <p>&nbsp;</p>
+            <p>accepted=5000  mapper=bio_to_spans  target=structured_extraction</p>
           </div>
           <ul class="run-metrics">
-            <li><strong>contracts</strong><span>task/data/runtime checks passed</span></li>
-            <li><strong>plans</strong><span>autopilot profile + launch guardrails resolved</span></li>
-            <li><strong>artifacts</strong><span>weights + metadata + eval trace packed</span></li>
+            <li><strong>introspect</strong><span>column-type sniff + ranked hypothesis list</span></li>
+            <li><strong>auto-gate</strong><span>confidence ≥ 0.80 needed, --force below</span></li>
+            <li><strong>audit</strong><span>RunEvent row emitted with mapper + row counts</span></li>
           </ul>
         </aside>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Pipeline As Code</p>
-          <h2>Every stage is explicit: what BrewSLM automates vs what engineers control</h2>
+          <p class="eyebrow">What actually shipped</p>
+          <h2>The pipeline, broken into the parts that are interesting</h2>
         </div>
         <div class="pipeline-grid">
           <article class="pipeline-card reveal">
-            <p class="stage">01 Ingest</p>
-            <h3>Source Connectors</h3>
-            <p>BrewSLM pulls local, URL, Hugging Face, and Kaggle data into one project namespace.</p>
-            <p class="card-note"><strong>You control:</strong> source scope and dataset quality bar.</p>
+            <p class="stage">01 Schema introspector</p>
+            <h3>Sniff columns, propose a mapping</h3>
+            <p>
+              Reads ~20 sample rows from any source, classifies each column by content shape
+              (text-like, categorical, BIO tags, chat messages, etc.), ranks hypotheses with
+              confidence + rationale. Never silently auto-picks — the user confirms via
+              <code>--auto</code> above the threshold or <code>--force</code> under it.
+            </p>
+            <p class="card-note"><strong>You control:</strong> the threshold, the override, the field map.</p>
           </article>
           <article class="pipeline-card reveal">
-            <p class="stage">02 Normalize</p>
-            <h3>Schema Mapping</h3>
-            <p>Field adapters generate canonical records so downstream steps stay deterministic.</p>
-            <p class="card-note"><strong>You control:</strong> label policy and mapping constraints.</p>
+            <p class="stage">02 Eight target mappers</p>
+            <h3>Domain-agnostic, registry-driven</h3>
+            <p>
+              <code>bio_to_spans</code>, <code>label_to_classification</code>, <code>qa_pair_passthrough</code>,
+              <code>chat_messages_passthrough</code>, <code>preference_pair</code>,
+              <code>rag_passthrough</code>, <code>kv_to_structured</code>, <code>text_only</code>.
+              Each declares the task profile it feeds.
+            </p>
+            <p class="card-note"><strong>You control:</strong> custom mappers via plugin modules.</p>
           </article>
           <article class="pipeline-card reveal">
-            <p class="stage">03 Preflight</p>
-            <h3>Contract Guardrails</h3>
-            <p>Runtime, dependency, memory, and capability checks block invalid training launches.</p>
-            <p class="card-note"><strong>You control:</strong> strictness level and fail-open policy.</p>
+            <p class="stage">03 Bulk-drop UX</p>
+            <h3>Group rejects by reason, drop in one click</h3>
+            <p>
+              Per-row accountability is the contract — every raw row becomes either a
+              TransformedRow or a RejectedRow with a stable reason code. Counts stay in the audit
+              log even when you bulk-drop a category from the import.
+            </p>
+            <p class="card-note"><strong>You control:</strong> which rejection categories to silence.</p>
           </article>
           <article class="pipeline-card reveal">
-            <p class="stage">04 Benchmark</p>
-            <h3>LLM Benchmarks + Leaderboard</h3>
-            <p>Sampled LLM benchmarks and AI benchmarks compare model quality, latency, and cost before full training.</p>
-            <p class="card-note"><strong>You control:</strong> acceptance metrics, LLM leaderboard rules, and ranking weights.</p>
+            <p class="stage">04 Task-aware eval</p>
+            <h3>The metric matches the shape</h3>
+            <p>
+              NER / PII get span-set scoring (strict <code>(type, start, end)</code> matching).
+              RAG gets faithfulness + context-recall alongside EM/F1. DPO gets similarity-to-chosen
+              vs similarity-to-rejected. Classification gets per-class P/R/F1 + confusion matrix.
+              No more "your F1 is 4% because the reference is one word."
+            </p>
+            <p class="card-note"><strong>You control:</strong> the gate policy + the metric registry.</p>
           </article>
           <article class="pipeline-card reveal">
-            <p class="stage">05 Train</p>
-            <h3>Local Or Cloud Burst</h3>
-            <p>Run jobs with one command model, including guided flows for queries like "how to finetune llama 4".</p>
-            <p class="card-note"><strong>You control:</strong> compute budget and schedule windows.</p>
+            <p class="stage">05 Saved mappings + audit log</p>
+            <h3>Reproducible imports, no re-introspecting</h3>
+            <p>
+              Save a mapping after first import; re-run against a refreshed source with one click
+              (or one <code>POST /configs/{id}/run</code>). Every import — fresh or re-run — emits
+              a RunEvent with source, locator, mapper, row counts, and the config_id link.
+            </p>
+            <p class="card-note"><strong>You control:</strong> when to refresh, when to retire.</p>
           </article>
           <article class="pipeline-card reveal">
-            <p class="stage">06 Package</p>
-            <h3>Export + Serve</h3>
-            <p>Artifacts are packaged with reproducibility metadata for deployment environments.</p>
-            <p class="card-note"><strong>You control:</strong> serving target and release gating rules.</p>
+            <p class="stage">06 Local-first runtime</p>
+            <h3>Your data stays on your machine</h3>
+            <p>
+              FastAPI backend + SQLite + a React workspace. Everything runs locally; the teacher
+              model is optional (Ollama, OpenAI-compatible endpoint, anything that speaks the
+              chat-completions API). Cloud burst is opt-in, not required.
+            </p>
+            <p class="card-note"><strong>You control:</strong> the inference backend, the storage path, the boundary.</p>
           </article>
         </div>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Operator View</p>
-          <h2>What engineers see during an actual SLM run</h2>
+          <p class="eyebrow">Operator view</p>
+          <h2>What you see during an actual session</h2>
         </div>
         <div class="dual-pane">
           <article class="pane reveal">
-            <p class="pane-title">Run Timeline</p>
+            <p class="pane-title">Import run audit (excerpt)</p>
             <div class="terminal-block dense">
-              <p>[09:00:11] ingest.started source=hf dataset=mteb/amazon_reviews_multi</p>
-              <p>[09:00:23] ingest.completed records=65000 source=huggingface</p>
-              <p>[09:00:37] preflight.pass memory_fit=true contract=strict</p>
-              <p>[09:01:11] autopilot.plan profile=balanced blockers=0</p>
-              <p>[09:02:04] train.started mode=autopilot-one-click</p>
-              <p>[09:16:12] checkpoint.saved step=1200 eval_f1=0.819</p>
-              <p>[09:22:51] export.completed target=runner.vllm artifact=slm-support-v3</p>
+              <p>POST /api/projects/1/dataset-import/introspect</p>
+              <p>→ proposal: bio_to_spans  conf=0.95  needs_force=false</p>
+              <p>POST /api/projects/1/dataset-import/preview</p>
+              <p>→ accepted=4982  rejected=18 (length_mismatch=18)</p>
+              <p>POST /api/projects/1/dataset-import/run</p>
+              <p>→ written_path=…/projects/1/synthetic/synthetic.jsonl</p>
+              <p>RunEvent  stage=ingestion  reason=dataset_import_run</p>
+              <p>RunEvent  stage=training   summary="Training completed: exp-7"</p>
+              <p>RunEvent  stage=eval       payload.pass_rate=0.92</p>
+              <p>RunEvent  stage=export     payload.format=gguf-q4_k_m</p>
             </div>
           </article>
           <article class="pane reveal">
-            <p class="pane-title">Generated Train Plan</p>
+            <p class="pane-title">What lands in your project</p>
             <div class="code-block dense">
-              <p><span class="code-key">task</span>: classify</p>
-              <p><span class="code-key">dataset_profile</span>: canonical.v2</p>
-              <p><span class="code-key">model_candidate</span>: qwen2.5-1.5b</p>
-              <p><span class="code-key">optimizer</span>: adamw_8bit</p>
-              <p><span class="code-key">target_metric</span>: macro_f1</p>
-              <p><span class="code-key">early_stop</span>: patience_3</p>
-              <p><span class="code-key">artifact_trace</span>: enabled</p>
+              <p><span class="code-key">source</span>: hf:ai4privacy/pii-masking-200k:train</p>
+              <p><span class="code-key">mapper</span>: bio_to_spans</p>
+              <p><span class="code-key">target_task_profile</span>: structured_extraction</p>
+              <p><span class="code-key">scoring_mode</span>: span_set</p>
+              <p><span class="code-key">written_rows</span>: 4982</p>
+              <p><span class="code-key">audit_log_entries</span>: 12 (RunEvent stream)</p>
+              <p><span class="code-key">saved_mapping</span>: pii-weekly-refresh</p>
+              <p><span class="code-key">lab_journal</span>: +120 XP · L2 reached</p>
             </div>
-            <table class="mini-table" aria-label="Benchmark summary">
+            <table class="mini-table" aria-label="Source connector summary">
               <thead>
                 <tr>
-                  <th>Model</th>
-                  <th>Score</th>
-                  <th>Cost</th>
+                  <th>Source</th>
+                  <th>Locator</th>
+                  <th>Cache</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Qwen2.5-1.5B</td>
-                  <td>0.842</td>
-                  <td>Low</td>
+                  <td>JSONL / CSV</td>
+                  <td><code>jsonl:/path</code></td>
+                  <td>local fs</td>
                 </tr>
                 <tr>
-                  <td>Llama3.2-1B</td>
-                  <td>0.825</td>
-                  <td>Low</td>
+                  <td>HuggingFace</td>
+                  <td><code>hf:org/dataset:split</code></td>
+                  <td><code>~/.cache/huggingface</code></td>
                 </tr>
                 <tr>
-                  <td>Mistral-7B</td>
-                  <td>0.851</td>
-                  <td>High</td>
+                  <td>Kaggle</td>
+                  <td><code>kaggle:competition:slug</code></td>
+                  <td><code>~/.cache/brewslm/kaggle</code></td>
                 </tr>
               </tbody>
             </table>
@@ -258,119 +304,189 @@
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Why Teams Switch</p>
-          <h2>Less hidden work, fewer failed runs, faster iteration loops</h2>
+          <p class="eyebrow">Why this matters</p>
+          <h2>What you stop doing once BrewSLM is in your loop</h2>
         </div>
         <div class="insight-grid">
           <article class="insight-card reveal">
-            <h3>No More Manual Glue Code</h3>
-            <p>Common ingestion, mapping, and evaluation scaffolding is generated by default.</p>
+            <h3>Stop writing per-dataset converters</h3>
+            <p>
+              The Kaggle PII converter was 175 lines of careful BIO-to-spans logic. The
+              introspector now infers the same mapping from sample rows — and it works on any
+              BIO-tagged dataset, not just one.
+            </p>
           </article>
           <article class="insight-card reveal">
-            <h3>Guardrails Before Compute Spend</h3>
-            <p>Preflight prevents invalid launches before long training jobs consume budget.</p>
+            <h3>Stop guessing which metric to trust</h3>
+            <p>
+              Task-aware eval handlers route to the metric shape that fits. NER doesn't get scored
+              with classification F1 anymore. RAG faithfulness shows up next to answer F1, so you
+              can tell retriever bugs from generation bugs.
+            </p>
           </article>
           <article class="insight-card reveal">
-            <h3>Benchmark-Driven Model Picks</h3>
-            <p>Candidate ranking feeds an auditable LLM leaderboard so model picks are sample-backed, not static guesswork.</p>
+            <h3>Stop re-introspecting weekly</h3>
+            <p>
+              Save the mapping the first time. The <em>Saved mappings</em> panel shows last-run
+              row counts; one-click re-runs hit the same RunEvent audit stream as a fresh import.
+            </p>
           </article>
           <article class="insight-card reveal">
-            <h3>Safer LLM Updates</h3>
-            <p>Same command model and telemetry surfaces make LLM updates easier to validate before release.</p>
+            <h3>Stop losing rows silently</h3>
+            <p>
+              Per-row rejections carry stable reason codes. Bulk-drop happens only on categories
+              you explicitly select; counts stay in the result regardless.
+            </p>
           </article>
         </div>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Reference Architecture</p>
-          <h2>A practical control surface around the <code>__SLM__</code> runtime stack</h2>
+          <p class="eyebrow">Architecture</p>
+          <h2>Three planes, all running on your machine</h2>
         </div>
         <article class="architecture-shell reveal" aria-label="Reference architecture">
           <div class="arch-lane">
-            <span>Data Plane</span>
-            <p>Connectors -> Mapper -> Dataset Contract Store</p>
+            <span>Data plane</span>
+            <p>
+              Sources (jsonl / csv / hf / kaggle / plugin) → Introspector → Target mapper →
+              Project's synthetic dataset (JSONL on disk).
+            </p>
           </div>
           <div class="arch-lane">
-            <span>Training Plane</span>
-            <p>Preflight Engine -> Benchmark Runner -> Training Orchestrator</p>
+            <span>Training plane</span>
+            <p>
+              Prepared manifest → Task-handler dispatcher (classification / qa / span_set / rag /
+              dpo / chat_sft / language_modeling / structured_extraction) → Local trainer or
+              optional cloud-burst backend.
+            </p>
           </div>
           <div class="arch-lane">
-            <span>Delivery Plane</span>
-            <p>Artifact Registry -> Export Targets -> Serving Integrations</p>
+            <span>Delivery plane</span>
+            <p>
+              Export targets (GGUF / safetensors / HF-compatible / vLLM) → Deployment versions
+              with promote / rollback / drift checks.
+            </p>
           </div>
           <div class="arch-note">
-            <p><strong>Design principle:</strong> Every stage emits traceable metadata so you can reproduce, audit, and iterate safely.</p>
+            <p>
+              <strong>Audit spine:</strong> every action above emits a RunEvent with stage,
+              reason code, and structured payload. Same stream feeds the Observability page, the
+              Lab Journal progression layer, and the support bundle.
+            </p>
           </div>
         </article>
       </section>
 
       <section class="section faq">
         <div class="section-head reveal">
-          <p class="eyebrow">Homepage FAQs</p>
-          <h2>Answers teams ask before production rollout</h2>
+          <p class="eyebrow">Common first questions</p>
+          <h2>Quick answers; the long version lives on the FAQs page</h2>
         </div>
         <div class="faq-grid">
           <details class="faq-item reveal">
-            <summary>How does BrewSLM run LLM benchmarks and AI benchmarks?</summary>
-            <p>Benchmark runs compare quality, latency, and cost on your project samples before long jobs are approved.</p>
+            <summary>Is BrewSLM open source?</summary>
+            <p>
+              Yes. Source lives at
+              <a class="inline-link" href="https://github.com/TensorGreed/__SLM__" target="_blank" rel="noopener noreferrer"
+                >github.com/TensorGreed/__SLM__</a
+              >. Run it locally; no account or hosted service required.
+            </p>
           </details>
           <details class="faq-item reveal">
-            <summary>Can BrewSLM generate an internal LLM leaderboard?</summary>
-            <p>Yes. Benchmark outputs are persisted so teams can rank candidates and gate promotion with repeatable rules.</p>
+            <summary>Do I need a GPU?</summary>
+            <p>
+              For training, yes — a single consumer GPU is plenty for the SLM size range BrewSLM
+              targets (1B–10B parameters with LoRA). For ingest / eval / export, no.
+            </p>
           </details>
           <details class="faq-item reveal">
-            <summary>How do we ship LLM updates without regressions?</summary>
-            <p>Preflight checks, benchmark floors, and release policies provide a controlled path for recurring LLM updates.</p>
+            <summary>Where does my data go?</summary>
+            <p>
+              Into the project's local directory on your machine. SQLite metadata, JSONL row
+              storage, file artifacts. The optional teacher model (for synthetic generation) is
+              the only external call, and you point it at whatever endpoint you want — local
+              Ollama works fine.
+            </p>
           </details>
           <details class="faq-item reveal">
-            <summary>Can BrewSLM support workflows like "how to finetune llama 4"?</summary>
-            <p>Yes. CLI, Python SDK, and Wizard UI all support repeatable fine-tune workflows with one shared run model.</p>
+            <summary>Can I plug in a custom mapper for my weird dataset?</summary>
+            <p>
+              Yes. Drop a Python module under <code>DATASET_MAPPER_PLUGIN_MODULES</code>; it
+              registers via <code>register_dataset_mappers(register)</code> alongside the built-ins.
+              Same pattern as data-adapter and training-runtime plugins.
+            </p>
           </details>
         </div>
         <p class="form-note faq-home-link reveal">
-          <a class="inline-link" href="./faqs.html">Read full Engineering FAQs</a> for rollout, governance, and support details.
+          <a class="inline-link" href="./faqs.html">Full FAQs →</a>
         </p>
       </section>
 
       <section id="quickstart" class="section cta reveal">
         <div class="cta-copy">
           <p class="eyebrow">Quickstart</p>
-          <h2>Boot BrewSLM, run first train, export in one session</h2>
-          <p>Use this baseline command pack when provisioning a new environment.</p>
+          <h2>Clone, install, import, train</h2>
+          <p>
+            Five blocks. The first three boot the platform; the last two are the demo run-through.
+            Match this against the README for the canonical version.
+          </p>
           <div class="terminal-block">
-            <p>$ git clone &lt;repo&gt; __SLM__</p>
-            <p>$ cd __SLM__/backend &amp;&amp; python -m venv .venv &amp;&amp; .venv/bin/pip install -r requirements.txt</p>
-            <p>$ cd __SLM__/backend &amp;&amp; .venv/bin/uvicorn app.main:app --reload --port 8000</p>
-            <p>$ cd __SLM__/backend &amp;&amp; .venv/bin/celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2</p>
-            <p>$ cd __SLM__/frontend &amp;&amp; npm install &amp;&amp; npm run dev</p>
-            <p>$ ./brewslm project create --name demo-slm --template general</p>
-            <p>$ ./brewslm dataset import --project 1 --sample general-chat-v1</p>
-            <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
-            <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
+            <p># 1. Clone</p>
+            <p>$ git clone https://github.com/TensorGreed/__SLM__ brewslm &amp;&amp; cd brewslm</p>
+            <p>&nbsp;</p>
+            <p># 2. Backend</p>
+            <p>$ cd backend &amp;&amp; python -m venv .venv &amp;&amp; source .venv/bin/activate</p>
+            <p>$ pip install -r requirements.txt</p>
+            <p>$ uvicorn app.main:app --reload --port 8000</p>
+            <p>&nbsp;</p>
+            <p># 3. Frontend (new shell)</p>
+            <p>$ cd frontend &amp;&amp; npm install &amp;&amp; npm run dev</p>
+            <p>&nbsp;</p>
+            <p># 4. Open http://localhost:5173 and create a project</p>
+            <p>&nbsp;</p>
+            <p># 5. Import via the wizard, or from the CLI:</p>
+            <p>$ cd backend &amp;&amp; python -m app.cli.dataset_import run \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;--locator hf:imdb:train --project 1 --auto --limit 5000</p>
           </div>
         </div>
 
         <aside class="quickstart-notes">
-          <p class="notes-head">Next Reads</p>
-          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation Paths:</a> choose CLI, Python API, or Wizard based on team mode.</p>
-          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> inspect each stage and artifact boundary.</p>
-          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> review automation and override controls.</p>
-          <a class="btn btn-solid" href="./faqs.html">Read Engineering FAQs</a>
+          <p class="notes-head">Where to go next</p>
+          <p class="form-note">
+            <a class="inline-link" href="./workflow.html">Workflow:</a> every pipeline stage,
+            with its inputs/outputs/contracts.
+          </p>
+          <p class="form-note">
+            <a class="inline-link" href="./capabilities.html">Capabilities:</a> the full feature
+            surface, grouped by axis.
+          </p>
+          <p class="form-note">
+            <a class="inline-link" href="./creation-paths.html">Creation paths:</a> CLI vs Python
+            vs Wizard UI — same pipeline, three doors.
+          </p>
+          <a
+            class="btn btn-solid"
+            href="https://github.com/TensorGreed/__SLM__"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Star on GitHub</a
+          >
         </aside>
       </section>
     </main>
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Powered by <a href="https://tensorgreed.com/">TensorGreed</a></p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
       <p>
         <a
           class="footer-link"
           href="https://github.com/TensorGreed/__SLM__/issues"
           target="_blank"
           rel="noopener noreferrer"
-          >Support &amp; Questions: GitHub Issues</a
+          >Support &amp; questions: GitHub Issues</a
         >
       </p>
     </footer>
@@ -378,4 +494,3 @@
     <script src="./script.js"></script>
   </body>
 </html>
-

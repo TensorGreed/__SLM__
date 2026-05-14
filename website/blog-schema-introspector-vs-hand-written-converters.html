@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Why the schema introspector beats hand-written converters | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="We shipped a 175-line BIO-to-spans converter for the Kaggle PII dataset. Then we threw it away and built a column sniffer. Here's why the sniffer wins."
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-schema-introspector-vs-hand-written-converters.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Why the schema introspector beats hand-written converters | BrewSLM Blog" />
+    <meta
+      property="og:description"
+      content="We shipped a 175-line BIO-to-spans converter. Then we threw it away and built a column sniffer. Here's why the sniffer wins."
+    />
+    <meta property="og:url" content="https://brewslm.com/blog-schema-introspector-vs-hand-written-converters.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Why the schema introspector beats hand-written converters | BrewSLM Blog" />
+    <meta
+      name="twitter:description"
+      content="We shipped a 175-line BIO-to-spans converter. Then we threw it away and built a column sniffer. Here's why the sniffer wins."
+    />
+    <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blog</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <article class="section blog-post reveal">
+        <header class="blog-post-head">
+          <p class="eyebrow">Engineering · Dataset pipeline</p>
+          <h1>Why the schema introspector beats hand-written converters</h1>
+          <p class="page-sub">
+            We shipped a 175-line BIO-to-spans converter for the Kaggle PII competition. Then we
+            threw it away and built a column sniffer. The sniffer is now the only path. Here's
+            why.
+          </p>
+        </header>
+
+        <h2>The original converter was correct, careful, and a dead end</h2>
+        <p>
+          The first PII demo we shipped depended on a script called
+          <code>kaggle_pii_to_brewslm.py</code>. It read the Kaggle competition's
+          <code>train.json</code> (BIO-tagged tokens + labels per essay), reconstructed character
+          offsets by aligning against <code>full_text</code> when present and falling back to a
+          tokens-plus-trailing-whitespace heuristic when not, merged <code>B-X</code> /
+          <code>I-X</code> runs into single spans, and mapped the Kaggle tag vocabulary
+          (<code>NAME_STUDENT</code>, <code>EMAIL</code>, <code>USERNAME</code>,
+          <code>ID_NUM</code>, etc.) onto BrewSLM's canonical entity types. 175 lines, pure
+          stdlib, well-tested.
+        </p>
+        <p>
+          Then we tried to ship the demo with the HuggingFace <code>ai4privacy/pii-masking-200k</code>
+          dataset, which has the same shape but different column names + a slightly different
+          tag vocabulary. The first version of the docs read: "you'll need a converter to span
+          offsets before BrewSLM picks it up." That sentence is the moment we knew this
+          approach didn't scale.
+        </p>
+
+        <h2>The category, not the instance</h2>
+        <p>
+          The Kaggle converter is one instance of a category: "BIO-tagged tokens + labels with
+          some entity-type vocabulary." The category is the right unit of abstraction. The
+          instance is what the user has in front of them.
+        </p>
+        <p>
+          What if the import pipeline could:
+        </p>
+        <ol>
+          <li>Sniff the columns of any dataset (HF, Kaggle, JSONL, CSV) the same way.</li>
+          <li>Detect the category — BIO-tagged tokens here, classification labels there, preference triples elsewhere.</li>
+          <li>Propose a mapping that's correct for that category.</li>
+          <li>Let the user confirm.</li>
+        </ol>
+        <p>
+          That's the introspector. The Kaggle converter became one configured instance of the
+          general <code>bio_to_spans</code> mapper, with a project-level entity-type-map
+          override for the demo's domain. The mapper itself is generic; the converter shrank to
+          a config dict.
+        </p>
+
+        <h2>The sniffer is short</h2>
+        <p>
+          The column-classifier looks at ~20 sample rows. For each column, it tries strict
+          shape predicates first (is the value a list of BIO tags? a list of
+          <code>{role, content}</code> dicts? a list of <code>{type, start, end}</code> entity
+          spans?), then falls back to scalar heuristics — boolean, numeric, categorical (low
+          cardinality on short single-token strings), text-like (long, multi-word). Each rule
+          is independently testable; the whole module is under 400 lines.
+        </p>
+        <p>
+          The shape detector then combines column types into ranked hypotheses. A tokens-list
+          + a BIO-tag list of the same length is the load-bearing NER fingerprint. A text-like
+          column + a categorical column with a small label set is classification. A
+          <code>{prompt, chosen, rejected}</code> triple of text columns is DPO. Etc. Each
+          hypothesis carries a confidence and a rationale.
+        </p>
+
+        <h2>Never silently auto-picks</h2>
+        <p>
+          The biggest mistake the introspector could make would be to silently apply a wrong
+          mapping. So it doesn't apply anything: it proposes. Two gates:
+        </p>
+        <ul>
+          <li>
+            <strong>Confidence threshold (0.80).</strong> Below this, the CLI refuses
+            <code>--auto</code> unless you also pass <code>--force</code>. The UI's import
+            wizard shows a red banner that requires an explicit "I've reviewed the proposal"
+            click before unlocking Preview.
+          </li>
+          <li>
+            <strong>Mapper id whitelist.</strong> When the optional LLM-assist mode is on
+            (off by default), the teacher model can suggest a mapper, but any mapper id it
+            invents is rejected at the registry boundary. We don't want a hallucinated mapper
+            to escape into the pipeline.
+          </li>
+        </ul>
+
+        <h2>Worth keeping the old converter? Briefly</h2>
+        <p>
+          The 175-line converter still lives in the repo for one reason: it's the canonical
+          example of how a complex domain-specific transform looks before generalization, and
+          it serves as a fixture for the BIO-to-spans mapper's tests. It's no longer in the
+          critical path. The demo doc now leads with the generic flow:
+        </p>
+        <pre class="terminal-block"><code>$ python -m app.cli.dataset_import introspect \
+    --locator kaggle:competition:pii-detection-removal-from-educational-data
+
+top proposal: bio_to_spans (confidence 0.95) — safe to --auto
+
+$ python -m app.cli.dataset_import run \
+    --locator kaggle:competition:pii-detection-removal-from-educational-data \
+    --project 1 --auto --limit 5000</code></pre>
+
+        <h2>What this changes</h2>
+        <p>
+          For the user: a new dataset is a few seconds of introspection + a single
+          <code>--auto</code> flag, not a converter and a doc page. For us: maintenance load
+          drops from N converters (one per dataset shape) to M mappers (one per task shape),
+          and M is bounded by the number of training paradigms, which is small. The wins
+          compound as the source catalog grows — adding the HuggingFace and Kaggle connectors
+          in Phase D / E was each a single file that wired into the same introspector +
+          mapper stack.
+        </p>
+
+        <div class="blog-post-footer">
+          <a class="btn btn-solid" href="./blog.html">Back to blog</a>
+          <a class="btn btn-ghost" href="./capabilities.html">See the mapper catalog</a>
+        </div>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

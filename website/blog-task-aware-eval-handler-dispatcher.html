@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inside the task-aware eval handler dispatcher | BrewSLM Blog</title>
+    <meta
+      name="description"
+      content="One generic 'pass rate' metric flatters classification and lies about NER. Here's how BrewSLM dispatches to the metric shape that matches the task."
+    />
+    <meta name="author" content="TensorGreed" />
+    <meta name="theme-color" content="#050b14" />
+    <link rel="canonical" href="https://brewslm.com/blog-task-aware-eval-handler-dispatcher.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="BrewSLM" />
+    <meta property="og:title" content="Inside the task-aware eval handler dispatcher | BrewSLM Blog" />
+    <meta
+      property="og:description"
+      content="One generic pass-rate metric flatters classification and lies about NER. Here's how BrewSLM dispatches to the metric shape that fits."
+    />
+    <meta property="og:url" content="https://brewslm.com/blog-task-aware-eval-handler-dispatcher.html" />
+    <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Inside the task-aware eval handler dispatcher | BrewSLM Blog" />
+    <meta
+      name="twitter:description"
+      content="One generic pass-rate metric flatters classification and lies about NER. Here's how BrewSLM dispatches to the metric shape that fits."
+    />
+    <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="grid-overlay"></div>
+
+    <header class="site-header">
+      <a class="brand" href="./index.html" aria-label="BrewSLM Home">
+        <img class="brand-logo" src="./assets/brewslm-logo.svg" alt="BrewSLM" />
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="./creation-paths.html">Creation Paths</a>
+        <a href="./workflow.html">Workflow</a>
+        <a href="./capabilities.html">Capabilities</a>
+        <a href="./blog.html" aria-current="page">Blog</a>
+        <a href="./faqs.html">FAQs</a>
+      </nav>
+      <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
+    </header>
+
+    <main>
+      <article class="section blog-post reveal">
+        <header class="blog-post-head">
+          <p class="eyebrow">Engineering · Evaluation</p>
+          <h1>Inside the task-aware eval handler dispatcher</h1>
+          <p class="page-sub">
+            A single "pass rate" metric is the eval equivalent of measuring car safety by
+            average vehicle weight. Useful in exactly one bucket; misleading everywhere else.
+            BrewSLM ships nine task handlers so the metric fits the task.
+          </p>
+        </header>
+
+        <h2>The motivating bug</h2>
+        <p>
+          A user trained a PII span-extraction model. Eval reported F1 ≈ 0.04. The model looked
+          fine in spot-checks. What was wrong?
+        </p>
+        <p>
+          The eval was running classification-style F1 against the whole prediction string vs
+          the whole reference string. The reference was a JSON entity list with three spans.
+          The prediction was a JSON entity list with the same three spans plus one
+          hallucinated street address. Char-level F1 was decimating the score because every
+          extra character in the hallucinated address counted as a false positive. The model
+          had ~92% recall on the real entities; the eval was reading 4%.
+        </p>
+        <p>
+          Different task, different metric. The fix is structural: pick the scoring shape
+          based on what the task <em>is</em>, not on a one-size-fits-all string-comparison
+          default.
+        </p>
+
+        <h2>The dispatcher</h2>
+        <p>
+          Every project carries a <code>task_profile</code> on its prepared manifest:
+          <code>classification</code>, <code>qa</code>, <code>structured_extraction</code>,
+          <code>rag_qa</code>, <code>dpo</code>, <code>seq2seq</code>, <code>chat_sft</code>,
+          <code>language_modeling</code>, <code>vision_language</code>,
+          <code>audio_transcript</code>, <code>safety</code>. Plus aliases (<code>extraction</code>,
+          <code>preference</code>, <code>image_captioning</code>, etc.) that map to the same
+          handlers.
+        </p>
+        <p>
+          The eval entry point resolves the profile to a handler via a registry-and-dispatcher
+          pattern. Each handler implements two methods:
+        </p>
+        <pre class="code-block"><code>class TaskHandler(Protocol):
+    profile_id: str
+
+    def build_prompts(
+        self, rows: list[dict], ctx: EvalContext,
+    ) -> list[BuiltPrompt]:
+        """Row → prompt + reference + extras."""
+
+    def score(
+        self, predictions: list[dict], ctx: EvalContext,
+    ) -> dict[str, Any]:
+        """Predictions → metric dict."""</code></pre>
+        <p>
+          That's the entire contract. Everything else is per-handler.
+        </p>
+
+        <h2>What each handler does that the others can't</h2>
+
+        <h3>StructuredExtractionHandler · span_set mode</h3>
+        <p>
+          The fix for the PII bug. The handler reads the prediction as JSON, parses out the
+          entity list, and computes per-class P/R/F1 + micro / macro aggregates against the
+          reference entity list. True positive requires identical <code>(type, start, end)</code>;
+          off-by-one boundaries count as miss + hallucination. Same handler runs
+          <code>field_match</code> mode for invoice / form extraction where the entities are
+          field-name keyed rather than character-offset keyed.
+        </p>
+
+        <h3>RAGHandler</h3>
+        <p>
+          Three signals because three things can be wrong: answer quality (EM/F1), faithfulness
+          (fraction of prediction tokens grounded in the retrieved context), context recall
+          (fraction of gold-answer tokens present in the context). Low faithfulness + high
+          context recall = generator hallucinating. High faithfulness + low context recall =
+          retriever missing. Both low = both broken. Both high = working. The decomposition
+          turns "RAG is bad" into a specific Jira ticket.
+        </p>
+
+        <h3>AlignmentHandler (DPO / ORPO)</h3>
+        <p>
+          F1 against the chosen completion <em>and</em> F1 against the rejected completion.
+          A row is "preference correct" if F1(prediction, chosen) &gt; F1(prediction, rejected).
+          Mean alignment margin across rows tells you whether DPO actually moved the model.
+          Falls back to plain EM/F1 against the chosen completion when the rejected column is
+          absent, so a project that transitions from SFT to DPO doesn't need an eval pack
+          rewrite.
+        </p>
+
+        <h3>QAHandler · CoT span extraction</h3>
+        <p>
+          CoT-trained models emit "…reasoning…<em>Therefore: Paris.</em>" The handler scans for
+          end-of-reasoning markers (<code>Final answer:</code>, <code>Answer:</code>,
+          <code>Therefore:</code>, <code>The answer is …</code>) and scores the extracted
+          span. Without this, SQuAD F1 against a one-word reference reports near-zero on
+          predictions that are correct. The handler annotates each prediction with
+          <code>answer_span</code> + <code>span_marker</code> so the UI shows what got
+          extracted, not just the score.
+        </p>
+
+        <h3>Seq2SeqHandler</h3>
+        <p>
+          Sub-task-aware. Translation: BLEU + chrF (via <code>sacrebleu</code>). Summarization:
+          ROUGE-1 / ROUGE-2 / ROUGE-L. Paraphrase: both. Plus a <code>length_ratio</code> on
+          every sub-task so you can spot over- or under-generation independent of content
+          quality. Legacy <code>exact_match</code> / <code>f1</code> aliases keep gate
+          policies working without a pack migration.
+        </p>
+
+        <h3>VisionLanguage / AudioTranscript / SafetyHandler</h3>
+        <p>
+          Captioning + VQA get CIDEr / METEOR / SPICE; speech-to-text gets WER / CER; safety
+          gets refusal pass-rate against an injection-prompt suite. Each is a small file (~200
+          lines) but the modular handler boundary lets us extend without touching the eval
+          runner.
+        </p>
+
+        <h2>Adding a new handler is one file</h2>
+        <p>
+          The registry pattern keeps the surface small:
+        </p>
+        <pre class="terminal-block"><code>class MyHandler:
+    profile_id: str = "my_task"
+
+    def build_prompts(self, rows, ctx): ...
+    def score(self, predictions, ctx): ...
+
+register_handler("my_task", MyHandler)</code></pre>
+        <p>
+          Pick a stable profile id, implement the two methods, register at import time. Set
+          the prepared manifest's <code>task_profile</code> to your id and the dispatcher picks
+          it up. No edits to the eval runner, no edits to the gate engine.
+        </p>
+
+        <h2>The bug stayed fixed</h2>
+        <p>
+          After we shipped the span-set handler, the PII model's eval F1 went from 0.04 to
+          0.91 — matching what the spot-checks had been suggesting all along. The model didn't
+          change. The metric did.
+        </p>
+        <p>
+          The general lesson: every time you find yourself reaching for a "weighted average"
+          metric across heterogeneous tasks, you're probably about to invent the next "F1
+          decimated by hallucinated address" bug. The fix is structural separation, not a
+          smarter average.
+        </p>
+
+        <div class="blog-post-footer">
+          <a class="btn btn-solid" href="./blog.html">Back to blog</a>
+          <a class="btn btn-ghost" href="./capabilities.html">See the handler catalog</a>
+        </div>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <p>&copy; <span id="year"></span> BrewSLM.com</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
+      <p>
+        <a
+          class="footer-link"
+          href="https://github.com/TensorGreed/__SLM__/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          >Support &amp; questions: GitHub Issues</a
+        >
+      </p>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

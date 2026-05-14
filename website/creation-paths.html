@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrewSLM Creation Paths | CLI, Python API, Wizard UI</title>
+    <title>BrewSLM Creation Paths | CLI, Python API, or Wizard UI</title>
     <meta
       name="description"
-      content="Compare BrewSLM creation paths with practical guidance for CLI, Python API usage, and Wizard UI teams."
+      content="Three ways into BrewSLM: a CLI for shell-first teams, a Python API for backend integrations, a 3-step Wizard UI for everyone else. Same pipeline, three doors."
     />
     <meta
       name="robots"
@@ -17,24 +17,18 @@
     <link rel="canonical" href="https://brewslm.com/creation-paths.html" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="BrewSLM" />
-    <meta
-      property="og:title"
-      content="BrewSLM Creation Paths | CLI, Python API, Wizard UI"
-    />
+    <meta property="og:title" content="BrewSLM Creation Paths | CLI, Python API, or Wizard UI" />
     <meta
       property="og:description"
-      content="Choose between CLI, Python API, and Wizard UI paths based on your team workflow."
+      content="Same pipeline, three doors: CLI, Python API, Wizard UI. Pick the surface that fits how your team already works."
     />
     <meta property="og:url" content="https://brewslm.com/creation-paths.html" />
     <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta
-      name="twitter:title"
-      content="BrewSLM Creation Paths | CLI, Python API, Wizard UI"
-    />
+    <meta name="twitter:title" content="BrewSLM Creation Paths | CLI, Python API, or Wizard UI" />
     <meta
       name="twitter:description"
-      content="Choose between CLI, Python API, and Wizard UI paths based on your team workflow."
+      content="Same pipeline, three doors: CLI, Python API, Wizard UI. Pick the surface that fits how your team already works."
     />
     <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
@@ -57,7 +51,7 @@
         <a href="./creation-paths.html" aria-current="page">Creation Paths</a>
         <a href="./workflow.html">Workflow</a>
         <a href="./capabilities.html">Capabilities</a>
-        <a href="./blog.html">Blogs</a>
+        <a href="./blog.html">Blog</a>
         <a href="./faqs.html">FAQs</a>
       </nav>
       <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
@@ -65,196 +59,207 @@
 
     <main>
       <section class="section page-hero reveal">
-        <p class="eyebrow">Creation Paths</p>
-        <h1>Pick the fastest interface path without losing model engineering control.</h1>
+        <p class="eyebrow">Creation paths</p>
+        <h1>Same pipeline, three doors.</h1>
         <p class="page-sub">
-          BrewSLM supports three entry modes. They all compile into the same <code>__SLM__</code>
-          pipeline, so you can start simple and grow into deeper control without rewriting process.
+          BrewSLM exposes its pipeline three ways: a CLI for shell-first teams, an HTTP / Python
+          API for integrating into existing services, and a Wizard UI for the in-browser
+          workflow. They all run the same underlying registry + dispatcher; choose by team
+          shape, not by feature set.
         </p>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Path Snapshot</p>
-          <h2>At-a-glance fit by team shape</h2>
+          <p class="eyebrow">At-a-glance</p>
+          <h2>Fit by team shape</h2>
         </div>
         <div class="decision-grid">
           <article class="decision-card reveal">
-            <h3>CLI Path</h3>
-            <p>Best when your team already runs shell-first workflows and CI automation.</p>
-            <p class="card-note"><strong>First milestone:</strong> scripted repeatable train + export job.</p>
+            <h3>CLI</h3>
+            <p>You already script your ML lifecycle. You want one binary per stage, exit codes, and stdout you can grep.</p>
+            <p class="card-note"><strong>First milestone:</strong> a scripted import + train + export job under CI.</p>
           </article>
           <article class="decision-card reveal">
-            <h3>Python API Path</h3>
-            <p>Best when SLM lifecycle must integrate directly into backend services.</p>
-            <p class="card-note"><strong>First milestone:</strong> service-triggered one-click run + export API flow.</p>
+            <h3>HTTP / Python API</h3>
+            <p>The SLM lifecycle is one piece of a larger backend. You want the same pipeline as a service call.</p>
+            <p class="card-note"><strong>First milestone:</strong> a service-triggered import + run flow with task-id polling.</p>
           </article>
           <article class="decision-card reveal">
-            <h3>Wizard UI Path</h3>
-            <p>Best when cross-functional teams need guided onboarding with visual checks.</p>
-            <p class="card-note"><strong>First milestone:</strong> first successful run with shared project view.</p>
+            <h3>Wizard UI</h3>
+            <p>You're a newbie, a non-shell user, or just want to <em>see</em> what's happening. Inline column rundown, ranked hypotheses, bulk-drop, audit log.</p>
+            <p class="card-note"><strong>First milestone:</strong> a complete import in three clicks, no flags.</p>
           </article>
         </div>
       </section>
 
       <section class="section">
         <div class="section-head reveal">
-          <p class="eyebrow">Interactive Breakdown</p>
-          <h2>Deep dive each interface mode</h2>
+          <p class="eyebrow">CLI</p>
+          <h2>Shell-first, scriptable, no hidden state</h2>
         </div>
+        <div class="dual-pane">
+          <article class="pane reveal">
+            <p class="pane-title">The subcommand surface</p>
+            <div class="terminal-block dense">
+              <p>$ python -m app.cli.dataset_import sources</p>
+              <p>csv  hf  jsonl  kaggle</p>
+              <p>&nbsp;</p>
+              <p>$ python -m app.cli.dataset_import mappers</p>
+              <p>bio_to_spans                  → task_profile=structured_extraction</p>
+              <p>chat_messages_passthrough     → task_profile=chat_sft</p>
+              <p>kv_to_structured              → task_profile=structured_extraction</p>
+              <p>label_to_classification       → task_profile=classification</p>
+              <p>preference_pair               → task_profile=dpo</p>
+              <p>qa_pair_passthrough           → task_profile=qa</p>
+              <p>rag_passthrough               → task_profile=rag_qa</p>
+              <p>text_only                     → task_profile=language_modeling</p>
+              <p>&nbsp;</p>
+              <p>$ python -m app.cli.dataset_import introspect \</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;--locator hf:imdb:train</p>
+              <p>&nbsp;</p>
+              <p>$ python -m app.cli.dataset_import run \</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;--locator hf:imdb:train --project 1 --auto --limit 5000</p>
+            </div>
+          </article>
+          <article class="pane reveal">
+            <p class="pane-title">Flag highlights</p>
+            <ul class="capability-list">
+              <li><code>--auto</code> picks the mapper from the introspector's top proposal (gated at 0.80 confidence).</li>
+              <li><code>--force</code> overrides the confidence gate. Pairs with <code>--auto</code>.</li>
+              <li><code>--map K=V</code> + <code>--map-json '{…}'</code> override the auto-suggested field map.</li>
+              <li><code>--drop REASON</code> bulk-drops a rejection category (counts stay in the audit).</li>
+              <li><code>--limit N</code> stops after N source rows.</li>
+              <li><code>--llm-assist</code> (opt-in) lets the teacher model propose a mapping when confidence is low.</li>
+            </ul>
+            <p>
+              Every command is also exposed via HTTP. The CLI is a thin wrapper over the same
+              service functions the API hits.
+            </p>
+          </article>
+        </div>
+      </section>
 
-        <div class="mode-console reveal" aria-label="Interface mode switcher">
-          <div class="mode-tabs" role="tablist" aria-label="BrewSLM creation interfaces">
-            <button class="mode-tab is-active" data-mode="cli" role="tab" aria-selected="true">
-              CLI
-            </button>
-            <button class="mode-tab" data-mode="python" role="tab" aria-selected="false">
-              Python API
-            </button>
-            <button class="mode-tab" data-mode="wizard" role="tab" aria-selected="false">
-              Wizard UI
-            </button>
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">HTTP / Python API</p>
+          <h2>Same pipeline, callable from any service</h2>
+        </div>
+        <div class="dual-pane">
+          <article class="pane reveal">
+            <p class="pane-title">Import: introspect → preview → run</p>
+            <div class="terminal-block dense">
+              <p>POST /api/dataset-import/introspect</p>
+              <p>&nbsp;&nbsp;{ "locator": "hf:imdb:train", "sample_size": 20 }</p>
+              <p>&nbsp;</p>
+              <p>POST /api/projects/1/dataset-import/preview</p>
+              <p>&nbsp;&nbsp;{ "locator": "hf:imdb:train",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"mapper_id": "label_to_classification",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"field_map": { "text_field": "text", "label_field": "label" },</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"sample_cap": 5 }</p>
+              <p>&nbsp;</p>
+              <p>POST /api/projects/1/dataset-import/run</p>
+              <p>&nbsp;&nbsp;{ "locator": "hf:imdb:train",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"mapper_id": "label_to_classification",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"field_map": { "text_field": "text", "label_field": "label" },</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"drop_reasons": ["missing_text"] }</p>
+            </div>
+          </article>
+          <article class="pane reveal">
+            <p class="pane-title">Save once, re-run forever</p>
+            <div class="terminal-block dense">
+              <p># 1. Save the mapping after the first import lands.</p>
+              <p>POST /api/projects/1/dataset-import/configs</p>
+              <p>&nbsp;&nbsp;{ "name": "weekly-pii-refresh",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"locator": "kaggle:competition:pii-detection-…",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"mapper_id": "bio_to_spans",</p>
+              <p>&nbsp;&nbsp;&nbsp;&nbsp;"field_map": {…} }</p>
+              <p>&nbsp;</p>
+              <p># 2. Re-run anytime against the (refreshed) source.</p>
+              <p>POST /api/projects/1/dataset-import/configs/12/run</p>
+              <p>&nbsp;</p>
+              <p># 3. Read the audit stream.</p>
+              <p>GET  /api/projects/1/run-events?stage=ingestion</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head reveal">
+          <p class="eyebrow">Wizard UI</p>
+          <h2>Three clicks. Same pipeline. No flags.</h2>
+        </div>
+        <div class="cluster-grid">
+          <article class="cluster-card reveal">
+            <h3>Step 1 — Source</h3>
+            <ul class="capability-list">
+              <li>Source dropdown (jsonl / csv / hf / kaggle).</li>
+              <li>Per-source helper text + auth banner for gated datasets.</li>
+              <li>Click <em>Introspect</em>.</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Step 2 — Map</h3>
+            <ul class="capability-list">
+              <li>Column-signatures table (detected type + confidence per column).</li>
+              <li>Ranked-hypothesis dropdown pre-selected to the top proposal.</li>
+              <li>JSON field-map editor for overrides. Low-confidence proposals show a red gate banner until you tick "proceed anyway."</li>
+            </ul>
+          </article>
+          <article class="cluster-card reveal">
+            <h3>Step 3 — Preview &amp; Confirm</h3>
+            <ul class="capability-list">
+              <li>Summary cards (accepted, rejected, mapper, target profile).</li>
+              <li>Rejected rows grouped by reason; tick to bulk-drop.</li>
+              <li>"Save this mapping" persists the config for one-click re-runs.</li>
+              <li>Final <em>Import</em> commits + emits the audit RunEvent.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section cta reveal">
+        <div class="cta-copy">
+          <p class="eyebrow">Pick a door</p>
+          <h2>All three lead to the same project</h2>
+          <p>
+            You can switch surfaces mid-project. A wizard import is indistinguishable from a CLI
+            import in the audit log; a saved mapping created from the UI is callable from the
+            API; everything composes.
+          </p>
+          <div class="terminal-block">
+            <p># CLI</p>
+            <p>$ python -m app.cli.dataset_import run --locator hf:imdb:train --project 1 --auto</p>
+            <p>&nbsp;</p>
+            <p># API</p>
+            <p>$ curl -X POST localhost:8000/api/projects/1/dataset-import/run \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;-H 'Content-Type: application/json' \</p>
+            <p>&nbsp;&nbsp;&nbsp;&nbsp;-d '{"locator":"hf:imdb:train","mapper_id":"label_to_classification","field_map":{}}'</p>
+            <p>&nbsp;</p>
+            <p># UI</p>
+            <p># Pipeline → Data → "Import dataset (auto-mapping)" → Introspect → Map → Confirm</p>
           </div>
-
-          <article class="mode-panel is-active" data-panel="cli">
-            <p class="mode-title">Terminal-first flow with strong reproducibility</p>
-            <div class="terminal-block">
-              <p>$ ./brewslm project create --name support-assistant --template support</p>
-              <p>$ ./brewslm dataset import --project 1 --sample support-chat-v1</p>
-              <p>$ ./brewslm preflight --project 1 --task causal_lm</p>
-              <p>$ ./brewslm train --project 1 --autopilot --one-click</p>
-              <p>$ ./brewslm export --project 1 --format huggingface --target vllm</p>
-            </div>
-            <div class="mode-detail-grid">
-              <p><strong>Team fit:</strong> platform, infra, MLOps-heavy engineering teams.</p>
-              <p><strong>Risk reduced:</strong> drift from manual one-off notebook logic.</p>
-              <p><strong>Handoff style:</strong> commit command profiles into repo templates.</p>
-            </div>
-          </article>
-
-          <article class="mode-panel" data-panel="python">
-            <p class="mode-title">Programmatic control inside product codebases</p>
-            <div class="code-block">
-              <p><span class="code-key">import</span> httpx</p>
-              <p>api = "http://127.0.0.1:8000/api"</p>
-              <p>token = "sk-mock-admin-key"</p>
-              <p>headers = {"Authorization": f"Bearer {token}"}</p>
-              <p>project = httpx.post(f"{api}/projects", json={"name": "Support SLM"}, headers=headers).json()</p>
-              <p>pid = project["id"]</p>
-              <p>httpx.post(f"{api}/projects/{pid}/training/autopilot/one-click-run", json={"intent": "Draft support replies"}, headers=headers)</p>
-              <p>httpx.get(f"{api}/projects/{pid}/training/experiments", headers=headers)</p>
-            </div>
-            <div class="mode-detail-grid">
-              <p><strong>Team fit:</strong> backend teams integrating training into services.</p>
-              <p><strong>Risk reduced:</strong> brittle shell glue around app workflows.</p>
-              <p><strong>Handoff style:</strong> expose internal training APIs to product teams.</p>
-            </div>
-          </article>
-
-          <article class="mode-panel" data-panel="wizard">
-            <p class="mode-title">Guided UI for fast onboarding and reviewable runs</p>
-            <ol class="wizard-flow">
-              <li>Select deployment target from the target catalog.</li>
-              <li>Describe your goal in plain language (plus optional VRAM and run name).</li>
-              <li>Review safe/balanced/max-quality plans and dataset readiness blockers.</li>
-              <li>Launch one-click run and monitor training status in the wizard.</li>
-              <li>Continue to Training, Playground, or Export when complete.</li>
-            </ol>
-            <div class="mode-detail-grid">
-              <p><strong>Team fit:</strong> mixed AI + product teams onboarding together.</p>
-              <p><strong>Risk reduced:</strong> hidden setup errors during early project stages.</p>
-              <p><strong>Handoff style:</strong> move repeatable runs to CLI or Python API when mature.</p>
-            </div>
-          </article>
         </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head reveal">
-          <p class="eyebrow">Decision Matrix</p>
-          <h2>Compare execution tradeoffs before choosing your default mode</h2>
-        </div>
-        <div class="table-wrap reveal">
-          <table class="compare-table" aria-label="Creation path comparison">
-            <thead>
-              <tr>
-                <th>Dimension</th>
-                <th>CLI</th>
-                <th>Python API</th>
-                <th>Wizard UI</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Onboarding speed</td>
-                <td>Fast for shell-native teams</td>
-                <td>Medium, requires code integration</td>
-                <td>Fastest for new mixed teams</td>
-              </tr>
-              <tr>
-                <td>Automation depth</td>
-                <td>High via scripts and CI</td>
-                <td>High via direct REST orchestration from services</td>
-                <td>Medium, guided steps with exports</td>
-              </tr>
-              <tr>
-                <td>Reviewability</td>
-                <td>High if config snapshots are committed</td>
-                <td>High with explicit payloads and API logs</td>
-                <td>High with visual run trace</td>
-              </tr>
-              <tr>
-                <td>Best starting point</td>
-                <td>Infra-oriented engineering orgs</td>
-                <td>Product/backend engineering orgs</td>
-                <td>Cross-functional pilot teams</td>
-              </tr>
-              <tr>
-                <td>Typical migration path</td>
-                <td>Stay CLI or add Python API helpers</td>
-                <td>Remain API-driven with selective CLI ops</td>
-                <td>Wizard first, then CLI or Python API</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head reveal">
-          <p class="eyebrow">Adoption Sequence</p>
-          <h2>A pragmatic rollout model teams actually use</h2>
-        </div>
-        <div class="adoption-steps">
-          <article class="adoption-step reveal">
-            <span>Phase 1</span>
-            <h3>Discover</h3>
-            <p>Use Wizard UI for initial project setup and quick validation runs.</p>
-          </article>
-          <article class="adoption-step reveal">
-            <span>Phase 2</span>
-            <h3>Stabilize</h3>
-            <p>Move repeated operations to CLI scripts with pinned configs.</p>
-          </article>
-          <article class="adoption-step reveal">
-            <span>Phase 3</span>
-            <h3>Integrate</h3>
-            <p>Use Python API calls for app-triggered training, evaluation, and export pipelines.</p>
-          </article>
-        </div>
+        <aside class="quickstart-notes">
+          <p class="notes-head">After you pick</p>
+          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> the stages the chosen door routes through.</p>
+          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> mappers, eval handlers, plugin slots.</p>
+          <a class="btn btn-solid" href="./faqs.html">FAQs</a>
+        </aside>
       </section>
     </main>
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Powered by TensorGreed</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
       <p>
         <a
           class="footer-link"
           href="https://github.com/TensorGreed/__SLM__/issues"
           target="_blank"
           rel="noopener noreferrer"
-          >Support &amp; Questions: GitHub Issues</a
+          >Support &amp; questions: GitHub Issues</a
         >
       </p>
     </footer>
@@ -262,4 +267,3 @@
     <script src="./script.js"></script>
   </body>
 </html>
-

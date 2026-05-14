@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BrewSLM FAQs | Engineering Rollout Questions</title>
+    <title>BrewSLM FAQs | Setup, mapping, eval, plugins, governance</title>
     <meta
       name="description"
-      content="Searchable BrewSLM FAQ page covering onboarding speed, workflow control, runtime behavior, and deployment decisions."
+      content="Substantive answers to the questions you'd actually ask before trying BrewSLM: setup, dataset mapping, task-aware eval, plugins, governance, support."
     />
     <meta
       name="robots"
@@ -17,24 +17,18 @@
     <link rel="canonical" href="https://brewslm.com/faqs.html" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="BrewSLM" />
-    <meta
-      property="og:title"
-      content="BrewSLM FAQs | Engineering Rollout Questions"
-    />
+    <meta property="og:title" content="BrewSLM FAQs | Setup, mapping, eval, plugins, governance" />
     <meta
       property="og:description"
-      content="Find practical answers on setup speed, control depth, deployment, and guardrails for BrewSLM."
+      content="Substantive answers, not SEO Q&amp;A. Setup, mapping, eval, plugins, governance, support."
     />
     <meta property="og:url" content="https://brewslm.com/faqs.html" />
     <meta property="og:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta
-      name="twitter:title"
-      content="BrewSLM FAQs | Engineering Rollout Questions"
-    />
+    <meta name="twitter:title" content="BrewSLM FAQs | Setup, mapping, eval, plugins, governance" />
     <meta
       name="twitter:description"
-      content="Find practical answers on setup speed, control depth, deployment, and guardrails for BrewSLM."
+      content="Substantive answers, not SEO Q&amp;A. Setup, mapping, eval, plugins, governance, support."
     />
     <meta name="twitter:image" content="https://brewslm.com/assets/brewslm-logo.svg" />
     <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
@@ -57,7 +51,7 @@
         <a href="./creation-paths.html">Creation Paths</a>
         <a href="./workflow.html">Workflow</a>
         <a href="./capabilities.html">Capabilities</a>
-        <a href="./blog.html">Blogs</a>
+        <a href="./blog.html">Blog</a>
         <a href="./faqs.html" aria-current="page">FAQs</a>
       </nav>
       <a class="btn btn-outline" href="./index.html#quickstart">Quickstart</a>
@@ -66,126 +60,226 @@
     <main>
       <section class="section page-hero reveal">
         <p class="eyebrow">FAQs</p>
-        <h1>Answers for teams rolling BrewSLM into real delivery workflows.</h1>
+        <h1>Questions worth answering.</h1>
         <p class="page-sub">
-          Use the search box to filter questions by topic. This page focuses on practical engineering
-          concerns: setup speed, control depth, risk, and deployment behavior.
+          These are the questions someone actually asks before trying or deploying BrewSLM —
+          grouped by what they're really getting at. No SEO Q&amp;A.
         </p>
       </section>
 
-      <section class="section">
-        <div class="faq-tools reveal">
-          <label class="search-label" for="faq-search">Search questions</label>
-          <input
-            id="faq-search"
-            class="search-input"
-            type="search"
-            placeholder="Try: preflight, cloud, benchmark, export"
-            data-faq-search
-          />
-          <p class="search-count">Visible questions: <span data-faq-count></span></p>
+      <section class="section faq">
+        <div class="section-head reveal">
+          <p class="eyebrow">Getting started</p>
+          <h2>Setup &amp; first run</h2>
+        </div>
+        <div class="faq-grid">
+          <details class="faq-item reveal">
+            <summary>What do I install?</summary>
+            <p>
+              Python 3.12 + Node 18+ + Git, plus a single consumer GPU (8 GB VRAM is enough for
+              the LoRA flow on the 1–3B models the autopilot recommends out of the box). Clone
+              the repo, run <code>pip install -r backend/requirements.txt</code>, run
+              <code>npm install</code> in the frontend, start the two dev servers. The README
+              has the canonical command list.
+            </p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Can I run BrewSLM without a GPU?</summary>
+            <p>
+              Ingest, eval, export, and the wizard work fine CPU-only. Training is the only
+              stage that effectively needs CUDA. The autopilot will refuse to start a real
+              training run on CPU; you can override with the simulation backend
+              (<code>TRAINING_BACKEND=simulate</code>) to walk the pipeline end-to-end without a
+              real model run.
+            </p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Do I need a teacher model?</summary>
+            <p>
+              Only for synthetic data generation and the optional LLM-assisted mapping mode.
+              Both are opt-in. Point <code>TEACHER_MODEL_API_URL</code> at any OpenAI-compatible
+              endpoint — local Ollama works, hosted gateways work, anything that speaks the
+              chat-completions API.
+            </p>
+          </details>
         </div>
       </section>
 
       <section class="section faq">
+        <div class="section-head reveal">
+          <p class="eyebrow">Data &amp; mapping</p>
+          <h2>How the import pipeline behaves</h2>
+        </div>
         <div class="faq-grid">
-          <details class="faq-item reveal" data-faq-item>
-            <summary>How fast can a new team run its first SLM job?</summary>
-            <p>Most teams can create a project, import a sample dataset, and start a first run in under 10 minutes.</p>
+          <details class="faq-item reveal">
+            <summary>The introspector picked the wrong mapper. How do I override?</summary>
+            <p>
+              Two paths. CLI: pass <code>--mapper &lt;id&gt;</code> + <code>--map-json '{…}'</code>
+              instead of <code>--auto</code>. UI: in the wizard's Map step, the mapper dropdown
+              lists every registered mapper alongside the proposal; pick a different one and
+              edit the field-map JSON before previewing. The deterministic sniffer is one
+              input to the proposal, not the final word.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Where should we ask support questions?</summary>
-            <p>Use the <a class="inline-link" href="https://github.com/TensorGreed/__SLM__/issues" target="_blank" rel="noopener noreferrer">__SLM__ GitHub Issues page</a> for support and troubleshooting.</p>
+          <details class="faq-item reveal">
+            <summary>I have a dataset shape the built-in mappers don't cover.</summary>
+            <p>
+              Write a plugin mapper. One Python module with
+              <code>register_dataset_mappers(register)</code> exporting a callable that returns
+              an object implementing the <code>TargetMapper</code> protocol. List your module
+              under <code>DATASET_MAPPER_PLUGIN_MODULES</code> in settings. BrewSLM loads it at
+              boot alongside the built-ins; one broken plugin doesn't block the rest.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Do we have to use the Wizard UI?</summary>
-            <p>No. CLI and Python API flows are first-class and can own your full production path.</p>
+          <details class="faq-item reveal">
+            <summary>Why does the wizard block me below 80% confidence?</summary>
+            <p>
+              Because silent auto-mapping is the single most damaging failure mode for a tool
+              like this — a bad mapper picks the wrong fields, the trainer learns the wrong
+              thing, and you discover the issue at eval time after burning a GPU-hour. The 80%
+              threshold lets you opt in to bypass (click "I've reviewed the proposal" / pass
+              <code>--force</code>), but the default is to make you look.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>What does preflight actually validate?</summary>
-            <p>Task-model compatibility, runtime dependencies, memory fit, and data-contract readiness.</p>
+          <details class="faq-item reveal">
+            <summary>What happens to rejected rows?</summary>
+            <p>
+              They're grouped by stable reason code (<code>missing_text</code>,
+              <code>label_not_allowed</code>, <code>length_mismatch</code>, etc.). The wizard
+              renders the breakdown; you tick which categories to bulk-drop. Dropped categories
+              still appear in the audit row's <code>rejection_counts</code> — the data
+              accounting stays honest.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Can we benchmark before committing to full training?</summary>
-            <p>Yes. Training UI and model-selection APIs support sampled benchmark sweeps before long jobs.</p>
+        </div>
+      </section>
+
+      <section class="section faq">
+        <div class="section-head reveal">
+          <p class="eyebrow">Training &amp; eval</p>
+          <h2>How the model side behaves</h2>
+        </div>
+        <div class="faq-grid">
+          <details class="faq-item reveal">
+            <summary>Which base models does BrewSLM support?</summary>
+            <p>
+              Anything HuggingFace can load via <code>transformers</code> in the size range
+              BrewSLM targets — Llama 3, Qwen 2 / 2.5, Mistral, Phi, Gemma, etc. The autopilot
+              picks from a curated shortlist by task; you can pin a specific model via the
+              Training Config page.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>How do we prevent invalid runs from wasting cloud budget?</summary>
-            <p>Run preflight before launch, then enforce evaluation/registry gates before promotion.</p>
+          <details class="faq-item reveal">
+            <summary>Why are my NER F1 scores so low?</summary>
+            <p>
+              You probably evaluated with the wrong metric shape. Check
+              <code>output_schema.scoring_mode</code> on the prepared manifest — for NER / PII /
+              span extraction, it should be <code>"span_set"</code>, not the classification
+              default. Span-set scoring requires exact <code>(type, start, end)</code> matches;
+              off-by-one boundaries count as miss + hallucination. Most pre-BrewSLM eval
+              libraries do not score this way.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Can we pin exact models instead of relying on recommendations?</summary>
-            <p>Yes. Autopilot suggestions are optional. You can pin exact models and constraints.</p>
+          <details class="faq-item reveal">
+            <summary>Can I set custom promotion gates?</summary>
+            <p>
+              Yes. The eval pack carries the gate policy. Required gates block; optional gates
+              allow degradation within tolerance. See
+              <code>app.services.evaluation_service</code> for the gate evaluation and
+              <code>app.models.experiment</code> for what's stored.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Can we mix local development with cloud burst production jobs?</summary>
-            <p>Yes. BrewSLM preserves one run model while letting you choose local or cloud execution.</p>
+          <details class="faq-item reveal">
+            <summary>How does RAG eval differ from QA eval?</summary>
+            <p>
+              The RAG handler reports answer EM/F1 <em>plus</em> faithfulness (fraction of
+              prediction tokens grounded in the retrieved context) <em>plus</em> context recall
+              (fraction of gold-answer tokens present in the context). The combination lets you
+              tell retriever bugs from generation bugs without leaving the page.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>What gets stored in exported artifacts?</summary>
-            <p>Weights, selected config, benchmark trace, and metadata required for reproducible serving.</p>
+        </div>
+      </section>
+
+      <section class="section faq">
+        <div class="section-head reveal">
+          <p class="eyebrow">Governance &amp; ops</p>
+          <h2>Audit, reproducibility, support</h2>
+        </div>
+        <div class="faq-grid">
+          <details class="faq-item reveal">
+            <summary>How do I prove what happened in a training run?</summary>
+            <p>
+              The <code>run_events</code> table is the audit spine. Every workflow stage emits
+              an event with a stable reason code; the support bundle exports them as JSON. The
+              training manifest captures every input that produced the run, so you can replay
+              an experiment from a frozen artifact.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>How do we compare new runs to current production quality?</summary>
-            <p>Use evaluation scorecards and gate policies to compare candidate runs against your baseline.</p>
+          <details class="faq-item reveal">
+            <summary>What about secrets — HF tokens, Kaggle creds, teacher API keys?</summary>
+            <p>
+              Stored under the Project → Secrets surface with encrypted-at-rest values. The
+              audit log records that a secret was used, not the value. CLI / API flows read
+              from env vars; the wizard surfaces an inline auth banner when a source needs
+              credentials that aren't present.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Can we integrate BrewSLM into existing CI/CD workflows?</summary>
-            <p>Yes. CLI commands and Python API calls are designed for scriptable automation pipelines.</p>
+          <details class="faq-item reveal">
+            <summary>Can I export the audit log?</summary>
+            <p>
+              Yes — the support bundle includes a <code>run_events.json</code> dump scoped to
+              the project, plus the prepared manifest, the recent failure clusters, and any
+              ingest reports. One zip, point it at the legal/compliance team.
+            </p>
           </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>What if our dataset schema changes frequently?</summary>
-            <p>Mapping profiles and contract checks make schema drift visible and manageable.</p>
-          </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Does BrewSLM support non-text data workflows?</summary>
-            <p>Text is default; multimodal paths are available when configured in your runtime profile.</p>
-          </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Can we audit why a model was selected for training?</summary>
-            <p>Yes. Benchmark summaries and selection metadata are persisted for review and auditability.</p>
-          </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>How do we handoff from prototyping to platform teams?</summary>
-            <p>Promote from Wizard to CLI/Python API and commit generated plans plus gating rules in version control.</p>
-          </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>What is the recommended first production policy?</summary>
-            <p>Enforce strict preflight, benchmark floor, and release comparison against production baseline.</p>
-          </details>
-          <details class="faq-item reveal" data-faq-item>
-            <summary>Where should we start if we are not sure which path to use?</summary>
-            <p>Start with Creation Paths, pick one mode, then lock workflow and capability policies.</p>
+          <details class="faq-item reveal">
+            <summary>How do I get help / report a bug?</summary>
+            <p>
+              Open an issue at
+              <a class="inline-link" href="https://github.com/TensorGreed/__SLM__/issues" target="_blank" rel="noopener noreferrer"
+                >github.com/TensorGreed/__SLM__/issues</a
+              >. Include the failing RunEvent's <code>run_id</code> + <code>reason_code</code>
+              if you have them — the audit trail is the fastest debug input we can read.
+            </p>
           </details>
         </div>
       </section>
 
       <section class="section cta reveal">
         <div class="cta-copy">
-          <p class="eyebrow">Need a rollout path?</p>
-          <h2>Recommended read order for new teams</h2>
-          <p>Creation Paths -> Workflow -> Capabilities -> Quickstart run.</p>
+          <p class="eyebrow">Still curious</p>
+          <h2>Read the source</h2>
+          <p>
+            The codebase isn't large. Every capability listed in these FAQs maps to one or two
+            files you can read end-to-end in an afternoon.
+          </p>
+          <div class="terminal-block">
+            <p>$ git clone https://github.com/TensorGreed/__SLM__ brewslm</p>
+            <p>$ cd brewslm/backend/app/services/dataset_import</p>
+            <p>$ ls</p>
+            <p>introspector.py  mappers/  plugin_loader.py  sources/  service.py  …</p>
+          </div>
         </div>
         <aside class="quickstart-notes">
-          <p class="notes-head">Go next</p>
-          <p class="form-note"><a class="inline-link" href="./creation-paths.html">Creation Paths</a></p>
-          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow</a></p>
-          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities</a></p>
-          <a class="btn btn-solid" href="./index.html#quickstart">Run Quickstart</a>
+          <p class="notes-head">Adjacent reads</p>
+          <p class="form-note"><a class="inline-link" href="./workflow.html">Workflow:</a> the pipeline stage by stage.</p>
+          <p class="form-note"><a class="inline-link" href="./capabilities.html">Capabilities:</a> registries + plugin contracts.</p>
+          <a class="btn btn-solid" href="./blog.html">Engineering blog</a>
         </aside>
       </section>
     </main>
 
     <footer class="site-footer">
       <p>&copy; <span id="year"></span> BrewSLM.com</p>
-      <p>Powered by TensorGreed</p>
+      <p>Built by <a href="https://github.com/TensorGreed">TensorGreed</a></p>
       <p>
         <a
           class="footer-link"
           href="https://github.com/TensorGreed/__SLM__/issues"
           target="_blank"
           rel="noopener noreferrer"
-          >Support &amp; Questions: GitHub Issues</a
+          >Support &amp; questions: GitHub Issues</a
         >
       </p>
     </footer>
@@ -193,4 +287,3 @@
     <script src="./script.js"></script>
   </body>
 </html>
-
