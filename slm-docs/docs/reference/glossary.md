@@ -142,6 +142,10 @@ A concrete action surfaced by the eval failure cluster card — "add 20 rows", "
 
 Single observability row written by every pipeline stage. Schema: `(run_id, parent_run_id, stage, severity, reason_code, actor, summary, payload, ts)`. See [Run events](../observability/run-events.md).
 
+## Saved mapping (dataset import)
+
+A persisted `(locator, mapper_id, field_map, drop_reasons)` tuple under a user-chosen name. Created via the "Save this mapping" card on the import wizard's Preview step; re-runs go through the **Saved mappings** panel on the Data tab. Re-runs use the same `run_import` code path as a fresh import, so they emit the same audit [run event](#run-event) (`stage=ingestion`, `reason_code=dataset_import_run`) plus a `config_id` link in the payload. `last_run_at` and `last_run_accepted` columns on the config row track the most recent re-run's timestamp and row count for at-a-glance status. Backed by the `dataset_import_configs` table; API: `POST /api/projects/{id}/dataset-import/configs` (create) → `POST /api/projects/{id}/dataset-import/configs/{cfg_id}/run` (re-run).
+
 ## Scoring mode
 
 Sub-mode of a task handler that picks the metric shape without changing which handler runs. Today's modes live inside `StructuredExtractionHandler`: `field_match` (per-field EM/F1 — invoice / form extraction) and `span_set` (entity-level P/R/F1 — PII / NER / span extraction). Declared as `output_schema.scoring_mode` on the prepared manifest. Same general handler, internal dispatch — BrewSLM doesn't add a new handler per domain. See [PII detector demo](../demos/pii-detector.md#how-scoring-works).

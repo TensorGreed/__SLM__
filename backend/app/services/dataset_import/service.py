@@ -155,6 +155,68 @@ def preview_import(
     )
 
 
+async def _emit_import_audit_event(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    severity: str,
+    reason_code: str,
+    summary: str,
+    payload: dict[str, Any],
+    use_fresh_session: bool = False,
+) -> None:
+    """Best-effort RunEvent emission for the dataset-import audit log.
+
+    Failures here are logged and swallowed — observability bugs must
+    never break the data write path. The pattern mirrors
+    ``deployment_version_service._emit_deployment_event``.
+
+    ``use_fresh_session`` is set on the failure path: the parent
+    transaction is about to be rolled back by the exception we just
+    caught, so the audit row has to live in its own short-lived
+    session that commits independently. Without this flag, the
+    failure event is created but never persisted.
+    """
+    try:
+        from app.database import async_session_factory
+        from app.models.run_event import STAGE_INGESTION
+        from app.services.run_event_service import emit_event
+
+        run_id = (
+            f"dataset-import-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        )
+        if use_fresh_session:
+            async with async_session_factory() as fresh:
+                await emit_event(
+                    fresh,
+                    project_id=project_id,
+                    run_id=run_id,
+                    stage=STAGE_INGESTION,
+                    severity=severity,
+                    reason_code=reason_code,
+                    summary=summary,
+                    payload=payload,
+                )
+                await fresh.commit()
+        else:
+            await emit_event(
+                db,
+                project_id=project_id,
+                run_id=run_id,
+                stage=STAGE_INGESTION,
+                severity=severity,
+                reason_code=reason_code,
+                summary=summary,
+                payload=payload,
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"[run_event] emit_failed dataset_import project={project_id} "
+            f"err={exc!r}",
+            flush=True,
+        )
+
+
 async def run_import(
     db: AsyncSession,
     *,
@@ -165,6 +227,7 @@ async def run_import(
     field_map: dict[str, Any] | None,
     limit: int | None = None,
     drop_reasons: set[str] | None = None,
+    config_id: int | None = None,
 ) -> ImportResult:
     """Persist transformed rows to the project's synthetic dataset.
 
@@ -172,52 +235,106 @@ async def run_import(
     first-class members of the project's synthetic dataset alongside
     teacher-LLM-generated rows. Same JSONL file, same accepted/
     rejected flag convention.
+
+    Emits a RunEvent on the success path (severity=info, reason_code
+    ``dataset_import_run``) and on the failure path (severity=error,
+    reason_code ``dataset_import_failed``). The audit row carries the
+    source, locator, mapper, row counts, written_path, and — when the
+    run was launched from a saved mapping — the ``config_id`` link.
     """
 
+    from app.models.reason_codes import (
+        DATASET_IMPORT_FAILED,
+        DATASET_IMPORT_RUN,
+    )
+    from app.models.run_event import SEVERITY_ERROR, SEVERITY_INFO
     from app.services.synthetic_service import (
         _synthetic_dir,
         get_or_create_synthetic_dataset,
     )
 
-    ctx = _build_context(
+    try:
+        ctx = _build_context(
+            project_id=project_id,
+            project_task_profile=project_task_profile,
+            locator=locator,
+            mapper_id=mapper_id,
+            field_map=field_map,
+            limit=limit,
+        )
+        # Full pipeline — no sample cap on accepted rows for a real run.
+        accepted, rejected, rejection_counts, warnings = _drain_pipeline(
+            ctx=ctx, drop_reasons=drop_reasons, sample_cap=None
+        )
+        mapper = resolve_mapper(mapper_id)
+
+        ds = await get_or_create_synthetic_dataset(db, project_id)
+        syn_dir = _synthetic_dir(project_id)
+        syn_dir.mkdir(parents=True, exist_ok=True)
+        file_path = syn_dir / "synthetic.jsonl"
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        written = 0
+        with file_path.open("a", encoding="utf-8") as handle:
+            for row in accepted:
+                entry = {
+                    "id": ds.record_count + written + 1,
+                    **row.payload,
+                    "source": "dataset_import",
+                    "import_locator": locator,
+                    "import_mapper": mapper_id,
+                    "row_key": row.row_key,
+                    "imported_at": now_iso,
+                    "status": "accepted",
+                }
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                written += 1
+
+        ds.record_count += written
+        ds.file_path = str(file_path)
+        await db.flush()
+    except Exception as exc:
+        await _emit_import_audit_event(
+            db,
+            project_id=project_id,
+            severity=SEVERITY_ERROR,
+            reason_code=DATASET_IMPORT_FAILED,
+            summary=f"Dataset import failed: {type(exc).__name__}",
+            payload={
+                "source_id": locator.split(":", 1)[0] if ":" in locator else "",
+                "locator": locator,
+                "mapper_id": mapper_id,
+                "config_id": config_id,
+                "error": str(exc)[:500],
+            },
+            # The exception below is about to roll back the caller's
+            # transaction — the audit row has to live in its own
+            # short-lived session so it survives.
+            use_fresh_session=True,
+        )
+        raise
+
+    await _emit_import_audit_event(
+        db,
         project_id=project_id,
-        project_task_profile=project_task_profile,
-        locator=locator,
-        mapper_id=mapper_id,
-        field_map=field_map,
-        limit=limit,
+        severity=SEVERITY_INFO,
+        reason_code=DATASET_IMPORT_RUN,
+        summary=(
+            f"Imported {written} row(s) via {mapper_id} from "
+            f"{ctx.source_id} ({locator})"
+        ),
+        payload={
+            "source_id": ctx.source_id,
+            "locator": locator,
+            "mapper_id": mapper_id,
+            "target_task_profile": mapper.declared_target(),
+            "accepted_count": written,
+            "rejected_count": sum(rejection_counts.values()),
+            "rejection_counts": rejection_counts,
+            "written_path": str(file_path),
+            "config_id": config_id,
+        },
     )
-    # Full pipeline — no sample cap on accepted rows for a real run.
-    accepted, rejected, rejection_counts, warnings = _drain_pipeline(
-        ctx=ctx, drop_reasons=drop_reasons, sample_cap=None
-    )
-    mapper = resolve_mapper(mapper_id)
-
-    ds = await get_or_create_synthetic_dataset(db, project_id)
-    syn_dir = _synthetic_dir(project_id)
-    syn_dir.mkdir(parents=True, exist_ok=True)
-    file_path = syn_dir / "synthetic.jsonl"
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    written = 0
-    with file_path.open("a", encoding="utf-8") as handle:
-        for row in accepted:
-            entry = {
-                "id": ds.record_count + written + 1,
-                **row.payload,
-                "source": "dataset_import",
-                "import_locator": locator,
-                "import_mapper": mapper_id,
-                "row_key": row.row_key,
-                "imported_at": now_iso,
-                "status": "accepted",
-            }
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            written += 1
-
-    ds.record_count += written
-    ds.file_path = str(file_path)
-    await db.flush()
 
     return ImportResult(
         accepted_rows=accepted[:5],  # cap inline sample in API response

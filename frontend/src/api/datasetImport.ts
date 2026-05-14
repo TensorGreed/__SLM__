@@ -156,3 +156,70 @@ export async function runImport(
     );
     return res.data;
 }
+
+// ── Saved configs (Phase G) ──────────────────────────────────────────
+
+export interface SavedConfig {
+    id: number;
+    project_id: number;
+    name: string;
+    description: string | null;
+    locator: string;
+    mapper_id: string;
+    field_map: Record<string, unknown>;
+    drop_reasons: string[];
+    limit: number | null;
+    created_at: string | null;
+    updated_at: string | null;
+    last_run_at: string | null;
+    last_run_accepted: number | null;
+}
+
+export interface SavedConfigListResponse {
+    configs: SavedConfig[];
+}
+
+export interface SavedConfigCreateBody {
+    name: string;
+    description?: string | null;
+    locator: string;
+    mapper_id: string;
+    field_map?: Record<string, unknown>;
+    drop_reasons?: string[];
+    limit?: number | null;
+}
+
+export async function listSavedConfigs(projectId: number): Promise<SavedConfig[]> {
+    const res = await api.get<SavedConfigListResponse>(
+        `/projects/${projectId}/dataset-import/configs`,
+    );
+    return res.data?.configs ?? [];
+}
+
+export async function saveConfig(
+    projectId: number,
+    body: SavedConfigCreateBody,
+): Promise<SavedConfig> {
+    const res = await api.post<SavedConfig>(
+        `/projects/${projectId}/dataset-import/configs`,
+        body,
+    );
+    return res.data;
+}
+
+export async function deleteSavedConfig(
+    projectId: number,
+    configId: number,
+): Promise<void> {
+    await api.delete(`/projects/${projectId}/dataset-import/configs/${configId}`);
+}
+
+export async function runSavedConfig(
+    projectId: number,
+    configId: number,
+): Promise<ImportResultDict> {
+    const res = await api.post<ImportResultDict>(
+        `/projects/${projectId}/dataset-import/configs/${configId}/run`,
+    );
+    return res.data;
+}

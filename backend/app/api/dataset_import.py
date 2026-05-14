@@ -28,6 +28,14 @@ from app.services.dataset_import import (
     list_registered_mappers,
     list_registered_sources,
 )
+from app.services.dataset_import.configs import (
+    config_to_dict,
+    delete_config,
+    get_config,
+    list_configs,
+    run_from_config,
+    save_config,
+)
 from app.services.dataset_import.service import (
     introspect_locator,
     preview_import,
@@ -179,4 +187,110 @@ async def run(
         raise HTTPException(404, str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"run failed: {exc}") from exc
+    return result_to_dict(result)
+
+
+# ── Saved configs (Phase G) ──────────────────────────────────────────
+
+
+class ConfigCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    locator: str = Field(..., min_length=3)
+    mapper_id: str = Field(..., min_length=1)
+    field_map: dict[str, Any] = Field(default_factory=dict)
+    drop_reasons: list[str] = Field(default_factory=list)
+    limit: int | None = Field(default=None, ge=1, le=10_000_000)
+
+
+_CONFIG_ERROR_CODES = {
+    "config_name_required": (400, "Config name is required."),
+    "config_name_too_long": (400, "Config name is too long (max 120 chars)."),
+    "config_locator_required": (400, "Config locator is required."),
+    "config_mapper_id_required": (400, "Config mapper_id is required."),
+    "config_name_taken": (
+        409,
+        "A saved mapping with that name already exists in this project.",
+    ),
+}
+
+
+def _translate_config_error(exc: ValueError) -> HTTPException:
+    code = str(exc)
+    status, detail = _CONFIG_ERROR_CODES.get(code, (400, code))
+    return HTTPException(status, detail)
+
+
+@project_router.get("/configs")
+async def list_saved_configs(
+    project_id: int, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    rows = await list_configs(db, project_id)
+    return {"configs": [config_to_dict(row) for row in rows]}
+
+
+@project_router.post("/configs", status_code=201)
+async def create_saved_config(
+    project_id: int,
+    req: ConfigCreateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    # Confirm the project exists before writing the row.
+    await _load_project_profile(db, project_id)
+    try:
+        row = await save_config(
+            db,
+            project_id=project_id,
+            name=req.name,
+            description=req.description,
+            locator=req.locator,
+            mapper_id=req.mapper_id,
+            field_map=req.field_map,
+            drop_reasons=req.drop_reasons,
+            limit=req.limit,
+        )
+    except ValueError as exc:
+        raise _translate_config_error(exc) from exc
+    await db.commit()
+    return config_to_dict(row)
+
+
+@project_router.delete("/configs/{config_id}", status_code=204)
+async def delete_saved_config(
+    project_id: int,
+    config_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    deleted = await delete_config(db, project_id, config_id)
+    if not deleted:
+        raise HTTPException(404, f"Saved mapping {config_id} not found.")
+    await db.commit()
+
+
+@project_router.post("/configs/{config_id}/run")
+async def run_saved_config(
+    project_id: int,
+    config_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    config = await get_config(db, project_id, config_id)
+    if config is None:
+        raise HTTPException(404, f"Saved mapping {config_id} not found.")
+    task_profile = await _load_project_profile(db, project_id)
+    try:
+        result = await run_from_config(
+            db,
+            project_id=project_id,
+            config=config,
+            project_task_profile=task_profile,
+        )
+    except KeyError as exc:
+        raise HTTPException(400, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"run failed: {exc}") from exc
+    await db.commit()
     return result_to_dict(result)

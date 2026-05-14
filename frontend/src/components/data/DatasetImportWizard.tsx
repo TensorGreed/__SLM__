@@ -27,8 +27,10 @@ import {
     listSources,
     previewImport,
     runImport,
+    saveConfig,
     type ImportResultDict,
     type IntrospectResponse,
+    type SavedConfig,
     type ShapeHypothesisDict,
 } from '../../api/datasetImport';
 
@@ -36,6 +38,7 @@ interface DatasetImportWizardProps {
     projectId: number;
     onClose: () => void;
     onSuccess?: (result: ImportResultDict) => void;
+    onConfigSaved?: (config: SavedConfig) => void;
 }
 
 type WizardStep = 'source' | 'map' | 'preview';
@@ -133,6 +136,7 @@ export default function DatasetImportWizard({
     projectId,
     onClose,
     onSuccess,
+    onConfigSaved,
 }: DatasetImportWizardProps) {
     // Step state.
     const [step, setStep] = useState<WizardStep>('source');
@@ -161,6 +165,11 @@ export default function DatasetImportWizard({
     const [running, setRunning] = useState(false);
     const [runError, setRunError] = useState<string>('');
     const [runResult, setRunResult] = useState<ImportResultDict | null>(null);
+
+    // Save-mapping state (Phase G).
+    const [savingConfig, setSavingConfig] = useState(false);
+    const [saveError, setSaveError] = useState<string>('');
+    const [savedConfigName, setSavedConfigName] = useState<string | null>(null);
 
     // Load source / mapper catalog once (best-effort — fall back to
     // built-in lists if the request fails).
@@ -304,6 +313,27 @@ export default function DatasetImportWizard({
         }
     };
 
+    const handleSaveConfig = async (name: string, description: string) => {
+        setSavingConfig(true);
+        setSaveError('');
+        try {
+            const cfg = await saveConfig(projectId, {
+                name: name.trim(),
+                description: description.trim() || null,
+                locator,
+                mapper_id: selectedMapperId,
+                field_map: fieldMapParsed.value,
+                drop_reasons: Array.from(dropReasons),
+            });
+            setSavedConfigName(cfg.name);
+            onConfigSaved?.(cfg);
+        } catch (err) {
+            setSaveError(extractErrorMessage(err));
+        } finally {
+            setSavingConfig(false);
+        }
+    };
+
     const stepLabel: Record<WizardStep, string> = {
         source: '1. Source',
         map: '2. Map',
@@ -401,6 +431,10 @@ export default function DatasetImportWizard({
                             onBack={() => setStep('map')}
                             onRun={handleRun}
                             onClose={onClose}
+                            onSaveConfig={handleSaveConfig}
+                            savingConfig={savingConfig}
+                            saveError={saveError}
+                            savedConfigName={savedConfigName}
                         />
                     )}
                 </div>
@@ -767,6 +801,10 @@ interface PreviewStepProps {
     onBack: () => void;
     onRun: () => void;
     onClose: () => void;
+    onSaveConfig: (name: string, description: string) => Promise<void>;
+    savingConfig: boolean;
+    saveError: string;
+    savedConfigName: string | null;
 }
 
 function PreviewStep({
@@ -782,7 +820,14 @@ function PreviewStep({
     onBack,
     onRun,
     onClose,
+    onSaveConfig,
+    savingConfig,
+    saveError,
+    savedConfigName,
 }: PreviewStepProps) {
+    const [showSaveForm, setShowSaveForm] = useState(false);
+    const [saveName, setSaveName] = useState('');
+    const [saveDescription, setSaveDescription] = useState('');
     const reasonEntries = useMemo(
         () =>
             Object.entries(previewResult.rejection_counts).sort(
@@ -940,6 +985,103 @@ function PreviewStep({
                     {runError}
                 </div>
             )}
+
+            {/* Save-as-config affordance: lets the user persist this
+                mapping for one-click re-runs later (Phase G). */}
+            <section
+                style={{
+                    padding: 'var(--space-md)',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                    <div>
+                        <strong>Save this mapping</strong>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            Stores the locator + mapper + field_map + drop_reasons so you can
+                            re-run against a refreshed source without re-introspecting.
+                        </div>
+                    </div>
+                    {savedConfigName ? (
+                        <span
+                            style={{
+                                fontSize: '0.85rem',
+                                color: 'var(--text-secondary)',
+                            }}
+                            data-testid="saved-config-confirm"
+                        >
+                            Saved as <code>{savedConfigName}</code>.
+                        </span>
+                    ) : (
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => setShowSaveForm((v) => !v)}
+                            data-testid="toggle-save-form-btn"
+                            disabled={running}
+                        >
+                            {showSaveForm ? 'Cancel' : 'Save mapping'}
+                        </button>
+                    )}
+                </div>
+                {showSaveForm && !savedConfigName && (
+                    <div
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 'var(--space-sm)',
+                            marginTop: 'var(--space-md)',
+                        }}
+                    >
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="dsi-save-name">
+                                Name
+                            </label>
+                            <input
+                                id="dsi-save-name"
+                                className="input"
+                                value={saveName}
+                                onChange={(e) => setSaveName(e.target.value)}
+                                placeholder="e.g. weekly PII refresh"
+                                data-testid="save-name-input"
+                                maxLength={120}
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="dsi-save-desc">
+                                Description (optional)
+                            </label>
+                            <input
+                                id="dsi-save-desc"
+                                className="input"
+                                value={saveDescription}
+                                onChange={(e) => setSaveDescription(e.target.value)}
+                                placeholder="Why this mapping exists / when to re-run"
+                                data-testid="save-desc-input"
+                                maxLength={1000}
+                            />
+                        </div>
+                        {saveError && (
+                            <div className="error-banner" data-testid="save-error">
+                                {saveError}
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => onSaveConfig(saveName, saveDescription)}
+                                disabled={savingConfig || !saveName.trim()}
+                                data-testid="save-config-btn"
+                            >
+                                {savingConfig ? 'Saving…' : 'Save'}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </section>
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <button className="btn btn-ghost" onClick={onBack} disabled={running}>

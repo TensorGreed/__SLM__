@@ -40,6 +40,15 @@ INGEST_IO_ERROR = "ingest_io_error"
 """Disk write / read failure during ingest."""
 INGEST_VALIDATION_FAILED = "ingest_validation_failed"
 """Ingested document failed schema or content validation."""
+DATASET_IMPORT_RUN = "dataset_import_run"
+"""Generic dataset-import pipeline (Phase A–F) committed rows to the
+project's synthetic dataset. Severity is ``info``; the payload carries
+source, locator, mapper, accepted/rejected counts, written_path, and
+config_id when re-run from a saved mapping."""
+DATASET_IMPORT_FAILED = "dataset_import_failed"
+"""Generic dataset-import pipeline raised before any rows were written.
+Severity is ``error``. Payload carries source, locator, mapper, and
+the error message."""
 
 # -- cleaning -----------------------------------------------------------
 CLEANING_OUTLIER_THRESHOLD_EXCEEDED = "cleaning_outlier_threshold_exceeded"
@@ -115,6 +124,8 @@ REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
         INGEST_UNSUPPORTED_FORMAT,
         INGEST_IO_ERROR,
         INGEST_VALIDATION_FAILED,
+        DATASET_IMPORT_RUN,
+        DATASET_IMPORT_FAILED,
     }),
     STAGE_CLEANING: frozenset({
         CLEANING_OUTLIER_THRESHOLD_EXCEEDED,

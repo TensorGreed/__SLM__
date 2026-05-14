@@ -418,4 +418,117 @@ describe('DatasetImportWizard', () => {
             screen.getByText(/KAGGLE_USERNAME \+ KAGGLE_KEY/i),
         ).toBeInTheDocument();
     });
+
+    it('saves the current mapping as a config and notifies the parent', async () => {
+        // Override the default mock so we can verify the save POST body.
+        apiMock.post.mockImplementation(async (url: string, body?: unknown) => {
+            if (url === '/dataset-import/introspect') {
+                return { data: HIGH_CONFIDENCE_INTROSPECTION };
+            }
+            if (url === '/projects/77/dataset-import/preview') {
+                return { data: PREVIEW_RESULT_WITH_REJECTS };
+            }
+            if (url === '/projects/77/dataset-import/configs') {
+                return {
+                    data: {
+                        id: 99,
+                        project_id: 77,
+                        name: (body as { name: string }).name,
+                        description: null,
+                        locator: 'jsonl:/tmp/data.jsonl',
+                        mapper_id: 'label_to_classification',
+                        field_map: {},
+                        drop_reasons: [],
+                        limit: null,
+                        created_at: null,
+                        updated_at: null,
+                        last_run_at: null,
+                        last_run_accepted: null,
+                    },
+                };
+            }
+            return { data: {} };
+        });
+
+        const user = userEvent.setup();
+        const onConfigSaved = vi.fn();
+        render(
+            <DatasetImportWizard
+                projectId={77}
+                onClose={() => undefined}
+                onConfigSaved={onConfigSaved}
+            />,
+        );
+
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+        await screen.findByText('Column signatures');
+        await user.click(screen.getByTestId('preview-btn'));
+        await screen.findByText('Dry-run summary');
+
+        // Toggle the save form, type a name, save.
+        await user.click(screen.getByTestId('toggle-save-form-btn'));
+        await user.type(
+            screen.getByTestId('save-name-input'),
+            'weekly-sentiment',
+        );
+        await user.click(screen.getByTestId('save-config-btn'));
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/77/dataset-import/configs',
+                expect.objectContaining({
+                    name: 'weekly-sentiment',
+                    locator: 'jsonl:/tmp/data.jsonl',
+                    mapper_id: 'label_to_classification',
+                }),
+            );
+        });
+        expect(
+            await screen.findByTestId('saved-config-confirm'),
+        ).toBeInTheDocument();
+        expect(onConfigSaved).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces a 409 duplicate-name error inline without closing the form', async () => {
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url === '/dataset-import/introspect') {
+                return { data: HIGH_CONFIDENCE_INTROSPECTION };
+            }
+            if (url === '/projects/77/dataset-import/preview') {
+                return { data: PREVIEW_RESULT_WITH_REJECTS };
+            }
+            if (url === '/projects/77/dataset-import/configs') {
+                throw {
+                    response: {
+                        data: {
+                            detail:
+                                'A saved mapping with that name already exists in this project.',
+                        },
+                    },
+                };
+            }
+            return { data: {} };
+        });
+
+        const user = userEvent.setup();
+        render(
+            <DatasetImportWizard projectId={77} onClose={() => undefined} />,
+        );
+
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+        await screen.findByText('Column signatures');
+        await user.click(screen.getByTestId('preview-btn'));
+        await screen.findByText('Dry-run summary');
+
+        await user.click(screen.getByTestId('toggle-save-form-btn'));
+        await user.type(screen.getByTestId('save-name-input'), 'taken-name');
+        await user.click(screen.getByTestId('save-config-btn'));
+
+        const err = await screen.findByTestId('save-error');
+        expect(err.textContent).toContain('already exists');
+        // Save form still open + Save button re-enabled for a retry.
+        expect(screen.getByTestId('save-config-btn')).toBeInTheDocument();
+    });
 });

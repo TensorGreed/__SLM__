@@ -596,29 +596,90 @@ visual mapping editor for power users.
 
 ---
 
-## Phase G — Persistent mapping configs + audit log
+## Phase G — Persistent mapping configs + audit log (shipped)
 
 **Goal**: imports become reproducible. Save a mapping config to the
 project; re-run later against a refreshed source with one click.
 
-### User stories
-- *As an ML engineer running periodic dataset refreshes*, I want to
-  save my mapping config the first time, then re-run weekly against
-  the refreshed source without re-doing the field mapping.
-- *As a compliance reviewer*, I want an audit log showing every
-  import: source, locator, mapping config, row counts, who ran it,
-  when.
+### What landed
+- **New ORM model + migration**
+  [`DatasetImportConfig`](backend/app/models/dataset_import_config.py)
+  / [migration 20260514_0029](backend/alembic/versions/20260514_0029_dataset_import_configs.py)
+  — one row per `(project_id, name)` tuple (unique-constrained so a
+  user can't silently clobber an existing config). Stores locator,
+  mapper_id, field_map, drop_reasons, optional limit, optional
+  description, plus `last_run_at` + `last_run_accepted` columns
+  bumped on each successful re-run so the UI shows latest yield
+  without joining against the RunEvent stream.
+- **Service layer**
+  [`configs.py`](backend/app/services/dataset_import/configs.py)
+  exposes `list_configs` / `get_config` / `save_config` /
+  `delete_config` / `run_from_config` plus the
+  `config_to_dict` serializer. `save_config` surfaces stable
+  ``ValueError`` codes (e.g. `config_name_taken`) that the API
+  translates to HTTP 4xx; `run_from_config` re-uses the existing
+  `run_import` code path and forwards `config_id` to the audit hook.
+- **Audit log**: `run_import` now emits a `RunEvent` on every run.
+  - Success → severity `info`, reason_code `dataset_import_run`,
+    payload `{source_id, locator, mapper_id, target_task_profile,
+    accepted_count, rejected_count, rejection_counts, written_path,
+    config_id}`. The Observability + timeline surfaces pick this up
+    automatically — no new wiring needed.
+  - Failure → severity `error`, reason_code `dataset_import_failed`.
+    Written through a fresh DB session so the rollback the caller's
+    transaction is about to take doesn't drop the audit row. Two new
+    constants registered in `app.models.reason_codes` so the
+    P33 lint rule on KNOWN_REASON_CODES accepts them.
+  - Stage stays as the existing `STAGE_INGESTION` — keeps the
+    canonical stage axis stable and avoids churning every
+    observability surface that filters by stage. The new reason_code
+    is the discriminator.
+- **API endpoints** on the project-scoped router:
+  - `GET    /api/projects/{id}/dataset-import/configs`
+  - `POST   /api/projects/{id}/dataset-import/configs` (201, 409 on
+    duplicate name)
+  - `DELETE /api/projects/{id}/dataset-import/configs/{cfg_id}` (204)
+  - `POST   /api/projects/{id}/dataset-import/configs/{cfg_id}/run`
+    — re-runs through `run_from_config`, bumps `last_run_*`, returns
+    the standard ImportResult payload.
+- **UI** —
+  - The wizard's Step 3 grows a "Save this mapping" card with a
+    toggleable name/description form. Persisting calls the new
+    `/configs` endpoint; success swaps the toggle for a "Saved as
+    `<name>`" confirmation.
+  - A new
+    [`SavedMappingsPanel`](frontend/src/components/data/SavedMappingsPanel.tsx)
+    sits at the top of the Data tab — hidden until at least one
+    config exists. Renders name, locator, mapper, last-run time,
+    last-run row count, plus per-row "Re-run" + "Delete" actions.
+    Re-run re-fetches after completion so the row count updates
+    inline.
+  - `IngestionPanel` wires the wizard's `onConfigSaved` callback to
+    a refresh-key state, so saving inside the wizard makes the new
+    row visible in the panel immediately.
+- **Tests** —
+  - Backend:
+    [`test_phase106_dataset_import_configs.py`](backend/tests/test_phase106_dataset_import_configs.py)
+    — 8 tests covering CRUD + name uniqueness + blank-name 422 +
+    `run_from_config` end-to-end + success/failure audit emission +
+    `config_id` linkage in the audit payload + 404 on missing
+    config.
+  - Frontend: 2 new wizard tests (save-mapping happy path + 409
+    duplicate-name surfaces inline) and a new
+    [`SavedMappingsPanel.test.tsx`](frontend/src/components/data/SavedMappingsPanel.test.tsx)
+    with 5 tests (hidden when empty, lists configs, re-run hits the
+    right endpoint and refreshes, delete confirms via
+    `window.confirm`).
 
-### Work
-- New `dataset_import_configs` table.
-- "Save mapping" button on the Confirm step.
-- "Re-run from saved" entry point on the Import page.
-- Audit log in the project's RunEvent stream
-  (`stage: dataset_import`).
-
-### Out of scope
-- Scheduled / automatic refresh (cron-like). That's a separate
-  workflow feature.
+### Out of scope (later phases)
+- Scheduled / automatic refresh (cron-like) — separate workflow
+  feature; the audit hook + `run_from_config` are the right
+  primitives but the scheduler isn't dataset-import-specific.
+- Editing a saved config in-place — currently delete + re-save is
+  the path. The UI gesture would be Phase G+ if needed.
+- A dedicated audit-log UI page — RunEvents already surface in the
+  Observability page; a dataset-import-specific view can land in
+  Phase G+ if the timeline view turns out to be too noisy.
 
 ---
 

@@ -8,6 +8,7 @@ import { ReadinessPanel } from '../shared/ReadinessPanel';
 import { buildWsUrl } from '../../utils/ws';
 import EDADashboard from './EDADashboard';
 import DatasetImportWizard from './DatasetImportWizard';
+import SavedMappingsPanel from './SavedMappingsPanel';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -122,6 +123,7 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [dragOver, setDragOver] = useState(false);
     const [uploadProgress, setUploadProgress] = useState('');
     const [showImportWizard, setShowImportWizard] = useState(false);
+    const [savedMappingsRefreshKey, setSavedMappingsRefreshKey] = useState(0);
 
     const [activeTab, setActiveTab] = useState<SourceTab>('upload');
     const [remoteId, setRemoteId] = useState('');
@@ -580,6 +582,17 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     return (
         <div className="ingestion-panel animate-fade-in">
             <ReadinessPanel projectId={projectId} />
+
+            {/* Phase G: saved mappings panel — only renders when at
+                least one config exists for the project. Re-run / delete
+                live alongside the new-import CTA below. */}
+            <SavedMappingsPanel
+                projectId={projectId}
+                refreshKey={savedMappingsRefreshKey}
+                onRunComplete={() => {
+                    void fetchDocs();
+                }}
+            />
 
             {/* Phase F: generic dataset-import pipeline. Parallel route
                 to the legacy file-format upload tabs below — auto-
@@ -1060,6 +1073,13 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                         // Data tab reflects whatever the synthetic-service
                         // surfaces alongside ingested files.
                         void fetchDocs();
+                    }}
+                    onConfigSaved={() => {
+                        // A new saved mapping was persisted — bump the
+                        // panel's refresh key so it re-fetches and
+                        // shows the new row even before the wizard
+                        // closes.
+                        setSavedMappingsRefreshKey((v) => v + 1);
                     }}
                 />
             )}

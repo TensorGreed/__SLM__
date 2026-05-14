@@ -70,6 +70,10 @@ Pipeline → **Data** → **Import dataset (auto-mapping)** opens a 3-step wizar
 2. **Map** — column signatures table (detected type + confidence per column), ranked-hypothesis dropdown pre-selected to the top proposal, free-form rationale, and a JSON field-map editor you can override before previewing. A red banner blocks low-confidence proposals until you tick "I've reviewed the proposal — proceed anyway."
 3. **Preview & Confirm** — accepted-row sample + rejected breakdown grouped by reason; tick reasons to bulk-drop them before commit (counts are preserved in the result for audit). Final *Import* button writes the rows to the project's synthetic dataset and surfaces the `written_path`.
 
+A "Save this mapping" card on the Preview step persists the current locator + mapper + field_map + drop_reasons under a name you choose. Saved mappings appear at the top of the Data tab in a **Saved mappings** panel; each row gets a **Re-run** button that re-imports against the (potentially refreshed) source without going back through the wizard, plus a **Delete** action. Re-runs bump `last_run_at` and `last_run_accepted` so the panel shows the latest yield at a glance.
+
+Every dataset-import run — interactive or re-run from a saved mapping — emits a [run event](../reference/glossary.md#run-event) with `stage=ingestion` and `reason_code=dataset_import_run` (`dataset_import_failed` on errors), carrying the source, locator, mapper, accepted/rejected row counts, `written_path`, and `config_id` if it came from a saved mapping. The Observability page surfaces these automatically — the audit log is just RunEvents you can already filter.
+
 Source locators today:
 
 - `jsonl:/path/to/file.jsonl`
