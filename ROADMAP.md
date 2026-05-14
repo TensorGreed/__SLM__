@@ -19,7 +19,7 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 |---|---|---|---|
 | 1. Annotation & active learning | 1.1 Annotation foundation (schema + service + API) | SHIPPED · 45e17a2 | 🔥 unblocks "any domain" |
 | 1. Annotation & active learning | 1.2 Text-classification + span annotation UI | SHIPPED · a52a164 | 🔥 |
-| 1. Annotation & active learning | 1.3 Preference-pair annotation UI | NOT STARTED | high |
+| 1. Annotation & active learning | 1.3 Preference-pair annotation UI | SHIPPED · fd34cc6 | high |
 | 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED | high |
 | 2. Knowledge distillation | 2.1 Teacher logit capture | NOT STARTED | 🔥 differentiator |
 | 2. Knowledge distillation | 2.2 KD training recipe | NOT STARTED | 🔥 |
@@ -325,7 +325,7 @@ skipRow(projectId, jobId, rowId) → void
 
 ### Story 1.3 — Preference-pair annotation UI
 
-**Status**: NOT STARTED
+**Status**: SHIPPED · fd34cc6
 **Depends on**: Story 1.1
 **As a** human labeler
 **I want** to rank two model completions side-by-side
