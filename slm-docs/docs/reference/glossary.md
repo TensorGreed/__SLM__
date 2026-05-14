@@ -164,7 +164,15 @@ Pre-run autopilot state capture. Rollback restores a snapshot. See [Newbie Autop
 
 ## Source connector (dataset import)
 
-Pluggable loader for an external dataset system — one file per source, registered into the dataset-import registry at module-load time. Built-ins ship for `jsonl` and `csv`; planned connectors cover `hf` (HuggingFace), `kaggle`, and `parquet`. Connectors are addressed via locator prefix: `jsonl:/path/to/file`, `hf:org/dataset:split`, etc. Every connector implements `load(locator, *, limit)` (lazy streaming of raw row dicts) and `describe(locator)` (sample rows + column names + approximate row count — the introspector's input).
+Pluggable loader for an external dataset system — one file per source, registered into the dataset-import registry at module-load time. Connectors are addressed via locator prefix and implement `load(locator, *, limit)` (lazy streaming of raw row dicts) and `describe(locator)` (sample rows + column names + approximate row count — the introspector's input). Catalog today:
+
+| Source id | Locator format | Notes |
+|---|---|---|
+| `jsonl` | `jsonl:/path/to/file.jsonl` | One JSON object per line. Unparseable lines surface as `__parse_error__` sentinel rows. |
+| `csv` | `csv:/path/to/file.csv` | First row is the header. Every cell is a string; mappers handle type coercion. |
+| `hf` | `hf:<dataset_id>[:<split>[:<revision>]]` | Wraps `datasets.load_dataset` with `streaming=True`. Auth via `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`. Multi-split DatasetDict picks first key when split isn't pinned. |
+
+Planned: `kaggle` (Phase E — wraps the Kaggle CLI). Plugin sources via Phase H.
 
 ## Starter pack
 

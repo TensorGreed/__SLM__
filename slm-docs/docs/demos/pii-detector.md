@@ -235,6 +235,30 @@ the `{"entities": [...]}` shape the handler scores against. See the
 [Data ingestion docs](../workflows/data-ingestion.md) for a deeper
 walkthrough of the importer.
 
+#### Faster path: hf locator + `--auto`
+
+The generic dataset-import pipeline can sniff the same HF dataset and
+auto-pick the right mapper without spelling out `--field-map`:
+
+```sh
+# Inspect what the introspector sees on the HF dataset (streams the
+# first 20 rows — no full download).
+python -m app.cli.dataset_import introspect \
+  --locator hf:ai4privacy/pii-masking-200k:train
+
+# Land 5k rows in the project's synthetic dataset.
+python -m app.cli.dataset_import run \
+  --locator hf:ai4privacy/pii-masking-200k:train \
+  --project <id> --auto --limit 5000
+```
+
+Set `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`) before running for gated
+datasets. The introspector falls into `bio_to_spans` when the dataset
+ships BIO-tagged tokens + labels, or `label_to_classification` when it
+ships a flat `{text, label}` shape — see the
+[generic dataset-import pipeline](../workflows/data-ingestion.md#generic-dataset-import-pipeline-sources-mappers)
+docs for the full mapper catalog.
+
 ### Kaggle datasets
 
 - [**PII Detection Dataset (Kaggle Cup 2024)**](https://www.kaggle.com/competitions/pii-detection-removal-from-educational-data)

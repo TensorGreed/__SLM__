@@ -62,16 +62,26 @@ curl -X POST http://localhost:8000/api/projects/1/ingest \
 
 The ingest helpers above know about *file formats*. For datasets that already carry task structure (BIO-tagged tokens, classification labels, preference pairs, chat threads, …) BrewSLM also ships a generic three-layer pipeline that introspects the shape and proposes a mapping straight into the project's synthetic dataset — no per-domain converter needed.
 
+Source locators today:
+
+- `jsonl:/path/to/file.jsonl`
+- `csv:/path/to/file.csv`
+- `hf:<dataset_id>[:<split>[:<revision>]]` — fetches directly from the HuggingFace Hub via the `datasets` library (set `HF_TOKEN` for gated datasets).
+
 ```sh
 # Sniff a JSONL file and print the proposed mapping (no writes).
 python -m app.cli.dataset_import introspect \
   --locator jsonl:./train.json
 
+# Same, but from HuggingFace — streams the first 20 rows for sniffing.
+python -m app.cli.dataset_import introspect \
+  --locator hf:imdb:train
+
 # Run with --auto: the introspector picks the mapper + field_map
 # when confidence ≥ 0.8. Falls back to --force below the threshold.
 python -m app.cli.dataset_import run \
-  --locator jsonl:./train.json \
-  --project 1 --auto
+  --locator hf:Anthropic/hh-rlhf:train \
+  --project 1 --auto --limit 5000
 
 # Override one field without losing the rest of the auto suggestion.
 python -m app.cli.dataset_import run \

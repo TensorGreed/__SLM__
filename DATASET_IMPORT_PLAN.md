@@ -383,35 +383,71 @@ mapper is a thin wrapper around a well-understood transform.
 
 ---
 
-## Phase D — HuggingFace source connector
+## Phase D — HuggingFace source connector (shipped)
 
 **Goal**: import any HF dataset directly. The HF `datasets` library is
 the de facto standard; once this connector lands, hundreds of public
 datasets become click-import-able.
 
-### User stories
-- *As a researcher exploring PII detection*, I want
-  `brewslm dataset import --source hf:ai4privacy/pii-masking-200k
-  --project pii-detector --auto` to fetch + introspect + map +
-  import that dataset's first 5k rows in one command.
-- *As a developer iterating on a model*, I want
-  `--source hf:dataset-id:train` to pick a specific split,
-  `--source hf:dataset-id:train:revision-sha` to pin a revision.
-- *As an offline operator*, I want HF datasets to cache locally so
-  re-runs don't re-download.
+### What landed
+- New connector `backend/app/services/dataset_import/sources/hf.py`
+  that wraps `datasets.load_dataset` and registers under
+  `source_id = "hf"`.
+- Locator format: `hf:<dataset_id>[:<split>[:<revision>]]`. Examples:
+  - `hf:Anthropic/hh-rlhf`
+  - `hf:ai4privacy/pii-masking-200k:train`
+  - `hf:OpenAssistant/oasst1:train:abc1234`
+- Streaming-first: `describe()` and `load()` both call
+  `load_dataset(..., streaming=True)` so a 50GB dataset can be
+  introspected without downloading the full archive. The HF library's
+  built-in cache (`~/.cache/huggingface`, overridable via `HF_HOME` /
+  `HF_DATASETS_CACHE`) handles re-run dedup — no BrewSLM-specific
+  cache policy needed.
+- Auth: reads `HF_TOKEN` (preferred) or `HUGGING_FACE_HUB_TOKEN`
+  (legacy) from the process env. The token is forwarded to
+  `load_dataset` explicitly so gated datasets fail with a clear
+  message rather than HF's generic "Dataset not found" when the env
+  var is missing.
+- Multi-split tolerance: when the user doesn't pin a split,
+  `load_dataset` returns a `DatasetDict` — the connector picks the
+  first key (typically `train`) and stamps that on the description
+  output so the user knows which split they got.
+- Graceful missing-dep error: if `datasets` isn't importable, the
+  connector raises `ImportError` with a clear `pip install datasets`
+  hint instead of crashing at module-load time.
+- Tests: `backend/tests/test_phase104_dataset_import_hf_source.py`
+  — 22 tests covering locator parsing (slash in org/dataset id,
+  optional split + revision, empty-locator rejection), token env
+  resolution, multi-split materialization, kwargs forwarded to
+  `load_dataset`, sample cap in `describe`, missing-package error
+  contract, registry wiring, and the connector plugged into
+  `introspect_locator` + `preview_import` end-to-end. The HF library
+  itself is stubbed so the suite runs fully offline.
+- Docs: workflow callout in
+  [data-ingestion](slm-docs/docs/workflows/data-ingestion.md);
+  PII demo gets an `hf:` example alongside the kaggle path;
+  glossary entry for
+  [Source connector](slm-docs/docs/reference/glossary.md#source-connector-dataset-import)
+  refreshed.
 
-### Work
-- New connector `dataset_import/sources/hf.py` that wraps
-  `datasets.load_dataset`.
-- Locator format: `hf:<dataset_id>[:<split>[:<revision>]]`.
-- Auth: reads HF_TOKEN from settings / project secrets when present
-  (some datasets are gated).
-- Streaming mode for >1GB datasets (uses HF's `streaming=True`).
-- Adds `datasets` to `requirements-base.txt` (already a dep!).
+### Manual smoke test (online — not in suite)
+```sh
+# Public dataset, no auth needed.
+python -m app.cli.dataset_import introspect \
+  --locator hf:imdb:train
 
-### Out of scope
-- Pushing datasets back to HF (one-way for now).
-- HF Spaces integration.
+# Gated dataset — needs HF_TOKEN.
+HF_TOKEN=hf_… python -m app.cli.dataset_import preview \
+  --locator hf:ai4privacy/pii-masking-200k:train \
+  --auto --sample-cap 5
+```
+
+### Out of scope (later phases)
+- Pushing datasets back to HF → not planned (the pipeline is
+  one-way; trained models go through the export service).
+- HF Spaces integration → out of scope.
+- HF token surfaced via project secrets / settings UI → defer until
+  Phase F's UI wizard needs it.
 
 ---
 
