@@ -2,12 +2,12 @@
   <title id="brand-title">BrewSLM</title>
   <desc id="brand-desc">BrewSLM wordmark: steam-wisps-over-cup-rim mark with the BrewSLM wordmark to the right.</desc>
   <!-- Mark: two steam wisps + flat cup rim. Single-stroke, matches
-       the in-product BrandMark exactly. Light ink for the dark
+       the in-product BrandMark exactly. Dark ink for the airy light
        marketing background. -->
-  <g transform="translate(4 4)" fill="none" stroke="#e8f0ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="translate(4 4)" fill="none" stroke="#0a0a0a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
     <path d="M 15 5.8 Q 12.5 10 15 14.2 Q 17.5 18.3 15 22.5"/>
     <path d="M 25 5.8 Q 22.5 10 25 14.2 Q 27.5 18.3 25 22.5"/>
     <path d="M 6.7 26.7 L 33.3 26.7" stroke-width="3"/>
   </g>
-  <text x="56" y="32" font-family="Outfit, 'Geist', 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#e8f0ff" letter-spacing="-0.01em">BrewSLM</text>
+  <text x="56" y="32" font-family="'Geist', 'Inter', 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#0a0a0a" letter-spacing="-0.01em">BrewSLM</text>
 </svg>
