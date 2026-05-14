@@ -31,6 +31,9 @@ import {
 } from '../api/annotation';
 import AnnotationProgress from '../components/annotation/AnnotationProgress';
 import ClassificationLabeler from '../components/annotation/ClassificationLabeler';
+import PreferencePairLabeler, {
+    type PreferencePayload,
+} from '../components/annotation/PreferencePairLabeler';
 import SpanLabeler, {
     type SpanAnnotation,
 } from '../components/annotation/SpanLabeler';
@@ -510,6 +513,30 @@ function AnnotateLabelerView({
                         onSubmit={(spans: SpanAnnotation[]) =>
                             void handleSubmit({
                                 label_payload: { spans },
+                            })
+                        }
+                        onSkip={() => void handleSkip()}
+                    />
+                ) : job.label_type === 'preference_pair' ? (
+                    <PreferencePairLabeler
+                        key={currentRow.id}
+                        prompt={String(
+                            currentRow.raw_payload.prompt ?? '',
+                        )}
+                        completionA={String(
+                            currentRow.raw_payload.completion_a ?? '',
+                        )}
+                        completionB={String(
+                            currentRow.raw_payload.completion_b ?? '',
+                        )}
+                        disabled={busy}
+                        onSubmit={(payload: PreferencePayload) =>
+                            void handleSubmit({
+                                label_payload:
+                                    payload as unknown as Record<
+                                        string,
+                                        unknown
+                                    >,
                             })
                         }
                         onSkip={() => void handleSkip()}
