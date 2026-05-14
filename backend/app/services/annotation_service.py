@@ -334,6 +334,45 @@ async def assign_next(
     return None
 
 
+async def skip_row(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    job_id: int,
+    row_id: int,
+) -> LabelRow:
+    """Clear the assignment on a row so it returns to the unlabeled
+    queue. Labeler UI calls this when the reviewer presses 'esc' or the
+    Skip button — the row stays in the job, just unassigned.
+
+    Raises ``ValueError`` with stable codes:
+      - ``label_job_not_found`` — job missing or cross-project.
+      - ``label_row_not_found`` — row missing or doesn't belong to job.
+      - ``label_row_already_labeled`` — row was already submitted;
+        skipping it would silently lose the label.
+    """
+
+    job = await get_job(db, project_id=project_id, job_id=job_id)
+    if job is None:
+        raise ValueError("label_job_not_found")
+
+    result = await db.execute(
+        select(LabelRow).where(
+            LabelRow.id == row_id, LabelRow.job_id == job_id
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise ValueError("label_row_not_found")
+    if row.labeled_at is not None:
+        raise ValueError("label_row_already_labeled")
+
+    row.assigned_to = None
+    row.assigned_at = None
+    await db.flush()
+    return row
+
+
 async def submit_label(
     db: AsyncSession,
     *,

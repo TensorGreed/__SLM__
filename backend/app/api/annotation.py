@@ -39,6 +39,7 @@ from app.services.annotation_service import (
     list_jobs,
     row_to_dict,
     seed_rows_from_dataset,
+    skip_row,
     submit_label,
     update_job_fields,
 )
@@ -106,6 +107,10 @@ _ERROR_CODES: dict[str, tuple[int, str]] = {
     "label_payload_required": (
         400,
         "label_payload must be a non-empty object.",
+    ),
+    "label_row_already_labeled": (
+        409,
+        "Row already labeled; cannot skip after submit.",
     ),
     "seed_n_must_be_positive": (400, "n must be >= 1."),
 }
@@ -260,6 +265,23 @@ async def next_row(
     if row is None:
         return {"row": None, "queue_empty": True}
     return {"row": row_to_dict(row), "queue_empty": False}
+
+
+@router.post("/{job_id}/rows/{row_id}/skip")
+async def skip_row_endpoint(
+    project_id: int,
+    job_id: int,
+    row_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        row = await skip_row(
+            db, project_id=project_id, job_id=job_id, row_id=row_id
+        )
+    except ValueError as exc:
+        raise _translate_value_error(exc) from exc
+    await db.commit()
+    return row_to_dict(row)
 
 
 @router.post("/{job_id}/rows/{row_id}/submit")

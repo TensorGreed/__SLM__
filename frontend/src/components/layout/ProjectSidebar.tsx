@@ -12,6 +12,7 @@ import {
     FolderTree,
     Layers,
     Lock,
+    PenSquare,
     Puzzle,
     Rocket,
     Search,
@@ -186,6 +187,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const isObservabilityRoute = location.pathname === `/project/${projectId}/observability`;
     const isExtensionStudioRoute = location.pathname === `/project/${projectId}/extensions`;
     const isPlaygroundRoute = location.pathname === `/project/${projectId}/playground`;
+    const isAnnotateRoute = location.pathname.startsWith(`/project/${projectId}/annotate`);
     const isDomainPacksRoute =
         location.pathname === `/project/${projectId}/domain/packs`
         || location.pathname === `/project/${projectId}/domain`;
@@ -342,6 +344,14 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             >
                                 <FolderTree size={15} />
                                 <span className="nav-label">Runs</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isAnnotateRoute ? 'active' : ''}`}
+                                onClick={() => navigate(`/project/${projectId}/annotate`)}
+                                title="Annotation"
+                            >
+                                <PenSquare size={15} />
+                                <span className="nav-label">Annotation</span>
                             </button>
                             <div className="nav-section-label submenu-label">Pipeline Stages</div>
                             {PIPELINE_TABS.map((tab) => {

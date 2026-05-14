@@ -18,6 +18,7 @@ import ProjectManifestPage from './pages/ProjectManifestPage';
 import ProjectDeploymentsPage from './pages/ProjectDeploymentsPage';
 import ProjectObservabilityPage from './pages/ProjectObservabilityPage';
 import ProjectExtensionStudioPage from './pages/ProjectExtensionStudioPage';
+import ProjectAnnotatePage from './pages/ProjectAnnotatePage';
 import SSOLoginPage from './pages/SSOLoginPage';
 import ToastContainer from './components/shared/Toast';
 
@@ -55,6 +56,8 @@ function App() {
               <Route path="deployments" element={<ProjectDeploymentsPage />} />
               <Route path="observability" element={<ProjectObservabilityPage />} />
               <Route path="extensions" element={<ProjectExtensionStudioPage />} />
+              <Route path="annotate" element={<ProjectAnnotatePage />} />
+              <Route path="annotate/:job_id" element={<ProjectAnnotatePage />} />
               <Route path="playground" element={<ProjectPlaygroundPage />} />
             </Route>
           </>

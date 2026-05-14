@@ -367,6 +367,60 @@ class Phase108AnnotationFoundationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400, resp.text)
         self.assertIn("label_payload", resp.json()["detail"])
 
+    # ── Skip + re-assign ────────────────────────────────────────────
+
+    def test_skip_returns_row_to_queue(self):
+        pid = self._create_project("phase108-skip")
+        job = self._create_job(pid)
+        dataset_id = _create_fixture_dataset(pid, n_rows=1)
+        self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/seed-from-dataset",
+            json={"dataset_id": dataset_id, "n": 1},
+        )
+        assigned = self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/next-row",
+            json={"user_id": 1},
+        ).json()
+        row_id = assigned["row"]["id"]
+
+        skip = self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/rows/{row_id}/skip"
+        )
+        self.assertEqual(skip.status_code, 200, skip.text)
+        self.assertIsNone(skip.json()["assigned_to"])
+        self.assertIsNone(skip.json()["assigned_at"])
+
+        # Same row is now available again, possibly to a different
+        # reviewer.
+        reclaim = self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/next-row",
+            json={"user_id": 2},
+        ).json()
+        self.assertEqual(reclaim["row"]["id"], row_id)
+        self.assertEqual(reclaim["row"]["assigned_to"], 2)
+
+    def test_skip_after_submit_is_409(self):
+        pid = self._create_project("phase108-skip-after-submit")
+        job = self._create_job(pid)
+        dataset_id = _create_fixture_dataset(pid, n_rows=1)
+        self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/seed-from-dataset",
+            json={"dataset_id": dataset_id, "n": 1},
+        )
+        assigned = self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/next-row",
+            json={"user_id": 1},
+        ).json()
+        row_id = assigned["row"]["id"]
+        self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/rows/{row_id}/submit",
+            json={"label_payload": {"label": "positive"}},
+        )
+        resp = self.client.post(
+            f"/api/projects/{pid}/label-jobs/{job['id']}/rows/{row_id}/skip"
+        )
+        self.assertEqual(resp.status_code, 409, resp.text)
+
     # ── Stats reflects state ────────────────────────────────────────
 
     def test_stats_reports_total_labeled_assigned_unlabeled(self):
