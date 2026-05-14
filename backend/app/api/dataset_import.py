@@ -29,6 +29,7 @@ from app.services.dataset_import import (
     list_registered_sources,
 )
 from app.services.dataset_import.service import (
+    introspect_locator,
     preview_import,
     result_to_dict,
     run_import,
@@ -41,6 +42,16 @@ catalog_router = APIRouter(prefix="/dataset-import", tags=["Dataset Import"])
 project_router = APIRouter(
     prefix="/projects/{project_id}/dataset-import", tags=["Dataset Import"]
 )
+
+
+class IntrospectRequest(BaseModel):
+    locator: str = Field(
+        ...,
+        min_length=3,
+        description="Source-prefixed locator, e.g. 'jsonl:/tmp/data.jsonl'. "
+        "The introspector samples the source and proposes a mapping.",
+    )
+    sample_size: int = Field(default=20, ge=1, le=100)
 
 
 class ImportRequest(BaseModel):
@@ -74,6 +85,30 @@ async def list_sources() -> dict[str, list[str]]:
 @catalog_router.get("/mappers")
 async def list_mappers() -> dict[str, list[str]]:
     return {"mappers": list_registered_mappers()}
+
+
+@catalog_router.post("/introspect")
+async def introspect(req: IntrospectRequest) -> dict[str, Any]:
+    """Sniff the dataset behind ``locator`` and propose a mapping.
+
+    Returns ranked hypotheses + a ``proposal`` block ready to feed into
+    ``/preview`` once the user confirms. Per the no-silent-auto-mapping
+    rule, callers MUST check ``proposal.needs_force`` and require an
+    explicit override when confidence < threshold.
+    """
+
+    try:
+        return introspect_locator(
+            req.locator, sample_size=req.sample_size
+        )
+    except KeyError as exc:
+        raise HTTPException(400, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"introspect failed: {exc}") from exc
 
 
 async def _load_project_profile(db: AsyncSession, project_id: int) -> str | None:

@@ -252,46 +252,69 @@ as a CLI command + a backend service; no UI yet.
 
 ---
 
-## Phase B — Schema introspector + dry-run mapping preview
+## Phase B — Schema introspector + dry-run mapping preview (shipped)
 
 **Goal**: when the user doesn't supply `--map` flags, the introspector
 samples rows, classifies columns by content, detects a likely task
 shape, and proposes a mapping. The user reviews + confirms.
 
-### User stories
-- *As a newbie with an unfamiliar dataset*, I want
-  `brewslm dataset import --source csv:./reviews.csv --project
-  sentiment --auto` to tell me *"I see 'text' (text column, 95%
-  confidence) + 'label' (3-value categorical, 90% confidence) → use
-  the label_to_classification mapper, ok?"* and let me approve.
-- *As an ML engineer*, I want a `--dry-run` flag that shows me the
-  proposed mapping + 5 transformed rows without writing anything,
-  so I can sanity-check before commiting a 200k-row import.
-- *As a careful operator*, I want imports with confidence below 0.8
-  to require an explicit `--force` flag so I don't fat-finger a bad
-  mapping.
+### What landed
+- `backend/app/services/dataset_import/introspector.py`:
+  - Per-column content sniffer: `text_like`, `categorical`,
+    `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`,
+    `numeric`, `boolean`, `path_like`, `unknown`. Multi-word + length
+    signals separate text from labels; categorical detection requires
+    a small repeated label set OR a tiny all-unique short-token sample
+    (weak categorical 0.6).
+  - Shape detector returning ranked `ShapeHypothesis` per registered
+    mapper. Two hypotheses today (`bio_to_spans`, `label_to_classification`);
+    Phase C's mapper expansion adds more detection rules.
+  - One-shot `propose_mapping(sample_rows)` returns the top
+    hypothesis as a `ProposedMapping`.
+  - `CONFIDENCE_HIGH = 0.8` is the gate above which `--auto` runs
+    without `--force`.
+- Service: `introspect_locator(locator, sample_size=20)` wires the
+  sniffer to the source connector's `describe()` and serializes
+  column signatures + ranked hypotheses + top proposal for API/CLI.
+- API: `POST /api/dataset-import/introspect` on the catalog router
+  (no project required — it's a pre-project orientation step).
+- CLI:
+  - New `introspect` subcommand: human-readable column rundown +
+    ranked hypotheses + safety-gated proposal.
+  - `--auto` on `preview` / `run`: pulls mapper + field_map from the
+    introspector. Refuses below the confidence threshold unless
+    `--force`. Explicit `--map` / `--map-json` / `--mapper` layer on
+    top of the auto suggestion (so you can override entity-type maps
+    or specific keys without dropping the auto-detection).
+  - `--force` overrides the confidence gate.
+  - `--mapper` is now optional (still required when `--auto` isn't
+    set; argparse moved the requirement check into the resolver so
+    the error message names the escape hatch).
+- Tests: `backend/tests/test_phase102_dataset_import_introspector.py`
+  — 15 tests covering the column sniffer (BIO/chat/tokens/categorical
+  splits), shape detector (NER + classification), service-level
+  introspect, and the CLI gate (`--auto` high-confidence pass-through,
+  low-confidence block, `--force` override, explicit `--map` overrides
+  on top of `--auto`).
+- Docs: PII demo gets an [`--auto` walkthrough](slm-docs/docs/demos/pii-detector.md)
+  showing how the same Kaggle file works *without* the bespoke
+  converter; glossary entries for [Schema introspection](slm-docs/docs/reference/glossary.md#schema-introspection),
+  [Confidence threshold](slm-docs/docs/reference/glossary.md#confidence-threshold-dataset-import),
+  [Source connector](slm-docs/docs/reference/glossary.md#source-connector-dataset-import),
+  [Target mapper](slm-docs/docs/reference/glossary.md#target-mapper-dataset-import).
 
-### Work
-- Per-column content sniffer in `introspector.py`:
-  - `text_like` (long strings, varied content)
-  - `categorical` (small unique-value set)
-  - `numeric` / `boolean`
-  - `bio_tag_list` (list of `[O, B-X, I-X, …]` strings)
-  - `entity_list_json` (list of `{type, start, end, text}` dicts)
-  - `chat_messages` (list of `{role, content}` dicts)
-  - `path_like` (looks like an image/audio path)
-- Shape detector: combines column types into a task hypothesis +
-  confidence (e.g. one `bio_tag_list` + one `text_like` →
-  span_set / NER, confidence 0.95).
-- Mapping proposer: picks the best-fit target mapper for the
-  hypothesis + writes a field_map.
-- `--dry-run` flag on CLI prints the proposal in human-readable
-  form.
-- `--force` requirement when confidence < 0.8.
+### Architectural rule (locked in)
+Introspection **never silently auto-picks**. It emits a
+`ProposedMapping` with confidence + rationale; the CLI (`--auto`) and
+the future UI wizard (Phase F) confirm with the user. Below the
+threshold the CLI exits with a message naming the override path.
 
-### Out of scope
-- LLM-assisted mapping suggestion (Phase H, optional).
-- Mapping configs persisted to project state (Phase G).
+### Out of scope (now Phase C+ work)
+- LLM-assisted mapping suggestion → Phase H.
+- Mapping configs persisted to project state → Phase G.
+- UI introspection wizard → Phase F.
+- Detection rules for `preference_pair` / `rag_passthrough` / etc. →
+  Phase C (add a mapper, add its detection rule).
 
 ---
 

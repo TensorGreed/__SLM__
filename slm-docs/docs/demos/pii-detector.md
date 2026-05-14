@@ -269,6 +269,42 @@ when alignment drifts), and maps Kaggle's tag vocabulary
 stdlib — no extra installs. Use `--limit N` to test against a small
 sample before running the full ~22k-essay set.
 
+#### Skip the converter with `--auto`
+
+The same Kaggle file works directly via the generic dataset-import
+pipeline — no domain-specific converter needed. The schema
+introspector sniffs the BIO-tagged tokens + labels columns and proposes
+a `bio_to_spans` mapping automatically:
+
+```sh
+# Inspect what the introspector sees before committing.
+python -m app.cli.dataset_import introspect \
+  --locator jsonl:./train.json
+
+# Run with --auto: it picks `bio_to_spans`, populates field_map.
+python -m app.cli.dataset_import run \
+  --locator jsonl:./train.json \
+  --project 1 \
+  --auto
+```
+
+The introspector requires confidence ≥ 0.8 to proceed without
+`--force`. Run `introspect` first to see the rationale; if the
+proposal is correct but confidence is borderline (e.g. a tiny sample
+or non-conventional column names), re-run with `--force`. To override
+just the entity-type vocabulary, layer `--map-json` on top of `--auto`:
+
+```sh
+python -m app.cli.dataset_import run \
+  --locator jsonl:./train.json \
+  --project 1 \
+  --auto \
+  --map-json '{"entity_type_map": {"NAME_STUDENT": "person_name", "EMAIL": "email", "PHONE_NUM": "phone_number"}}'
+```
+
+See the [Schema introspection](../glossary.md#schema-introspection)
+glossary entry for the architecture.
+
 ### Bundle generator (synthetic expansion)
 
 If you want more synthetic data with full control over coverage, the

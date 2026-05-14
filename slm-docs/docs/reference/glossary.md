@@ -39,6 +39,10 @@ Stage 10. Quantises / prunes a trained checkpoint. Methods: GGUF-Q4, GGUF-Q8, ON
 
 `high` / `medium` / `low` rating attached to cost estimates. `high` ≥ 0.8, `medium` ≥ 0.6, `low` otherwise.
 
+## Confidence threshold (dataset import)
+
+The 0.8 floor the [Schema introspection](#schema-introspection) pipeline applies before `--auto` will pick a mapping for you. Below the threshold, the CLI refuses to proceed unless you pass `--force`; the UI surfaces a warning banner asking for explicit confirmation. Encodes the "no silent auto-mapping" rule from the dataset-import plan — the proposal can be wrong, so the user always confirms before rows land in a project.
+
 ## Contract version
 
 A version pin on a plugin contract, e.g. `slm.data_adapter/v3`. A plugin declaring an older version is rejected by the loader. See [Plugin contracts](../extensions/contracts.md).
@@ -142,6 +146,10 @@ Single observability row written by every pipeline stage. Schema: `(run_id, pare
 
 Sub-mode of a task handler that picks the metric shape without changing which handler runs. Today's modes live inside `StructuredExtractionHandler`: `field_match` (per-field EM/F1 — invoice / form extraction) and `span_set` (entity-level P/R/F1 — PII / NER / span extraction). Declared as `output_schema.scoring_mode` on the prepared manifest. Same general handler, internal dispatch — BrewSLM doesn't add a new handler per domain. See [PII detector demo](../demos/pii-detector.md#how-scoring-works).
 
+## Schema introspection
+
+The dataset-import pipeline's column sniffer + shape detector + mapping proposer. Reads ~20 sample rows from any registered [source connector](#source-connector), classifies each column by content (`text_like`, `categorical`, `bio_tag_list`, `entity_list_json`, `chat_messages`, `tokens_list`, `numeric`, `boolean`, `path_like`), and proposes the best-fit [target mapper](#target-mapper) + field map with a confidence score and rationale. Drives the `--auto` flag on the dataset-import CLI and the import-wizard UI; never silently auto-picks — the user confirms either by passing `--auto` (when confidence ≥ the [Confidence threshold](#confidence-threshold-dataset-import)), by passing `--force` under it, or by accepting the proposal in the UI wizard. CLI: `python -m app.cli.dataset_import introspect --locator <prefix:rest>`.
+
 ## SLM
 
 Small Language Model. The 1B–10B parameter range that BrewSLM is optimised for. Small enough to fine-tune on a single GPU; useful enough to ship in production.
@@ -153,6 +161,10 @@ Entity-level precision/recall/F1 for tasks whose output is a list of typed spans
 ## Snapshot
 
 Pre-run autopilot state capture. Rollback restores a snapshot. See [Newbie Autopilot → Rollback](../workflows/newbie-autopilot.md#rollback).
+
+## Source connector (dataset import)
+
+Pluggable loader for an external dataset system — one file per source, registered into the dataset-import registry at module-load time. Built-ins ship for `jsonl` and `csv`; planned connectors cover `hf` (HuggingFace), `kaggle`, and `parquet`. Connectors are addressed via locator prefix: `jsonl:/path/to/file`, `hf:org/dataset:split`, etc. Every connector implements `load(locator, *, limit)` (lazy streaming of raw row dicts) and `describe(locator)` (sample rows + column names + approximate row count — the introspector's input).
 
 ## Starter pack
 
@@ -169,6 +181,10 @@ Autopilot mode that refuses to take any fallback path; surfaces every blocker ve
 ## Support bundle
 
 Redacted zip export of recent RunEvents + failure clusters + deployment state + experiments + autopilot decisions. For hand-off to support / oncall. See [Support bundles](../observability/support-bundles.md).
+
+## Target mapper (dataset import)
+
+Pluggable transform that turns raw source rows into one of BrewSLM's canonical task shapes. Domain-agnostic by design — a single `bio_to_spans` mapper serves PII, medical, legal, and financial NER; the per-row [Schema introspection](#schema-introspection) result picks the right one and fills the field map. Built-ins ship for `bio_to_spans` (→ structured_extraction) and `label_to_classification` (→ classification); the planned mapper catalog adds `preference_pair`, `rag_passthrough`, `qa_pair_passthrough`, `chat_messages_passthrough`, `kv_to_structured`, and `text_only`. Every mapper declares its target task profile so the orchestrator validates project/mapper compatibility before a row lands.
 
 ## Target profile
 

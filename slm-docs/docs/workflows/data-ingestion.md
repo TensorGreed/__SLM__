@@ -58,6 +58,29 @@ curl -X POST http://localhost:8000/api/projects/1/ingest \
 | `ingest_io_error` | Couldn't read the file (disk full, network blip on URL pull). |
 | `ingest_validation_failed` | Content didn't match schema (e.g., CSV has fewer columns than declared). |
 
+### Generic dataset-import pipeline (sources × mappers)
+
+The ingest helpers above know about *file formats*. For datasets that already carry task structure (BIO-tagged tokens, classification labels, preference pairs, chat threads, …) BrewSLM also ships a generic three-layer pipeline that introspects the shape and proposes a mapping straight into the project's synthetic dataset — no per-domain converter needed.
+
+```sh
+# Sniff a JSONL file and print the proposed mapping (no writes).
+python -m app.cli.dataset_import introspect \
+  --locator jsonl:./train.json
+
+# Run with --auto: the introspector picks the mapper + field_map
+# when confidence ≥ 0.8. Falls back to --force below the threshold.
+python -m app.cli.dataset_import run \
+  --locator jsonl:./train.json \
+  --project 1 --auto
+
+# Override one field without losing the rest of the auto suggestion.
+python -m app.cli.dataset_import run \
+  --locator jsonl:./train.json --project 1 --auto \
+  --map-json '{"entity_type_map": {"NAME_STUDENT": "person_name"}}'
+```
+
+See [Schema introspection](../reference/glossary.md#schema-introspection) and the [PII demo `--auto` walkthrough](../demos/pii-detector.md#skip-the-converter-with---auto).
+
 ## Step 2 — Clean
 
 ### What it does

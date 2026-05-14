@@ -25,9 +25,18 @@ from typing import Any, Iterable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.dataset_import.introspector import (
+    CONFIDENCE_HIGH,
+    detect_shape,
+    hypothesis_to_dict,
+    proposal_to_dict,
+    signature_to_dict,
+    sniff_columns,
+)
 from app.services.dataset_import.protocols import (
     ImportContext,
     ImportResult,
+    ProposedMapping,
     RejectedRow,
     TransformedRow,
 )
@@ -224,6 +233,60 @@ async def run_import(
         dry_run=False,
         warnings=warnings,
     )
+
+
+def introspect_locator(
+    locator: str,
+    *,
+    sample_size: int = 20,
+) -> dict[str, Any]:
+    """Sniff columns + propose a mapping for the dataset behind ``locator``.
+
+    Looks up the registered source by the locator's prefix, asks it for
+    a sample (via ``describe``), then runs the introspector to produce
+    a ranked list of mapping hypotheses. The top hypothesis is also
+    materialized as a ``ProposedMapping`` so callers can pass it
+    straight to ``preview_import`` / ``run_import`` after the user
+    confirms.
+
+    Per the architectural rule: this NEVER picks for the user — it
+    just emits proposals with confidence + rationale. The CLI / UI
+    must enforce the ``CONFIDENCE_HIGH`` gate before auto-running.
+    """
+
+    source_id, source_rest = split_locator(locator)
+    source = resolve_source(source_id)
+    description = source.describe(source_rest)
+    sample_rows = list(description.get("sample_rows") or [])[:sample_size]
+
+    signatures = sniff_columns(sample_rows)
+    hypotheses = detect_shape(signatures, sample_rows)
+    proposal: ProposedMapping | None = None
+    if hypotheses:
+        top = hypotheses[0]
+        proposal = ProposedMapping(
+            target_task_profile=top.target_task_profile,
+            mapper_id=top.mapper_id,
+            field_map=top.field_map,
+            confidence=top.confidence,
+            rationale=top.rationale,
+            warnings=list(top.warnings),
+        )
+
+    return {
+        "source_id": source_id,
+        "locator": locator,
+        "resolved_path": description.get("resolved_path"),
+        "approximate_total_rows": description.get("approximate_total_rows"),
+        "columns": description.get("columns") or list(signatures.keys()),
+        "sample_rows": sample_rows,
+        "column_signatures": [
+            signature_to_dict(sig) for sig in signatures.values()
+        ],
+        "hypotheses": [hypothesis_to_dict(h) for h in hypotheses],
+        "proposal": proposal_to_dict(proposal) if proposal else None,
+        "confidence_threshold": CONFIDENCE_HIGH,
+    }
 
 
 def result_to_dict(result: ImportResult) -> dict[str, Any]:
