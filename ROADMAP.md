@@ -21,7 +21,7 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 | 1. Annotation & active learning | 1.2 Text-classification + span annotation UI | SHIPPED · a52a164 | 🔥 |
 | 1. Annotation & active learning | 1.3 Preference-pair annotation UI | SHIPPED · fd34cc6 | high |
 | 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED | high |
-| 1. Annotation & active learning | 1.5 Diagnostic gates (data shape · eval schema · run status) | NOT STARTED | 🔥 incident-driven |
+| 1. Annotation & active learning | 1.5 Training-eval contract gates (any task) | NOT STARTED | 🔥 |
 | 2. Knowledge distillation | 2.1 Teacher logit capture | NOT STARTED | 🔥 differentiator |
 | 2. Knowledge distillation | 2.2 KD training recipe | NOT STARTED | 🔥 |
 | 2. Knowledge distillation | 2.3 Student-vs-teacher eval | NOT STARTED | high |
@@ -475,88 +475,103 @@ Quality gates: backend pytest only for this story; no UI changes.
 
 ---
 
-### Story 1.5 — Diagnostic gates: data shape, eval schema, run status
+### Story 1.5 — Training-eval contract gates (any task)
 
 **Status**: NOT STARTED
-**As a** project owner who just lost 10.5 GPU-hours to a silent data-shape failure
-**I want** the platform to refuse, banner, or reconcile the three classes of "everything looked fine, F1 is zero" failure before they cost me time
-**so that** the next person who runs the PII demo doesn't repeat the Qwen-PII-V2 incident (experiment #10 / commit 222bc5d).
+**As a** project owner running any task profile (classification, span,
+QA, RAG, preference-pair, summarization — anything)
+**I want** the platform to detect and surface training/eval contract
+drift in three places where it currently fails silently
+**so that** a training run can never "complete" with eval F1 ≈ 0
+because the model was trained on a different objective than the eval
+measures.
 
-**Context — the incident this story closes:**
-- Experiment 10 (`Qwen-PII-V2`) ran SFT on `ai4privacy/pii-masking-200k`
-  chunks for 10.5 GPU-hours and reported eval F1 = 0.0%. Root cause:
-  the prepared `train.jsonl` had only a `text` field; every row was
-  missing `answer`/`completion`/`output`/`response`. Training silently
-  fell back to causal-LM continuation; the model emitted
-  ai4privacy-style mask-tokens (`{value, label}`) instead of the eval's
-  expected `{entities: [{type, start, end, text}]}` schema; every row
-  scored FAIL. Commit `222bc5d` plugged the pre-training gate; this
-  story plugs the other two diagnostic holes the incident exposed.
+**The failure class** (domain-agnostic — the same pattern bites NER
+projects, classification projects, QA projects, JSON-extraction
+projects, anything that has a non-trivial output schema):
+- The trainer's data has shape X.
+- The eval handler scores shape Y.
+- X ≠ Y, no gate catches it before launch, training optimizes the
+  wrong objective for hours, eval drops F1 ≈ 0 with a tiny "missing
+  field" footnote buried under the headline FAIL chip.
+
+Commit `222bc5d` plugged one of three holes (a pre-training data-shape
+gate). This story plugs the other two and adds a status-state
+reconciliation pass for stuck runs.
 
 **Acceptance criteria** (three independent gates, ship together):
 
 1. **Model-recommender data-shape gate.** When the project has a
-   prepared `train.jsonl` and the SFT-mode gate would refuse the run
-   (zero rows with any target field), the recommendation API returns
-   a "data shape blocks model choice" banner *instead of* a model
-   list. The recommender already had no signal here ([model_selection_service.py:649](backend/app/services/model_selection_service.py#L649) scores
-   only language/device/VRAM); we surface the data-shape failure
-   earlier in the UX so the user never reaches model-pick.
+   prepared `train.jsonl` and the existing data-shape gate would
+   refuse the run, the recommendation API returns a "data shape
+   blocks model choice" banner *instead of* a model list. Today the
+   recommender scores only language/device/VRAM
+   ([model_selection_service.py:649](backend/app/services/model_selection_service.py#L649))
+   so it cheerfully recommends a model for data that no model could
+   succeed on. Reuses the existing `verify_training_data_has_targets`
+   helper — no task-specific logic.
 2. **Eval-time schema-mismatch banner.** When an eval pass completes
-   and ≥80% of predictions have a top-level JSON key set disjoint from
-   the gold answers' key set, the result API surfaces a top-level
-   `schema_mismatch` warning above the F1 number — names the missing /
-   unexpected keys + links to the training data + suggests checking
-   the adapter contract's `target_fields`. The signal exists today
-   ("missing: entities") but is buried under the FAIL chip.
+   and ≥80% of predictions have a top-level JSON key set disjoint
+   from the gold answers' key set, the result API surfaces a
+   top-level `schema_mismatch` warning above the headline metric.
+   Names the expected/observed keys + suggests checking the adapter
+   contract's `target_fields`. Generic — works whether the gold
+   answers have `entities`, `summary`, `intent`, `messages`,
+   `chosen/rejected`, anything.
 3. **Run-status reconciliation.** When `experiments.status = RUNNING`
    but the experiment's `training_report.json` has a `finished_at`
-   field (i.e. the subprocess exited cleanly but the DB write-back
-   never landed), the read path returns `COMPLETED` and a background
-   reaper on app start updates the row. Currently experiment 10's
-   DB row still says `RUNNING` even though the report finished
-   2026-05-15T03:46:07Z.
+   field (subprocess exited cleanly, DB write-back didn't land), the
+   read path returns the correct terminal status and a startup
+   reaper updates the row. Same logic applies to any training_mode.
 
 **Files likely touched:**
 - Backend:
-  - `backend/app/services/model_selection_service.py` (data-shape probe before scoring; new return shape with `blocked_by_data_shape` flag)
-  - `backend/app/api/models.py` (recommendation endpoint forwards the banner shape)
-  - `backend/app/services/evaluation_service.py` (schema-mismatch detector at eval finalize)
-  - `backend/app/services/training_service.py` (reconciliation read-side helper + reaper)
-  - `backend/app/main.py` (call reaper from the lifespan startup)
+  - `backend/app/services/model_selection_service.py` (data-shape
+    probe before scoring; return shape with `blocked_by_data_shape`)
+  - `backend/app/api/models.py` (recommendation endpoint forwards
+    the banner)
+  - `backend/app/services/evaluation_service.py` (key-set comparison
+    at eval finalize; pluggable across every task handler)
+  - `backend/app/services/training_service.py` (reconciliation
+    helper + reaper)
+  - `backend/app/main.py` (call reaper from `lifespan` startup)
 - Frontend:
-  - `frontend/src/components/training/ModelRecommendations*.tsx` (renders banner when blocked)
-  - `frontend/src/components/evaluation/EvalResultPanel.tsx` (schema-mismatch banner above metrics)
+  - `frontend/src/components/training/ModelRecommendations*.tsx`
+    (renders banner when blocked)
+  - `frontend/src/components/evaluation/EvalResultPanel.tsx`
+    (banner above metrics)
 
 **Tests:**
 - `backend/tests/test_phase109_recommender_data_gate.py` — prepared
-  `train.jsonl` with no target field → recommendation API returns
-  blocked-by-data-shape; well-shaped data → model list as before.
+  `train.jsonl` with no target → recommendation API returns blocked
+  banner; well-shaped data → model list as before. Fixtures
+  parameterized across task profiles (classification, span, qa,
+  preference_pair) to prove the gate is task-agnostic.
 - `backend/tests/test_phase109_eval_schema_mismatch_banner.py` —
-  fixture predictions whose top-level keys never overlap gold →
-  banner field populated; well-aligned predictions → banner absent.
-- `backend/tests/test_phase109_status_reconciliation.py` — write a
-  `training_report.json` with `finished_at` against an experiment in
-  `RUNNING` → reaper flips it to `COMPLETED`; concurrent writes
-  don't race.
+  parameterized cases: gold shape `{entities: [...]}` vs prediction
+  shape `{value, label}`; gold `{summary: "..."}` vs `{text: "..."}`;
+  gold `{chosen: ..., rejected: ...}` vs free-form string. Each fires
+  the banner with the right key sets.
+- `backend/tests/test_phase109_status_reconciliation.py` — insert a
+  RUNNING experiment, write a `training_report.json` with
+  `finished_at`, run the reaper, assert state transition.
 
 **Claude prompt:**
-> Read ROADMAP.md Story 1.5 and ship it — three independent gates in one vertical slice, motivated by the Qwen-PII-V2 incident.
+> Read ROADMAP.md Story 1.5 and ship it — three task-agnostic gates in one vertical slice. Reuse training_data_gate; don't add task-specific logic.
 
 <details>
 <summary>Codex brief — Story 1.5</summary>
 
-This story closes three diagnostic gaps exposed by experiment #10
-(Qwen-PII-V2, project 3): a 10.5h SFT run that reported eval F1 = 0%
-because the training data had no target field. The pre-training gate
-already landed in commit `222bc5d`; this story adds the three sibling
-gates that should fire earlier or surface harder.
+Three independent contract-drift gates, all task-agnostic. Reuse the
+existing `training_data_gate` helper rather than introducing
+task-specific checks. None of the three gates should mention any
+specific dataset, label vocabulary, or domain.
 
 **Gate 1 — Model-recommender data-shape gate.**
 
 `backend/app/services/model_selection_service.py:recommend_training_base_models`
-currently scores models on language / device / VRAM only — never
-inspects the prepared `train.jsonl`. Add a pre-scoring check:
+currently scores models on language / device / VRAM only. Add a
+pre-scoring check:
 
 ```python
 from app.services.training_data_gate import verify_training_data_has_targets
@@ -572,77 +587,63 @@ if prepared.exists():
         }
 ```
 
-The API at `backend/app/api/models.py` forwards the `blocked_by_data_shape`
-field. The frontend component that consumes recommendations renders
-the banner instead of the model list when the flag is true.
+The API at `backend/app/api/models.py` forwards the
+`blocked_by_data_shape` field. The frontend component renders the
+banner instead of the model list when the flag is true.
 
 **Gate 2 — Eval-time schema-mismatch banner.**
 
 In `backend/app/services/evaluation_service.py`, after metrics are
-computed, sample the first N predictions + gold answers, extract
-top-level JSON keys from each. If ≥80% of prediction-key-sets are
-disjoint from the corresponding gold-key-set, populate
-`result.metrics["schema_mismatch"]`:
+computed, sample the first N predictions + gold answers. For each
+pair, JSON-parse if possible and extract top-level keys. If ≥80% of
+prediction-key-sets are disjoint from the corresponding
+gold-key-set, populate `result.metrics["schema_mismatch"]`:
 
 ```python
 {
     "ratio": 0.97,
     "sample_size": 100,
-    "expected_top_keys": ["entities"],
+    "expected_top_keys": [...],         # from gold
     "observed_top_keys_top3": [
-        {"keys": ["value", "start", "end", "label"], "count": 67},
+        {"keys": [...], "count": 67},
         ...
     ],
     "hint": "Predictions don't share top-level keys with gold answers; check the adapter contract's target_fields + that the training data carries the eval schema."
 }
 ```
 
-The eval result panel renders this above the F1 chip when present.
+The eval result panel renders this above the headline metric chip
+when present. No task-specific code paths — the check is purely
+key-set comparison.
 
 **Gate 3 — Run-status reconciliation.**
 
 Two pieces:
 1. Read-side helper in `training_service.get_training_status` that
    loads `training_report.json` from `exp.output_dir` and, if it has
-   a `finished_at` field but `exp.status == RUNNING`, returns
-   `COMPLETED` and flips the DB row.
+   a `finished_at` field but `exp.status == RUNNING`, returns the
+   correct terminal status and flips the DB row.
 2. Startup reaper in `app.main.lifespan` that scans
    `experiments WHERE status = 'RUNNING' AND started_at < NOW() - 1h`
    for any whose `training_report.json` is on disk with a
-   `finished_at`, and bumps them to `COMPLETED` once.
-
-**Tests:**
-- `test_phase109_recommender_data_gate.py`: build a project with a
-  text-only `train.jsonl`; assert the recommend API returns the
-  banner shape; rewrite the file with `{question, answer}` pairs and
-  assert the model list comes back.
-- `test_phase109_eval_schema_mismatch_banner.py`: feed the eval
-  service fixture predictions like `{value, label}` against gold like
-  `{entities: [...]}`; assert `schema_mismatch` is set with the right
-  ratio + top-key examples.
-- `test_phase109_status_reconciliation.py`: insert an `experiments`
-  row with `status=RUNNING`; write `training_report.json` next to it
-  with `finished_at=...`; run the reaper; assert status is now
-  `COMPLETED`.
+   `finished_at`, and bumps them to the right terminal state.
 
 **Quality gates:**
 - `python -m pytest tests/test_phase109_*.py -v`
-- `python -m pytest tests/test_training_data_gate.py tests/test_phase106_dataset_import_configs.py -q`
+- `python -m pytest tests/test_training_data_gate.py -q`
   (regression for the gate this story builds on)
 - Frontend: `npx tsc --noEmit && npx vitest run && npx vite build`
 
 **Commit message template:**
 ```
-Diagnostic gates: data shape · eval schema · run status
+Training-eval contract gates: recommender · eval schema · status
 
-[Three gates in one commit — recommender refuses when prepared
-train.jsonl has no target field; eval result surfaces schema-mismatch
-banner above F1 when predictions and gold disagree on top-level keys;
-RUNNING-but-finished experiments are reconciled to COMPLETED on read
-and by a startup reaper.]
-
-[Motivated by experiment 10 (Qwen-PII-V2) — closes the diagnostic
-gaps the pre-training gate (222bc5d) couldn't reach.]
+[Three task-agnostic gates in one commit — recommender refuses
+when prepared train.jsonl has no target field; eval result surfaces
+schema-mismatch banner above the headline metric when predictions
+and gold disagree on top-level keys; RUNNING-but-finished
+experiments reconcile to their correct terminal status on read and
+via a startup reaper.]
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
