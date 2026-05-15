@@ -795,7 +795,20 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             </div>
                         </>
                     )}
-                    <button className="btn btn-primary" onClick={handleGenerate} disabled={isGenerating || !sourceText.trim()}>
+                    <button
+                        className="btn btn-primary"
+                        onClick={handleGenerate}
+                        disabled={
+                            isGenerating
+                            || (
+                                // span_extraction + useAllChunks supplies its
+                                // source server-side per batch, so an empty
+                                // textarea is fine in that one combo.
+                                !(generationMode === 'span_extraction' && useAllChunks)
+                                && !sourceText.trim()
+                            )
+                        }
+                    >
                         {isGenerating ? '⏳ Generating...' : '🧪 Generate'}
                     </button>
                 </div>
