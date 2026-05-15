@@ -20,8 +20,9 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 | 1. Annotation & active learning | 1.1 Annotation foundation (schema + service + API) | SHIPPED · 45e17a2 | 🔥 unblocks "any domain" |
 | 1. Annotation & active learning | 1.2 Text-classification + span annotation UI | SHIPPED · a52a164 | 🔥 |
 | 1. Annotation & active learning | 1.3 Preference-pair annotation UI | SHIPPED · fd34cc6 | high |
-| 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED | high |
-| 1. Annotation & active learning | 1.5 Training-eval contract gates (any task) | NOT STARTED | 🔥 |
+| 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED · needs baseline model | high |
+| 1. Annotation & active learning | 1.5 Training-eval contract gates (any task) | SHIPPED · 92cf7a5 | 🔥 |
+| 1. Annotation & active learning | 1.6 Promote labeled rows → training dataset | NOT STARTED | 🔥 closes annotation loop |
 | 2. Knowledge distillation | 2.1 Teacher logit capture | NOT STARTED | 🔥 differentiator |
 | 2. Knowledge distillation | 2.2 KD training recipe | NOT STARTED | 🔥 |
 | 2. Knowledge distillation | 2.3 Student-vs-teacher eval | NOT STARTED | high |
@@ -477,7 +478,7 @@ Quality gates: backend pytest only for this story; no UI changes.
 
 ### Story 1.5 — Training-eval contract gates (any task)
 
-**Status**: NOT STARTED
+**Status**: SHIPPED · 92cf7a5
 **As a** project owner running any task profile (classification, span,
 QA, RAG, preference-pair, summarization — anything)
 **I want** the platform to detect and surface training/eval contract
@@ -644,6 +645,218 @@ schema-mismatch banner above the headline metric when predictions
 and gold disagree on top-level keys; RUNNING-but-finished
 experiments reconcile to their correct terminal status on read and
 via a startup reaper.]
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+```
+</details>
+
+---
+
+### Story 1.6 — Promote labeled rows → training dataset
+
+**Status**: NOT STARTED
+**As a** project owner who labeled 200 rows via the in-product annotation UI
+**I want** those labels to actually reach my training data
+**so that** the annotation feature isn't a dead-end — Stories 1.1–1.3
+ship a fully-functional UI, but submitted labels currently sit in the
+``label_rows`` table forever and never flow into ``train.jsonl``.
+
+**Audit confirming the gap** (verified 2026-05-15):
+- `submit_label` in [annotation_service.py](backend/app/services/annotation_service.py)
+  persists labels into ``label_rows``.
+- No code path reads from ``label_rows`` into the synthetic dataset
+  or the prepared train file.
+- `combine_datasets` only pulls from ``CLEANED`` / ``SYNTHETIC`` /
+  ``GOLD_DEV`` — ``label_rows`` is not a dataset_type and isn't
+  considered.
+- Net: a project that uses annotation as its primary data path has
+  a beautiful UI and zero training signal. The PII demo project
+  worked around it by using synthetic generation + a pre-bundled
+  gold set, not by labeling. Without 1.6, Epic 1 is vertical-slice
+  incomplete.
+
+**Acceptance criteria:**
+- Service: `app/services/annotation/promotion.py` with
+  `promote_labeled_rows(db, *, project_id, job_id, target_dataset_type)`
+  that writes labeled rows to the project's SYNTHETIC dataset (or
+  GOLD_DEV when caller passes that). Rows get
+  ``source: "annotation_job"``, ``annotation_job_id``,
+  ``original_row_id``, ``reviewer_user_id`` provenance fields. Each
+  label_type's `label_payload` maps to the canonical
+  ``{question, answer}`` shape:
+  - classification → `{question: text, answer: json.dumps({label})}`
+  - span → `{question: text, answer: json.dumps({entities})}`
+  - preference_pair → `{prompt, chosen, rejected}` rows for the
+    alignment training path.
+- API: `POST /api/projects/{id}/label-jobs/{job_id}/promote` body
+  `{target_dataset_type: "synthetic" | "gold_dev"}`. Returns
+  promoted_count + skipped_count + the resulting dataset's
+  record_count.
+- Audit: each promotion emits a RunEvent with reason
+  `annotation_rows_promoted` under STAGE_INGESTION.
+- UI: "Promote N labeled rows → Synthetic" button on the Annotation
+  page once `stats.labeled > 0`. Confirms before promoting; toasts
+  on success / failure.
+- Idempotency: rows already promoted (tracked via ``promoted_at``
+  column on `label_rows`) aren't re-promoted on subsequent calls;
+  the response reports them as `skipped_already_promoted`.
+
+**Files likely touched:**
+- Backend:
+  - `backend/alembic/versions/<next>_label_row_promoted_at.py` (new — add column)
+  - `backend/app/models/label_job.py` (add ``promoted_at`` field)
+  - `backend/app/models/reason_codes.py` (new code:
+    `ANNOTATION_ROWS_PROMOTED`)
+  - `backend/app/services/annotation/__init__.py` (new package
+    boundary — make room for 1.4's `active_learning.py` later)
+  - `backend/app/services/annotation/promotion.py` (new)
+  - `backend/app/api/annotation.py` (new endpoint)
+- Frontend:
+  - `frontend/src/pages/ProjectAnnotatePage.tsx` (Promote button +
+    confirm dialog)
+  - `frontend/src/api/annotation.ts` (new wrapper)
+
+**Tests:**
+- `backend/tests/test_annotation_promotion.py` parameterized across
+  the three label_types:
+  - Classification job → labeled rows land in SYNTHETIC with
+    ``{question, answer: "{\"label\": ...}"}`` shape.
+  - Span job → labeled rows land in SYNTHETIC with
+    ``{question, answer: "{\"entities\": [...]}"}`` shape.
+  - Preference pair → labeled rows land in the alignment dataset
+    file with ``{prompt, chosen, rejected}`` shape.
+- Idempotency: calling promote twice doesn't duplicate rows; the
+  second call reports `skipped_already_promoted == N`.
+- Cross-project rejection: a job from project A cannot promote into
+  project B's dataset (returns 404 / 400).
+
+**Claude prompt:**
+> Read ROADMAP.md Story 1.6 and ship it. Closes the annotation loop end-to-end so Stories 1.1–1.3 finally reach the trainer.
+
+<details>
+<summary>Codex brief — Story 1.6</summary>
+
+End-to-end story: schema migration + service + API + UI + tests.
+No model changes to ``LabelJob`` itself; one new nullable column on
+``label_rows``.
+
+**Schema migration:**
+
+```python
+op.add_column(
+    "label_rows",
+    sa.Column("promoted_at", sa.DateTime(timezone=True), nullable=True),
+)
+op.add_column(
+    "label_rows",
+    sa.Column("promoted_to_dataset_id", sa.Integer(),
+              sa.ForeignKey("datasets.id"), nullable=True),
+)
+```
+
+The `promoted_at` field is the idempotency guard; `promoted_to_dataset_id`
+captures the target so the operator can trace which run consumed
+which labels.
+
+**Service signature:**
+
+```python
+async def promote_labeled_rows(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    job_id: int,
+    target_dataset_type: DatasetType = DatasetType.SYNTHETIC,
+) -> dict:
+    """Materialize every labeled, unpromoted row in ``job_id`` into
+    the project's target dataset JSONL. Idempotent — rows already
+    carrying ``promoted_at`` are skipped. Returns counts."""
+```
+
+Per-label_type rendering — all three end as JSONL lines in the
+target dataset's file:
+
+```python
+def _render_for_classification(row: LabelRow) -> dict:
+    label = row.label_payload.get("label")
+    text = (row.raw_payload.get("text") or row.raw_payload.get("question") or "")
+    return {
+        "question": text,
+        "answer": json.dumps({"label": label}),
+        "source": "annotation_job",
+        "annotation_job_id": row.job_id,
+        "original_row_id": row.id,
+        "reviewer_user_id": row.assigned_to,
+    }
+
+def _render_for_span(row: LabelRow) -> dict:
+    spans = row.label_payload.get("spans") or []
+    text = (row.raw_payload.get("text") or "")
+    return {
+        "question": text,
+        "answer": json.dumps({"entities": spans}),
+        # ...same provenance fields...
+    }
+
+def _render_for_preference_pair(row: LabelRow) -> dict:
+    rp = row.raw_payload
+    lp = row.label_payload
+    return {
+        "prompt": rp.get("prompt") or "",
+        "chosen": rp["completion_a"] if lp.get("chosen") == "A" else rp["completion_b"],
+        "rejected": rp["completion_b"] if lp.get("chosen") == "A" else rp["completion_a"],
+        # ...same provenance fields...
+    }
+```
+
+The preference-pair path writes to `projects/{id}/alignment/preferences.jsonl`
+instead of the synthetic file, since the alignment trainer expects
+that location.
+
+**API:**
+
+```python
+@router.post("/{job_id}/promote")
+async def promote_labels(
+    project_id: int,
+    job_id: int,
+    body: PromoteRequest,  # {target_dataset_type: str}
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    result = await promote_labeled_rows(
+        db, project_id=project_id, job_id=job_id,
+        target_dataset_type=DatasetType(body.target_dataset_type),
+    )
+    await db.commit()
+    return result
+```
+
+**UI:**
+
+On `ProjectAnnotatePage` in the per-job detail view, render a primary
+button when `stats.labeled > 0`:
+- "Promote 142 labeled rows → Synthetic dataset" (count from stats)
+- Click → confirm dialog → POST to the new endpoint → toast result
+- Disable when `stats.labeled === stats.promoted` (need to add a
+  `promoted` field to `job_stats`).
+
+**Audit:** new reason code `ANNOTATION_ROWS_PROMOTED` under
+`STAGE_INGESTION`; emit per promotion with the payload
+`{job_id, promoted_count, skipped_count, target_dataset_type}`.
+
+**Quality gates:**
+- `python -m pytest tests/test_annotation_promotion.py tests/test_phase108_annotation_foundation.py -v`
+- Frontend: `npx tsc --noEmit && npx vitest run src/pages/ProjectAnnotatePage* && npx vite build`
+
+**Commit message template:**
+```
+Annotation: promote labeled rows → training dataset
+
+Closes the Epic 1 annotation loop. submit_label rows now flow into
+the project's synthetic / alignment dataset via a new
+promote_labeled_rows service, with provenance fields preserved and
+idempotency guarded by a new label_rows.promoted_at column. UI adds
+a "Promote N labeled rows" CTA on the job detail page.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
