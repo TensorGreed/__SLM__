@@ -248,12 +248,31 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         }
     };
 
+    // Picker shows a random sample, not the whole corpus — a 74k-row
+    // project would otherwise stream ~37MB to the browser per click.
+    // The Sample-all-cleaned-chunks toggle on the span_extraction
+    // path handles the "use everything" case server-side.
+    const CHUNK_PICKER_SAMPLE_SIZE = 200;
+    const [chunkPoolTotal, setChunkPoolTotal] = useState(0);
+
     const loadChunks = async () => {
         setIsLoadingChunks(true);
         try {
-            const res = await api.get(`/projects/${projectId}/cleaning/chunks`);
-            const loadedChunks = (res.data.chunks || []).map((c: any) => ({ ...c, selected: true }));
+            const res = await api.get(
+                `/projects/${projectId}/cleaning/chunks`,
+                {
+                    params: {
+                        limit: CHUNK_PICKER_SAMPLE_SIZE,
+                        random_sample: true,
+                    },
+                },
+            );
+            const loadedChunks = (res.data.chunks || []).map((c: any) => ({
+                ...c,
+                selected: false,
+            }));
             setChunks(loadedChunks);
+            setChunkPoolTotal(Number(res.data.total ?? loadedChunks.length));
             setShowChunkPicker(true);
         } catch (err) {
             toast.error('No cleaned chunks found. Run Data Cleaning first.');
@@ -758,8 +777,31 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                         <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, margin: 0 }}>
                             📥 Select Chunks to Import
                             <span className="badge badge-accent" style={{ marginLeft: 8 }}>{selectedCount} / {chunks.length} selected</span>
+                            {chunkPoolTotal > chunks.length && (
+                                <span
+                                    style={{
+                                        marginLeft: 8,
+                                        fontSize: 'var(--font-size-xs)',
+                                        color: 'var(--text-tertiary)',
+                                        fontWeight: 400,
+                                    }}
+                                    data-testid="chunk-pool-total"
+                                    title={`Random sample of ${chunks.length} chunks from ${chunkPoolTotal.toLocaleString()} total. Use "Reroll sample" to see a different random subset, or enable "Sample randomly from all cleaned chunks" on the generation form to use the whole pool server-side.`}
+                                >
+                                    (random sample of {chunkPoolTotal.toLocaleString()})
+                                </span>
+                            )}
                         </h3>
                         <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                                className="btn btn-secondary"
+                                style={{ fontSize: 'var(--font-size-xs)' }}
+                                onClick={loadChunks}
+                                disabled={isLoadingChunks}
+                                title="Fetch a different random sample from the pool"
+                            >
+                                {isLoadingChunks ? 'Loading…' : '🎲 Reroll sample'}
+                            </button>
                             <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: true })))}>Select All</button>
                             <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: false })))}>Deselect All</button>
                         </div>

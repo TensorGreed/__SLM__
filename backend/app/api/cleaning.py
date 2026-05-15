@@ -148,34 +148,112 @@ async def task_status(
 @router.get("/chunks")
 async def get_cleaned_chunks(
     project_id: int,
+    limit: int = 200,
+    offset: int = 0,
+    random_sample: bool = True,
+    seed: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Return all cleaned text chunks for a project (from .chunks.jsonl files)."""
+    """Return cleaned text chunks for a project.
+
+    Streams ``.chunks.jsonl`` files for the project line-by-line so a
+    74k-chunk project doesn't stream 37MB of JSON to the browser on
+    every "Load from Cleaned Data" click. Three modes:
+
+    - **random_sample=true** (default) — reservoir sample ``limit``
+      chunks across the whole pool. Each call returns a different
+      sample unless ``seed`` is provided.
+    - **random_sample=false, offset=N** — paginated: skip the first
+      N chunks, return the next ``limit``. Useful for "Load more".
+    - ``limit=0`` returns just the total count + no rows. Cheapest
+      way to ask "how many chunks does this project have?"
+
+    Response:
+      - ``chunks``: list of chunk dicts (``document_id`` is injected)
+      - ``total``: full chunk count across the project
+      - ``returned``: len(chunks)
+      - ``limit`` / ``offset`` / ``random_sample`` / ``seed``: echoed
+    """
     import json as _json
+    import random as _random
     from pathlib import Path
     from sqlalchemy import select
     from app.models.dataset import Dataset, RawDocument
+
+    if limit < 0:
+        raise HTTPException(400, "limit must be >= 0")
+    if limit > 5000:
+        raise HTTPException(400, "limit must be <= 5000")
+    if offset < 0:
+        raise HTTPException(400, "offset must be >= 0")
 
     result = await db.execute(
         select(RawDocument)
         .join(Dataset, Dataset.id == RawDocument.dataset_id)
         .where(Dataset.project_id == project_id)
     )
-    docs = result.scalars().all()
+    docs = list(result.scalars().all())
 
-    all_chunks: list[dict] = []
-    for doc in docs:
-        if not doc.file_path:
-            continue
-        chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
-        if chunks_path.exists():
-            for line in chunks_path.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    try:
-                        chunk = _json.loads(line)
+    def _iter_chunk_lines():
+        """Yield (doc_id, parsed_chunk) for every chunk across every
+        document, line-by-line — never materializes the full list."""
+        for doc in docs:
+            if not doc.file_path:
+                continue
+            chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
+            if not chunks_path.exists():
+                continue
+            try:
+                with chunks_path.open("r", encoding="utf-8") as handle:
+                    for raw_line in handle:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        try:
+                            chunk = _json.loads(line)
+                        except _json.JSONDecodeError:
+                            continue
                         chunk["document_id"] = doc.id
-                        all_chunks.append(chunk)
-                    except _json.JSONDecodeError:
-                        pass
+                        yield chunk
+            except OSError:
+                continue
 
-    return {"chunks": all_chunks, "total": len(all_chunks)}
+    rng = _random.Random(seed) if seed is not None else _random.Random()
+    selected: list[dict] = []
+    total = 0
+
+    if random_sample:
+        # Reservoir sample: O(total) time, O(limit) memory.
+        for chunk in _iter_chunk_lines():
+            total += 1
+            if limit == 0:
+                continue
+            if len(selected) < limit:
+                selected.append(chunk)
+            else:
+                idx = rng.randint(0, total - 1)
+                if idx < limit:
+                    selected[idx] = chunk
+    else:
+        # Paginated: skip ``offset``, take ``limit``, then keep
+        # counting (cheap) so the response can show the full total.
+        taken = 0
+        skipped = 0
+        for chunk in _iter_chunk_lines():
+            total += 1
+            if skipped < offset:
+                skipped += 1
+                continue
+            if taken < limit:
+                selected.append(chunk)
+                taken += 1
+
+    return {
+        "chunks": selected,
+        "returned": len(selected),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "random_sample": random_sample,
+        "seed": seed,
+    }
