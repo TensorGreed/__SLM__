@@ -1,8 +1,12 @@
 """Synthetic data generation service — teacher model integration."""
 
+import asyncio
 import json
+import random
 import re
+import threading
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType
+from app.database import async_session_factory
+from app.models.dataset import Dataset, DatasetType, RawDocument
 
 
 def _coerce_completion_content(raw: Any) -> str:
@@ -1451,3 +1456,285 @@ async def save_synthetic_span_batch(
         "total": ds.record_count,
         "rejected_rows": rejected,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Batched synthetic-span generation (long-running)
+# ─────────────────────────────────────────────────────────────────────
+#
+# Why batched: a teacher LLM call asking for 50 structured-JSON rows is
+# already at the upper end of what fits in a context window. Asking for
+# 2000 in one shot doesn't work — either the prompt is truncated or
+# the response is. The pattern below loops ``ceil(num_rows / 50)`` 50-row
+# calls, optionally feeding each batch a fresh randomized sample of the
+# project's cleaned chunks so the generated data spans the corpus
+# instead of being 40 variations of the same 24KB of text.
+#
+# Lifecycle mirrors ``cleaning_service.CleaningTask`` exactly so the
+# read-side polling endpoint can be a near-copy.
+
+PER_BATCH_ROW_CAP: int = 50
+MAX_TOTAL_ROWS: int = 5000
+# Per-batch sampling target. 4–8k "tokens" using the standard ~4
+# chars/token heuristic. Per-batch target picked uniformly in this
+# range so different batches see different effective source sizes.
+SAMPLE_MIN_CHARS: int = 4 * 4000
+SAMPLE_MAX_CHARS: int = 4 * 8000
+
+
+@dataclass
+class SyntheticSpanTask:
+    """In-memory record of a long-running batched span-generation job.
+    Process-global, keyed by ``task_id`` in ``_SYNTHETIC_TASKS``."""
+
+    task_id: str
+    project_id: int
+    target_rows: int
+    entity_types: list[str]
+    api_url: str
+    api_key: str
+    model_name: str
+    use_all_chunks: bool
+    source_text: str
+
+    status: str = "pending"  # pending | running | completed | failed
+    rows: list[dict] = field(default_factory=list)
+    batches_done: int = 0
+    batches_total: int = 0
+    error: str | None = None
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "project_id": self.project_id,
+            "status": self.status,
+            "target_rows": self.target_rows,
+            "rows_so_far": len(self.rows),
+            "batches_done": self.batches_done,
+            "batches_total": self.batches_total,
+            "rows": list(self.rows),
+            "error": self.error,
+            "started_at": self.started_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "finished_at": (
+                self.finished_at.isoformat() if self.finished_at else None
+            ),
+        }
+
+
+_SYNTHETIC_TASKS: dict[str, SyntheticSpanTask] = {}
+_SYNTHETIC_TASKS_LOCK = threading.Lock()
+_MAX_TRACKED_SYNTHETIC_TASKS: int = 64
+
+
+def _trim_finished_synthetic_tasks() -> None:
+    """Evict the oldest finished synthetic tasks when registry grows
+    past the cap. Caller holds ``_SYNTHETIC_TASKS_LOCK``."""
+    if len(_SYNTHETIC_TASKS) <= _MAX_TRACKED_SYNTHETIC_TASKS:
+        return
+    finished = sorted(
+        (t for t in _SYNTHETIC_TASKS.values() if t.finished_at is not None),
+        key=lambda t: t.finished_at,  # type: ignore[arg-type]
+    )
+    overflow = len(_SYNTHETIC_TASKS) - _MAX_TRACKED_SYNTHETIC_TASKS
+    for task in finished[:overflow]:
+        _SYNTHETIC_TASKS.pop(task.task_id, None)
+
+
+async def _load_project_cleaned_chunks(project_id: int) -> list[str]:
+    """Load every cleaned chunk text for a project. Mirrors the read
+    path of :func:`app.api.cleaning.get_cleaned_chunks` but returns
+    only the text payloads (sufficient for the sampler)."""
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(RawDocument)
+            .join(Dataset, Dataset.id == RawDocument.dataset_id)
+            .where(Dataset.project_id == project_id)
+        )
+        docs = list(result.scalars().all())
+
+    texts: list[str] = []
+    for doc in docs:
+        if not doc.file_path:
+            continue
+        chunks_path = Path(doc.file_path).with_suffix(".chunks.jsonl")
+        if not chunks_path.exists():
+            continue
+        try:
+            content = chunks_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            text = (row.get("text") or "").strip()
+            if text:
+                texts.append(text)
+    return texts
+
+
+def _sample_chunks_for_batch(
+    pool: list[str], *, target_chars: int, rng: random.Random
+) -> str:
+    """Pick chunks from ``pool`` in random order, joined by ``---``,
+    until accumulated char count meets ``target_chars`` (or pool is
+    exhausted). Returns the joined source text for one batch."""
+    if not pool:
+        return ""
+    order = list(range(len(pool)))
+    rng.shuffle(order)
+    accumulated: list[str] = []
+    total = 0
+    for idx in order:
+        chunk = pool[idx]
+        accumulated.append(chunk)
+        total += len(chunk)
+        if total >= target_chars:
+            break
+    return "\n\n---\n\n".join(accumulated)
+
+
+async def _run_span_generation_task(task: SyntheticSpanTask) -> None:
+    """Drive one batched span-generation job to completion.
+
+    Each iteration generates up to ``PER_BATCH_ROW_CAP`` rows. When
+    ``use_all_chunks`` is set, the source text for each batch is a
+    fresh random sample of the project's cleaned chunks; otherwise
+    every batch reuses ``task.source_text`` verbatim. Best-effort —
+    a failed batch is logged into the task error trail but later
+    batches still attempt.
+    """
+    task.status = "running"
+    task.updated_at = datetime.now(timezone.utc)
+
+    pool: list[str] = []
+    if task.use_all_chunks:
+        try:
+            pool = await _load_project_cleaned_chunks(task.project_id)
+        except Exception as exc:  # noqa: BLE001
+            task.status = "failed"
+            task.error = f"failed to load cleaned chunks: {exc}"
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            return
+        if not pool:
+            task.status = "failed"
+            task.error = (
+                "use_all_chunks=true but no cleaned chunks were found "
+                "for this project. Run Data Cleaning first."
+            )
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            return
+
+    remaining = task.target_rows
+    task.batches_total = (
+        (task.target_rows + PER_BATCH_ROW_CAP - 1) // PER_BATCH_ROW_CAP
+    )
+    rng = random.Random()
+
+    try:
+        async with async_session_factory() as db:
+            while remaining > 0:
+                rows_this_batch = min(PER_BATCH_ROW_CAP, remaining)
+                if task.use_all_chunks:
+                    target_chars = rng.randint(
+                        SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS
+                    )
+                    source_text = _sample_chunks_for_batch(
+                        pool, target_chars=target_chars, rng=rng
+                    )
+                else:
+                    source_text = task.source_text
+
+                try:
+                    batch_rows = await generate_span_extraction_rows(
+                        db,
+                        task.project_id,
+                        source_text,
+                        rows_this_batch,
+                        task.entity_types or None,
+                        task.api_url,
+                        task.api_key,
+                        task.model_name,
+                    )
+                    task.rows.extend(batch_rows)
+                except Exception as exc:  # noqa: BLE001
+                    # One bad batch shouldn't sink the job — record + continue.
+                    task.error = (
+                        f"batch {task.batches_done + 1}/{task.batches_total}: "
+                        f"{exc}"
+                    )
+                finally:
+                    task.batches_done += 1
+                    remaining -= rows_this_batch
+                    task.updated_at = datetime.now(timezone.utc)
+
+        task.status = "completed"
+    except Exception as exc:  # noqa: BLE001
+        task.status = "failed"
+        task.error = str(exc)
+    finally:
+        task.finished_at = datetime.now(timezone.utc)
+        task.updated_at = task.finished_at
+
+
+def start_span_generation_task(
+    *,
+    project_id: int,
+    target_rows: int,
+    entity_types: list[str] | None,
+    api_url: str,
+    api_key: str,
+    model_name: str,
+    use_all_chunks: bool,
+    source_text: str,
+) -> SyntheticSpanTask:
+    """Register + launch a span-generation task. Returns the task
+    record immediately; the actual work runs in the background.
+
+    Raises ``ValueError`` for bad inputs (out-of-range ``target_rows``,
+    missing source when not using all chunks)."""
+    if target_rows < 1 or target_rows > MAX_TOTAL_ROWS:
+        raise ValueError(
+            f"target_rows must be between 1 and {MAX_TOTAL_ROWS} "
+            f"(got {target_rows})"
+        )
+    if not use_all_chunks and not (source_text or "").strip():
+        raise ValueError(
+            "source_text is required when use_all_chunks is false"
+        )
+
+    task = SyntheticSpanTask(
+        task_id=uuid.uuid4().hex,
+        project_id=project_id,
+        target_rows=target_rows,
+        entity_types=list(entity_types or []),
+        api_url=api_url,
+        api_key=api_key,
+        model_name=model_name,
+        use_all_chunks=use_all_chunks,
+        source_text=source_text,
+    )
+
+    with _SYNTHETIC_TASKS_LOCK:
+        _SYNTHETIC_TASKS[task.task_id] = task
+        _trim_finished_synthetic_tasks()
+
+    asyncio.create_task(_run_span_generation_task(task))
+    return task
+
+
+def get_span_task_status(task_id: str) -> SyntheticSpanTask | None:
+    """Return the in-memory task record for a given id, or None if
+    it's already been evicted or never existed."""
+    with _SYNTHETIC_TASKS_LOCK:
+        return _SYNTHETIC_TASKS.get(task_id)

@@ -88,6 +88,22 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const [generatedConversations, setGeneratedConversations] = useState<any[]>([]);
     const [generatedSpans, setGeneratedSpans] = useState<SpanRow[]>([]);
     const [numSpans, setNumSpans] = useState(5);
+    // When true, span_extraction generation runs server-side as a
+    // batched async task: ceil(numSpans / 50) calls each fed a fresh
+    // randomized sample of the project's cleaned chunks. The textarea
+    // / chunk picker selection is ignored in this mode.
+    const [useAllChunks, setUseAllChunks] = useState(false);
+    // Live status of the in-flight async span job. ``null`` when no
+    // task is running. The poller drives this every ~3s.
+    const [spanTaskStatus, setSpanTaskStatus] = useState<{
+        task_id: string;
+        status: string;
+        target_rows: number;
+        rows_so_far: number;
+        batches_done: number;
+        batches_total: number;
+        error?: string | null;
+    } | null>(null);
     // Comma-separated list shown in the UI; parsed to a string[] when
     // calling the backend. Pre-filled from the project's prepared
     // manifest when task_profile is structured_extraction.
@@ -272,7 +288,11 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const LONG_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
     const handleGenerate = async () => {
-        if (!sourceText.trim()) return;
+        // useAllChunks span_extraction mode doesn't need source_text
+        // — the server samples from the cleaned-chunk pool per batch.
+        const skipSourceCheck =
+            generationMode === 'span_extraction' && useAllChunks;
+        if (!skipSourceCheck && !sourceText.trim()) return;
         setIsGenerating(true);
         try {
             if (generationMode === 'qa') {
@@ -291,21 +311,89 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 setGeneratedConversations([]);
                 setGeneratedSpans([]);
             } else if (generationMode === 'span_extraction') {
-                const res = await api.post(
-                    `/projects/${projectId}/synthetic/generate-spans`,
-                    {
-                        source_text: sourceText,
-                        num_rows: numSpans,
-                        entity_types: parseEntityTypes(entityTypesInput),
-                        api_url: apiUrl,
-                        api_key: apiKey,
-                        model_name: modelName,
-                    },
-                    { timeout: LONG_REQUEST_TIMEOUT_MS },
-                );
-                setGeneratedSpans(res.data.rows || []);
-                setGeneratedPairs([]);
-                setGeneratedConversations([]);
+                // Two paths: a single-batch sync call (≤50 rows AND
+                // user is feeding their own source_text), or a
+                // batched async task (>50 rows OR sample-from-all-
+                // cleaned-chunks mode). The async task is server-
+                // looped at PER_BATCH_ROW_CAP=50 per call and uses a
+                // fresh randomized chunk sample each batch.
+                const wantsAsync = numSpans > 50 || useAllChunks;
+                if (wantsAsync) {
+                    setSpanTaskStatus(null);
+                    setGeneratedSpans([]);
+                    setGeneratedPairs([]);
+                    setGeneratedConversations([]);
+                    const startRes = await api.post(
+                        `/projects/${projectId}/synthetic/generate-spans-async`,
+                        {
+                            target_rows: numSpans,
+                            entity_types: parseEntityTypes(entityTypesInput),
+                            api_url: apiUrl,
+                            api_key: apiKey,
+                            model_name: modelName,
+                            use_all_chunks: useAllChunks,
+                            source_text: useAllChunks ? '' : sourceText,
+                        },
+                    );
+                    const taskId = startRes.data.task_id;
+                    setSpanTaskStatus({
+                        task_id: taskId,
+                        status: startRes.data.status,
+                        target_rows: startRes.data.target_rows,
+                        rows_so_far: 0,
+                        batches_done: 0,
+                        batches_total: startRes.data.batches_total,
+                    });
+                    // Poll until the task reports completed/failed.
+                    while (true) {
+                        await new Promise((r) => setTimeout(r, 3000));
+                        const statusRes = await api.get(
+                            `/projects/${projectId}/synthetic/tasks/${taskId}`,
+                        );
+                        const data = statusRes.data;
+                        setSpanTaskStatus({
+                            task_id: taskId,
+                            status: data.status,
+                            target_rows: data.target_rows,
+                            rows_so_far: data.rows_so_far,
+                            batches_done: data.batches_done,
+                            batches_total: data.batches_total,
+                            error: data.error,
+                        });
+                        if (data.status === 'completed' || data.status === 'failed') {
+                            setGeneratedSpans(data.rows || []);
+                            if (data.status === 'failed') {
+                                toast.error(
+                                    data.error || 'Span generation failed.',
+                                );
+                            } else if (data.error) {
+                                // Partial success — some batches errored
+                                // but the task completed with the rows
+                                // that did succeed.
+                                toast.warning(
+                                    `Generation finished with warnings: ${data.error}`,
+                                );
+                            }
+                            break;
+                        }
+                    }
+                } else {
+                    const res = await api.post(
+                        `/projects/${projectId}/synthetic/generate-spans`,
+                        {
+                            source_text: sourceText,
+                            num_rows: numSpans,
+                            entity_types: parseEntityTypes(entityTypesInput),
+                            api_url: apiUrl,
+                            api_key: apiKey,
+                            model_name: modelName,
+                        },
+                        { timeout: LONG_REQUEST_TIMEOUT_MS },
+                    );
+                    setGeneratedSpans(res.data.rows || []);
+                    setGeneratedPairs([]);
+                    setGeneratedConversations([]);
+                }
             } else {
                 const res = await api.post(
                     `/projects/${projectId}/synthetic/generate-conversations`,
@@ -491,13 +579,25 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     value={numSpans}
                                     onChange={(e) =>
                                         setNumSpans(
-                                            Math.max(1, Math.min(50, Number(e.target.value) || 1)),
+                                            Math.max(1, Math.min(5000, Number(e.target.value) || 1)),
                                         )
                                     }
                                     min={1}
-                                    max={50}
+                                    max={5000}
                                     style={{ width: 120 }}
+                                    data-testid="span-num-rows"
                                 />
+                                <div
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        color: 'var(--text-tertiary)',
+                                        marginTop: 4,
+                                    }}
+                                >
+                                    {numSpans > 50
+                                        ? `Will run in ${Math.ceil(numSpans / 50)} background batches.`
+                                        : 'Single-shot generation.'}
+                                </div>
                             </div>
                             <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 280 }}>
                                 <label className="form-label">
@@ -513,6 +613,76 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     placeholder="email, phone, ssn, credit_card, person_name"
                                 />
                             </div>
+                            <div
+                                className="form-group"
+                                style={{
+                                    marginBottom: 0,
+                                    flexBasis: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                }}
+                            >
+                                <label
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        cursor: 'pointer',
+                                        fontSize: '0.85rem',
+                                    }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={useAllChunks}
+                                        onChange={(e) =>
+                                            setUseAllChunks(e.target.checked)
+                                        }
+                                        data-testid="span-use-all-chunks"
+                                    />
+                                    Sample randomly from all cleaned chunks (per batch)
+                                </label>
+                                <span
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        color: 'var(--text-tertiary)',
+                                    }}
+                                >
+                                    Ignores the source-text textarea; each
+                                    batch gets a fresh 4–8k-token sample.
+                                </span>
+                            </div>
+                            {spanTaskStatus && (
+                                <div
+                                    data-testid="span-task-progress"
+                                    style={{
+                                        flexBasis: '100%',
+                                        padding: 'var(--space-sm)',
+                                        background: 'var(--bg-secondary)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: 'var(--radius-sm)',
+                                        fontSize: '0.85rem',
+                                    }}
+                                >
+                                    <strong>{spanTaskStatus.status}</strong>
+                                    {' — '}
+                                    batch {spanTaskStatus.batches_done} /{' '}
+                                    {spanTaskStatus.batches_total}
+                                    {' · '}
+                                    {spanTaskStatus.rows_so_far} /{' '}
+                                    {spanTaskStatus.target_rows} rows
+                                    {spanTaskStatus.error && (
+                                        <div
+                                            style={{
+                                                color: 'var(--color-error, #c00)',
+                                                marginTop: 4,
+                                            }}
+                                        >
+                                            {spanTaskStatus.error}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </>
                     ) : (
                         <>

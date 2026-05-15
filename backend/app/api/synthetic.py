@@ -6,12 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.services.synthetic_service import (
+    MAX_TOTAL_ROWS,
     generate_conversation_dialogues,
     generate_qa_pairs,
     generate_span_extraction_rows,
+    get_span_task_status,
     save_synthetic_batch,
     save_synthetic_conversation_batch,
     save_synthetic_span_batch,
+    start_span_generation_task,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/synthetic", tags=["Synthetic"])
@@ -156,6 +159,74 @@ async def generate_spans(
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Span generation failed: {str(e)}")
+
+
+class GenerateSpanAsyncRequest(BaseModel):
+    """Request body for the long-running batched span generator.
+
+    The sync ``/generate-spans`` endpoint is fine for ≤50 rows in one
+    teacher call. For 2k+ row jobs the work is batched server-side in
+    ``PER_BATCH_ROW_CAP``-row chunks, each fed a fresh randomized sample
+    of the project's cleaned chunks when ``use_all_chunks`` is set.
+    """
+
+    target_rows: int = Field(..., ge=1, le=MAX_TOTAL_ROWS)
+    entity_types: list[str] = Field(default_factory=list)
+    api_url: str = ""
+    api_key: str = ""
+    model_name: str = "llama3"
+    use_all_chunks: bool = Field(
+        default=True,
+        description=(
+            "When true, source text for each batch is a fresh random "
+            "sample (~4–8k tokens) of the project's cleaned chunks. "
+            "When false, ``source_text`` is reused verbatim for every "
+            "batch."
+        ),
+    )
+    source_text: str = ""
+
+
+@router.post("/generate-spans-async", status_code=202)
+async def generate_spans_async(
+    project_id: int,
+    req: GenerateSpanAsyncRequest,
+):
+    """Kick off a batched span-generation job. Returns immediately with
+    a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}`` for
+    progress + accumulated rows."""
+    try:
+        task = start_span_generation_task(
+            project_id=project_id,
+            target_rows=req.target_rows,
+            entity_types=req.entity_types,
+            api_url=req.api_url,
+            api_key=req.api_key,
+            model_name=req.model_name,
+            use_all_chunks=req.use_all_chunks,
+            source_text=req.source_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {
+        "task_id": task.task_id,
+        "status": task.status,
+        "target_rows": task.target_rows,
+        "batches_total": (req.target_rows + 49) // 50,
+    }
+
+
+@router.get("/tasks/{task_id}")
+async def get_synthetic_task(project_id: int, task_id: str):
+    """Read the live state of a batched span-generation job. Returns
+    ``rows`` once the task has completed (or partial rows while still
+    running)."""
+    task = get_span_task_status(task_id)
+    if task is None:
+        raise HTTPException(404, f"Synthetic task {task_id!r} not found")
+    if task.project_id != project_id:
+        raise HTTPException(404, f"Synthetic task {task_id!r} not found")
+    return task.to_dict()
 
 
 @router.post("/save-spans")
