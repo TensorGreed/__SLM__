@@ -25,10 +25,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.dataset import DatasetType
 from app.models.label_job import (
     KNOWN_JOB_STATUSES,
     KNOWN_LABEL_TYPES,
 )
+from app.services.annotation.promotion import promote_labeled_rows
 from app.services.annotation_service import (
     assign_next,
     create_job,
@@ -86,6 +88,19 @@ class SubmitLabelRequest(BaseModel):
     reviewer_notes: str | None = Field(default=None, max_length=10_000)
 
 
+class PromoteLabelsRequest(BaseModel):
+    target_dataset_type: str = Field(
+        default="synthetic",
+        description=(
+            "Where promoted rows land. ``synthetic`` (default) routes "
+            "classification + span rows into the project's synthetic "
+            "dataset and preference-pair rows into the alignment "
+            "preference file. ``gold_dev`` treats the labels as gold "
+            "eval ground truth."
+        ),
+    )
+
+
 # ── Error translation ────────────────────────────────────────────────
 
 
@@ -113,6 +128,10 @@ _ERROR_CODES: dict[str, tuple[int, str]] = {
         "Row already labeled; cannot skip after submit.",
     ),
     "seed_n_must_be_positive": (400, "n must be >= 1."),
+    "invalid_target_dataset_type": (
+        400,
+        "target_dataset_type must be 'synthetic' or 'gold_dev'.",
+    ),
 }
 
 
@@ -133,6 +152,12 @@ def _translate_value_error(exc: ValueError) -> HTTPException:
         return HTTPException(
             400,
             f"Unknown status {bad!r}. Allowed: {sorted(KNOWN_JOB_STATUSES)}",
+        )
+    if code.startswith("invalid_target_dataset_type:"):
+        bad = code.split(":", 1)[1]
+        return HTTPException(
+            400,
+            f"Unknown target_dataset_type {bad!r}. Allowed: synthetic, gold_dev.",
         )
     return HTTPException(400, code)
 
@@ -305,3 +330,31 @@ async def submit_row_label(
         raise _translate_value_error(exc) from exc
     await db.commit()
     return row_to_dict(row)
+
+
+@router.post("/{job_id}/promote")
+async def promote_job_labels(
+    project_id: int,
+    job_id: int,
+    req: PromoteLabelsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Story 1.6 — promote every labeled, unpromoted row in ``job_id``
+    into the project's synthetic / gold / alignment dataset. Idempotent."""
+    try:
+        target_type = DatasetType(req.target_dataset_type)
+    except ValueError as exc:
+        raise _translate_value_error(
+            ValueError("invalid_target_dataset_type")
+        ) from exc
+    try:
+        result = await promote_labeled_rows(
+            db,
+            project_id=project_id,
+            job_id=job_id,
+            target_dataset_type=target_type,
+        )
+    except ValueError as exc:
+        raise _translate_value_error(exc) from exc
+    await db.commit()
+    return result

@@ -20,12 +20,14 @@ import {
     type LabelJobDetail,
     type LabelRow,
     type LabelType,
+    type PromoteTarget,
     type SubmitLabelBody,
     createLabelJob,
     deleteLabelJob,
     fetchNextRow,
     getLabelJob,
     listLabelJobs,
+    promoteLabeledRows,
     skipRow,
     submitLabel,
 } from '../api/annotation';
@@ -356,6 +358,7 @@ function AnnotateLabelerView({
     const [queueEmpty, setQueueEmpty] = useState(false);
     const [error, setError] = useState<string>('');
     const [busy, setBusy] = useState(false);
+    const [promoting, setPromoting] = useState(false);
 
     const reviewerId = (() => {
         const raw = localStorage.getItem('slm_user_id');
@@ -424,6 +427,51 @@ function AnnotateLabelerView({
         }
     }, [projectId, jobId, currentRow, busy, refreshStats, loadNext]);
 
+    const handlePromote = useCallback(
+        async (target: PromoteTarget) => {
+            if (promoting || !job) return;
+            const pending = job.stats.labeled - (job.stats.promoted || 0);
+            if (pending <= 0) {
+                toast.info(
+                    'Nothing new to promote — every labeled row is already in a training dataset.',
+                );
+                return;
+            }
+            const targetLabel =
+                target === 'gold_dev' ? 'gold (dev) set' : 'synthetic dataset';
+            const confirmed = window.confirm(
+                `Promote ${pending} labeled row(s) into the ${targetLabel}? `
+                + 'Rows already promoted will be skipped.',
+            );
+            if (!confirmed) return;
+            setPromoting(true);
+            try {
+                const result = await promoteLabeledRows(
+                    projectId,
+                    jobId,
+                    target,
+                );
+                if (result.promoted_count > 0) {
+                    toast.success(
+                        `Promoted ${result.promoted_count} row(s) into ${result.target_dataset_type}.`,
+                    );
+                } else if (result.skipped_already_promoted > 0) {
+                    toast.info(
+                        `All ${result.skipped_already_promoted} labeled row(s) were already promoted.`,
+                    );
+                } else {
+                    toast.info('No promotable rows found.');
+                }
+                await refreshStats();
+            } catch (err) {
+                toast.error(extractError(err, 'Failed to promote rows.'));
+            } finally {
+                setPromoting(false);
+            }
+        },
+        [projectId, jobId, job, promoting, refreshStats],
+    );
+
     if (error) {
         return (
             <div className="page-container">
@@ -452,6 +500,70 @@ function AnnotateLabelerView({
             </div>
 
             <AnnotationProgress jobName={job.name} stats={job.stats} />
+
+            {job.stats.labeled > 0 && (
+                <div
+                    style={{
+                        marginTop: 'var(--space-md)',
+                        padding: 'var(--space-md)',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-md)',
+                        flexWrap: 'wrap',
+                    }}
+                    data-testid="annotate-promote-card"
+                >
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                        <strong>
+                            {job.stats.labeled - (job.stats.promoted || 0)}
+                            {' '}
+                            labeled row(s) ready to promote
+                        </strong>
+                        <div
+                            style={{
+                                fontSize: '0.85rem',
+                                color: 'var(--text-secondary)',
+                                marginTop: 4,
+                            }}
+                        >
+                            {(job.stats.promoted || 0) > 0
+                                ? `${job.stats.promoted} already in your training data.`
+                                : 'Labels stay in the annotation table until promoted into a training dataset.'}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => void handlePromote('synthetic')}
+                        disabled={
+                            promoting
+                            || job.stats.labeled === (job.stats.promoted || 0)
+                        }
+                        data-testid="annotate-promote-synthetic"
+                        title="Append labeled rows to your project's synthetic.jsonl (or alignment preference file for preference-pair jobs)"
+                    >
+                        {promoting
+                            ? 'Promoting…'
+                            : '📤 Promote to synthetic'}
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => void handlePromote('gold_dev')}
+                        disabled={
+                            promoting
+                            || job.stats.labeled === (job.stats.promoted || 0)
+                        }
+                        data-testid="annotate-promote-gold"
+                        title="Promote labels into the gold (dev) eval set instead — use when you're hand-curating ground truth, not training data"
+                    >
+                        Promote to gold
+                    </button>
+                </div>
+            )}
 
             {job.instructions && (
                 <div

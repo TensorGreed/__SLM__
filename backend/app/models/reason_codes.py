@@ -56,6 +56,12 @@ ANNOTATION_LABEL_SUBMITTED = "annotation_label_submitted"
 """Reviewer submitted a label for one row in an annotation job.
 Severity is ``info``; payload carries job_id, row_id, user_id,
 label_type, and (optionally) the submitted label_payload."""
+ANNOTATION_ROWS_PROMOTED = "annotation_rows_promoted"
+"""Story 1.6 — labeled rows in an annotation job were materialized
+into a downstream training dataset (synthetic or alignment).
+Severity is ``info``; payload carries job_id, label_type,
+promoted_count, skipped_already_promoted, and the target dataset
+id / type."""
 
 # -- cleaning -----------------------------------------------------------
 CLEANING_OUTLIER_THRESHOLD_EXCEEDED = "cleaning_outlier_threshold_exceeded"
@@ -135,6 +141,7 @@ REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
         DATASET_IMPORT_FAILED,
         ANNOTATION_JOB_CREATED,
         ANNOTATION_LABEL_SUBMITTED,
+        ANNOTATION_ROWS_PROMOTED,
     }),
     STAGE_CLEANING: frozenset({
         CLEANING_OUTLIER_THRESHOLD_EXCEEDED,

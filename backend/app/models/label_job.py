@@ -136,3 +136,17 @@ class LabelRow(Base):
     reviewer_notes: Mapped[str | None] = mapped_column(
         Text, nullable=True, default=None
     )
+
+    # Story 1.6 — set when this row has been materialized into the
+    # project's synthetic / alignment training file via the promote
+    # endpoint. Idempotency guard: a second promote call skips any
+    # row with ``promoted_at`` already set, so re-runs never duplicate.
+    promoted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    # Captures which downstream dataset the row landed in so the
+    # operator can trace the path from a label_row through to a
+    # training-time entry.
+    promoted_to_dataset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("datasets.id"), nullable=True, default=None
+    )

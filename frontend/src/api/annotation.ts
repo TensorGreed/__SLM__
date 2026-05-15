@@ -45,6 +45,22 @@ export interface JobStats {
     labeled: number;
     assigned: number;
     unlabeled: number;
+    /** Story 1.6 — rows already materialized into a downstream
+     *  training dataset via the promote endpoint. */
+    promoted: number;
+}
+
+export type PromoteTarget = 'synthetic' | 'gold_dev';
+
+export interface PromoteResult {
+    promoted_count: number;
+    skipped_already_promoted: number;
+    skipped_unlabeled: number;
+    skipped_unrenderable: number;
+    target_dataset_id: number | null;
+    target_dataset_type: string;
+    label_type: LabelType;
+    written_path: string;
 }
 
 export interface LabelJobDetail extends LabelJob {
@@ -160,6 +176,18 @@ export async function skipRow(
 ): Promise<LabelRow> {
     const res = await api.post<LabelRow>(
         `/projects/${projectId}/label-jobs/${jobId}/rows/${rowId}/skip`,
+    );
+    return res.data;
+}
+
+export async function promoteLabeledRows(
+    projectId: number,
+    jobId: number,
+    target: PromoteTarget = 'synthetic',
+): Promise<PromoteResult> {
+    const res = await api.post<PromoteResult>(
+        `/projects/${projectId}/label-jobs/${jobId}/promote`,
+        { target_dataset_type: target },
     );
     return res.data;
 }

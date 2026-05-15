@@ -471,6 +471,17 @@ async def job_stats(
     )
     assigned = int(assigned_q.scalar() or 0)
 
+    # Story 1.6 — count rows already materialized into a downstream
+    # training dataset so the UI can show "142 labeled · 100 promoted"
+    # and hide the Promote CTA when ``labeled == promoted``.
+    promoted_q = await db.execute(
+        select(func.count(LabelRow.id)).where(
+            LabelRow.job_id == job_id,
+            LabelRow.promoted_at.is_not(None),
+        )
+    )
+    promoted = int(promoted_q.scalar() or 0)
+
     unlabeled = total - labeled - assigned
 
     return {
@@ -483,6 +494,7 @@ async def job_stats(
         "labeled": labeled,
         "assigned": assigned,
         "unlabeled": unlabeled,
+        "promoted": promoted,
     }
 
 
