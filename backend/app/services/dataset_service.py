@@ -344,6 +344,71 @@ async def save_project_dataset_adapter_preference(
     return await resolve_project_dataset_adapter_preference(db, project_id)
 
 
+async def resolve_training_dataset_types(
+    db: AsyncSession,
+    project_id: int,
+    requested: list[str] | None,
+) -> tuple[list[str], dict[str, Any]]:
+    """Auto-drop ``cleaned`` from the requested include_types when the
+    project has a non-empty synthetic dataset.
+
+    Rationale: in SFT mode the trainer applies its loss to every row,
+    including text-only CLEANED rows that lack a target. When SYNTHETIC
+    rows exist, the cleaned chunks have already served their purpose
+    (they fed synthetic generation upstream) — keeping them in
+    train.jsonl drowns the structured-target signal at a typical 30–80
+    to 1 ratio and produces a model that learns continuation rather
+    than the task schema (incident: experiment 10 / commit 222bc5d).
+
+    Only fires when BOTH ``cleaned`` and ``synthetic`` are in the
+    requested set, so callers asking for either type alone get exactly
+    what they asked for. The decision is recorded in the returned
+    report dict and surfaced in the split manifest so the operator can
+    see what changed.
+
+    Returns ``(resolved_types, report)``.
+    """
+    requested_list = list(requested) if requested else [
+        DatasetType.CLEANED.value,
+        DatasetType.SYNTHETIC.value,
+        DatasetType.GOLD_DEV.value,
+    ]
+    report: dict[str, Any] = {
+        "auto_excluded": [],
+        "reason": None,
+        "synthetic_rows": 0,
+    }
+
+    if (
+        DatasetType.CLEANED.value not in requested_list
+        or DatasetType.SYNTHETIC.value not in requested_list
+    ):
+        return requested_list, report
+
+    synth_result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type == DatasetType.SYNTHETIC,
+        )
+    )
+    synth_ds = synth_result.scalar_one_or_none()
+    synth_rows = int(getattr(synth_ds, "record_count", 0) or 0)
+    report["synthetic_rows"] = synth_rows
+
+    if synth_rows < 1:
+        return requested_list, report
+
+    resolved = [
+        t for t in requested_list if t != DatasetType.CLEANED.value
+    ]
+    report["auto_excluded"] = [DatasetType.CLEANED.value]
+    report["reason"] = (
+        f"synthetic dataset has {synth_rows} row(s); cleaned text "
+        "would dilute SFT signal (request both explicitly to override)."
+    )
+    return resolved, report
+
+
 async def combine_datasets(
     db: AsyncSession,
     project_id: int,
@@ -460,14 +525,15 @@ async def split_dataset(
     if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-6:
         raise ValueError("Split ratios must sum to 1.0")
 
-    types = None
-    included_source_types = include_types[:] if include_types else [
-        DatasetType.CLEANED.value,
-        DatasetType.SYNTHETIC.value,
-        DatasetType.GOLD_DEV.value,
-    ]
-    if include_types:
-        types = [DatasetType(t) for t in include_types]
+    # Resolve include_types via the auto-exclusion rule so the prep
+    # step doesn't dump 70k+ text-only CLEANED rows on top of 2k
+    # structured SYNTHETIC rows for SFT. The resolver is a no-op when
+    # synthetic is empty or when the caller asks for a single type.
+    resolved_type_strs, dataset_type_report = (
+        await resolve_training_dataset_types(db, project_id, include_types)
+    )
+    included_source_types = resolved_type_strs[:]
+    types = [DatasetType(t) for t in resolved_type_strs]
 
     entries = await combine_datasets(
         db,
@@ -569,6 +635,7 @@ async def split_dataset(
         "dataset_versions": dataset_versions,
         "chat_template": chat_template,
         "included_types": included_source_types,
+        "include_types_resolution": dataset_type_report,
         "adapter_id": adapter_id,
         "adapter_config": dict(adapter_config or {}),
         "field_mapping": dict(field_mapping or {}),
