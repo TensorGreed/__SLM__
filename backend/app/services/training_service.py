@@ -19,6 +19,10 @@ from app.models.experiment import (
     TrainingMode,
 )
 from app.models.project import Project
+from app.services.training_data_gate import (
+    DEFAULT_TARGET_FIELDS,
+    verify_training_data_has_targets,
+)
 from app.services.training_preflight_service import (
     evaluate_training_base_model_compatibility,
     run_training_preflight,
@@ -890,6 +894,26 @@ async def start_training(
                     else "disabled_in_config"
                 ),
             }
+
+    # ── Data-shape gate ─────────────────────────────────────────────
+    # Refuse to launch an SFT run on domain-pretrain-shape data
+    # (text-only rows with no answer/completion/output/response). The
+    # trainer would silently fall back to causal-LM continuation and
+    # the user would discover eval F1=0% only after burning hours of
+    # GPU time. See training_data_gate.py for the failure incident
+    # this gate was added for. The gate is a no-op for DPO/ORPO
+    # (alignment path has its own contract checks) and DOMAIN_PRETRAIN
+    # (text-only is the point).
+    data_gate_report = verify_training_data_has_targets(
+        train_file,
+        training_mode=training_mode,
+        target_fields=DEFAULT_TARGET_FIELDS,
+    )
+    runtime_config["training_data_gate"] = data_gate_report
+    if not data_gate_report["ok"]:
+        raise ValueError(
+            f"Training data gate failed: {data_gate_report['message']}"
+        )
 
     exp.status = ExperimentStatus.RUNNING
     exp.started_at = datetime.now(timezone.utc)
