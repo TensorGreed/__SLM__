@@ -282,6 +282,14 @@ interface ModelWizardResponse {
   recommendation_count?: number;
   recommendations?: ModelWizardRecommendation[];
   warnings?: string[];
+  /**
+   * Story 1.5 Gate 1 — when the project's prepared train.jsonl has
+   * no target field, the API returns this flag + a message instead
+   * of a model list. The UI surfaces a banner that blocks model pick
+   * until the data shape is fixed.
+   */
+  blocked_by_data_shape?: boolean;
+  data_shape_message?: string;
   adaptive_ranking?: {
     enabled?: boolean;
     context_label?: string;
@@ -4645,6 +4653,32 @@ export default function TrainingPanel({
                       {wizardError && (
                         <div className="training-alert training-alert--warning training-alert--tight">
                           {wizardError}
+                        </div>
+                      )}
+                      {wizardResult?.blocked_by_data_shape && (
+                        <div
+                          className="training-alert training-alert--error"
+                          data-testid="recommender-data-shape-banner"
+                          style={{
+                            padding: 'var(--space-md)',
+                            border: '1px solid var(--color-error, #b91c1c)',
+                            borderRadius: 'var(--radius-sm)',
+                            background: 'rgba(185, 28, 28, 0.05)',
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              marginBottom: 6,
+                              color: 'var(--color-error, #b91c1c)',
+                            }}
+                          >
+                            Data shape blocks model choice
+                          </div>
+                          <div style={{ fontSize: '0.875rem' }}>
+                            {wizardResult.data_shape_message
+                              || 'Your prepared training data has no target field. Fix the data shape before picking a model.'}
+                          </div>
                         </div>
                       )}
                       {Array.isArray(wizardResult?.warnings) && wizardResult.warnings.length > 0 && (

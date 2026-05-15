@@ -3,7 +3,7 @@
 import asyncio
 import json
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import WebSocket
@@ -1274,6 +1274,142 @@ async def resume_training(
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Story 1.5 Gate 3: stuck-RUNNING reconciliation
+# ─────────────────────────────────────────────────────────────────────
+#
+# Training subprocess writes ``training_report.json`` with a
+# ``finished_at`` field when it exits cleanly. Normally the parent
+# service's monitor then flips ``experiments.status`` to COMPLETED or
+# FAILED. When the parent crashes / the API server restarts mid-run /
+# the websocket disconnects, that DB write-back can be lost — leaving
+# the row stuck on RUNNING forever. The reconciler below fixes those
+# rows on read (cheap, single-experiment) and at startup (sweep all
+# stale RUNNING rows once).
+
+
+_REPORT_TO_STATUS: dict[str, ExperimentStatus] = {
+    "completed": ExperimentStatus.COMPLETED,
+    "succeeded": ExperimentStatus.COMPLETED,
+    "failed": ExperimentStatus.FAILED,
+    "cancelled": ExperimentStatus.CANCELLED,
+    "canceled": ExperimentStatus.CANCELLED,
+}
+
+
+def _load_training_report(exp: Experiment) -> dict | None:
+    """Read the on-disk training_report.json for an experiment, or
+    None when the file is missing / unreadable. Read-only — never
+    mutates DB state itself."""
+    if not exp.output_dir:
+        return None
+    report_path = Path(exp.output_dir) / "training_report.json"
+    if not report_path.exists():
+        return None
+    try:
+        return json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _terminal_status_from_report(report: dict) -> ExperimentStatus | None:
+    """Map a training_report.json's signals to the right ExperimentStatus.
+    Returns None if the report doesn't show terminal completion."""
+    finished_at = report.get("finished_at")
+    if not finished_at:
+        return None
+    # Explicit status string wins when present.
+    status_value = str(report.get("status") or "").strip().lower()
+    if status_value in _REPORT_TO_STATUS:
+        return _REPORT_TO_STATUS[status_value]
+    # Fall back: an exit code field signals failure; otherwise assume
+    # success since finished_at is set.
+    exit_code = report.get("exit_code")
+    if isinstance(exit_code, int) and exit_code != 0:
+        return ExperimentStatus.FAILED
+    # Some reports use a top-level ``error`` field instead of
+    # exit_code; treat presence as failure.
+    if report.get("error") or report.get("fatal_error"):
+        return ExperimentStatus.FAILED
+    return ExperimentStatus.COMPLETED
+
+
+async def reconcile_experiment_if_stale(
+    db: AsyncSession, exp: Experiment
+) -> dict | None:
+    """If ``exp.status`` is RUNNING but the on-disk training_report.json
+    shows it's actually finished, flip the DB row to the right terminal
+    status. Returns a small report dict when a flip happened, ``None``
+    otherwise. Called from ``get_training_status`` on read."""
+    if exp.status != ExperimentStatus.RUNNING:
+        return None
+    report = _load_training_report(exp)
+    if report is None:
+        return None
+    terminal = _terminal_status_from_report(report)
+    if terminal is None:
+        return None
+
+    exp.status = terminal
+    if not exp.completed_at:
+        finished_iso = str(report.get("finished_at") or "")
+        try:
+            exp.completed_at = (
+                datetime.fromisoformat(finished_iso.replace("Z", "+00:00"))
+                if finished_iso
+                else datetime.now(timezone.utc)
+            )
+        except ValueError:
+            exp.completed_at = datetime.now(timezone.utc)
+    if (
+        terminal == ExperimentStatus.COMPLETED
+        and exp.final_train_loss is None
+    ):
+        loss_value = report.get("final_train_loss")
+        if isinstance(loss_value, (int, float)):
+            exp.final_train_loss = float(loss_value)
+    if (
+        terminal == ExperimentStatus.COMPLETED
+        and exp.final_eval_loss is None
+    ):
+        eval_loss = report.get("final_eval_loss")
+        if isinstance(eval_loss, (int, float)):
+            exp.final_eval_loss = float(eval_loss)
+    await db.flush()
+    return {
+        "experiment_id": exp.id,
+        "from_status": ExperimentStatus.RUNNING.value,
+        "to_status": terminal.value,
+        "finished_at": report.get("finished_at"),
+        "reconciled_by": "on_read",
+    }
+
+
+async def reconcile_stale_running_experiments(
+    db: AsyncSession, *, max_age_minutes: int = 60
+) -> list[dict]:
+    """Sweep every experiment in RUNNING state older than ``max_age_minutes``
+    and reconcile any whose on-disk report has finished. Intended to
+    run once at app startup. Returns a list of per-row reports so the
+    operator's log shows what was fixed."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    result = await db.execute(
+        select(Experiment).where(
+            Experiment.status == ExperimentStatus.RUNNING,
+            Experiment.started_at < cutoff,
+        )
+    )
+    stale = list(result.scalars().all())
+    reports: list[dict] = []
+    for exp in stale:
+        report = await reconcile_experiment_if_stale(db, exp)
+        if report is not None:
+            reports.append({**report, "reconciled_by": "startup_reaper"})
+    if reports:
+        await db.commit()
+    return reports
+
+
 async def get_training_status(
     db: AsyncSession,
     project_id: int,
@@ -1283,6 +1419,13 @@ async def get_training_status(
     exp = await _get_experiment_for_project(db, project_id, experiment_id)
     if not exp:
         raise ValueError(f"Experiment {experiment_id} not found in project {project_id}")
+
+    # Story 1.5 Gate 3: auto-flip RUNNING → terminal when the on-disk
+    # report shows the subprocess actually finished. Cheap (one JSON
+    # read) and idempotent — does nothing once the row is reconciled.
+    reconciliation = await reconcile_experiment_if_stale(db, exp)
+    if reconciliation is not None:
+        await db.commit()
 
     ckpt_result = await db.execute(
         select(Checkpoint)

@@ -111,6 +111,147 @@ def exact_match(prediction: str, reference: str) -> float:
     return 1.0 if _normalize_answer(prediction) == _normalize_answer(reference) else 0.0
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Story 1.5 Gate 2: schema-mismatch detection
+# ─────────────────────────────────────────────────────────────────────
+#
+# When the trainer was taught one output schema and the eval rubric
+# scores a different one, every row scores zero with a tiny per-row
+# "missing: <field>" hint that gets drowned under the headline FAIL
+# chip. The detector below pulls top-level JSON keys from a sample of
+# prediction/gold pairs and flags the mismatch as a top-level metric
+# so the UI can surface it above the headline number.
+
+_SCHEMA_MISMATCH_SAMPLE_CAP: int = 100
+_SCHEMA_MISMATCH_MIN_JSON_PAIRS: int = 5
+_SCHEMA_MISMATCH_RATIO_THRESHOLD: float = 0.80
+
+
+def _try_parse_top_level_keys(value: str) -> tuple[bool, frozenset[str]]:
+    """Return ``(is_json_object, frozenset_of_top_level_keys)``. The
+    bool lets the caller distinguish "non-JSON free-form text" from
+    "JSON object that happens to be empty"."""
+    if not isinstance(value, str):
+        return False, frozenset()
+    stripped = value.strip()
+    if not stripped:
+        return False, frozenset()
+    # Some teacher models wrap the JSON in ```json … ``` fences.
+    # Strip those before the structural shape check so the fence
+    # doesn't make us bail on otherwise-valid JSON.
+    if stripped.startswith("```"):
+        inner = stripped[3:]
+        if inner.lower().startswith("json"):
+            inner = inner[4:]
+        inner = inner.lstrip()
+        if inner.endswith("```"):
+            inner = inner[:-3].rstrip()
+        stripped = inner
+    if not stripped or stripped[0] != "{":
+        return False, frozenset()
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        # The full string didn't parse; try the longest prefix that
+        # ends at a balanced brace. This handles the common case of
+        # the model emitting trailing chatter after a valid JSON
+        # object.
+        depth = 0
+        end_idx = -1
+        for i, ch in enumerate(stripped):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i + 1
+                    break
+        if end_idx > 0:
+            try:
+                parsed = json.loads(stripped[:end_idx])
+            except (json.JSONDecodeError, ValueError):
+                return False, frozenset()
+        else:
+            return False, frozenset()
+    if not isinstance(parsed, dict):
+        return False, frozenset()
+    return True, frozenset(parsed.keys())
+
+
+def detect_schema_mismatch(
+    predictions: list[dict],
+    *,
+    sample_cap: int = _SCHEMA_MISMATCH_SAMPLE_CAP,
+    ratio_threshold: float = _SCHEMA_MISMATCH_RATIO_THRESHOLD,
+) -> dict | None:
+    """Return a schema_mismatch report dict when ≥``ratio_threshold``
+    of sampled JSON pairs have disjoint top-level keys; otherwise
+    ``None``. Task-agnostic: works whether the gold schema is
+    ``{entities}``, ``{summary}``, ``{intent}``, ``{chosen, rejected}``,
+    or anything else.
+
+    Returns ``None`` (i.e. silently no-op) when:
+      - Fewer than ``_SCHEMA_MISMATCH_MIN_JSON_PAIRS`` pairs parse as
+        JSON. Free-form text tasks are out of scope.
+      - The mismatch ratio is below the threshold (the eval handler's
+        own per-row diagnostics are sufficient signal).
+    """
+    sample = predictions[:sample_cap]
+    pairs_compared = 0
+    pairs_mismatched = 0
+    gold_key_universe: dict[frozenset[str], int] = {}
+    pred_key_universe: dict[frozenset[str], int] = {}
+
+    for row in sample:
+        if not isinstance(row, dict):
+            continue
+        pred_str = row.get("prediction")
+        gold_str = row.get("reference")
+        pred_is_json, pred_keys = _try_parse_top_level_keys(pred_str or "")
+        gold_is_json, gold_keys = _try_parse_top_level_keys(gold_str or "")
+        if not (pred_is_json and gold_is_json):
+            continue
+        pairs_compared += 1
+        gold_key_universe[gold_keys] = gold_key_universe.get(gold_keys, 0) + 1
+        pred_key_universe[pred_keys] = pred_key_universe.get(pred_keys, 0) + 1
+        if pred_keys.isdisjoint(gold_keys):
+            pairs_mismatched += 1
+
+    if pairs_compared < _SCHEMA_MISMATCH_MIN_JSON_PAIRS:
+        return None
+
+    ratio = pairs_mismatched / pairs_compared
+    if ratio < ratio_threshold:
+        return None
+
+    # Top-3 most common observed prediction-key-sets so the UI can
+    # show the operator exactly what shape the model is emitting.
+    top_observed = sorted(
+        pred_key_universe.items(), key=lambda kv: -kv[1]
+    )[:3]
+    top_expected = sorted(
+        gold_key_universe.items(), key=lambda kv: -kv[1]
+    )[:3]
+    return {
+        "ratio": round(ratio, 4),
+        "sample_size": pairs_compared,
+        "pairs_mismatched": pairs_mismatched,
+        "expected_top_keys": [
+            {"keys": sorted(k), "count": c} for k, c in top_expected
+        ],
+        "observed_top_keys": [
+            {"keys": sorted(k), "count": c} for k, c in top_observed
+        ],
+        "hint": (
+            "Predictions don't share top-level JSON keys with gold "
+            "answers. The trainer likely taught a different schema "
+            "than the eval scores against — check the adapter "
+            "contract's target_fields and verify training data "
+            "carries the eval schema."
+        ),
+    }
+
+
 def f1_score(prediction: str, reference: str) -> float:
     """SQuAD-style token-level F1 over normalized multisets.
 
@@ -957,6 +1098,14 @@ async def run_heldout_evaluation(
     metrics["evaluated_samples"] = len(predictions)
     metrics["inference"] = runtime
     metrics["modality_breakdown"] = modality_counts
+    # Story 1.5 Gate 2 — surface "the model is emitting a different
+    # JSON schema than gold" as a top-level metric so the UI banner
+    # appears above the headline F1 chip. Detector returns None when
+    # the eval is free-form text or when prediction/gold keys mostly
+    # agree, so this is a no-op for the common case.
+    schema_mismatch = detect_schema_mismatch(predictions)
+    if schema_mismatch is not None:
+        metrics["schema_mismatch"] = schema_mismatch
     result.metrics = metrics
 
     details = dict(result.details or {})

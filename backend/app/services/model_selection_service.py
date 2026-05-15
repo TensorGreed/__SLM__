@@ -744,8 +744,57 @@ def recommend_training_base_models(
     top_k: int = 3,
     adaptive_model_bias: dict[str, float] | None = None,
     adaptive_bias_label: str | None = None,
+    project_id: int | None = None,
 ) -> dict[str, Any]:
-    """Recommend base models from catalog registry using hardware/task heuristics."""
+    """Recommend base models from catalog registry using hardware/task heuristics.
+
+    When ``project_id`` is set and the project's prepared training data
+    fails the data-shape gate (zero target fields across the sampled
+    rows), we return early with ``blocked_by_data_shape=True`` and an
+    empty recommendation list. The recommender otherwise can't know
+    the data is mis-shaped and would happily pick a model that no
+    amount of training could salvage. Gate fires only on SFT-shaped
+    task profiles; domain_pretrain leaves the prep data unchanged."""
+    # ── Story 1.5 Gate 1: data-shape pre-scoring check ────────────
+    if project_id is not None:
+        from app.config import settings
+        from app.services.training_data_gate import (
+            verify_training_data_has_targets,
+        )
+
+        prepared_path = (
+            settings.DATA_DIR
+            / "projects"
+            / str(project_id)
+            / "prepared"
+            / "train.jsonl"
+        )
+        if prepared_path.exists():
+            gate_report = verify_training_data_has_targets(
+                prepared_path, training_mode="sft"
+            )
+            if not gate_report["ok"]:
+                return {
+                    "catalog_strategy": "blocked_by_data_shape_v1",
+                    "blocked_by_data_shape": True,
+                    "data_shape_message": gate_report["message"],
+                    "data_shape_report": gate_report,
+                    "recommendations": [],
+                    "recommendation_count": 0,
+                    "request": {
+                        "target_device": target_device,
+                        "primary_language": primary_language,
+                        "available_vram_gb": available_vram_gb,
+                        "task_profile": task_profile,
+                        "top_k": top_k,
+                        "project_id": project_id,
+                    },
+                    "warnings": [
+                        "Prepared training data has zero target fields; "
+                        "fix the dataset before picking a model."
+                    ],
+                }
+
     resolved_device = _normalize_target_device(target_device)
     resolved_language = _normalize_primary_language(primary_language)
     resolved_vram = _coerce_vram(available_vram_gb)
@@ -896,6 +945,7 @@ def recommend_training_base_models(
             "task_profile": resolved_task_profile,
             "top_k": resolved_top_k,
         },
+        "blocked_by_data_shape": False,
         "recommendation_count": len(recommendations),
         "recommendations": recommendations,
         "warnings": warnings,

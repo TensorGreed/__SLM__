@@ -39,9 +39,26 @@ interface InferenceMetrics {
     token_throughput_tps?: number;
 }
 
+/**
+ * Story 1.5 Gate 2 — the eval finalize step populates this field when
+ * ≥80% of prediction/gold pairs have disjoint top-level JSON keys.
+ * Task-agnostic: covers PII span-extraction, classification,
+ * summarization, alignment pairs, anything with a structured
+ * output schema.
+ */
+interface SchemaMismatchReport {
+    ratio: number;
+    sample_size: number;
+    pairs_mismatched: number;
+    expected_top_keys: Array<{ keys: string[]; count: number }>;
+    observed_top_keys: Array<{ keys: string[]; count: number }>;
+    hint: string;
+}
+
 interface EvalMetrics {
     scored_predictions?: ScoredPrediction[];
     inference?: InferenceMetrics;
+    schema_mismatch?: SchemaMismatchReport;
 }
 
 interface PredictionPreviewRow {
@@ -1622,6 +1639,79 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                     ))}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {samplePredictionsResult?.metrics?.schema_mismatch && (
+                <div
+                    className="card"
+                    data-testid="eval-schema-mismatch-banner"
+                    style={{
+                        border: '1px solid var(--color-error, #b91c1c)',
+                        background: 'rgba(185, 28, 28, 0.04)',
+                    }}
+                >
+                    <h3
+                        style={{
+                            color: 'var(--color-error, #b91c1c)',
+                            marginTop: 0,
+                        }}
+                    >
+                        Schema mismatch detected
+                        <span
+                            style={{
+                                marginLeft: 12,
+                                fontSize: '0.85rem',
+                                color: 'var(--text-secondary)',
+                                fontWeight: 400,
+                            }}
+                        >
+                            {(samplePredictionsResult.metrics.schema_mismatch.ratio * 100).toFixed(0)}%
+                            of{' '}
+                            {samplePredictionsResult.metrics.schema_mismatch.sample_size}
+                            {' '}sampled predictions don't share top-level keys with gold
+                        </span>
+                    </h3>
+                    <p style={{ margin: '0 0 var(--space-sm) 0' }}>
+                        {samplePredictionsResult.metrics.schema_mismatch.hint}
+                    </p>
+                    <div
+                        style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: 'var(--space-md)',
+                            fontSize: '0.85rem',
+                        }}
+                    >
+                        <div>
+                            <strong>Gold expects (top key sets):</strong>
+                            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                                {samplePredictionsResult.metrics.schema_mismatch.expected_top_keys.map((entry, idx) => (
+                                    <li key={`exp-${idx}`}>
+                                        <code>{entry.keys.length ? entry.keys.join(', ') : '∅'}</code>
+                                        {' '}
+                                        <span style={{ color: 'var(--text-tertiary)' }}>
+                                            ({entry.count}×)
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                        <div>
+                            <strong>Model emits (top key sets):</strong>
+                            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                                {samplePredictionsResult.metrics.schema_mismatch.observed_top_keys.map((entry, idx) => (
+                                    <li key={`obs-${idx}`}>
+                                        <code>{entry.keys.length ? entry.keys.join(', ') : '∅'}</code>
+                                        {' '}
+                                        <span style={{ color: 'var(--text-tertiary)' }}>
+                                            ({entry.count}×)
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
                     </div>
                 </div>

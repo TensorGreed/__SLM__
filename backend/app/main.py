@@ -186,6 +186,29 @@ async def lifespan(app: FastAPI):
         await ensure_default_domain_profile(db)
         await ensure_default_domain_pack(db)
         await db.commit()
+    # Story 1.5 Gate 3 — sweep any experiments stuck on RUNNING whose
+    # training_report.json shows they actually finished. Cheap (one
+    # query + a JSON read per stale row) and best-effort: failure
+    # logs and continues so a flaky filesystem can't keep the API
+    # from booting.
+    try:
+        from app.services.training_service import (
+            reconcile_stale_running_experiments,
+        )
+
+        async with async_session_factory() as db:
+            fixed = await reconcile_stale_running_experiments(db)
+            if fixed:
+                print(
+                    f"[startup] reconciled {len(fixed)} stuck-RUNNING "
+                    f"experiment(s): {[r['experiment_id'] for r in fixed]}",
+                    flush=True,
+                )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"[startup] stuck-RUNNING reconciliation skipped: {exc!r}",
+            flush=True,
+        )
     yield
 
 

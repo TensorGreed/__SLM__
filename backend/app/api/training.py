@@ -3102,6 +3102,7 @@ async def recommend_training_models(
         top_k=req.top_k,
         adaptive_model_bias=combined_bias,
         adaptive_bias_label=adaptive_label,
+        project_id=project_id,
     )
     return {
         "project_id": project_id,
