@@ -22,7 +22,7 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 | 1. Annotation & active learning | 1.3 Preference-pair annotation UI | SHIPPED · fd34cc6 | high |
 | 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED · needs baseline model | high |
 | 1. Annotation & active learning | 1.5 Training-eval contract gates (any task) | SHIPPED · 92cf7a5 | 🔥 |
-| 1. Annotation & active learning | 1.6 Promote labeled rows → training dataset | NOT STARTED | 🔥 closes annotation loop |
+| 1. Annotation & active learning | 1.6 Promote labeled rows → training dataset | SHIPPED · 8c5d109 | 🔥 closes annotation loop |
 | 2. Knowledge distillation | 2.1 Teacher logit capture | NOT STARTED | 🔥 differentiator |
 | 2. Knowledge distillation | 2.2 KD training recipe | NOT STARTED | 🔥 |
 | 2. Knowledge distillation | 2.3 Student-vs-teacher eval | NOT STARTED | high |
@@ -654,7 +654,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 ### Story 1.6 — Promote labeled rows → training dataset
 
-**Status**: NOT STARTED
+**Status**: SHIPPED · 8c5d109
 **As a** project owner who labeled 200 rows via the in-product annotation UI
 **I want** those labels to actually reach my training data
 **so that** the annotation feature isn't a dead-end — Stories 1.1–1.3
