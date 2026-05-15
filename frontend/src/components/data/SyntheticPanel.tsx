@@ -248,12 +248,15 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         }
     };
 
-    // Picker shows a random sample, not the whole corpus — a 74k-row
-    // project would otherwise stream ~37MB to the browser per click.
-    // The Sample-all-cleaned-chunks toggle on the span_extraction
-    // path handles the "use everything" case server-side.
-    const CHUNK_PICKER_SAMPLE_SIZE = 200;
+    // Default picker load size — a random sample of N chunks so the
+    // browser doesn't have to render a 74k-row list. "Load more"
+    // appends another N from the random pool when the user wants
+    // breadth; "Use all N chunks" sets the server-side auto-sample
+    // toggle to use the whole corpus without ever materializing it
+    // in the DOM.
+    const CHUNK_PICKER_PAGE_SIZE = 200;
     const [chunkPoolTotal, setChunkPoolTotal] = useState(0);
+    const [isLoadingMoreChunks, setIsLoadingMoreChunks] = useState(false);
 
     const loadChunks = async () => {
         setIsLoadingChunks(true);
@@ -262,7 +265,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 `/projects/${projectId}/cleaning/chunks`,
                 {
                     params: {
-                        limit: CHUNK_PICKER_SAMPLE_SIZE,
+                        limit: CHUNK_PICKER_PAGE_SIZE,
                         random_sample: true,
                     },
                 },
@@ -279,6 +282,51 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         } finally {
             setIsLoadingChunks(false);
         }
+    };
+
+    const loadMoreChunks = async () => {
+        if (isLoadingMoreChunks) return;
+        setIsLoadingMoreChunks(true);
+        try {
+            const res = await api.get(
+                `/projects/${projectId}/cleaning/chunks`,
+                {
+                    params: {
+                        limit: CHUNK_PICKER_PAGE_SIZE,
+                        random_sample: true,
+                    },
+                },
+            );
+            const fetched: any[] = res.data.chunks || [];
+            // Dedupe by (document_id, chunk_id) — random sampling can
+            // overlap; appending duplicates would confuse the picker.
+            setChunks((prev) => {
+                const seen = new Set(
+                    prev.map((c) => `${c.document_id}:${c.chunk_id}`),
+                );
+                const fresh = fetched
+                    .filter(
+                        (c) => !seen.has(`${c.document_id}:${c.chunk_id}`),
+                    )
+                    .map((c) => ({ ...c, selected: false }));
+                return [...prev, ...fresh];
+            });
+            setChunkPoolTotal(
+                Number(res.data.total ?? chunkPoolTotal),
+            );
+        } catch (err) {
+            toast.error('Failed to load more chunks.');
+        } finally {
+            setIsLoadingMoreChunks(false);
+        }
+    };
+
+    const useAllChunksFromPicker = () => {
+        setUseAllChunks(true);
+        setShowChunkPicker(false);
+        toast.success(
+            `Using all ${chunkPoolTotal.toLocaleString()} cleaned chunks — each batch will sample 4–8k tokens server-side.`,
+        );
     };
 
     const toggleChunk = (idx: number) => {
@@ -792,7 +840,19 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 </span>
                             )}
                         </h3>
-                        <div style={{ display: 'flex', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {generationMode === 'span_extraction'
+                                && chunkPoolTotal > chunks.length && (
+                                <button
+                                    className="btn btn-primary"
+                                    style={{ fontSize: 'var(--font-size-xs)' }}
+                                    onClick={useAllChunksFromPicker}
+                                    title={`Use the full pool of ${chunkPoolTotal.toLocaleString()} chunks. Each generation batch will sample 4–8k tokens randomly server-side — no need to load them all in the browser.`}
+                                    data-testid="span-use-all-from-picker"
+                                >
+                                    📦 Use all {chunkPoolTotal.toLocaleString()} (auto-sample per batch)
+                                </button>
+                            )}
                             <button
                                 className="btn btn-secondary"
                                 style={{ fontSize: 'var(--font-size-xs)' }}
@@ -802,7 +862,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             >
                                 {isLoadingChunks ? 'Loading…' : '🎲 Reroll sample'}
                             </button>
-                            <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: true })))}>Select All</button>
+                            <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: true })))}>Select all visible</button>
                             <button className="btn btn-secondary" style={{ fontSize: 'var(--font-size-xs)' }} onClick={() => setChunks(prev => prev.map(c => ({ ...c, selected: false })))}>Deselect All</button>
                         </div>
                     </div>
@@ -833,6 +893,25 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             <div style={{ textAlign: 'center', padding: 'var(--space-lg)', color: 'var(--text-tertiary)' }}>
                                 No chunks found. Run Data Cleaning on your documents first.
                             </div>
+                        )}
+                        {chunks.length > 0 && chunkPoolTotal > chunks.length && (
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={loadMoreChunks}
+                                disabled={isLoadingMoreChunks}
+                                style={{
+                                    fontSize: 'var(--font-size-xs)',
+                                    alignSelf: 'center',
+                                    marginTop: 'var(--space-sm)',
+                                }}
+                                data-testid="span-load-more-chunks"
+                                title={`Append another random ${CHUNK_PICKER_PAGE_SIZE} chunks to the picker (deduplicated). Or click "Use all" to skip the picker entirely and sample the whole pool server-side.`}
+                            >
+                                {isLoadingMoreChunks
+                                    ? 'Loading…'
+                                    : `+ Load ${CHUNK_PICKER_PAGE_SIZE} more (${chunks.length} of ${chunkPoolTotal.toLocaleString()} loaded)`}
+                            </button>
                         )}
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 'var(--space-md)' }}>
