@@ -384,9 +384,9 @@ class Phase87DemoProjectTests(unittest.TestCase):
         self.assertEqual(summary["slug"], "pii-detector")
         self.assertEqual(summary["adapter_id"], "structured-extraction")
         self.assertEqual(summary["task_profile"], "structured_extraction")
-        # The bundle ships 61 training rows and 25 gold rows.
+        # The bundle ships 61 training rows and 200 gold rows.
         self.assertEqual(summary["source_row_count"], 61)
-        self.assertEqual(summary["gold_row_count"], 25)
+        self.assertEqual(summary["gold_row_count"], 200)
 
         async def _inspect():
             async with async_session_factory() as db:

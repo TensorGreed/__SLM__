@@ -1,10 +1,200 @@
-{"key": "g1", "input": {"text": "Best headphones I've ever owned. The noise cancellation is unreal."}, "expected": {"label": "positive"}, "rationale": "Clear positive sentiment with intensifier."}
-{"key": "g2", "input": {"text": "Works as advertised. Nothing extraordinary, nothing broken."}, "expected": {"label": "neutral"}, "rationale": "Classic neutral — works but unremarkable."}
-{"key": "g3", "input": {"text": "Completely defective. Won't even turn on. Returning today."}, "expected": {"label": "negative"}, "rationale": "Clear negative — defective + return action."}
-{"key": "g4", "input": {"text": "I was skeptical at first but this thing is genuinely great."}, "expected": {"label": "positive"}, "rationale": "Tests turn-around / shift in sentiment to positive."}
-{"key": "g5", "input": {"text": "It's a screwdriver. It screws and unscrews. What else can I say."}, "expected": {"label": "neutral"}, "rationale": "Functional neutral — no opinion either way."}
-{"key": "g6", "input": {"text": "Broke after one use. Customer service ghosted me. Garbage."}, "expected": {"label": "negative"}, "rationale": "Strong negative + multiple complaints."}
-{"key": "g7", "input": {"text": "Genuinely the best money I've spent this year. Will buy again."}, "expected": {"label": "positive"}, "rationale": "Positive intent + intention to repurchase."}
-{"key": "g8", "input": {"text": "Decent but not great. Probably wouldn't recommend to a friend."}, "expected": {"label": "neutral"}, "rationale": "Tests boundary — slightly negative-leaning but not clearly negative."}
-{"key": "g9", "input": {"text": "Awful design. Cheap materials. Returned within an hour."}, "expected": {"label": "negative"}, "rationale": "Tests multi-attribute negative."}
-{"key": "g10", "input": {"text": "I love this product. Highly recommend!"}, "expected": {"label": "positive"}, "rationale": "Simplest possible positive — basic recall check."}
+{"key": "g001", "input": {"text": "Saved my preset and everything synced across devices instantly. Magical."}, "expected": {"label": "positive"}, "rationale": "Software UX praise."}
+{"key": "g002", "input": {"text": "Replacement part came in three days. Installation guide was sparse but enough."}, "expected": {"label": "neutral"}, "rationale": "Adequate documentation."}
+{"key": "g003", "input": {"text": "Documentation is current. Examples could be more varied."}, "expected": {"label": "neutral"}, "rationale": "Adequate-but-thin."}
+{"key": "g004", "input": {"text": "Movie was incoherent. The good actors were wasted on a bad script."}, "expected": {"label": "negative"}, "rationale": "Quality."}
+{"key": "g005", "input": {"text": "Park was open. Restrooms were clean. The playground was crowded."}, "expected": {"label": "neutral"}, "rationale": "Multi-observation."}
+{"key": "g006", "input": {"text": "Earbuds pair quickly to one device. Switching between two is fiddly."}, "expected": {"label": "neutral"}, "rationale": "Single-task fine, multi-task less so."}
+{"key": "g007", "input": {"text": "Sleep tracking finally gave me data I trust. Cross-checked with my watch."}, "expected": {"label": "positive"}, "rationale": "Data credibility."}
+{"key": "g008", "input": {"text": "The light in the bathroom was warm. The shower pressure was uneven."}, "expected": {"label": "neutral"}, "rationale": "Two neutral observations."}
+{"key": "g009", "input": {"text": "Restaurant was busy but seats turned over quickly enough."}, "expected": {"label": "neutral"}, "rationale": "Throughput acknowledgement."}
+{"key": "g010", "input": {"text": "Their tutorial videos are all from 2019 and reference removed features. Useless onboarding."}, "expected": {"label": "negative"}, "rationale": "Content stale + outdated."}
+{"key": "g011", "input": {"text": "Driver took the long way and the meter ran 40% over a normal fare."}, "expected": {"label": "negative"}, "rationale": "Trust violation."}
+{"key": "g012", "input": {"text": "Two flight delays, lost bag, and the agent at the desk shrugged. Awful trip."}, "expected": {"label": "negative"}, "rationale": "Multi-failure travel."}
+{"key": "g013", "input": {"text": "Color was approximately what the website showed. Fit was close to the size chart."}, "expected": {"label": "neutral"}, "rationale": "Approximate match."}
+{"key": "g014", "input": {"text": "Air filtering on this purifier dropped my allergy meds usage in half."}, "expected": {"label": "positive"}, "rationale": "Outcome-based."}
+{"key": "g015", "input": {"text": "Two-factor felt friction-free for once. The app is solid."}, "expected": {"label": "positive"}, "rationale": "UX praise + comparison."}
+{"key": "g016", "input": {"text": "The app's notifications cannot be turned off. It pings me at 2am about news."}, "expected": {"label": "negative"}, "rationale": "UX failure."}
+{"key": "g017", "input": {"text": "Software does what we hired it to do. Could be 30% faster."}, "expected": {"label": "neutral"}, "rationale": "Functional + room for improvement."}
+{"key": "g018", "input": {"text": "Driver was on time. Car was clean. Quiet ride."}, "expected": {"label": "neutral"}, "rationale": "Service neutrality."}
+{"key": "g019", "input": {"text": "Walking distance to the metro. Three flights of stairs in the building."}, "expected": {"label": "neutral"}, "rationale": "Travel trade-offs."}
+{"key": "g020", "input": {"text": "Driver refused to use the trunk for my luggage. Trip felt unsafe."}, "expected": {"label": "negative"}, "rationale": "Service refusal + safety."}
+{"key": "g021", "input": {"text": "My grandmother could use this app unaided. That's the highest praise I have."}, "expected": {"label": "positive"}, "rationale": "Accessibility."}
+{"key": "g022", "input": {"text": "Headphones leak so much sound my coworkers could follow my podcast."}, "expected": {"label": "negative"}, "rationale": "Function failure."}
+{"key": "g023", "input": {"text": "Battery dies in three hours. Cannot use it for a single workday."}, "expected": {"label": "negative"}, "rationale": "Quantified failure."}
+{"key": "g024", "input": {"text": "Refrigerator's freezer compartment cannot hold zero. Ice cream is always soft."}, "expected": {"label": "negative"}, "rationale": "Spec failure."}
+{"key": "g025", "input": {"text": "Tea was hot, the pastry was day-of. Service was attentive but slow."}, "expected": {"label": "neutral"}, "rationale": "Mixed service."}
+{"key": "g026", "input": {"text": "Listing said quiet street. Construction starts under the bedroom window at 6am."}, "expected": {"label": "negative"}, "rationale": "Misrepresentation."}
+{"key": "g027", "input": {"text": "My six-year-old reads this book to herself now. Couldn't be happier."}, "expected": {"label": "positive"}, "rationale": "Family outcome."}
+{"key": "g028", "input": {"text": "Their CLI is a joy. Tab completion is comprehensive and the docs are excellent."}, "expected": {"label": "positive"}, "rationale": "Developer experience."}
+{"key": "g029", "input": {"text": "Loved every chapter. The pacing kept me up past midnight twice."}, "expected": {"label": "positive"}, "rationale": "Book engagement praise."}
+{"key": "g030", "input": {"text": "Even after a year of daily wear, no scratches and no battery drift."}, "expected": {"label": "positive"}, "rationale": "Long-term durability."}
+{"key": "g031", "input": {"text": "Best headphones I've ever owned. The noise cancellation is unreal."}, "expected": {"label": "positive"}, "rationale": "Clear positive — intensifier."}
+{"key": "g032", "input": {"text": "Conference WiFi held up for chat and slides. Video calls were rough."}, "expected": {"label": "neutral"}, "rationale": "Capability dependent."}
+{"key": "g033", "input": {"text": "Customer success rep proactively flagged we'd be hitting our plan limit. Nice touch."}, "expected": {"label": "positive"}, "rationale": "Proactive."}
+{"key": "g034", "input": {"text": "Vacuum suction is so weak it can't pick up loose hair off carpet."}, "expected": {"label": "negative"}, "rationale": "Function failure."}
+{"key": "g035", "input": {"text": "Class size was advertised as small. There were twelve of us."}, "expected": {"label": "neutral"}, "rationale": "Match to expectation."}
+{"key": "g036", "input": {"text": "Driver took the route the app suggested. Cabin was a little warm."}, "expected": {"label": "neutral"}, "rationale": "Service + small detail."}
+{"key": "g037", "input": {"text": "Their bug-fix turnaround is the best I've seen from any vendor."}, "expected": {"label": "positive"}, "rationale": "Service responsiveness."}
+{"key": "g038", "input": {"text": "My order arrived complete and on time. Box was a little scuffed."}, "expected": {"label": "neutral"}, "rationale": "Cosmetic detail."}
+{"key": "g039", "input": {"text": "Sweater pilled badly after a single wash on the gentle cycle. Disappointing fiber quality."}, "expected": {"label": "negative"}, "rationale": "Materials."}
+{"key": "g040", "input": {"text": "Pizza was edible. The crust was a little dry. The toppings were the right amount."}, "expected": {"label": "neutral"}, "rationale": "Mixed dimensions averaging out."}
+{"key": "g041", "input": {"text": "Shipping was a day early and the box was well-protected. Perfect transaction."}, "expected": {"label": "positive"}, "rationale": "Logistics praise."}
+{"key": "g042", "input": {"text": "Restaurant accommodated a dietary restriction without fuss. Portion was on the small side."}, "expected": {"label": "neutral"}, "rationale": "Accommodation + portion."}
+{"key": "g043", "input": {"text": "Power bank charges as advertised. Cable was not included."}, "expected": {"label": "neutral"}, "rationale": "Spec + small surprise."}
+{"key": "g044", "input": {"text": "Setup took the documented time. No surprises either way."}, "expected": {"label": "neutral"}, "rationale": "Met expectation, no excitement."}
+{"key": "g045", "input": {"text": "It does the one thing it advertises. I expected slightly more for the price."}, "expected": {"label": "neutral"}, "rationale": "Met spec, missed expectation."}
+{"key": "g046", "input": {"text": "Toy paint chipped within a day. Choking hazard for the recipient's age range."}, "expected": {"label": "negative"}, "rationale": "Safety."}
+{"key": "g047", "input": {"text": "Bookstore had a small selection of what I was looking for. Staff were polite."}, "expected": {"label": "neutral"}, "rationale": "Inventory + service."}
+{"key": "g048", "input": {"text": "Coffee tasted burnt. Pastry was day-old at best. Will not return."}, "expected": {"label": "negative"}, "rationale": "Food + intent."}
+{"key": "g049", "input": {"text": "Doors don't lock reliably. Had to wedge a chair behind one overnight."}, "expected": {"label": "negative"}, "rationale": "Safety."}
+{"key": "g050", "input": {"text": "Cargo space swallowed everything we packed for two weeks abroad."}, "expected": {"label": "positive"}, "rationale": "Capacity praise."}
+{"key": "g051", "input": {"text": "Dishwasher cleans dishes. It's loud during the dry cycle."}, "expected": {"label": "neutral"}, "rationale": "Functional + minor flaw."}
+{"key": "g052", "input": {"text": "Driver smelled strongly of smoke. Made the 40-minute ride miserable."}, "expected": {"label": "negative"}, "rationale": "Hygiene."}
+{"key": "g053", "input": {"text": "Soup came cold. Server was unbothered when we mentioned it. Won't return."}, "expected": {"label": "negative"}, "rationale": "Food + service + intent."}
+{"key": "g054", "input": {"text": "Two-day shipping arrived on day two. Box was reused. Item was new."}, "expected": {"label": "neutral"}, "rationale": "Standard delivery."}
+{"key": "g055", "input": {"text": "Cabin smelled like wet dog from the first minute. Driver had no air freshener."}, "expected": {"label": "negative"}, "rationale": "Hygiene + unprepared."}
+{"key": "g056", "input": {"text": "Sushi was clearly cut fresh and the rice was perfect. Going back next week."}, "expected": {"label": "positive"}, "rationale": "Food quality + return."}
+{"key": "g057", "input": {"text": "The wifi works. Speeds are fine for browsing, slow for downloads."}, "expected": {"label": "neutral"}, "rationale": "Variable adequacy."}
+{"key": "g058", "input": {"text": "Massage was the standard 50 minutes. Pressure was as requested."}, "expected": {"label": "neutral"}, "rationale": "Met spec exactly."}
+{"key": "g059", "input": {"text": "Bag fits the laptop. Strap is okay. Color is darker in person."}, "expected": {"label": "neutral"}, "rationale": "Mixed-but-equal observations."}
+{"key": "g060", "input": {"text": "Hotel had loud construction starting at 7am every day. They knew and didn't warn us."}, "expected": {"label": "negative"}, "rationale": "Disclosure failure."}
+{"key": "g061", "input": {"text": "Tour was on schedule. Guide read from notes most of the time."}, "expected": {"label": "neutral"}, "rationale": "Effort observed, low engagement."}
+{"key": "g062", "input": {"text": "App syncs across devices, mostly. Once a week I have to log out and back in."}, "expected": {"label": "neutral"}, "rationale": "Functional with caveat."}
+{"key": "g063", "input": {"text": "Phone has a green tint visible against any white background. Replacement also had it."}, "expected": {"label": "negative"}, "rationale": "Manufacturing defect."}
+{"key": "g064", "input": {"text": "Sound quality at concert volume with zero distortion. Highly recommend."}, "expected": {"label": "positive"}, "rationale": "Technical praise + recommendation."}
+{"key": "g065", "input": {"text": "Bakery's sourdough has the kind of crust I haven't had since I was in Lyon."}, "expected": {"label": "positive"}, "rationale": "Authenticity praise."}
+{"key": "g066", "input": {"text": "Battery life exceeded the advertised hours. Easily a full day of heavy use."}, "expected": {"label": "positive"}, "rationale": "Beat expectations."}
+{"key": "g067", "input": {"text": "Hummus was creamy, garlic just right, and the warm pita kept coming. Excellent."}, "expected": {"label": "positive"}, "rationale": "Food multi-attribute."}
+{"key": "g068", "input": {"text": "Their integrations Just Work™. We had data flowing in twenty minutes."}, "expected": {"label": "positive"}, "rationale": "Speed of integration."}
+{"key": "g069", "input": {"text": "Hiking boots felt broken in by the third mile. No blisters at all."}, "expected": {"label": "positive"}, "rationale": "Comfort."}
+{"key": "g070", "input": {"text": "Pancakes were fine. Syrup was the generic kind. Coffee was acceptable."}, "expected": {"label": "neutral"}, "rationale": "Diner neutrality."}
+{"key": "g071", "input": {"text": "Bike fit was meticulous and my back hasn't ached on rides since."}, "expected": {"label": "positive"}, "rationale": "Outcome-based praise."}
+{"key": "g072", "input": {"text": "Tracks calories effortlessly and the streak feature actually motivates me."}, "expected": {"label": "positive"}, "rationale": "Feature efficacy."}
+{"key": "g073", "input": {"text": "Their CSV import handled my messy file without complaining once."}, "expected": {"label": "positive"}, "rationale": "Robustness praise."}
+{"key": "g074", "input": {"text": "Pricing tier covered our needs for now. We will reassess next quarter."}, "expected": {"label": "neutral"}, "rationale": "Provisional adequacy."}
+{"key": "g075", "input": {"text": "Update broke the only feature I used the software for. No rollback path."}, "expected": {"label": "negative"}, "rationale": "Regression."}
+{"key": "g076", "input": {"text": "Restored my full workflow after a hard reset in under two minutes. Lifesaver."}, "expected": {"label": "positive"}, "rationale": "Reliability."}
+{"key": "g077", "input": {"text": "The keyboard started double-typing within a month. Repair quote was half the device price."}, "expected": {"label": "negative"}, "rationale": "Early failure + repair gouge."}
+{"key": "g078", "input": {"text": "Carpet had stains that pre-existed our stay. Manager refused to move us."}, "expected": {"label": "negative"}, "rationale": "Cleanliness + escalation."}
+{"key": "g079", "input": {"text": "Insurance claim took six months and required a lawyer to move it along."}, "expected": {"label": "negative"}, "rationale": "Process failure."}
+{"key": "g080", "input": {"text": "Newsletter shows up in my inbox each week. About half the articles are relevant to me."}, "expected": {"label": "neutral"}, "rationale": "Frequency + hit-rate."}
+{"key": "g081", "input": {"text": "Dryer beeps loudly when done. Drying time matches the dial."}, "expected": {"label": "neutral"}, "rationale": "Function + sound."}
+{"key": "g082", "input": {"text": "Phone case adds protection. Adds noticeable bulk too."}, "expected": {"label": "neutral"}, "rationale": "Trade-off."}
+{"key": "g083", "input": {"text": "Vacation rental host left a welcome basket and clear instructions for everything."}, "expected": {"label": "positive"}, "rationale": "Hosting excellence."}
+{"key": "g084", "input": {"text": "Tasting menu paced perfectly, sommelier nailed every pairing."}, "expected": {"label": "positive"}, "rationale": "Hospitality flow."}
+{"key": "g085", "input": {"text": "Subscription page hides cancellation behind three confirmation modals."}, "expected": {"label": "negative"}, "rationale": "Dark pattern."}
+{"key": "g086", "input": {"text": "Eco-mode actually halved our electricity bill. Numbers don't lie."}, "expected": {"label": "positive"}, "rationale": "Quantified benefit."}
+{"key": "g087", "input": {"text": "Couch fit through the door with two inches to spare. Cushions are firm."}, "expected": {"label": "neutral"}, "rationale": "Logistic + tactile."}
+{"key": "g088", "input": {"text": "Crisp screen, snappy keyboard, and the trackpad finally rivals the competition."}, "expected": {"label": "positive"}, "rationale": "Component quality."}
+{"key": "g089", "input": {"text": "Game crashes to desktop every 30 minutes. Patch notes don't mention it."}, "expected": {"label": "negative"}, "rationale": "Stability."}
+{"key": "g090", "input": {"text": "Plumber came when scheduled. Job took roughly what was quoted."}, "expected": {"label": "neutral"}, "rationale": "Trade fulfillment."}
+{"key": "g091", "input": {"text": "Repair shop got it done same day for less than the quote. Honest folks."}, "expected": {"label": "positive"}, "rationale": "Service value."}
+{"key": "g092", "input": {"text": "Headset is comfortable for an hour. After two, my ears start to hurt."}, "expected": {"label": "neutral"}, "rationale": "Conditional comfort."}
+{"key": "g093", "input": {"text": "Charger stopped working after two weeks. Warranty process took six emails to start."}, "expected": {"label": "negative"}, "rationale": "Early failure + friction."}
+{"key": "g094", "input": {"text": "Their bookkeeping flow finally made tax season painless this year."}, "expected": {"label": "positive"}, "rationale": "Workflow improvement."}
+{"key": "g095", "input": {"text": "Worked perfectly out of the box, no fiddling required. Beautifully done."}, "expected": {"label": "positive"}, "rationale": "Setup ease."}
+{"key": "g096", "input": {"text": "Their cancellation flow was respectful and quick. Refunded the same day."}, "expected": {"label": "positive"}, "rationale": "Exit experience."}
+{"key": "g097", "input": {"text": "Returns were processed in the advertised window. Refund showed up day eight."}, "expected": {"label": "neutral"}, "rationale": "Met process."}
+{"key": "g098", "input": {"text": "Hotel was a short walk to dinner spots. The building was on the older side."}, "expected": {"label": "neutral"}, "rationale": "Location + age."}
+{"key": "g099", "input": {"text": "Refurb arrived looking new. Battery health 97%. Couldn't ask for more."}, "expected": {"label": "positive"}, "rationale": "Refurbished product praise."}
+{"key": "g100", "input": {"text": "Their data export is a 300MB XML file. No CSV, no JSON, no API."}, "expected": {"label": "negative"}, "rationale": "Format hostility."}
+{"key": "g101", "input": {"text": "Steakhouse with seafood ambitions — got both wrong. Disappointing all around."}, "expected": {"label": "negative"}, "rationale": "Scope failure."}
+{"key": "g102", "input": {"text": "Editor handles 500MB files without breaking a sweat. Tooling I'd actually pay for."}, "expected": {"label": "positive"}, "rationale": "Performance praise."}
+{"key": "g103", "input": {"text": "Hostel had bedbug bites on three of four nights. Got a partial refund only after escalating."}, "expected": {"label": "negative"}, "rationale": "Cleanliness + resolution gap."}
+{"key": "g104", "input": {"text": "Picked this up on a whim and now I use it daily. Absolute steal."}, "expected": {"label": "positive"}, "rationale": "Discovery + frequent use."}
+{"key": "g105", "input": {"text": "This recipe finally taught me how to actually make decent risotto at home."}, "expected": {"label": "positive"}, "rationale": "Useful instruction."}
+{"key": "g106", "input": {"text": "Adequate for the price. I'd buy again if mine broke."}, "expected": {"label": "neutral"}, "rationale": "Conditional satisfaction."}
+{"key": "g107", "input": {"text": "Trainer spent more time on his phone than with the group. Refund request denied."}, "expected": {"label": "negative"}, "rationale": "Effort + denial."}
+{"key": "g108", "input": {"text": "Class was structured around standard exercises. Instructor was competent."}, "expected": {"label": "neutral"}, "rationale": "Standard execution."}
+{"key": "g109", "input": {"text": "Drone hovered rock-steady in 30 km/h winds. Genuinely impressive flight controller."}, "expected": {"label": "positive"}, "rationale": "Engineering."}
+{"key": "g110", "input": {"text": "The restaurant takes reservations. Tables are close together. Volume gets loud after 8pm."}, "expected": {"label": "neutral"}, "rationale": "Factual observations."}
+{"key": "g111", "input": {"text": "The book is mostly padding. The two good chapters are buried in 300 forgettable ones."}, "expected": {"label": "negative"}, "rationale": "Content quality."}
+{"key": "g112", "input": {"text": "The food was fine. Service was fine. We will probably try somewhere else next time."}, "expected": {"label": "neutral"}, "rationale": "Lukewarm with mild negative lean."}
+{"key": "g113", "input": {"text": "Trainer was knowledgeable, patient, and made even the hardest sets feel doable."}, "expected": {"label": "positive"}, "rationale": "Service quality."}
+{"key": "g114", "input": {"text": "The hotel charged me three times for the same incidental. Took four calls to reverse."}, "expected": {"label": "negative"}, "rationale": "Billing failure + escalation."}
+{"key": "g115", "input": {"text": "Restaurant said our reservation was unconfirmed despite the email proving otherwise."}, "expected": {"label": "negative"}, "rationale": "Trust + dispute."}
+{"key": "g116", "input": {"text": "Crystal clear video on a slow hotel connection. No idea how they pulled it off."}, "expected": {"label": "positive"}, "rationale": "Performance beyond expectation."}
+{"key": "g117", "input": {"text": "Knife dulled within a week of light use. The 'lifetime' warranty is unrechable."}, "expected": {"label": "negative"}, "rationale": "Quality + warranty."}
+{"key": "g118", "input": {"text": "Coffee was hot. Not great, not bad. Filled the cup."}, "expected": {"label": "neutral"}, "rationale": "Functional neutrality."}
+{"key": "g119", "input": {"text": "Massage worked out every knot I came in with. Booked again on the way out."}, "expected": {"label": "positive"}, "rationale": "Service efficacy + return."}
+{"key": "g120", "input": {"text": "Restaurant ran out of half the menu by 7pm on a Saturday. Why open?"}, "expected": {"label": "negative"}, "rationale": "Operational failure."}
+{"key": "g121", "input": {"text": "Camera in low light is genuinely shocking — phones don't usually do this well."}, "expected": {"label": "positive"}, "rationale": "Technical excellence."}
+{"key": "g122", "input": {"text": "After a year, this jacket still looks new even after weekly use."}, "expected": {"label": "positive"}, "rationale": "Durability over time."}
+{"key": "g123", "input": {"text": "Tour guide knew every detail and adjusted the pace to the group. Stellar."}, "expected": {"label": "positive"}, "rationale": "Service personalization."}
+{"key": "g124", "input": {"text": "The lemon tart was the highlight — light, citrusy, and not too sweet."}, "expected": {"label": "positive"}, "rationale": "Specific food highlight."}
+{"key": "g125", "input": {"text": "Hotel staff went out of their way to make us feel welcome. Will book again next year."}, "expected": {"label": "positive"}, "rationale": "Service praise + return intent."}
+{"key": "g126", "input": {"text": "Hotel check-in took about 20 minutes due to a queue. Once at the desk it was quick."}, "expected": {"label": "neutral"}, "rationale": "Mixed wait."}
+{"key": "g127", "input": {"text": "Completely defective. Won't even turn on. Returning today."}, "expected": {"label": "negative"}, "rationale": "Clear negative — defective + return."}
+{"key": "g128", "input": {"text": "Their dev support engineer found my issue faster than I could explain it."}, "expected": {"label": "positive"}, "rationale": "Technical support."}
+{"key": "g129", "input": {"text": "Coffee notes were exactly as described — caramel and stone fruit, very clean cup."}, "expected": {"label": "positive"}, "rationale": "Product accuracy."}
+{"key": "g130", "input": {"text": "Software updates come on time. Some adds features I don't use."}, "expected": {"label": "neutral"}, "rationale": "Functional + indifferent."}
+{"key": "g131", "input": {"text": "Works as advertised. Nothing extraordinary, nothing broken."}, "expected": {"label": "neutral"}, "rationale": "Classic neutral — works but unremarkable."}
+{"key": "g132", "input": {"text": "Returns require paying shipping AND a 15% restocking fee. Buried in the FAQ."}, "expected": {"label": "negative"}, "rationale": "Hidden cost."}
+{"key": "g133", "input": {"text": "Two refund requests sent. Both ignored. Filed a chargeback this morning."}, "expected": {"label": "negative"}, "rationale": "Escalation."}
+{"key": "g134", "input": {"text": "The new dashboard is intuitive and saved me hours of monthly reporting."}, "expected": {"label": "positive"}, "rationale": "Productivity praise."}
+{"key": "g135", "input": {"text": "The room had a window. View was a parking lot. Bed was comfortable."}, "expected": {"label": "neutral"}, "rationale": "Mixed attributes."}
+{"key": "g136", "input": {"text": "Lecture was unprepared. Slides were last year's with the date Sharpied over."}, "expected": {"label": "negative"}, "rationale": "Effort failure."}
+{"key": "g137", "input": {"text": "Helmet arrived with cracked padding inside. Definitely not safe."}, "expected": {"label": "negative"}, "rationale": "Safety."}
+{"key": "g138", "input": {"text": "Lobster roll lived up to every Yelp review I had read on the way there."}, "expected": {"label": "positive"}, "rationale": "Reputation matched."}
+{"key": "g139", "input": {"text": "Reliable, fast, and gorgeous to look at. No regrets at all."}, "expected": {"label": "positive"}, "rationale": "Composite positive."}
+{"key": "g140", "input": {"text": "Customer support resolved my issue in under five minutes. Genuinely impressed."}, "expected": {"label": "positive"}, "rationale": "Positive service interaction."}
+{"key": "g141", "input": {"text": "Hair color came out two shades darker than what we agreed. Stylist blamed my hair."}, "expected": {"label": "negative"}, "rationale": "Service + blame."}
+{"key": "g142", "input": {"text": "Tickets were easy to purchase online. The venue line moved at a normal pace."}, "expected": {"label": "neutral"}, "rationale": "Smooth + ordinary."}
+{"key": "g143", "input": {"text": "Air conditioning brought the room down to 23C. It took about 20 minutes."}, "expected": {"label": "neutral"}, "rationale": "Functional + timed."}
+{"key": "g144", "input": {"text": "Movie theater seats reclined. The audio was a touch quiet."}, "expected": {"label": "neutral"}, "rationale": "Mixed exact details."}
+{"key": "g145", "input": {"text": "Wireless connection holds steady but speeds vary throughout the day."}, "expected": {"label": "neutral"}, "rationale": "Variable performance."}
+{"key": "g146", "input": {"text": "Pasta was hand-rolled, sauce was a revelation, and the wine pairing was spot on."}, "expected": {"label": "positive"}, "rationale": "Composite food praise."}
+{"key": "g147", "input": {"text": "Bike-share rebalances often enough that I always find one nearby."}, "expected": {"label": "positive"}, "rationale": "Service reliability."}
+{"key": "g148", "input": {"text": "Course materials were five years out of date. Examples reference deprecated APIs."}, "expected": {"label": "negative"}, "rationale": "Content currency."}
+{"key": "g149", "input": {"text": "Streaming buffered every 10 minutes on a fiber connection. Their CDN is broken."}, "expected": {"label": "negative"}, "rationale": "Service performance."}
+{"key": "g150", "input": {"text": "Three months in and the keyboard still feels brand new. Worth every penny."}, "expected": {"label": "positive"}, "rationale": "Durability + value praise."}
+{"key": "g151", "input": {"text": "Audiobook narrator brought every character to life. Couldn't stop listening."}, "expected": {"label": "positive"}, "rationale": "Audio production."}
+{"key": "g152", "input": {"text": "Plumber was late, broke a tile, and charged extra to replace it."}, "expected": {"label": "negative"}, "rationale": "Service + collateral damage."}
+{"key": "g153", "input": {"text": "The room view was breathtaking and the bed might be the most comfortable I've slept in."}, "expected": {"label": "positive"}, "rationale": "Travel attributes."}
+{"key": "g154", "input": {"text": "Subscription auto-renewed twice after I cancelled. Three months to fully unwind."}, "expected": {"label": "negative"}, "rationale": "Billing escape failure."}
+{"key": "g155", "input": {"text": "Movie had decent moments. Story didn't quite land. We finished it."}, "expected": {"label": "neutral"}, "rationale": "Mixed leaning slightly negative."}
+{"key": "g156", "input": {"text": "Therapist asked good questions in the first session. We'll see how the next one goes."}, "expected": {"label": "neutral"}, "rationale": "Reserved judgment."}
+{"key": "g157", "input": {"text": "Game runs at 4K 60 without drops. Best port I've played in years."}, "expected": {"label": "positive"}, "rationale": "Performance gaming."}
+{"key": "g158", "input": {"text": "Show was sold out. We got tickets to the next night without much hassle."}, "expected": {"label": "neutral"}, "rationale": "Inconvenience handled."}
+{"key": "g159", "input": {"text": "Their CLI silently corrupted my config file. Hours of work to rebuild."}, "expected": {"label": "negative"}, "rationale": "Data loss."}
+{"key": "g160", "input": {"text": "Shoes fit true to size. Arch support was minimal."}, "expected": {"label": "neutral"}, "rationale": "Mixed fit detail."}
+{"key": "g161", "input": {"text": "My eight-year-old laughed all the way through. Already booked the sequel."}, "expected": {"label": "positive"}, "rationale": "Family enjoyment."}
+{"key": "g162", "input": {"text": "Got what I ordered. Packaging was generic. Delivery was on the late side of the window."}, "expected": {"label": "neutral"}, "rationale": "Functional fulfillment."}
+{"key": "g163", "input": {"text": "Trail was marked but signs faded in places. We didn't get lost."}, "expected": {"label": "neutral"}, "rationale": "Partial completion."}
+{"key": "g164", "input": {"text": "Three different agents gave three different answers. Nobody owned the case."}, "expected": {"label": "negative"}, "rationale": "Service inconsistency."}
+{"key": "g165", "input": {"text": "Dress arrived with a tear on the seam. Customer service ignored two emails."}, "expected": {"label": "negative"}, "rationale": "Defect + unresponsive."}
+{"key": "g166", "input": {"text": "Pizza arrived hot, dough was perfect, and the toppings were generous."}, "expected": {"label": "positive"}, "rationale": "Multi-attribute food praise."}
+{"key": "g167", "input": {"text": "Battery indicator lies. Says 30% then shuts off without warning."}, "expected": {"label": "negative"}, "rationale": "Trust failure."}
+{"key": "g168", "input": {"text": "Salad was generous. Dressing was on the salty side. I'd order it again."}, "expected": {"label": "neutral"}, "rationale": "Mixed-with-positive-lean."}
+{"key": "g169", "input": {"text": "Pool was closed all three days we were there. Resort didn't mention it at check-in."}, "expected": {"label": "negative"}, "rationale": "Disclosure."}
+{"key": "g170", "input": {"text": "The novel had three protagonists. Two were memorable."}, "expected": {"label": "neutral"}, "rationale": "Mixed character work."}
+{"key": "g171", "input": {"text": "My order was missing two items. Replacement shipping was billed to me."}, "expected": {"label": "negative"}, "rationale": "Missing + extra cost."}
+{"key": "g172", "input": {"text": "Hotel was clean, breakfast was standard, location was central enough."}, "expected": {"label": "neutral"}, "rationale": "Multi-attribute mediocre."}
+{"key": "g173", "input": {"text": "Tickets were oversold. They offered a $20 credit for being denied entry."}, "expected": {"label": "negative"}, "rationale": "Compensation inadequacy."}
+{"key": "g174", "input": {"text": "Concierge anticipated needs I hadn't even thought of yet. Five stars."}, "expected": {"label": "positive"}, "rationale": "Proactive service."}
+{"key": "g175", "input": {"text": "Steak was overcooked and the sides were salty enough to be inedible. Skip this place."}, "expected": {"label": "negative"}, "rationale": "Multi-flaw food."}
+{"key": "g176", "input": {"text": "Coverage where my old carrier had zero bars. Switched and never looked back."}, "expected": {"label": "positive"}, "rationale": "Comparative praise."}
+{"key": "g177", "input": {"text": "Trainer pushed exercises that aggravated an injury I had clearly mentioned."}, "expected": {"label": "negative"}, "rationale": "Service + harm."}
+{"key": "g178", "input": {"text": "Streaming quality at 1080p on a budget plan looks like 4K elsewhere."}, "expected": {"label": "positive"}, "rationale": "Value praise."}
+{"key": "g179", "input": {"text": "My deposit was withheld for damages I documented before move-in."}, "expected": {"label": "negative"}, "rationale": "Trust + dispute."}
+{"key": "g180", "input": {"text": "My account was suspended without warning and support takes 48 hours to even read tickets."}, "expected": {"label": "negative"}, "rationale": "Account + service."}
+{"key": "g181", "input": {"text": "App crashes whenever I try to upload a file over 5MB. Useless for my workflow."}, "expected": {"label": "negative"}, "rationale": "Feature failure."}
+{"key": "g182", "input": {"text": "Soundbar pairs flawlessly and the dialogue clarity setting actually works."}, "expected": {"label": "positive"}, "rationale": "Feature works as advertised."}
+{"key": "g183", "input": {"text": "Cleanup-after-cooking is basically nil thanks to the new pan. Game changer."}, "expected": {"label": "positive"}, "rationale": "Time saved."}
+{"key": "g184", "input": {"text": "Dental visit started 45 minutes late and the hygienist seemed rushed."}, "expected": {"label": "negative"}, "rationale": "Wait + quality."}
+{"key": "g185", "input": {"text": "Charger cable frayed at the connector after a month of normal use."}, "expected": {"label": "negative"}, "rationale": "Materials."}
+{"key": "g186", "input": {"text": "Book had a strong start and a flat middle. Ending was acceptable."}, "expected": {"label": "neutral"}, "rationale": "Mixed-by-section."}
+{"key": "g187", "input": {"text": "Cleaner left the apartment in better shape than I'd ever managed myself."}, "expected": {"label": "positive"}, "rationale": "Service quality."}
+{"key": "g188", "input": {"text": "Subscription auto-renewed on the right date. Charge was correct."}, "expected": {"label": "neutral"}, "rationale": "Operational neutrality."}
+{"key": "g189", "input": {"text": "Photo prints came back saturated but not garish — exactly what I wanted."}, "expected": {"label": "positive"}, "rationale": "Color accuracy."}
+{"key": "g190", "input": {"text": "Hotel breakfast had eggs, bread, and fruit. Coffee was acceptable."}, "expected": {"label": "neutral"}, "rationale": "Standard buffet."}
+{"key": "g191", "input": {"text": "Onboarding flow was the clearest I've seen — three steps and I was running."}, "expected": {"label": "positive"}, "rationale": "UX onboarding."}
+{"key": "g192", "input": {"text": "They lost my luggage on a one-leg domestic flight. Three days to return it."}, "expected": {"label": "negative"}, "rationale": "Logistics."}
+{"key": "g193", "input": {"text": "Restaurant brought the wrong dish twice. Server got defensive when we pointed it out."}, "expected": {"label": "negative"}, "rationale": "Error + attitude."}
+{"key": "g194", "input": {"text": "Their support chatbot routed me in a loop for 40 minutes. Never reached a human."}, "expected": {"label": "negative"}, "rationale": "Service routing."}
+{"key": "g195", "input": {"text": "Headphones disconnect every time I move my head. Useless on a walk."}, "expected": {"label": "negative"}, "rationale": "Function failure."}
+{"key": "g196", "input": {"text": "Recliner went all the way back. Lever takes some force to engage."}, "expected": {"label": "neutral"}, "rationale": "Functional + minor friction."}
+{"key": "g197", "input": {"text": "Live class was small enough to get personal feedback. Best teacher I've had."}, "expected": {"label": "positive"}, "rationale": "Personalized teaching."}
+{"key": "g198", "input": {"text": "Salon stylist actually listened to what I wanted. Color came out exactly right."}, "expected": {"label": "positive"}, "rationale": "Service personalization."}
+{"key": "g199", "input": {"text": "Battery lasted the day. Phone charges in the time the manual says it would."}, "expected": {"label": "neutral"}, "rationale": "Spec-aligned."}
+{"key": "g200", "input": {"text": "Couch arrived with a different fabric than the showroom sample. They wouldn't take it back."}, "expected": {"label": "negative"}, "rationale": "Misrepresentation."}
