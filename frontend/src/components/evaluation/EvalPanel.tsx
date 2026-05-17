@@ -744,7 +744,20 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         }
 
         try {
-            await api.post(`/projects/${projectId}/evaluation/run-heldout`, payload);
+            // Held-out eval on a 200-row gold set typically takes
+            // 10–20 min on local-GPU Qwen-1.5B (200 rows × ~5s/row
+            // for structured extraction). The default axios timeout
+            // is none, but the Vite dev proxy + browser idle
+            // detection cut around 10 min, surfacing as a "network
+            // error" while the backend was still processing. Setting
+            // explicit 30-min ceiling signals intent + keeps the
+            // request alive long enough. Same pattern as the synth /
+            // cleaning paths (see SyntheticPanel.tsx).
+            await api.post(
+                `/projects/${projectId}/evaluation/run-heldout`,
+                payload,
+                { timeout: 30 * 60 * 1000 },
+            );
             await Promise.all([listResults(selectedExp), loadGateReport(selectedExp)]);
             setShowRunForm(false);
         } catch (error) {

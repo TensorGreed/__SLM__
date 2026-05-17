@@ -4827,6 +4827,77 @@ async def cancel(
         raise HTTPException(409, detail)
 
 
+# ── Story 1.7: experiment lifecycle recovery ────────────────────────
+
+
+def _translate_recovery_error(exc: ValueError) -> HTTPException:
+    code = str(exc)
+    if code == "experiment_not_found":
+        return HTTPException(404, "Experiment not found in this project.")
+    if code == "experiment_running":
+        return HTTPException(
+            409,
+            "Experiment is RUNNING — cancel + wait for it to stop before "
+            "resetting or deleting.",
+        )
+    return HTTPException(400, code)
+
+
+@router.post("/experiments/{experiment_id}/reset")
+async def reset(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Flip a FAILED experiment back to PENDING and clear stale state
+    (archive the output dir to .bak.<ts>, drop its checkpoint rows).
+    Idempotent. Refuses RUNNING experiments — cancel first."""
+    from app.services.experiment_recovery_service import reset_experiment
+
+    try:
+        result = await reset_experiment(
+            db, project_id=project_id, experiment_id=experiment_id
+        )
+    except ValueError as exc:
+        raise _translate_recovery_error(exc) from exc
+    await db.commit()
+    return result
+
+
+@router.delete("/experiments/{experiment_id}")
+async def delete_experiment_endpoint(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Hard delete an experiment: DB row + checkpoint rows + output
+    dir gone for good. Refuses RUNNING experiments."""
+    from app.services.experiment_recovery_service import delete_experiment
+
+    try:
+        result = await delete_experiment(
+            db, project_id=project_id, experiment_id=experiment_id
+        )
+    except ValueError as exc:
+        raise _translate_recovery_error(exc) from exc
+    await db.commit()
+    return result
+
+
+@router.post("/experiments/bulk-archive-failed")
+async def bulk_archive_failed_endpoint(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Sweep every FAILED experiment in the project through
+    reset_experiment. One-button cleanup after a chain of failures."""
+    from app.services.experiment_recovery_service import bulk_archive_failed
+
+    result = await bulk_archive_failed(db, project_id=project_id)
+    await db.commit()
+    return result
+
+
 @router.get("/experiments/{experiment_id}/status")
 async def status(
     project_id: int,

@@ -609,46 +609,186 @@ def _latest_checkpoint_dir(output_dir: Path) -> Path | None:
     return checkpoint_dirs[-1][1]
 
 
+class CheckpointCompatibilityError(RuntimeError):
+    """Raised when an auto-discovered checkpoint's adapter_config is
+    incompatible with the current run's LoRA / base-model config.
+
+    Surfaced to the user with an actionable message instead of letting
+    torch crash later with a cryptic shape stack trace. Recovery is
+    one of:
+      - delete / archive the stale checkpoint dir
+      - set ``resume_from_checkpoint`` explicitly to a compatible path
+      - bring the current config back in line with the checkpoint's
+        ``lora_r`` / ``base_model_name_or_path``
+    """
+
+
+def _read_checkpoint_adapter_config(checkpoint: Path) -> dict[str, Any] | None:
+    """Read the PEFT ``adapter_config.json`` next to a checkpoint dir.
+    Returns ``None`` when the file is missing / unreadable (not a LoRA
+    checkpoint; nothing to gate)."""
+    path = checkpoint / "adapter_config.json"
+    if not path.exists():
+        return None
+    try:
+        import json as _json
+        return _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _check_checkpoint_compatibility(
+    checkpoint: Path,
+    *,
+    current_config: dict[str, Any],
+    current_base_model: str | None,
+) -> tuple[bool, str | None]:
+    """Compare a checkpoint's adapter_config against the current run's
+    config. Returns ``(ok, mismatch_message)``. ``ok=True`` means safe
+    to resume; ``ok=False`` means the caller should refuse and surface
+    the message.
+
+    Conservative on purpose — only refuses when there's a CLEAR shape-
+    or family-level mismatch. Unknown / missing fields default to
+    "compatible" so we don't false-positive on non-LoRA checkpoints or
+    older PEFT versions."""
+    adapter_cfg = _read_checkpoint_adapter_config(checkpoint)
+    if adapter_cfg is None:
+        return True, None
+
+    issues: list[str] = []
+
+    # base_model_name_or_path mismatch is the hardest break: weights
+    # won't load at all on a different model architecture.
+    ckpt_base = adapter_cfg.get("base_model_name_or_path")
+    if (
+        isinstance(ckpt_base, str)
+        and current_base_model
+        and ckpt_base.strip()
+        and ckpt_base.strip() != current_base_model.strip()
+    ):
+        issues.append(
+            f"base_model: checkpoint={ckpt_base!r} vs current={current_base_model!r}"
+        )
+
+    # lora_r drives the (rank, hidden) shape of every adapter tensor;
+    # any change here surfaces as the shape-mismatch error.
+    ckpt_r = adapter_cfg.get("r")
+    cur_r = current_config.get("lora_r")
+    if (
+        isinstance(ckpt_r, int)
+        and isinstance(cur_r, int)
+        and ckpt_r != cur_r
+    ):
+        issues.append(f"lora_r: checkpoint={ckpt_r} vs current={cur_r}")
+
+    # target_modules drives which layers carry adapter tensors. A
+    # config that targets {q_proj, v_proj} loaded against a checkpoint
+    # built for {q_proj, k_proj, v_proj, o_proj} produces a tensor-
+    # set mismatch.
+    ckpt_targets = adapter_cfg.get("target_modules")
+    cur_targets = current_config.get("target_modules")
+    if (
+        isinstance(ckpt_targets, list)
+        and isinstance(cur_targets, list)
+        and set(ckpt_targets) != set(cur_targets)
+    ):
+        issues.append(
+            f"target_modules: checkpoint={sorted(ckpt_targets)} "
+            f"vs current={sorted(cur_targets)}"
+        )
+
+    if not issues:
+        return True, None
+
+    message = (
+        f"Checkpoint at {checkpoint} is incompatible with the current run's "
+        f"config. Differences: " + "; ".join(issues) + ". "
+        "Fix by deleting / archiving the stale checkpoint dir, OR by "
+        "setting resume_from_checkpoint to a compatible path, OR by "
+        "matching the current config to the checkpoint's adapter."
+    )
+    return False, message
+
+
 def _resolve_resume_checkpoint(
     output_dir: Path,
     resume_value: Any,
     warnings: list[str],
+    *,
+    current_config: dict[str, Any] | None = None,
+    current_base_model: str | None = None,
 ) -> Path | None:
+    """Pick a checkpoint to resume from + validate it's compatible
+    with the current config.
+
+    Behavior change (Story 1.7 — checkpoint-resume compatibility gate):
+    - When ``resume_value`` is ``None`` / missing from config, we no
+      longer auto-resume. Stale checkpoints in ``output_dir`` are
+      ignored unless the caller explicitly opts in via ``"auto"``,
+      ``"latest"``, etc. This prevents the failure mode where a brand-
+      new experiment row reuses a directory that happens to contain a
+      pre-existing checkpoint from a different config.
+    - When a checkpoint IS selected, its ``adapter_config.json`` gets
+      diffed against the current ``lora_r`` / ``base_model`` /
+      ``target_modules``. A mismatch raises
+      :class:`CheckpointCompatibilityError` with an actionable message
+      instead of letting torch surface a shape stack trace 23s later.
+    """
+    current_config = current_config or {}
+
+    def _validate(candidate: Path | None) -> Path | None:
+        if candidate is None:
+            return None
+        ok, message = _check_checkpoint_compatibility(
+            candidate,
+            current_config=current_config,
+            current_base_model=current_base_model,
+        )
+        if not ok:
+            raise CheckpointCompatibilityError(message)
+        return candidate
+
     if resume_value is None:
-        return _latest_checkpoint_dir(output_dir)
+        # Stricter default: don't auto-resume when the config didn't
+        # explicitly request it. Pre-existing checkpoints from other
+        # runs in this output_dir would otherwise silently match.
+        return None
 
     if isinstance(resume_value, bool):
-        return _latest_checkpoint_dir(output_dir) if resume_value else None
+        return _validate(
+            _latest_checkpoint_dir(output_dir) if resume_value else None
+        )
 
     token = str(resume_value).strip()
     if not token:
-        return _latest_checkpoint_dir(output_dir)
+        return None
 
     lowered = token.lower()
     if lowered in {"0", "false", "no", "off", "none", "null", "disable", "disabled"}:
         return None
     if lowered in {"1", "true", "yes", "on", "auto", "latest"}:
-        return _latest_checkpoint_dir(output_dir)
+        return _validate(_latest_checkpoint_dir(output_dir))
 
     if token.isdigit():
         candidate = output_dir / f"checkpoint-{token}"
         if candidate.exists() and candidate.is_dir():
-            return candidate
+            return _validate(candidate)
         warnings.append(
             f"Configured resume checkpoint step does not exist: {candidate}. Falling back to latest checkpoint."
         )
-        return _latest_checkpoint_dir(output_dir)
+        return _validate(_latest_checkpoint_dir(output_dir))
 
     candidate = Path(token).expanduser()
     if not candidate.is_absolute():
         candidate = (output_dir / candidate).resolve()
     if candidate.exists() and candidate.is_dir():
-        return candidate
+        return _validate(candidate)
 
     warnings.append(
         f"Configured resume checkpoint path not found: {candidate}. Falling back to latest checkpoint."
     )
-    return _latest_checkpoint_dir(output_dir)
+    return _validate(_latest_checkpoint_dir(output_dir))
 
 
 def _coerce_constructor_kwargs(
@@ -2477,10 +2617,18 @@ def _run_training_attempt(
         )
     )
 
+    # Story 1.7: don't default to "auto" anymore. If the user / API
+    # doesn't pass an explicit resume_from_checkpoint, we won't pick
+    # up a stale checkpoint from output_dir on our own. The compat
+    # gate inside _resolve_resume_checkpoint catches the remaining
+    # case where an explicit resume target is incompatible with the
+    # current LoRA / base-model config.
     resume_checkpoint = _resolve_resume_checkpoint(
         output_dir=output_dir,
-        resume_value=config.get("resume_from_checkpoint", "auto"),
+        resume_value=config.get("resume_from_checkpoint"),
         warnings=warnings,
+        current_config=config,
+        current_base_model=args.base_model,
     )
     if resume_checkpoint is not None:
         _emit_runtime_event(

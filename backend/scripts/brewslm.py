@@ -639,6 +639,68 @@ def _train_checkpoints(args: argparse.Namespace, client: ApiClient) -> int:
     return 0
 
 
+# -- Story 1.7: experiment lifecycle recovery ---------------------------
+
+
+def _experiment_reset(args: argparse.Namespace, client: ApiClient) -> int:
+    """POST /api/projects/{pid}/training/experiments/{eid}/reset.
+
+    Flip a FAILED experiment back to PENDING, archive the stale
+    output dir, drop checkpoint rows. Replaces the hand-crafted
+    ``mv`` + ``DELETE FROM checkpoints WHERE...`` SQL recipe.
+    """
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/training/experiments/{int(args.experiment_id)}/reset",
+    )
+    _print_json(payload)
+    return 0
+
+
+def _experiment_delete(args: argparse.Namespace, client: ApiClient) -> int:
+    """DELETE /api/projects/{pid}/training/experiments/{eid}.
+
+    Hard delete: DB row + output dir gone permanently. Refuses
+    RUNNING experiments — cancel + wait first.
+    """
+    payload = client.request(
+        "DELETE",
+        f"/api/projects/{args.project_id}/training/experiments/{int(args.experiment_id)}",
+    )
+    _print_json(payload)
+    return 0
+
+
+def _experiment_archive_failed(
+    args: argparse.Namespace, client: ApiClient
+) -> int:
+    """POST /api/projects/{pid}/training/experiments/bulk-archive-failed.
+
+    Sweep every FAILED experiment in the project through reset.
+    One-call cleanup after a chain of failures.
+    """
+    payload = client.request(
+        "POST",
+        f"/api/projects/{args.project_id}/training/experiments/bulk-archive-failed",
+    )
+    _print_json(payload)
+    return 0
+
+
+def run_experiment(args: argparse.Namespace, client: ApiClient) -> int:
+    """Dispatcher for ``brewslm experiment <subcommand>`` (Story 1.7)."""
+    subcommand = str(
+        getattr(args, "experiment_subcommand", "") or ""
+    ).strip().lower()
+    if subcommand == "reset":
+        return _experiment_reset(args, client)
+    if subcommand == "delete":
+        return _experiment_delete(args, client)
+    if subcommand == "archive-failed":
+        return _experiment_archive_failed(args, client)
+    raise ValueError(f"Unsupported experiment subcommand '{subcommand}'.")
+
+
 def run_train(args: argparse.Namespace, client: ApiClient) -> int:
     """Dispatcher for ``brewslm train <subcommand>`` (P19)."""
     subcommand = str(getattr(args, "train_subcommand", "") or "").strip().lower()
@@ -3368,6 +3430,61 @@ def build_parser() -> argparse.ArgumentParser:
 
     for sub in (tr_start, tr_rerun, tr_clone, tr_pause, tr_resume, tr_checkpoints):
         sub.set_defaults(func=run_train)
+
+    # -- Story 1.7: experiment lifecycle recovery --------------------------
+    experiment_parser = subparsers.add_parser(
+        "experiment",
+        help=(
+            "Manage experiment lifecycle (reset / delete / archive-failed). "
+            "Replaces the hand-crafted SQL + mv commands needed after a "
+            "stale-checkpoint or compat-gate failure."
+        ),
+    )
+    experiment_sub = experiment_parser.add_subparsers(
+        dest="experiment_subcommand", required=True
+    )
+
+    exp_reset = experiment_sub.add_parser(
+        "reset",
+        help=(
+            "Flip a FAILED experiment back to PENDING + archive its output "
+            "dir + drop stale checkpoint rows."
+        ),
+    )
+    exp_reset.add_argument(
+        "--project", "--project-id", dest="project_id", type=int, required=True
+    )
+    exp_reset.add_argument(
+        "--exp", "--experiment-id", dest="experiment_id", type=int, required=True
+    )
+
+    exp_delete = experiment_sub.add_parser(
+        "delete",
+        help=(
+            "Permanently delete an experiment + its output directory. "
+            "Refuses RUNNING experiments."
+        ),
+    )
+    exp_delete.add_argument(
+        "--project", "--project-id", dest="project_id", type=int, required=True
+    )
+    exp_delete.add_argument(
+        "--exp", "--experiment-id", dest="experiment_id", type=int, required=True
+    )
+
+    exp_archive = experiment_sub.add_parser(
+        "archive-failed",
+        help=(
+            "Sweep every FAILED experiment in a project through reset. "
+            "One-call cleanup after a chain of failures."
+        ),
+    )
+    exp_archive.add_argument(
+        "--project", "--project-id", dest="project_id", type=int, required=True
+    )
+
+    for sub in (exp_reset, exp_delete, exp_archive):
+        sub.set_defaults(func=run_experiment)
 
     # -- repro manifest (P19, reads P14) -----------------------------------
     repro_parser = subparsers.add_parser(

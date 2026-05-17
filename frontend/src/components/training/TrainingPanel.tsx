@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
+import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
@@ -2299,6 +2300,76 @@ export default function TrainingPanel({
     const prevTab = setupTabOrder[setupTabIndex - 1];
     if (prevTab) {
       setSetupTab(prevTab);
+    }
+  };
+
+  // Story 1.7 — experiment lifecycle recovery actions. All three
+  // call into the new /experiments/{id}/{reset,delete} +
+  // /experiments/bulk-archive-failed endpoints so the operator never
+  // has to hand-craft SQL + mv commands to recover from a chain of
+  // stale-checkpoint failures (see the 9/10/11 incident series).
+  const handleResetExperiment = async (exp: Experiment) => {
+    if (!window.confirm(
+      `Reset experiment "${exp.name}" (#${exp.id})? Status flips back to PENDING, output directory gets archived to .bak.<timestamp>, and stale checkpoints are dropped. You can re-start it after.`,
+    )) return;
+    try {
+      const res = await api.post(
+        `/projects/${projectId}/training/experiments/${exp.id}/reset`,
+      );
+      const data = res.data || {};
+      toast.success(
+        `Reset experiment #${exp.id}. `
+        + (data.archived_output_dir ? 'Output dir archived. ' : '')
+        + (data.checkpoints_deleted ? `${data.checkpoints_deleted} stale checkpoint row(s) cleared.` : ''),
+      );
+      await refreshExperiments();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Reset failed');
+    }
+  };
+
+  const handleDeleteExperiment = async (exp: Experiment) => {
+    const typed = window.prompt(
+      `Delete experiment "${exp.name}" (#${exp.id}) — this removes the DB row + output directory PERMANENTLY. Type the experiment NAME to confirm:`,
+    );
+    if (typed !== exp.name) {
+      if (typed !== null) toast.info('Name did not match — delete cancelled.');
+      return;
+    }
+    try {
+      const res = await api.delete(
+        `/projects/${projectId}/training/experiments/${exp.id}`,
+      );
+      const data = res.data || {};
+      toast.success(
+        `Deleted experiment "${data.name || exp.name}" (#${exp.id}). `
+        + (data.output_dir_removed ? 'Output dir removed. ' : 'No output dir to remove. ')
+        + (data.checkpoints_deleted ? `${data.checkpoints_deleted} checkpoint row(s) cleared.` : ''),
+      );
+      await refreshExperiments();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Delete failed');
+    }
+  };
+
+  const handleBulkArchiveFailed = async () => {
+    const failedCount = experiments.filter((e) => e.status === 'failed').length;
+    if (failedCount === 0) return;
+    if (!window.confirm(
+      `Archive all ${failedCount} FAILED experiment(s)? Each one's output dir gets renamed to .bak.<timestamp> and its status flips back to PENDING. RUNNING experiments are skipped automatically.`,
+    )) return;
+    try {
+      const res = await api.post(
+        `/projects/${projectId}/training/experiments/bulk-archive-failed`,
+      );
+      const data = res.data || {};
+      toast.success(
+        `Archived ${data.reset_count || 0} failed experiment(s)`
+        + (data.skipped_count ? `; skipped ${data.skipped_count} (race with RUNNING).` : '.'),
+      );
+      await refreshExperiments();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Bulk archive failed');
     }
   };
 
@@ -5727,6 +5798,39 @@ export default function TrainingPanel({
             />
           ) : (
             <div className="training-experiment-list">
+              {experiments.filter((e) => e.status === 'failed').length >= 2 && (
+                <div
+                  data-testid="bulk-archive-failed-banner"
+                  style={{
+                    padding: 'var(--space-md)',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 'var(--space-md)',
+                    marginBottom: 'var(--space-md)',
+                  }}
+                >
+                  <span>
+                    You have <strong>
+                      {experiments.filter((e) => e.status === 'failed').length}
+                    </strong> failed experiment(s). Archiving resets each one
+                    back to PENDING and renames its output directory to
+                    <code> .bak.&lt;timestamp&gt;</code> so a fresh start won't
+                    inherit stale checkpoints.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleBulkArchiveFailed}
+                    data-testid="bulk-archive-failed-button"
+                  >
+                    📦 Archive all failed
+                  </button>
+                </div>
+              )}
               {selectedForCompare.length > 1 && (
                 <div className="training-compare-bar">
                   <button className="btn btn-primary" onClick={() => setShowCompare(true)}>
@@ -5783,9 +5887,31 @@ export default function TrainingPanel({
                         Start
                       </button>
                     )}
+                    {exp.status === 'failed' && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleResetExperiment(exp)}
+                        data-testid={`experiment-reset-${exp.id}`}
+                        title="Reset to PENDING + archive stale output dir + clear stale checkpoints"
+                      >
+                        🔄 Reset
+                      </button>
+                    )}
                     <button className="btn btn-secondary btn-sm" onClick={() => viewDashboard(exp)}>
                       Dashboard
                     </button>
+                    {exp.status !== 'running' && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handleDeleteExperiment(exp)}
+                        data-testid={`experiment-delete-${exp.id}`}
+                        title="Permanently delete this experiment + its output directory"
+                      >
+                        🗑
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
