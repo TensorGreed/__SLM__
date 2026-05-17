@@ -23,6 +23,7 @@ pre-May-2026 sprint plan. This file is the forward backlog from
 | 1. Annotation & active learning | 1.4 Active-learning ranker + IAA | NOT STARTED · needs baseline model | high |
 | 1. Annotation & active learning | 1.5 Training-eval contract gates (any task) | SHIPPED · 92cf7a5 | 🔥 |
 | 1. Annotation & active learning | 1.6 Promote labeled rows → training dataset | SHIPPED · 8c5d109 | 🔥 closes annotation loop |
+| 1. Annotation & active learning | 1.7 Experiment lifecycle hygiene + checkpoint-resume compat gate | SHIPPED · 65a439a | 🔥 incident-driven |
 | 2. Knowledge distillation | 2.1 Teacher logit capture | NOT STARTED | 🔥 differentiator |
 | 2. Knowledge distillation | 2.2 KD training recipe | NOT STARTED | 🔥 |
 | 2. Knowledge distillation | 2.3 Student-vs-teacher eval | NOT STARTED | high |
@@ -861,6 +862,91 @@ a "Promote N labeled rows" CTA on the job detail page.
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 </details>
+
+---
+
+### Story 1.7 — Experiment lifecycle hygiene + checkpoint-resume compat gate
+
+**Status**: SHIPPED · 65a439a
+**As a** project owner whose training keeps failing because the trainer
+auto-resumes from a stale checkpoint left over in the output directory
+**I want** the platform to either (a) refuse the incompatible resume
+with an actionable message or (b) give me one-click recovery from any
+FAILED experiment without hand-crafted SQL
+**so that** I never burn another 23 seconds (or 10 hours) on a config
+mismatch that the platform could have caught up front.
+
+**Context — the incident series this closes** (2026-05-15..17):
+Experiments 9 → 10 → 11 in project 3 all failed within seconds with
+identical torch shape stack traces (`size mismatch for ...lora_A...
+copying a param with shape torch.Size([16, 1536]) from checkpoint,
+the shape in current model is torch.Size([8, 1536])`). Root cause:
+`_resolve_resume_checkpoint` defaulted to "auto", which scanned
+`output_dir` for any `checkpoint-*` dir and tried to resume from it
+even when the LoRA rank or base model differed from the current run.
+Recovery required three rounds of hand-crafted SQL + `mv` commands
+under operator supervision.
+
+**Acceptance criteria** (four pieces, one vertical slice):
+
+1. **Checkpoint-resume compatibility gate** in `backend/scripts/train.py`.
+   Before resuming, read the checkpoint's `adapter_config.json` and
+   compare `lora_r`, `base_model_name_or_path`, `target_modules`
+   against the current config. On mismatch, raise
+   `CheckpointCompatibilityError` with the specific diff. Also
+   change the default: stop auto-picking the latest checkpoint when
+   the caller didn't explicitly set `resume_from_checkpoint`.
+2. **Recovery service** `app/services/experiment_recovery_service.py`
+   with three functions:
+   - `reset_experiment(db, project_id, exp_id)` — FAILED → PENDING,
+     archive output dir, drop checkpoint rows. Idempotent. Refuses
+     RUNNING.
+   - `delete_experiment(...)` — hard delete DB row + output dir.
+   - `bulk_archive_failed(...)` — sweep every FAILED row in a project.
+3. **API endpoints**:
+   - `POST /api/projects/{id}/training/experiments/{exp_id}/reset`
+   - `DELETE /api/projects/{id}/training/experiments/{exp_id}`
+   - `POST /api/projects/{id}/training/experiments/bulk-archive-failed`
+4. **UI surfaces them** in `TrainingPanel.tsx`:
+   - 🔄 Reset button on every FAILED experiment row.
+   - 🗑 Delete button on every non-RUNNING row (with type-the-name
+     confirm).
+   - "Archive all failed" header banner when ≥2 FAILED rows exist.
+5. **CLI** in `brewslm.py`:
+   - `brewslm experiment reset --project <id> --exp <id>`
+   - `brewslm experiment delete --project <id> --exp <id>`
+   - `brewslm experiment archive-failed --project <id>`
+
+**Bonus shipped in the same commit**: eval-time POST in
+`EvalPanel.tsx` now sends an explicit 30-min axios timeout. Default
+Vite-proxy ~10-min cut was killing 200-row structured evals mid-run
+on local-GPU Qwen-1.5B (same bug pattern as the cleaning + synthetic
+fixes from earlier sprints).
+
+**Files touched:**
+- Backend:
+  - `backend/scripts/train.py` (compat gate + helpers)
+  - `backend/app/services/experiment_recovery_service.py` (new)
+  - `backend/app/api/training.py` (3 endpoints)
+  - `backend/scripts/brewslm.py` (3 CLI subcommands)
+- Frontend:
+  - `frontend/src/components/training/TrainingPanel.tsx` (Reset /
+    Delete / bulk-archive banner)
+  - `frontend/src/components/evaluation/EvalPanel.tsx` (eval timeout)
+- Tests:
+  - `backend/tests/test_phase110_experiment_recovery.py` (19 tests:
+    7 for the compat gate, 12 for service + API)
+
+**Lesson recorded for future stories**: this is the third
+incident-driven contract gate (Story 1.5 = data-shape +
+schema-mismatch + status reconciliation; Story 1.7 = checkpoint
+compat + experiment recovery). The pattern is consistent: long-
+running ML operations need cheap upfront gates that refuse
+inconsistent state before the GPU spins up, plus operator-facing
+recovery actions when something does slip through. Worth keeping
+that lens for Epic 2+ (knowledge distillation will have its own
+contract surface — teacher logits format, KD vs hard-label data
+shape mismatch, etc.).
 
 ---
 
