@@ -18,7 +18,11 @@ land in a fully-seeded project:
 
 - **61 training rows** of synthetic chat / log / form / DM-style
   snippets with entity offsets pre-labelled.
-- **25 gold rows** for held-out evaluation.
+- **200 gold rows** for held-out evaluation. Coverage: all 10 entity
+  types, 1–4 entities per row (mean 2.4), char offsets verified by
+  construction. 200 is the literature sweet spot for narrow-task eval
+  — small enough to label well, large enough that a single mislabel
+  doesn't swing F1 more than ~0.5 points.
 - **`task_profile: structured_extraction`** with
   **`scoring_mode: span_set`** — eval automatically produces
   per-class precision / recall / F1 per entity type (the
@@ -133,7 +137,7 @@ metrics compliance teams actually evaluate.
 This is what you stare at to improve the model. The fictional row
 above says SSN recall is 62% — that's a leak. You'd:
 
-1. Add more SSN training examples (use the [bundle generator](#bundle-generator-synthetic-expansion) or import from one of the [HF datasets](#huggingface-datasets) filtered for SSN-heavy rows).
+1. Add more SSN training examples (use the [bundle generator](#3-bundle-generator-deterministic-template-expansion), generate a focused synthetic batch via [synthetic generation](#1-synthetic-generation-against-cleaned-chunks-recommended-first-pass), or import from one of the [HF datasets](#huggingface-datasets) filtered for SSN-heavy rows).
 2. Re-train.
 3. Check `per_class.ssn.recall` next eval, not overall F1.
 
@@ -197,12 +201,64 @@ object that doesn't even have the required field.
 
 ## Expanding the dataset
 
-The 61 + 25 rows are enough to demonstrate the full pipeline, but
-production PII detectors need 10× more — both for diversity (more
-real-world templates) and for recall (more entity-type coverage). Two
-clean ways to scale:
+The 61 + 200 bundled rows are enough to demonstrate the full pipeline,
+but production PII detectors need at least 1–2k training rows for the
+SFT loss to settle reliably. Three clean ways to scale, in the order
+you'd actually use them:
 
-### HuggingFace datasets
+### 1. Synthetic generation against cleaned chunks (recommended first pass)
+
+This is the path that actually works for getting from 0 → trained model
+on the bundled demo. The synthetic generator runs a teacher LLM
+(local Ollama or any OpenAI-compatible endpoint) over your cleaned
+chunks and produces rows in the exact `{text, entities: [...]}` shape
+the eval scores against — no schema-translation step needed.
+
+**Walkthrough:**
+
+1. Pipeline → **Synthetic**. The page auto-switches to
+   `span_extraction` mode when the project's task profile is
+   `structured_extraction`.
+2. Pick a teacher model. **`qwen2.5:7b-instruct-q4_K_M`** or
+   **`qwen2.5:14b-instruct-q4_K_M`** dramatically outperform `llama3`
+   on structured-JSON output for span extraction — Qwen2.5 was trained
+   on this exact shape. Pull with `ollama pull qwen2.5:7b-instruct-q4_K_M`.
+3. **Entity types** — comma-separated list matching your gold vocabulary.
+   For the bundled demo:
+   `person_name, email, ip_address, credit_card, phone, ssn, api_key, bank_account, date_of_birth, street_address`
+4. **Rows to generate**: 2000. The form shows
+   "Will run in 40 background batches" once you cross 50.
+5. Check **Sample randomly from all cleaned chunks (per batch)**. The
+   server samples 4–8k tokens per batch from your cleaned pool —
+   diversity across 40 batches comes for free. Ignores the source-text
+   textarea when this is on.
+6. **Generate**. Progress card shows `batch X/40 — N/2000 rows` live.
+   Roughly 20–40 min on local Ollama for 2k rows.
+7. Review a handful of rows for sanity (entities not garbage, types from
+   your list, offsets sensible), then **Save Approved**.
+
+The prep step that builds `train.jsonl` automatically excludes the raw
+CLEANED chunks once you have synthetic rows (
+[`resolve_training_dataset_types`](https://github.com/anugram/__SLM__/blob/main/backend/app/services/dataset_service.py))
+— this prevents the failure mode where text-only chunks dilute the
+target-bearing synthetic rows at a 30–80:1 ratio. The split manifest's
+`include_types_resolution` field records what got auto-excluded.
+
+### 2. HuggingFace / Kaggle imports (when you have ready-shaped data)
+
+**Heads-up on dataset format compatibility**: not every HF / Kaggle
+dataset shape has a matching mapper. The platform ships eight mappers
+(`qa_pair_passthrough`, `label_to_classification`, `bio_to_spans`,
+`chat_messages_passthrough`, `preference_pair`, `kv_to_structured`,
+`rag_passthrough`, `text_only`) covering most public datasets, but
+**inline-character-span formats like `ai4privacy/pii-masking-200k`'s
+`{source_text, privacy_mask: [{value, label, start, end}]}` shape do
+not have a mapper today** — the import wizard will surface
+"Unable to normalize imported records". For datasets in that shape, use
+path 1 (synthetic generation) instead; for datasets that match a
+shipped mapper, see below.
+
+#### HuggingFace datasets
 
 Recommended starting points (all CC-BY / synthetic-safe):
 
@@ -259,7 +315,7 @@ ships a flat `{text, label}` shape — see the
 [generic dataset-import pipeline](../workflows/data-ingestion.md#generic-dataset-import-pipeline-sources-mappers)
 docs for the full mapper catalog.
 
-### Kaggle datasets
+#### Kaggle datasets
 
 - [**PII Detection Dataset (Kaggle Cup 2024)**](https://www.kaggle.com/competitions/pii-detection-removal-from-educational-data)
   — student writing samples with PII; ~20k essays. Format is BIO-tagged
@@ -353,7 +409,7 @@ python -m app.cli.dataset_import run \
 See the [Schema introspection](../reference/glossary.md#schema-introspection)
 glossary entry for the architecture.
 
-### Bundle generator (synthetic expansion)
+### 3. Bundle generator (deterministic template expansion)
 
 If you want more synthetic data with full control over coverage, the
 bundle ships its own generator:
@@ -371,6 +427,88 @@ Re-seed the project after edits:
 ```sh
 brewslm demo seed pii-detector --force
 ```
+
+## Improving F1 after the first training run
+
+The first training pass on the bundled demo typically lands in the
+0.55–0.80 macro-F1 range depending on synthetic quality. From there
+the priority-ordered levers, by impact:
+
+### 🔥 Highest impact: data quality + hard negatives
+
+SFT is data-limited, not model-limited. Two cheap wins before touching
+hyperparameters:
+
+**Switch to a stronger teacher for synthetic gen.** If your first run
+used `llama3`, regenerate with `qwen2.5:7b-instruct-q4_K_M` (or
+`qwen2.5:14b-instruct-q4_K_M` if VRAM allows). Qwen2.5 emits cleaner
+JSON + computes character offsets more reliably for span tasks. Same
+Synthetic flow, just change the model-name field.
+
+**Add hard negatives.** The default synthetic gen produces text that
+always contains PII. Production text often *doesn't* — and models
+trained only on positive examples over-predict. Three ways to add
+negatives:
+
+- **Option A — Empty-entities batches**: in the Synthetic page, paste
+  source text manually (don't auto-sample) using corporate / technical
+  language that lacks PII (`"Q3 revenue grew 12%. Engineering velocity
+  improved after we adopted feature flags."`). Generate 200 rows, then
+  edit the review pane to blank any spurious entities the teacher
+  attempted. Save only when `entities: []` or near-empty.
+- **Option B — Confusable mentions**: source text deliberately contains
+  lookalikes — `"Apple's Q3 earnings beat estimates"` (Apple = company,
+  NOT person_name), `"Order SKU 4012-887-1100 ships Friday"` (SKU, not
+  credit_card), `"Server IP 999.999.999.999 returned a 500"` (invalid
+  IP). Hand-label so only genuine PII gets tagged.
+- **Option C — Annotation UI**: create a `span` label job, seed from
+  cleaned chunks, hand-label 100–200 rows paying special attention to
+  what should NOT be tagged, then click
+  **📤 Promote to synthetic** ([Story 1.6](https://github.com/anugram/__SLM__/blob/main/backend/app/services/annotation/promotion.py)).
+  Highest quality, most time-intensive.
+
+200 hard-negative rows mixed with 2k clean synthetics typically lifts
+precision by 5–10 F1 on adversarial gold without hurting recall.
+
+### High impact: LoRA capacity (one config change)
+
+The Essentials wizard hides PEFT controls. Switch to **Advanced** mode
+(toggle in the page header) — you'll get a 4th tab: **Power Tools** →
+**Advanced & PEFT** section. Two changes that typically lift span-task
+F1 by 5–15 points:
+
+- **Rank (r)**: `8 → 16` (or `32` if you have VRAM headroom on the GB10)
+- **Alpha**: `2 × r` (32 for r=16, 64 for r=32)
+- **Target Modules**: `q_proj, v_proj` → `q_proj, k_proj, v_proj, o_proj`
+  (all four attention projections instead of just query+value)
+
+Roughly doubles training time but worth it on the first pass.
+
+### Medium impact: training schedule
+
+- **Epochs**: 3 is too few for 2k rows. Bump to `5` or `6`. Watch
+  the eval_loss curve in the Observability tab — stop when it plateaus.
+- **Learning rate**: `2e-4` is aggressive for small datasets. If you
+  see loss spikes in the training log, drop to `1e-4`.
+
+### Lower impact (don't bother until data + LoRA are maxed)
+
+- **Bigger base model**: 1.5B → 3B (`Qwen/Qwen2.5-3B-Instruct`,
+  `microsoft/Phi-3.5-mini-instruct`). A 3B model on garbage data still
+  scores worse than a 1.5B on clean data. Try this only after you've
+  saturated the data + LoRA-capacity levers.
+
+### Diagnosis flow when F1 plateaus
+
+Open the eval result page and look at the **Sample predictions** table
+(introduced in Story 1.5). Scan 20–30 rows:
+
+| What you see | Failure mode | Fix |
+|---|---|---|
+| Model misses obvious PII | Coverage gap | Re-generate synth with stronger teacher / more diverse source chunks |
+| Entity emitted with wrong `type` | Vocabulary confusion | Add class-balanced synth — more examples of confused types |
+| Offsets off by 1–2 chars but text right | Tokenization edge / small model | Bump base to 3B, or accept partial-F1 |
+| JSON shape wrong (`{value, label}` not `{type, text}`) | Schema mismatch | The eval result page now surfaces a schema-mismatch banner above the headline metric ([Story 1.5 Gate 2](https://github.com/anugram/__SLM__/blob/main/backend/app/services/evaluation_service.py)) — follow its hint to fix the adapter contract |
 
 ## Plugging into LlamaFirewall
 
@@ -480,6 +618,80 @@ brewslm export onnx --project pii-detector --quantize int8
 #    setting PER_CLASS_THRESHOLD from your final eval's per_class
 #    precision numbers.
 ```
+
+## Troubleshooting
+
+The bundled demo has hit each of these failure modes during development.
+The platform now refuses or surfaces each one early — but if you're
+running on an older build or hit something unexpected, this is what to
+check.
+
+### Eval F1 = 0% even though training completed
+
+The model trained successfully (loss went down, checkpoint exists) but
+every row scores FAIL on eval. The cause is almost always a
+**training/eval contract mismatch** — the trainer optimized one output
+shape, the eval rubric scores a different one.
+
+**What to look at first**: open the eval result page. Story 1.5's
+schema-mismatch banner ([`detect_schema_mismatch`](https://github.com/anugram/__SLM__/blob/main/backend/app/services/evaluation_service.py))
+fires above the headline metric when ≥80% of predictions have
+top-level JSON keys disjoint from gold. It names the expected vs
+observed key sets, e.g. *"Gold expects `entities`; model emits
+`value, label, start, end`"*. Common root causes:
+
+- **Training data had no target field**. The pre-training data-shape
+  gate ([`training_data_gate.py`](https://github.com/anugram/__SLM__/blob/main/backend/app/services/training_data_gate.py))
+  catches this before launch — if you see it AFTER training succeeded,
+  your prepared `train.jsonl` rows had `answer` / `completion` fields
+  pointing at a different schema than gold. Re-run synthetic generation
+  with cleaner few-shot examples and re-prep.
+- **Adapter contract drift** — the `target_fields` on the adapter
+  preset don't match the column names in your synthetic rows. Check
+  the project's data adapter settings.
+
+### Training fails in 23 seconds with `size mismatch for ... lora_A`
+
+Stale-checkpoint contamination — the trainer auto-resumed from a
+checkpoint built with different LoRA config. The compatibility gate
+([Story 1.7](https://github.com/anugram/__SLM__/blob/main/backend/scripts/train.py))
+now refuses incompatible resumes with a clear message ("was rank=16,
+now rank=8"). On older builds:
+
+- **From the UI**: open the experiment list, click the 🔄 **Reset**
+  button on the failed row. The output directory gets archived to
+  `<dir>.bak.<utc-stamp>` and the row flips to PENDING — restart
+  cleanly from there.
+- **From the CLI**: `brewslm experiment reset --project <id> --exp <id>`
+- **Bulk cleanup after a chain of failures**: the experiment list
+  shows an "📦 Archive all failed" banner when ≥2 FAILED rows exist —
+  one click sweeps every one. CLI: `brewslm experiment archive-failed --project <id>`.
+
+### "Network error" during held-out eval
+
+Vite-proxy timeout. Held-out eval on 200 gold rows takes 10–20 min on
+local-GPU Qwen-1.5B; the default ~10-min proxy cut killed the request
+while the backend was still inferring. Fixed in
+[Story 1.7](https://github.com/anugram/__SLM__/blob/main/frontend/src/components/evaluation/EvalPanel.tsx)
+— the eval POST now sends an explicit 30-min axios timeout. Hard refresh
+the browser to pick up the new bundle.
+
+### Experiment stuck on `RUNNING` after training_report shows finished
+
+DB write-back didn't fire when the trainer subprocess exited. The
+status reconciler ([Story 1.5 Gate 3](https://github.com/anugram/__SLM__/blob/main/backend/app/services/training_service.py))
+auto-flips RUNNING → terminal status on the next status read, plus a
+startup reaper sweeps stale rows on app start. If you see a stuck row,
+either `GET /api/projects/{id}/training/experiments/{exp_id}/status` to
+trigger the read-side reconciler, or restart the API server.
+
+### Recommender suggests `microsoft/phi-2` instead of Qwen
+
+Known UI default (the wizard's `baseModel` state initializes to
+`microsoft/phi-2`). On the **Config** tab, explicitly type
+`Qwen/Qwen2.5-1.5B-Instruct` into the **Base Model** field and click
+**Introspect Model** to verify (`architecture: Qwen2ForCausalLM`,
+`hidden_size: 1536`). The Review tab then carries the correct value.
 
 ## What's not in the demo (yet)
 
