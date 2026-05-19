@@ -138,7 +138,27 @@ Gold entity counts:
 Seeder-backed details:
 
 - Expected prepared split counts: 45 train, 8 validation, 8 test.
-- Prepared manifest should preserve output schema and entity types.
+- Prepared manifest preserves output schema and entity types.
+
+Selector/route pass evidence:
+
+- Disposable UI pass seeded this sample through the real tile with
+  `POST /api/demo-projects/pii-detector` and created project id `1` in
+  `/tmp/slm-selector-pass-remaining.8c6MCJ`.
+- Browser routes verified: data, cleaning, gold set, synthetic, dataset prep,
+  tokenization, training, evaluation, compression, export, and training config.
+- Screenshots: `selector-pass-pii-01-demo-tile.png` through
+  `selector-pass-pii-13-training-config.png`.
+- Data tab UI/API showed 61 raw `csv-row` documents.
+- Raw row expansion worked with `[data-testid="expand-doc-61"]`; sampled row
+  shape was `text` plus `entities_json`.
+- Gold set UI/API showed 200 entries.
+- Prepared manifest API showed adapter `structured-extraction`, task profile
+  `structured_extraction`, split `45/8/8`, field mapping `text` to
+  `entities_json`, span-set schema, and all 10 entity types.
+- Runtime warnings shown in UI: system readiness `WARN`, missing
+  `TEACHER_MODEL_API_KEY`, synthetic tab with no text loaded, training tab with
+  no experiments yet, and evaluation tab with no experiments to evaluate.
 
 Open questions:
 
@@ -198,7 +218,27 @@ Gold label counts:
 Seeder-backed details:
 
 - Expected prepared split counts: 22 train, 4 validation, 4 test.
-- Prepared manifest should preserve labels.
+- Prepared manifest preserves labels.
+
+Selector/route pass evidence:
+
+- Disposable UI pass seeded this sample through the real tile with
+  `POST /api/demo-projects/sentiment-classifier` and created project id `2` in
+  `/tmp/slm-selector-pass-remaining.8c6MCJ`.
+- Browser routes verified: data, cleaning, gold set, synthetic, dataset prep,
+  tokenization, training, evaluation, compression, export, and training config.
+- Screenshots: `selector-pass-sentiment-01-demo-tile.png` through
+  `selector-pass-sentiment-13-training-config.png`.
+- Data tab UI/API showed 30 raw `csv-row` documents.
+- Raw row expansion worked with `[data-testid="expand-doc-91"]`; sampled row
+  shape was `text` plus `label`.
+- Gold set UI/API showed 200 entries.
+- Prepared manifest API showed adapter `classification-label`, task profile
+  `classification`, split `22/4/4`, field mapping `text` to `label`, and
+  labels `positive`, `neutral`, `negative`.
+- Runtime warnings shown in UI: system readiness `WARN`, missing
+  `TEACHER_MODEL_API_KEY`, synthetic tab with no text loaded, training tab with
+  no experiments yet, and evaluation tab with no experiments to evaluate.
 
 Open questions:
 

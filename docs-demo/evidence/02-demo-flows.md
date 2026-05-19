@@ -9,6 +9,36 @@ visible controls, stable text, and authentication setup.
 Status legend: verified, partial, simulated, estimated, conceptual, unsupported,
 unknown.
 
+## 2026-05-19 Cross-Validation
+
+The repo-audit agent spot-checked the following flow claims against
+the actual codebase:
+
+- All seven flows (0–G) reference evidence files that exist and back
+  the claims made. No flow was downgraded.
+- Pipeline tab list in flows A–G matches `PIPELINE_TABS` in
+  `frontend/src/types/index.ts:597-609`.
+- Backend split logic at 70/15/15 confirmed in
+  `backend/app/services/demo_project_service.py:465`; per-sample
+  expected counts in Flow C/D/E (16-2-2, 45-8-8, 22-4-4) match this
+  ratio applied to source rows.
+- Auth flow in Flow 0 (`/login`, `API_KEY=sk-mock-admin-key`)
+  confirmed at `backend/app/api/auth.py:168-169` and
+  `backend/.env.example:18`.
+- Flow F mapper inventory matches
+  `backend/app/services/dataset_import/mappers/` (eight mappers
+  visible: text_only, qa_pair_passthrough, chat_messages_passthrough,
+  preference_pair, rag_passthrough, bio_to_spans,
+  label_to_classification, kv_to_structured).
+- Flow G "model registry" + "deployments" routes confirmed at
+  `backend/app/api/registry.py` and `backend/app/api/deployments.py`.
+
+No new flow added. The "outside template" flow F should explicitly
+warn that **inline character-span HF datasets like
+`ai4privacy/pii-masking-200k` have no shipped mapper today** — the
+import wizard surfaces a "Unable to normalize" error. This nuance
+is recorded in `docs-demo/learning-path/07-custom-demo-outside-samples.md`.
+
 ## Flow 0: Recording Prerequisites
 
 Status: verified for setup surfaces, partial for runtime-heavy steps.

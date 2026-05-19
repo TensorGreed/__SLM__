@@ -1,5 +1,23 @@
 # Official Demo Samples
 
+Three folders under `backend/data/demo_samples/` are the only official
+templates: `support-faq`, `pii-detector`, `sentiment-classifier`.
+Every claim below is backed by either the manifest, the source file,
+or a selector-discovery pass on 2026-05-19.
+
+| Sample | Source rows | Gold rows | Task profile | Target | Seeded split | Video |
+|---|---:|---:|---|---|---:|---|
+| `support-faq` | 20 | 200 | `instruction_sft` | `vllm_server` | 16 / 2 / 2 | Video 05 |
+| `pii-detector` | 61 | 200 | `structured_extraction` | `vllm_server` | 45 / 8 / 8 | Video 06 |
+| `sentiment-classifier` | 30 | 200 | `classification` | `mobile_cpu` | 22 / 4 / 4 | Video 07 |
+
+> **Manifest text vs file truth**: each sample's `manifest.json`
+> description currently mentions a smaller gold count (e.g. "6
+> hand-labelled gold rows" for support-faq). The 200-row figure is
+> measured from the file and is the source of truth; the manifest
+> description text is stale. Open Q2 in
+> `docs-demo/evidence/10-open-questions.md`.
+
 ## support-faq
 
 Learning goal: show an instruction-style support assistant from ticket Q&A.

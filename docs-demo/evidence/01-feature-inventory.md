@@ -1,6 +1,32 @@
 # Feature Inventory
 
 Discovery date: 2026-05-19.
+Last cross-validation: 2026-05-19 (repo audit agent).
+
+## Cross-validation log
+
+The 2026-05-19 repo audit confirmed every "verified" row in this file
+against the cited evidence paths. Spot checks:
+
+- `PIPELINE_TABS` in `frontend/src/types/index.ts:597-609` matches the
+  ten tab keys claimed across this file (`data`, `cleaning`, `goldset`,
+  `synthetic`, `dataprep`, `tokenization`, `training`, `eval`,
+  `compression`, `export`).
+- 70/15/15 split ratio confirmed in
+  `backend/app/services/demo_project_service.py:465`.
+- Demo-project routes confirmed in `backend/app/api/demo_projects.py:43,48`
+  (`GET /api/demo-projects` and `POST /api/demo-projects/{slug}`).
+- Local-login password gate confirmed in
+  `backend/app/api/auth.py:168-169` against `settings.API_KEY`; default
+  `sk-mock-admin-key` confirmed in `backend/.env.example:18`.
+- Demo sample file counts confirmed: support-faq tickets.csv = 20 data
+  rows, pii-detector pii_records.csv = 61 data rows, sentiment-classifier
+  reviews.csv = 30 data rows, all three `gold.jsonl` = 200 rows.
+
+No "verified" rows have been downgraded. No new "unsupported" rows
+discovered. The single remaining manifest/gold-count documentation
+mismatch ("Manifest prose mentions … gold rows while gold.jsonl has
+200") is correctly captured in `10-open-questions.md` Q2.
 
 This inventory is based on repo files only. No product behavior was changed, no
 database seeding was performed during this pass, and no recording scripts were

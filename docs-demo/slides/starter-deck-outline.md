@@ -2,6 +2,27 @@
 
 Every slide entry includes title, audience level, visual idea, talking notes summary, evidence needed, and video module mapping.
 
+## Section Index (2026-05-19 expansion for 12+ videos)
+
+| Section | Title | Maps onto videos |
+|---|---|---|
+| A | SLM 101 | 01 |
+| B | BrewSLM 101 | 02 |
+| C | Quickstart | 02 |
+| D | Dataset Lifecycle | 03, 04, 05–07 |
+| E | Official Sample Demos | 05, 06, 07 |
+| F | Beyond Official Samples | 13 |
+| G | Evaluation, Compression, Export | 10, 11 |
+| H | Final Model Usage (original concise pass) | 12 |
+| I' | Final Model Usage (expanded) | 12 |
+| J | BYO Dataset / Custom Pipeline | 13 |
+| K | Architecture / Operator Deep Dive | 14 |
+| M | Advanced Topics (governance, registry, recipes) | 14 / cross-cutting |
+
+Sections H and I' both cover Video 12; H is the lighter conceptual
+pass and I' is the build-out with playground/serve/registry slides.
+Use H for non-technical audiences, I' for technical operators.
+
 ## Section A: SLM 101
 
 | Slide title | Audience level | Visual idea | Talking notes summary | Evidence needed | Video module mapping |
@@ -77,7 +98,36 @@ Every slide entry includes title, audience level, visual idea, talking notes sum
 | Playground | intermediate | Playground screenshot placeholder | Possible final testing UI. | `ProjectPlaygroundPage.tsx`; output needed. | 07 |
 | Registry And Deployment | advanced | Promotion stages | Registry and deployment APIs exist. | `registry.py`, `deployments.py`; output needed. | 07 |
 
-## Section I: Advanced Topics
+## Section I': Final Model Usage (expanded for Video 12 — supplements Section H above)
+
+| Slide title | Audience level | Visual idea | Talking notes summary | Evidence needed | Video module mapping |
+|---|---|---|---|---|---|
+| What Happens After Training? | beginner | Decision tree | Test in playground, export, register, serve, deploy. | `09-final-model-usage-plan.md`. | 12 |
+| Playground vs Production Serve | intermediate | Side-by-side panels | Playground is for one-shot smoke tests; serve plan is for repeatable API calls. | `playground_service.py`, `serve_service.py`. | 12 |
+| Export Formats | intermediate | Format cards | GGUF, ONNX, TensorRT, HuggingFace, Docker. Each maps to a target profile. | `backend/app/models/export.py`. | 12 |
+| Smoke Test The Trained Model | intermediate | Terminal + curl response | Generated `serve.py` + curl snippet from the serve plan. | `serve_service.py` plan output. | 12 |
+| Registry Promotion And Gates | advanced | Promotion stage diagram | Candidate → Staging → Production; gates can block. | `registry.py`, `evaluation_pack_service.py`. | 12 |
+
+## Section J: BYO Dataset / Custom Pipeline (new — Video 13)
+
+| Slide title | Audience level | Visual idea | Talking notes summary | Evidence needed | Video module mapping |
+|---|---|---|---|---|---|
+| BYO Workflow | intermediate | Custom-data → Import Wizard → Sample tabs | Generic import vs official seed; explain where rows land. | `DatasetImportWizard.tsx`, `dataset_import/service.py`. | 13 |
+| Mapper Catalog | intermediate | 8-mapper grid | text_only / qa_pair_passthrough / chat_messages_passthrough / preference_pair / rag_passthrough / bio_to_spans / label_to_classification / kv_to_structured. | `backend/app/services/dataset_import/mappers/`. | 13 |
+| When No Mapper Applies | intermediate | Red-X callout | Inline-char-span formats like ai4privacy don't have a mapper today. | `learning-path/07-custom-demo-outside-samples.md`. | 13 |
+| Falling Back To Synthetic | intermediate | Two-path diagram (import fails → synthetic from cleaned chunks) | The synthetic generator gives a clean path when the import shape mismatches. | `SyntheticPanel.tsx`. | 13 |
+
+## Section K: Architecture / Operator Deep Dive (new — Video 14)
+
+| Slide title | Audience level | Visual idea | Talking notes summary | Evidence needed | Video module mapping |
+|---|---|---|---|---|---|
+| Service Map | advanced | Boxes: React → Vite proxy → FastAPI → services → SQLite/Redis | The repo's high-level shape. | `backend/app/main.py`, `frontend/vite.config.ts`. | 14 |
+| Async-task Registry Pattern | advanced | Diagram: POST → in-memory dict → poll task_id → results | Cleaning, synthetic, training all use the same pattern. | `cleaning_service.py`, `synthetic_service.py`, `training_service.py`. | 14 |
+| RunEvent Audit Spine | advanced | Event timeline | Every stage emits canonical run events (stage + reason_code + payload). | `run_event_service.py`. | 14 |
+| Diagnostic Gates Shipped | advanced | Three-gate diagram | Training data shape gate (`222bc5d`), schema-mismatch banner + status reconciler (`92cf7a5`), checkpoint-compat + recovery (`65a439a`). | Story 1.5 / 1.7 commits + `experiment_recovery_service.py`. | 14 |
+| Recovery Actions (UI + CLI) | advanced | Button + terminal screenshot | `🔄 Reset` / `🗑 Delete` / "Archive all failed" + `brewslm experiment reset/delete/archive-failed`. | `TrainingPanel.tsx`, `brewslm.py`. | 14 |
+
+## Section M: Advanced Topics (originally numbered Section I; renumbered to make room for I'/J/K/L above)
 
 | Slide title | Audience level | Visual idea | Talking notes summary | Evidence needed | Video module mapping |
 |---|---|---|---|---|---|

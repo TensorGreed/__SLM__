@@ -20,9 +20,13 @@ slides, or narration that make product-specific claims.
 ## Seeded Project Behavior
 
 5. Does a seeded demo project starting at `PipelineStage.TRAINING` affect how
-   earlier tabs are visually presented?
+   earlier tabs are visually presented? Selector passes showed all pipeline
+   tabs unlocked with current stage `training` and progress `60%`; narration
+   still needs to explain that the seed preloads data/gold/prepared splits.
 6. Does the frontend expose prepared `manifest.json`, split counts, adapter
-   selection, and sample rows clearly enough for a browser recording?
+   selection, and sample rows clearly enough for a browser recording? Raw
+   samples and gold counts are visible; prepared split/adapter/schema evidence
+   was verified through API, not as clearly visible UI text.
 7. Are legacy gold set UI and gold workbench UI both expected to be shown, or
    should one be treated as the canonical demo path?
 8. Does the locked seeded gold set prevent editing in ways that need narration?
@@ -47,24 +51,31 @@ slides, or narration that make product-specific claims.
 
 ## Runtime Choices
 
-16. Which training runtime should recorded demos use: real external training,
-    explicitly enabled simulated training, or a hybrid with clear labels?
-17. What is the smallest reliable real training job for each official sample on
-    the recording machine?
-18. Is Redis/Celery required for the chosen training and compression demo path?
-19. Which Python environment and dependency set should be treated as canonical
-    for training, evaluation, compression, export, and serving?
-20. Which tokenizer/model presets are guaranteed to load without gated access or
-    a large download?
-21. Which teacher model endpoint should be used for synthetic generation, or
-    should `ALLOW_SYNTHETIC_DEMO_FALLBACK=true` be used and labeled simulated?
-22. Which judge model endpoint should be used for LLM judge evaluation, or
-    should demos avoid LLM judge until local setup is confirmed?
-23. Which compression path is practical locally: GGUF, ONNX, benchmark only, or
-    explicitly marked stub?
-24. Which export format should be canonical for the first real final-model demo?
-25. Which local serving runtime is installed or installable for recording:
-    Ollama, llama.cpp, vLLM, TGI, ONNX Runtime, Docker, or none?
+> **Resolved 2026-05-19 — see `12-runtime-decisions-2026-05-19.md`
+> for the full rationale and operational setup.**
+
+16. ✅ Training runtime: **real Celery + external runtime**. No
+    simulated training in recordings.
+17. ✅ Smallest reliable training job: **support-faq, 2 epochs**
+    (16 train rows × 2 ≈ 32 forward passes). PII + sentiment runs
+    scaled up later.
+18. ✅ Redis/Celery required: **yes**. Pre-flight commands in
+    `12-runtime-decisions-2026-05-19.md`.
+19. ✅ Canonical Python env: `backend/.venv` from
+    `backend/requirements.txt`. No alternate env.
+20. Still open — which tokenizer/model presets are guaranteed to
+    load without gated access or a large download? Not blocking any
+    current video; revisit when Video 09's training run actually
+    happens.
+21. ✅ Synthetic generation teacher: **local Ollama
+    `qwen2.5:7b-instruct-q4_K_M` at `http://localhost:11434/v1`**.
+    Real endpoint, not fallback.
+22. ✅ LLM judge: **local Ollama `qwen2.5:7b-instruct-q4_K_M`**
+    (same Ollama process; same model).
+23. ✅ Compression path: **GGUF quantization via llama.cpp**.
+24. ✅ Canonical export format: **GGUF**. Direct corollary of
+    Q23 + Q25 — single artifact format, single trust boundary.
+25. ✅ Local serve runtime: **Ollama**.
 
 ## Final Model Usage
 
@@ -83,11 +94,14 @@ slides, or narration that make product-specific claims.
 ## UI Recording Readiness
 
 31. Should Playwright login through visible `/login`, or set authentication
-    state after documenting the login flow?
+    state after documenting the login flow? Visible login worked in selector
+    passes and is evidence-backed; pre-auth storage remains an optimization.
 32. Which routes need stable `data-testid` attributes before reliable
-    recording?
+    recording? Demo tiles and pipeline tabs have usable text/title selectors,
+    but stable `data-testid`s would reduce brittleness if approved.
 33. Are any tabs lazy-loaded or hidden behind gate checks that need a seeded
-    project status change?
+    project status change? Selector passes showed all standard pipeline tabs
+    unlocked for seeded official demos.
 34. Which browser widths should be recorded for the main videos?
 35. Should the first prototype recording use only the project list and one
     seeded project, leaving runtime-heavy steps for later?
@@ -107,12 +121,48 @@ slides, or narration that make product-specific claims.
 
 ## Next Evidence Tasks
 
-1. Start the app against a disposable local database and seed one official
-   sample through the UI.
-2. Capture screenshots of the project list, data tab, gold tab, dataset prep
-   tab, and training config tab.
-3. Verify exact selectors/routes without writing full recording scripts.
-4. Run one safe API preflight for dataset prep and training configuration.
-5. Decide the runtime path for one tiny real or explicitly simulated training
+1. Decide whether to add stable `data-testid` values to demo tiles and pipeline
+   tabs, or proceed with text/title selectors.
+2. Run one safe API preflight for dataset prep and training configuration on a
+   disposable official sample project.
+3. Decide the runtime path for one tiny real or explicitly simulated training
    demo.
-6. Only after that, create real Playwright recording specs.
+4. Verify whether tokenization can run with a small non-gated tokenizer on the
+   recording machine.
+5. Verify whether synthetic generation should use a real teacher endpoint or a
+   clearly labeled demo fallback.
+6. Only after those decisions, create real Playwright recording specs.
+
+## Validation Notes (2026-05-19 repo audit)
+
+The repo-audit agent spot-checked the following claims from this file
+and the surrounding evidence pack. No additional questions were
+added; existing items remain valid.
+
+- Q1 (pii-detector manifest says 60, CSV has 61): still open; manifest
+  prose at `backend/data/demo_samples/pii-detector/manifest.json` is
+  unchanged.
+- Q2 (manifests say smaller gold sets than the current 200 rows):
+  confirmed stale for all three samples; see headline note at
+  `support-faq/manifest.json` ("6 hand-labelled gold rows") and the
+  others. Worth a small docs-only manifest update separately.
+- Q5–Q8 (seeded-project visual semantics): partially answered by the
+  selector-discovery pass — all pipeline tabs render unlocked, but
+  prepared manifest/split count visibility in the UI is still an open
+  recording-readiness question.
+- Q31–Q35 (recording readiness): largely answered by the screenshot
+  set under `docs-demo/screenshots/selector-pass-*.png`. Remaining
+  hard question is Q32 (data-testid additions); see
+  `11-selector-and-instrumentation-plan.md` for the explicit proposal.
+
+## Answered By Selector Passes
+
+- All three official demos can be seeded through real dashboard tiles.
+- All three seeded projects render data, cleaning, gold set, synthetic, dataset
+  prep, tokenization, training, evaluation, compression, export, and training
+  config routes.
+- All three seeded projects expose raw row expansion through
+  `[data-testid^="expand-doc-"]`.
+- Gold set UI shows 200 entries for all three official demos.
+- Prepared split/adapter/schema/label details are reliably available through
+  `/api/projects/{id}/prepared-manifest`.

@@ -1,6 +1,8 @@
 # Quickstart Path
 
-Status: starter plan. Items marked "to verify from repo" need a real run-through before recording.
+Status: **verified** for all manual setup + login + first-seed steps
+(2026-05-19 selector-discovery pass). Items marked "to verify from
+repo" have been resolved unless explicitly re-flagged below.
 
 ## Local Setup
 
@@ -22,22 +24,33 @@ Status: starter plan. Items marked "to verify from repo" need a real run-through
 
 ## Login
 
-Evidence: `frontend/src/App.tsx`, `frontend/src/pages/SSOLoginPage.tsx`, `backend/app/api/auth.py`, `backend/.env.example`.
+Evidence: `frontend/src/App.tsx`, `frontend/src/pages/SSOLoginPage.tsx`, `backend/app/api/auth.py:168-169`, `backend/.env.example:18`.
 
 Use local login when auth is enabled:
-- Username: any value
+- Username: any value (e.g. `demo`)
 - Password: `API_KEY` from `backend/.env`, default `sk-mock-admin-key`
 
-To verify from repo:
-- Whether current `.env` disables auth or uses local login.
+**Verified selectors** (2026-05-19):
+- Username field: placeholder `Enter your username`.
+- Password field: placeholder `API Key or Password`.
+- Submit: button with role `Sign in`.
+
+Screenshots: `docs-demo/screenshots/selector-pass-01-login.png`.
 
 ## Project Creation
 
 Use one of the official demo tiles on the project list.
 
-To verify from repo:
-- Exact button text and post-click route.
-- Whether an already seeded demo returns the existing project.
+**Verified** (2026-05-19):
+- Tile container selector: `.demo-project-tiles`.
+- Tile button selector: `.demo-project-tile`.
+- Tile aria-labels: `Open the Demo · Support FAQ demo project`,
+  `Open the Demo · PII / PCI Detector demo project`,
+  `Open the Demo · Sentiment classifier demo project` (note the
+  centered dot in `·`).
+- Click fires `POST /api/demo-projects/<slug>` → 200.
+- Already-seeded demo: backend reuses the existing project (idempotent).
+- Post-click navigation: `/project/<id>/pipeline/data`.
 
 ## Choosing An Official Demo Sample
 
@@ -83,7 +96,13 @@ To verify from repo:
 
 ## Next Steps
 
-- Map selectors.
-- Record prototype manual path.
-- Build one real Playwright flow after evidence docs are complete.
+- Map selectors — **done**, see `docs-demo/evidence/11-selector-route-evidence.md`.
+- Record prototype manual path — **done** for support-faq, pii-detector, and sentiment-classifier (screenshots under `docs-demo/screenshots/selector-pass-*`).
+- Build one real Playwright flow — **next**, see `docs-demo/videos/02-brewslm-quickstart/recording-plan.md` for the first target.
+- Decide on `data-testid` additions before recording series 03–07 — see `docs-demo/evidence/11-selector-and-instrumentation-plan.md`.
+
+## Maps onto Video 02
+
+This learning-path file is the conceptual companion to **Video 02 —
+BrewSLM Quickstart** (`docs-demo/videos/02-brewslm-quickstart/recording-plan.md`).
 
