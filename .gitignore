@@ -46,10 +46,24 @@ backend/tests/*_data/
 .DS_Store
 roadmap*.*
 SprintPlan_25March.txt
-scripts/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 .github/agents/
 .github/copilot-instructions.md
 sprintPlan.md
 priority.md
 ROADMAP22APR.md
+
+# Demo recording artifacts
+test-results/
+playwright-report/
+docs-demo/recordings/raw/*
+docs-demo/recordings/final/*
+docs-demo/audio/*
+docs-demo/screenshots/*.png
+docs-demo/screenshots/*.jpg
+docs-demo/screenshots/*.jpeg
+docs-demo/screenshots/*.webp
+!docs-demo/recordings/raw/.gitkeep
+!docs-demo/recordings/final/.gitkeep
+!docs-demo/screenshots/.gitkeep

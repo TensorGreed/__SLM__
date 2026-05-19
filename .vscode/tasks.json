@@ -1,0 +1,79 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "agent:build",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/agent-pipeline.sh build",
+      "problemMatcher": []
+    },
+    {
+      "label": "agent:lint",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/agent-pipeline.sh lint",
+      "problemMatcher": []
+    },
+    {
+      "label": "agent:test:unit",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/agent-pipeline.sh test-unit",
+      "problemMatcher": []
+    },
+    {
+      "label": "agent:test:api",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/agent-pipeline.sh test-api",
+      "problemMatcher": []
+    },
+    {
+      "label": "agent:test:e2e",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/agent-pipeline.sh test-e2e",
+      "problemMatcher": []
+    },
+    {
+      "label": "agent:full",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/agent-pipeline.sh full",
+      "problemMatcher": []
+    },
+    {
+      "label": "SLM: Backend API",
+      "type": "shell",
+      "command": "cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "SLM: Frontend Vite",
+      "type": "shell",
+      "command": "cd frontend && npm run dev",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: Install Playwright Browsers",
+      "type": "shell",
+      "command": "npm run demo:install-browsers",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: Record Prototype",
+      "type": "shell",
+      "command": "npm run demo:record:prototype",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: Record All",
+      "type": "shell",
+      "command": "npm run demo:test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: Show Playwright Report",
+      "type": "shell",
+      "command": "npm run demo:show-report",
+      "problemMatcher": []
+    }
+  ]
+}

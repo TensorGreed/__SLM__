@@ -314,8 +314,6 @@ Tests: test_synthetic_async_task.py pins 202 start, terminal
 status, chunk-error isolation, 404 paths; SyntheticPanel test
 covers async start, live progress, and chunk-error surface. Full
 frontend regression + vite production build green.
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
 ## How to verify the user-facing fix
