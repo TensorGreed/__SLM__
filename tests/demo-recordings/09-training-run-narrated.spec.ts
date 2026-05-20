@@ -149,16 +149,24 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     await padTo(page, sectionStart, dur.config_recap);
 
     // ── Section: kickoff — back to Training tab + API start ─────────
+    // Order matters here. The TrainingPanel does NOT poll the
+    // experiments list — it only re-fetches on mount (the useEffect
+    // at TrainingPanel.tsx:2538 keyed on projectId/hideCreateControls
+    // /hideExperimentList). So we have to:
+    //
+    //   1. Fire the create + start API while still on /training-config
+    //      (invisible to the viewer — the page is still showing Power
+    //      Tools from the prior section).
+    //   2. THEN navigate to /pipeline/training. The TrainingPanel
+    //      mounts fresh, fetches experiments, and the new row is in
+    //      the response. No mid-narration reload skeleton.
+    //
+    // The brief navigation transition lines up with the narration
+    // saying "Back to the Training tab", so it reads as intentional.
     sectionStart = Date.now();
-    await page.goto(`/project/${projectId}/pipeline/training`);
-    await page.waitForTimeout(800);
-    await focusOn(page, '.tab-content');
 
-    // Create the experiment via API. Overrides:
-    // - SmolLM2-135M-Instruct: small, ungated, instruction-tuned.
-    // - 2 epochs / batch 2 / no packing: keeps it ~12s on GB10.
-    // - adamw_torch instead of paged_adamw_8bit: avoids bitsandbytes
-    //   dependency on aarch64.
+    // Create + start the experiment via API. The viewer is still on
+    // /training-config; no UI change yet.
     const createResp = await request.post(
         `http://localhost:8000/api/projects/${projectId}/training/experiments`,
         {
@@ -182,23 +190,29 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     expect(createResp.ok()).toBeTruthy();
     const expId = (await createResp.json()).id as number;
 
-    // Start the experiment
     const startResp = await request.post(
         `http://localhost:8000/api/projects/${projectId}/training/experiments/${expId}/start`,
         { headers: authHeader, data: {} },
     );
     expect(startResp.ok()).toBeTruthy();
 
-    // Refresh the UI so the new experiment row shows up
-    await page.reload();
-    await page.waitForTimeout(1500);
-    // Scroll the runs list into view — that's where the new experiment
-    // appears.
+    // Use the SPA breadcrumb link to get back — that's faster than
+    // page.goto (no full bundle reload, just a React-router push) and
+    // matches the narration's "Back to the Training tab" beat
+    // without showing a long skeleton state.
+    await page
+        .locator('button.training-config-breadcrumb-link')
+        .click();
+    await page
+        .locator('.training-experiment-item')
+        .first()
+        .waitFor({ state: 'visible', timeout: 15_000 });
     await focusOn(page, '.training-experiment-item');
     await padTo(page, sectionStart, dur.kickoff);
 
     // ── Section: watching — wait for completion (status polling) ────
     sectionStart = Date.now();
+    // Keep the new row in view as its status flips running → completed.
     await focusOn(page, '.training-experiment-item');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-training-running.png`, fullPage: true });
 
@@ -220,9 +234,16 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     }
     expect(finalStatus).toBe('completed');
 
-    // Refresh once more to land the completed status in the UI
+    // The TrainingPanel doesn't auto-refresh the experiments list,
+    // so the badge in the UI is still stuck at "running" even though
+    // the API reports completed. Reload to land the COMPLETED badge.
+    // The reload naturally aligns with the narration's last line in
+    // this section: "Refresh the table."
     await page.reload();
-    await page.waitForTimeout(1500);
+    await page
+        .locator('.training-experiment-item')
+        .first()
+        .waitFor({ state: 'visible', timeout: 10_000 });
     await focusOn(page, '.training-experiment-item');
     await padTo(page, sectionStart, dur.watching);
 
