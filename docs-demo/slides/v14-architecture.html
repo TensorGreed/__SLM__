@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Architecture</title>
+<style>
+:root {
+  --bg: #0f1115;
+  --fg: #e6e6e6;
+  --muted: #888;
+  --accent: #1f9d55;
+  --accent-soft: rgba(31,157,85,0.10);
+  --warn: #ffb000;
+  --pad: 80px;
+  --pad-y: 70px;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  overflow: hidden;
+}
+body { display: flex; align-items: center; justify-content: center; }
+.deck { width: 1440px; height: 900px; position: relative; }
+.slide {
+  position: absolute; inset: 0;
+  padding: var(--pad-y) var(--pad);
+  opacity: 0; visibility: hidden;
+  transition: opacity 200ms ease-in-out;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.slide.active { opacity: 1; visibility: visible; }
+.slide-eyebrow {
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+.slide-title {
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 24px;
+}
+.slide-subtitle {
+  font-size: 26px;
+  color: var(--muted);
+  margin: 0 0 32px;
+  line-height: 1.4;
+  max-width: 1100px;
+}
+.brand {
+  position: absolute;
+  top: 32px; right: 56px;
+  font-size: 13px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em;
+}
+.brand strong { color: var(--fg); }
+.title-block { text-align: center; margin: auto 0; }
+.title-block .slide-title { font-size: 88px; margin-bottom: 16px; }
+.title-block .slide-subtitle { font-size: 28px; text-align: center; margin: 0 auto; }
+
+/* Stack diagram */
+.stack-diagram {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 18px;
+  margin-top: 28px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.stack-box {
+  border: 1px solid rgba(31,157,85,0.3);
+  background: var(--accent-soft);
+  border-radius: 10px;
+  padding: 22px 18px;
+  font-size: 15px;
+}
+.stack-box .title {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.stack-box .desc {
+  color: #d0d0d0;
+  font-size: 14px;
+  line-height: 1.55;
+  font-family: 'Inter', sans-serif;
+}
+.stack-box .port {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Data flow chain */
+.flow-chain {
+  margin-top: 28px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 19px;
+  line-height: 1.9;
+  color: #d0d0d0;
+}
+.flow-chain .arrow { color: var(--accent); margin: 0 4px; }
+.flow-row { padding: 6px 0; }
+
+/* Where things run */
+.run-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  margin-top: 24px;
+}
+.run-col {
+  background: rgba(255,255,255,0.03);
+  border-radius: 10px;
+  padding: 24px;
+}
+.run-col h3 {
+  font-size: 20px;
+  margin: 0 0 14px;
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+}
+.run-col ul {
+  list-style: none; padding: 0; margin: 0;
+  font-size: 18px;
+  line-height: 1.7;
+}
+.run-col code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 16px;
+  color: var(--accent);
+}
+
+/* Trust boundaries */
+.trust-diagram {
+  margin-top: 28px;
+  position: relative;
+  font-family: 'JetBrains Mono', monospace;
+}
+.trust-zone {
+  border: 2px dashed rgba(255,176,0,0.5);
+  border-radius: 14px;
+  padding: 28px 32px;
+  margin-bottom: 18px;
+  background: rgba(255,176,0,0.04);
+}
+.trust-zone.outer { border-color: rgba(31,157,85,0.4); background: rgba(31,157,85,0.04); }
+.trust-zone .zone-label {
+  font-size: 14px;
+  color: var(--warn);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+.trust-zone.outer .zone-label { color: var(--accent); }
+.trust-row {
+  display: flex; gap: 14px; flex-wrap: wrap;
+}
+.trust-pill {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 16px;
+}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active" data-slide="1">
+  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="title-block">
+    <div class="slide-eyebrow">Architecture</div>
+    <h1 class="slide-title">What makes this work?</h1>
+    <p class="slide-subtitle">Five processes, one machine, end-to-end on local hardware.</p>
+  </div>
+</section>
+
+<section class="slide" data-slide="2">
+  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="slide-eyebrow">The Stack</div>
+  <h1 class="slide-title">Five processes.</h1>
+  <div class="stack-diagram">
+    <div class="stack-box">
+      <div class="title">FastAPI</div>
+      <div class="desc">Backend. HTTP API, SQLite/Postgres, auth, run orchestration.</div>
+      <div class="port">:8000</div>
+    </div>
+    <div class="stack-box">
+      <div class="title">React</div>
+      <div class="desc">Frontend. Workspace UI, all pipeline tabs.</div>
+      <div class="port">:5173</div>
+    </div>
+    <div class="stack-box">
+      <div class="title">Celery</div>
+      <div class="desc">Worker. Long-running jobs — training, compression, ingestion.</div>
+      <div class="port">via broker</div>
+    </div>
+    <div class="stack-box">
+      <div class="title">Redis</div>
+      <div class="desc">Broker. Job queue + Celery result backend.</div>
+      <div class="port">:6379</div>
+    </div>
+    <div class="stack-box">
+      <div class="title">Ollama</div>
+      <div class="desc">Inference runtime. Teacher, judge, served models.</div>
+      <div class="port">:11434</div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-slide="3">
+  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="slide-eyebrow">Data Flow</div>
+  <h1 class="slide-title">Raw rows in. Served model out.</h1>
+  <div class="flow-chain">
+    <div class="flow-row">Ingestion<span class="arrow">→</span>Cleaning<span class="arrow">→</span>Gold Set</div>
+    <div class="flow-row"><span class="arrow">→</span>Synthetic Generation<span class="arrow">→</span>Dataset Prep<span class="arrow">→</span>Tokenization</div>
+    <div class="flow-row"><span class="arrow">→</span>Training (Celery + PyTorch + LoRA)</div>
+    <div class="flow-row"><span class="arrow">→</span>Evaluation (gold set + scoring handler)</div>
+    <div class="flow-row"><span class="arrow">→</span>Compression (llama.cpp quantize)</div>
+    <div class="flow-row"><span class="arrow">→</span>Export (manifest + deployment plan)</div>
+    <div class="flow-row"><span class="arrow">→</span>Ollama serve → Playground</div>
+  </div>
+</section>
+
+<section class="slide" data-slide="4">
+  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="slide-eyebrow">Where Things Run</div>
+  <h1 class="slide-title">All on the box. No cloud.</h1>
+  <div class="run-grid">
+    <div class="run-col">
+      <h3>GPU work</h3>
+      <ul>
+        <li>Training: <code>PyTorch + transformers + PEFT</code></li>
+        <li>Inference: <code>Ollama (llama.cpp under the hood)</code></li>
+        <li>Eval generation: same GPU, bf16</li>
+        <li>Quantization: <code>llama.cpp/quantize</code></li>
+      </ul>
+    </div>
+    <div class="run-col">
+      <h3>CPU + disk</h3>
+      <ul>
+        <li>DB: <code>data/slm_platform.db</code></li>
+        <li>Project artifacts: <code>data/projects/&lt;id&gt;/</code></li>
+        <li>Exports: <code>data/exports/&lt;id&gt;/</code></li>
+        <li>Ollama models: <code>~/.ollama/models/</code></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-slide="5">
+  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="slide-eyebrow">Trust Boundaries</div>
+  <h1 class="slide-title">Two boundaries. Drawn deliberately.</h1>
+  <div class="trust-diagram">
+    <div class="trust-zone outer">
+      <div class="zone-label">Backend trust zone</div>
+      <div class="trust-row">
+        <div class="trust-pill">FastAPI · DB · file system · model weights</div>
+        <div class="trust-pill">Celery worker · same DB · same data dir</div>
+      </div>
+    </div>
+    <div class="trust-zone">
+      <div class="zone-label">External services</div>
+      <div class="trust-row">
+        <div class="trust-pill">Ollama (port 11434) · own process · treated as external</div>
+        <div class="trust-pill">Frontend → backend via authenticated REST</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-slide="6">
+  <div class="brand"><strong>BrewSLM</strong> · Video 14</div>
+  <div class="title-block">
+    <div class="slide-eyebrow">End</div>
+    <h1 class="slide-title">One backend. One frontend. One worker. One broker. One runtime.</h1>
+    <p class="slide-subtitle">Five processes, one machine, end-to-end. The other thirteen videos demonstrate every piece of this loop running for real.</p>
+  </div>
+</section>
+
+</div>
+<script>
+window.showSlide = function (n) {
+  document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+  const next = document.querySelector('[data-slide="' + n + '"]');
+  if (next) next.classList.add('active');
+};
+</script>
+</body>
+</html>
