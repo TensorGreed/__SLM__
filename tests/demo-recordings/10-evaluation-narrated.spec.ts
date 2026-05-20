@@ -94,22 +94,34 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
     // Navigate to the Evaluation tab — section starting point.
     await page.locator('button.tab[title="Evaluation"]').click();
     await page.waitForTimeout(1500);
-    await focusOn(page, '.tab-content');
 
     // ── Section: cold open ───────────────────────────────────────────
+    // Focus the "Select Experiment / Model" card — that's where the
+    // v09-narrated-run button lives. The narration introduces the
+    // experiment + gold set; the card is the visual anchor.
     let sectionStart = Date.now();
+    await focusOn(page, ':text("Select Experiment / Model")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v10-eval-tab-before.png`, fullPage: true });
     await padTo(page, sectionStart, dur.cold_open);
 
     // ── Section: setup recap ─────────────────────────────────────────
+    // Click into the Workbench sub-tab so the viewer sees the actual
+    // eval-config form while the narration explains generation +
+    // scoring. Settles on the form for the duration of the section.
     sectionStart = Date.now();
-    // Hold on the eval tab. Nothing to click.
+    await page.getByRole('tab', { name: 'Workbench' }).click();
+    await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await padTo(page, sectionStart, dur.setup);
 
     // ── Section: kickoff — POST /evaluation/run-heldout ──────────────
-    // run-heldout blocks until the eval completes. Fire it and don't
-    // await yet; let it run while sections 3+4 of audio play.
+    // Back to Eval Runs sub-tab. Fire the eval. The narration says
+    // "launching via the API" so the viewer's eyes stay on the
+    // experiment selector card while the request is in flight.
     sectionStart = Date.now();
+    await page.getByRole('tab', { name: 'Eval runs' }).click();
+    await page.waitForTimeout(800);
+    await focusOn(page, ':text("Select Experiment / Model")');
     const evalPromise = request.post(
         `http://localhost:8000/api/projects/${projectId}/evaluation/run-heldout`,
         {
@@ -132,20 +144,42 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
     const evalResp = await evalPromise;
     expect(evalResp.ok()).toBeTruthy();
     const evalResult = await evalResp.json();
-    // Eval is done. Reload the UI to land the metrics.
+    // Reload to make the Auto-Gate panel refresh with the new result,
+    // then CLICK the experiment button — that's what actually
+    // populates the metrics table + sample predictions card in the
+    // UI. Without this click the screen stays empty.
     await page.reload();
     await page.waitForTimeout(1500);
     await page.locator('button.tab[title="Evaluation"]').click();
-    await page.waitForTimeout(1500);
-    // Scroll the Auto-Gate panel into the viewport — that's where the
-    // result lands.
+    await page.waitForTimeout(1000);
+    // Click the v09-narrated-run experiment button (loads results
+    // into the side panels — pass-rate table + sample predictions).
+    const expBtn = page.locator(
+        '.btn:has-text("v09-narrated-run")',
+    );
+    if ((await expBtn.count()) > 0) {
+        await expBtn.first().click();
+        await page.waitForTimeout(1500);
+    }
+    // Scroll to the Auto-Gate panel — the FAIL badge + the failing
+    // gate names land here.
     await focusOn(page, ':text("Auto Gate")');
     await padTo(page, sectionStart, dur.watching);
 
     // ── Section: results ────────────────────────────────────────────
     sectionStart = Date.now();
+    // Slowly walk the viewer down: Auto-Gate first, then the pass-
+    // rate table, then the sample predictions card.
     await focusOn(page, ':text("Auto Gate")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v10-eval-tab-after.png`, fullPage: true });
+    // ~⅓ into the results section, scroll to the pass-rate table.
+    await page.waitForTimeout(dur.results * 1000 * 0.35);
+    await focusOn(page, ':text("Pass Rate")');
+    // ~⅔ into the section, drop to the sample predictions card if it
+    // rendered (it requires the experiment button click above to have
+    // fired loadResults successfully).
+    await page.waitForTimeout(dur.results * 1000 * 0.3);
+    await focusOn(page, '.eval-sample-predictions');
     console.log(
         `[v10] eval result id=${evalResult.id} ` +
             `exact_match=${evalResult.metrics?.exact_match} ` +
@@ -156,5 +190,9 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
 
     // ── Section: wrap ────────────────────────────────────────────────
     sectionStart = Date.now();
+    // Hold on the sample predictions card — it's the most concrete
+    // artifact of the eval and a good final beat for the handoff to
+    // the compression video.
+    await focusOn(page, '.eval-sample-predictions');
     await padTo(page, sectionStart, dur.wrap);
 });
