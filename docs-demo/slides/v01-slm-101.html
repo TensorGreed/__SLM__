@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SLM 101</title>
+<style>
+:root {
+  --bg: #0f1115;
+  --fg: #e6e6e6;
+  --muted: #888;
+  --accent: #1f9d55;
+  --accent-soft: rgba(31,157,85,0.10);
+  --pad: 80px;
+  --pad-y: 70px;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  overflow: hidden;
+}
+body { display: flex; align-items: center; justify-content: center; }
+.deck { width: 1440px; height: 900px; position: relative; }
+.slide {
+  position: absolute; inset: 0;
+  padding: var(--pad-y) var(--pad);
+  opacity: 0; visibility: hidden;
+  transition: opacity 200ms ease-in-out;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.slide.active { opacity: 1; visibility: visible; }
+
+.slide-eyebrow {
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+.slide-title {
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 24px;
+}
+.slide-subtitle {
+  font-size: 26px;
+  color: var(--muted);
+  margin: 0 0 48px;
+  line-height: 1.4;
+  max-width: 1100px;
+}
+.slide-body {
+  font-size: 22px;
+  line-height: 1.55;
+  color: #d0d0d0;
+  max-width: 1100px;
+}
+ul.points {
+  list-style: none;
+  padding: 0; margin: 24px 0 0;
+  display: grid;
+  gap: 18px;
+}
+ul.points li {
+  display: flex; align-items: flex-start; gap: 16px;
+  font-size: 24px;
+  line-height: 1.45;
+}
+ul.points li::before {
+  content: ""; flex: 0 0 10px;
+  width: 10px; height: 10px;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-top: 14px;
+}
+.lifecycle {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-top: 36px;
+}
+.lifecycle .step {
+  background: var(--accent-soft);
+  border: 1px solid rgba(31,157,85,0.2);
+  border-radius: 10px;
+  padding: 18px 16px;
+  font-size: 18px;
+}
+.lifecycle .step .n {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+.brand {
+  position: absolute;
+  top: 32px; right: 56px;
+  font-size: 13px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em;
+}
+.brand strong { color: var(--fg); }
+.footer {
+  position: absolute;
+  bottom: 28px; left: 56px;
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+.title-block {
+  text-align: center;
+}
+.title-block .slide-title {
+  font-size: 88px;
+  margin-bottom: 16px;
+}
+.title-block .slide-subtitle {
+  font-size: 28px;
+  text-align: center;
+  margin: 0 auto;
+}
+.stack-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-top: 28px;
+}
+.stack-col h3 {
+  font-size: 22px;
+  margin: 0 0 12px;
+  color: var(--accent);
+}
+.stack-col ul {
+  list-style: none; padding: 0; margin: 0;
+  font-size: 20px;
+  line-height: 1.7;
+  color: #d0d0d0;
+}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<section class="slide active" data-slide="1">
+  <div class="brand"><strong>BrewSLM</strong> · Video 01</div>
+  <div class="title-block" style="margin: auto 0;">
+    <div class="slide-eyebrow">SLM 101</div>
+    <h1 class="slide-title">What Is A Small Language Model?</h1>
+    <p class="slide-subtitle">Five minutes. The shape of the platform demo before we touch any product surface.</p>
+  </div>
+</section>
+
+<section class="slide" data-slide="2">
+  <div class="brand"><strong>BrewSLM</strong> · Video 01</div>
+  <div class="slide-eyebrow">Definition</div>
+  <h1 class="slide-title">Small is relative.</h1>
+  <p class="slide-subtitle">A language model designed to be smaller, cheaper, faster, or easier to deploy than a big general-purpose model.</p>
+  <ul class="points">
+    <li>Fewer parameters</li>
+    <li>Lower memory use</li>
+    <li>Shorter context window</li>
+    <li>Narrower task scope</li>
+    <li>Smaller deployment target — laptop, phone, edge device</li>
+  </ul>
+  <div class="footer">There is no hard cutoff between LLM and SLM. It's a spectrum.</div>
+</section>
+
+<section class="slide" data-slide="3">
+  <div class="brand"><strong>BrewSLM</strong> · Video 01</div>
+  <div class="slide-eyebrow">Why Smaller Models Matter</div>
+  <h1 class="slide-title">Five reasons.</h1>
+  <ul class="points">
+    <li><strong>Lower serving cost.</strong> No H-100 fleet required.</li>
+    <li><strong>Lower latency.</strong> Small models respond in milliseconds.</li>
+    <li><strong>Easier on-device deployment.</strong> Fits on a laptop or phone.</li>
+    <li><strong>Better control for narrow tasks.</strong> Tuned models beat general-purpose ones on their job.</li>
+    <li><strong>Smaller blast radius.</strong> Failures are contained.</li>
+  </ul>
+</section>
+
+<section class="slide" data-slide="4">
+  <div class="brand"><strong>BrewSLM</strong> · Video 01</div>
+  <div class="slide-eyebrow">The Lifecycle</div>
+  <h1 class="slide-title">Eleven stages, one loop.</h1>
+  <p class="slide-subtitle">Every video in this series sits somewhere on this loop.</p>
+  <div class="lifecycle">
+    <div class="step"><div class="n">01</div>Define task</div>
+    <div class="step"><div class="n">02</div>Collect or import data</div>
+    <div class="step"><div class="n">03</div>Inspect & clean</div>
+    <div class="step"><div class="n">04</div>Build gold set</div>
+    <div class="step"><div class="n">05</div>Generate synthetic</div>
+    <div class="step"><div class="n">06</div>Prepare splits</div>
+    <div class="step"><div class="n">07</div>Pick base model</div>
+    <div class="step"><div class="n">08</div>Train</div>
+    <div class="step"><div class="n">09</div>Evaluate</div>
+    <div class="step"><div class="n">10</div>Compress & export</div>
+    <div class="step"><div class="n">11</div>Test in real usage path</div>
+    <div class="step" style="background:transparent;border-color:transparent;color:var(--muted)">→ monitor & iterate</div>
+  </div>
+</section>
+
+<section class="slide" data-slide="5">
+  <div class="brand"><strong>BrewSLM</strong> · Video 01</div>
+  <div class="slide-eyebrow">Where BrewSLM Fits</div>
+  <h1 class="slide-title">A workspace for the whole loop. Local hardware.</h1>
+  <div class="stack-grid">
+    <div class="stack-col">
+      <h3>Stages → tabs</h3>
+      <ul>
+        <li>Data · Cleaning · Gold Set</li>
+        <li>Synthetic · Dataset Prep</li>
+        <li>Tokenization · Training</li>
+        <li>Evaluation · Compression</li>
+        <li>Export · Registry · Playground</li>
+      </ul>
+    </div>
+    <div class="stack-col">
+      <h3>Every action → artifact on disk</h3>
+      <ul>
+        <li>Raw rows, cleaned chunks, gold pairs</li>
+        <li>Synthetic samples, prepared splits</li>
+        <li>LoRA adapters, GGUF artifacts</li>
+        <li>Eval results, deployment manifests</li>
+        <li>Nothing leaves the box.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide" data-slide="6">
+  <div class="brand"><strong>BrewSLM</strong> · Video 01</div>
+  <div class="title-block" style="margin: auto 0;">
+    <div class="slide-eyebrow">Up Next</div>
+    <h1 class="slide-title">Open the product →</h1>
+    <p class="slide-subtitle">Video 02 — Quickstart. Login, click, inspect. Under five minutes from a fresh repo clone to a seeded project on the data tab.</p>
+  </div>
+</section>
+
+</div>
+
+<script>
+window.showSlide = function (n) {
+  document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+  const next = document.querySelector('[data-slide="' + n + '"]');
+  if (next) next.classList.add('active');
+};
+</script>
+</body>
+</html>
