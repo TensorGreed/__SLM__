@@ -1,173 +1,166 @@
-# Sentiment Classifier Pipeline — Narration Skeleton
+# Sentiment Classifier Pipeline — Narration
 
-Status: ready for the inspect-only path. ONNX-INT8 export story is
-the lingering partial — narration must mark it as "the natural
-target, not yet validated."
+Status: **synced** with the actual narrated take produced by
+`tts/generate_v05_narration.py` (Orpheus voice "leo") on 2026-05-20.
 
-Target length: 8–10 minutes (≈1300 words).
+The **Python script** at
+[tts/generate_v05_narration.py](../../../tts/generate_v05_narration.py)
+is the **authoritative source** of the spoken text. This file mirrors
+the same text plus stage directions / Playwright cues. Edit the
+script first.
+
+Total runtime: **2:26** (matches
+`docs-demo/recordings/raw/05-sentiment-classifier-pipeline-narrated.mp4`).
+Section timings come from `tts/audio/v05-durations.json`.
 
 Companion to:
-`docs-demo/videos/05-sentiment-classifier-pipeline/recording-plan.md`.
+[docs-demo/videos/05-sentiment-classifier-pipeline/recording-plan.md](../../videos/05-sentiment-classifier-pipeline/recording-plan.md).
+
+This is the third sample in the inspection arc. Two beats are
+distinctive to this video: **class balance** (10/10/10 source,
+70/65/65 gold) and the **mobile_cpu target** which hints at an
+ONNX-INT8 export story — marked as future, not validated.
 
 ---
 
-## Cold open (0:00–0:25)
+## Pre-roll (not narrated)
 
-> "The sentiment classifier is the simplest of the three official
-> samples. Three labels — positive, neutral, negative — applied to
-> short product reviews. If you've ever trained a classifier in a
-> tutorial, this is that, with BrewSLM's pipeline scaffolding around
-> it. Plus one extra teaching beat at the end about mobile / ONNX
-> export, since this sample's target profile is `mobile_cpu`."
+Playwright logs in as admin, clicks the **Demo · Sentiment classifier**
+tile, lands on the Data tab. ~5 seconds before narration starts.
 
-## Section 1 — Seed + Data tab (0:25–1:45)
+## Section 1 — Cold open (0:00–0:15)
 
-**Action**: click Sentiment classifier tile, land on Data tab.
+**On screen**: Data tab loaded; 30 raw documents listed below.
 
-> "I click the Sentiment classifier tile. Standard seeder behavior —
-> 30 source rows, 200 gold rows, a 22-4-4 train-val-test split.
-> 
-> The source CSV is exactly balanced: 10 positive, 10 neutral, 10
-> negative. That's the demo's deliberate setup so the model can't
-> shortcut by always predicting the majority class."
+> "Welcome to the Sentiment Classifier pipeline walkthrough. This is
+> the simplest of the three samples — three-way classification with
+> the labels positive, neutral, and negative. Thirty source rows,
+> perfectly balanced ten, ten, ten. Each row is text and a single
+> label."
 
-**Action**: expand one row (doc id 91 from selector pass).
+## Section 2 — Data tab + expand a raw row (0:15–0:32)
 
-> "Each row is a short review and a single label. This shape is what
-> the classification adapter expects."
+**On screen**: click `[data-testid^="expand-doc-"]` on the first
+row; the `text` and `label` payload expand inline.
 
-## Section 2 — Gold Set + label distribution (1:45–3:00)
+> "Data tab. Thirty source reviews. Each row has two columns: the
+> text, and the gold label. Expand one. You see exactly the shape
+> the model has to learn — read a review, emit one of three labels.
+> The balance matters: ten of each class means the model never gets
+> to cheat by always predicting the majority."
 
-**Action**: switch to Gold Set.
+## Section 3 — Gold Set tab (class distribution callout) (0:32–0:51)
 
-> "Gold has 200 entries. The distribution is slightly skewed: 70
-> positive, 65 neutral, 65 negative. That's a realistic skew —
-> people are slightly more likely to write a 5-star review than a
-> 1-star one, and neutral reviews are rare in the wild because most
-> people who write a review feel something one way or the other.
-> 
-> When you build your own classifier, this is the distribution you
-> want to *measure* against. Training on a perfectly balanced
-> dataset and then evaluating on a real-world-skewed gold gives you
-> an honest signal."
+**On screen**: click **Gold Set**; "Entries 200" badge visible.
 
-## Section 3 — Dataset Prep + classification adapter (3:00–4:30)
+> "Gold Set. Two hundred entries. The distribution is seventy
+> positive, sixty-five neutral, sixty-five negative. Slightly skewed
+> positive — typical of real-world reviews. The eval handler
+> measures per-class precision and recall against this gold, so
+> under-represented classes still get measured."
 
-**Action**: switch to Dataset Prep, open Schema Profile.
+## Section 4 — Dataset Prep tab (labels) (0:51–1:07)
 
-> "Dataset Prep. The adapter applied here is `classification-label`
-> — different from the Support FAQ's `qa-pair` and the PII
-> Detector's `structured-extraction`. The adapter is what makes the
-> trainer treat this as a classification problem instead of a
-> sequence-generation problem.
-> 
-> Look at the Schema Profile panel: the label vocabulary is right
-> there — `positive`, `neutral`, `negative`. The field mapping is
-> `text → label`. Twenty-two rows in train, four each in val and
-> test."
+**On screen**: click **Dataset Prep**; Schema Profile panel shows the
+three labels.
 
-## Section 4 — Tokenization light tour (4:30–5:30)
+> "Dataset Prep. Schema Profile shows the three labels. The adapter
+> is classification-label — it canonicalizes every prepared row to
+> a text column and a label column. Splits are twenty-two train,
+> four validation, four test. Small, but enough to verify the loop
+> end to end."
 
-**Action**: switch to Tokenization.
+## Section 5 — Tokenization tab (mobile angle) (1:07–1:21)
 
-> "Tokenization analyzes the length distribution of your prepared
-> data. For classification, sequence length matters more than for
-> generation tasks — you're typically batching tens or hundreds of
-> short inputs per forward pass, and your max sequence length sets
-> the memory ceiling.
-> 
-> For mobile deployment, you'd target a max length of maybe 128 or
-> 256 tokens. We won't run the analyzer in this video — it needs the
-> transformers library and a tokenizer download — but this is where
-> you'd check that your data actually fits the budget."
+**On screen**: click **Tokenization**.
 
-## Section 5 — Training Config + mobile target (5:30–7:00)
+> "Tokenization. Same idea as the previous samples. The twist for
+> this sample: target profile is mobile CPU, so max sequence length
+> matters more than usual. Short sequences mean a smaller model
+> footprint and faster inference on-device."
 
-**Action**: Training Config Page.
+## Section 6 — Training tab → Training Config (mobile target) (1:21–1:37)
 
-> "Training Config. Look at the recipe defaults — the manifest's
-> `target_profile=mobile_cpu` and `training_preferred_plan_profile=fast-iteration`
-> influence the suggested settings. Smaller batch, shorter sequences,
-> fewer parameters. The Hardware Auto-Tuner button will recommend a
-> base model sized for your target.
-> 
-> Don't click Apply Recipe yet — you'd overwrite your base model
-> selection. For this video we're staying with the defaults and
-> walking surfaces."
+**On screen**: click **Training** → click **Open Training Config →** →
+land on `/project/<id>/training-config` → click **Advanced**.
 
-**Action**: flip to Advanced → Power Tools.
+> "Training tab — empty, expected. Into the Training Config page.
+> Flip to Advanced. The Training Config picks up the mobile CPU
+> target profile from the manifest — that hints at smaller batches,
+> shorter sequences, and a tighter model footprint on export.
+> Defaults are tuned for mobile."
 
-> "If you flip to Advanced mode and open Power Tools, you can tune
-> LoRA rank. For a three-class classifier on small data, the default
-> rank 8 is usually plenty. Bumping rank 16 doesn't help much for
-> classification — it's a span/structure-task lever, not a
-> classification lever."
+## Section 7 — Evaluation tab (classification pack) (1:37–1:50)
 
-## Section 6 — Evaluation surface (7:00–8:00)
+**On screen**: navigate to `/project/<id>/pipeline/eval`; "No
+experiments to evaluate" empty state.
 
-**Action**: switch to Evaluation.
+> "Evaluation tab. Empty until we have an experiment. For this
+> sample the eval pack is the classification default — accuracy and
+> macro-F1 in the headline, per-class precision and recall in the
+> detail panel."
 
-> "Evaluation. Empty until we run an experiment. When we do, this
-> surface emits accuracy and macro-F1 — that's the canonical
-> classification eval pack — plus per-class precision and recall.
-> The eval pack `evalpack.classification.default` ships with the
-> repo; you can see it referenced in the prepared manifest."
+## Section 8 — Compression + Export (ONNX-INT8 future) (1:50–2:08)
 
-## Section 7 — Compression + Export (mobile story) (8:00–9:15)
+**On screen**: click **Compression** → click **Export**; export
+format dropdown including `onnx` is visible.
 
-**Action**: switch to Compression, then Export.
+> "Compression and Export. The natural target for this sample is
+> ONNX with eight-bit quantization, which would give us a fast
+> on-device model. ONNX is in the export format list, but the
+> end-to-end story for this sample isn't validated yet — that's
+> Video Eleven. For now we're just confirming the shape of the
+> export surface."
 
-> "Compression and Export. This is where the mobile story would land
-> for this sample, but I'm going to mark it clearly as 'partial.'
-> 
-> The manifest declares `target_profile=mobile_cpu` and mentions
-> ONNX-INT8 export as the natural endpoint. The export panel does
-> support ONNX — it's in the format dropdown — and the compression
-> service has a real quantization path in `backend/scripts/quantize.py`.
-> 
-> But we haven't actually run an ONNX-INT8 export on this sample
-> end-to-end yet. Whether the local toolchain — `optimum`,
-> `onnxruntime`, the rest — is installed and works on this machine is
-> a question we resolve in Video 11. Watch this space."
+## Section 9 — Wrap (2:08–2:26)
 
-## Wrap (9:15–9:45)
+**On screen**: hold on Export tab.
 
-> "Sentiment classifier walkthrough done. The simplest of the three
-> samples and a good shape for understanding classification
-> end-to-end.
-> 
-> Three takeaways:
-> 
-> One — classification adapters force a `text → label` contract.
-> 
-> Two — gold distribution should look like your real-world target,
-> not your perfectly-balanced training set.
-> 
-> Three — the mobile / ONNX export path exists in the codebase but
-> isn't proven end-to-end yet. That's Video 11's problem.
-> 
-> Next video walks the dataset lifecycle in detail — cleaning, gold,
-> synthetic — across all three samples in one shot."
+> "And that's the third sample. Three task profiles, three scoring
+> contracts, one shared pipeline. Quickstart, support FAQ, PII
+> detector, sentiment classifier — that's the inspection arc
+> complete. Next videos pick up the runtime-heavy side: actually
+> launching a training run, scoring against gold, compressing, and
+> serving."
 
 ---
 
 ## Things to **not** say
 
-- Don't say "ONNX-INT8 export works end-to-end" — it has not been
-  proven. Mark as partial.
-- Don't claim a synthetic-data path specifically for classification —
-  open Q12. The generic Q&A synthetic path works for some shapes;
-  whether it works for `{text, label}` data is unverified.
-- Don't say "the model fits on a phone" — that depends on the base
-  model choice, which we haven't made yet.
+- Don't claim the ONNX-INT8 export *has* been validated — it
+  hasn't. Say "the natural target" or "in the export format list",
+  not "it works."
+- Don't speak the manifest's `target_profile = mobile_cpu`
+  literal. Say "the mobile CPU target profile" in plain English.
+- Don't list per-class gold counts beyond what's said (70/65/65) —
+  reading more numbers aloud feels recital-style and the on-screen
+  display covers the detail.
+- Don't read literal tech tokens (env var names, REST paths,
+  adapter literal strings) — same rule as the other videos.
 
-## Optional advanced notes
+## Optional technical notes (background; not spoken)
 
-- The classification eval handler dispatches via
-  `backend/app/services/eval_task_handler_service.py` based on
-  `task_profile=classification`.
-- Quantization paths in `backend/scripts/quantize.py` cover GGUF
-  and ONNX; the latter is the relevant path for mobile_cpu targets.
-- Manifest preferred plan profile `fast-iteration` is one of three
-  built-in profiles (`fast-iteration`, `balanced`, `quality`); see
-  `backend/app/services/training_recipe_service.py`.
+- Eval pack id: `evalpack.classification.default`. Configured via
+  the manifest's `evaluation.preferred_pack_id`. Dispatches to the
+  classification handler in
+  [backend/app/services/eval_task_handler_service.py](../../../backend/app/services/eval_task_handler_service.py).
+- ONNX export is in the export format enum at
+  [backend/app/models/export.py](../../../backend/app/models/export.py)
+  but no successful export run has been observed in this pass. Open
+  question Q23 / Q24 — parked here, answered by Video 11.
+- Source distribution is exact 10/10/10 by construction; gold
+  70/65/65 reflects the real-world skew toward positive reviews
+  even when curating.
+- Q12 (classification-specific synthetic path) is still open —
+  the synthetic tab is intentionally skipped in this video to avoid
+  showing an unverified surface.
+
+## Why no synthetic section
+
+Videos 03 and 04 each included a Synthetic tab section. This video
+skips Synthetic because Q12 — "is there a classification-specific
+synthetic data generation path?" — remains unresolved. The Synthetic
+tab does render for this sample but the surface looks generic; the
+recording would either invent a story or have to explain a caveat
+that distracts from the class-balance / mobile-target beats.
+Compression and Export get the freed time instead.
