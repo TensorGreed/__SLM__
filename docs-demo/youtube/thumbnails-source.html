@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BrewSLM Thumbnails</title>
+<style>
+  /* CRT/terminal aesthetic — high contrast for YouTube thumbnail grid */
+  :root {
+    --bg: #0a0d12;
+    --bg-soft: #11161e;
+    --fg: #f5f5f5;
+    --muted: #7c8590;
+    --accent: #2bd773;       /* phosphor green, bright */
+    --accent-dim: #1f9d55;
+    --accent-soft: rgba(43, 215, 115, 0.08);
+    --grid-line: rgba(43, 215, 115, 0.08);
+    --warn: #ffb000;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #000;
+    color: var(--fg);
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .thumb {
+    width: 1280px;
+    height: 720px;
+    margin: 0 auto 40px;
+    background: var(--bg);
+    color: var(--fg);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 60px 72px;
+    border: 1px solid var(--grid-line);
+    /* Subtle scanline */
+    background-image:
+      linear-gradient(180deg, transparent 50%, rgba(43,215,115,0.025) 50%);
+    background-size: 100% 6px;
+  }
+
+  /* Top row */
+  .thumb-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .episode {
+    color: var(--accent);
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+  .brand {
+    color: var(--muted);
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 22px;
+    letter-spacing: 0.16em;
+    text-align: right;
+  }
+  .brand strong { color: var(--fg); }
+
+  /* Main title block */
+  .thumb-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    margin: 0;
+  }
+  .hook {
+    color: var(--accent);
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+  .title {
+    font-size: 96px;
+    font-weight: 800;
+    line-height: 0.98;
+    letter-spacing: -0.025em;
+    margin: 0 0 24px;
+    color: var(--fg);
+  }
+  .title .accent { color: var(--accent); }
+  .title-2line { font-size: 84px; }
+  .title-3line { font-size: 68px; }
+
+  /* Bottom row */
+  .thumb-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 20px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 26px;
+    line-height: 1.3;
+    max-width: 800px;
+    font-family: 'Inter', sans-serif;
+  }
+  .badge {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-dim);
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    display: inline-block;
+  }
+  .badge-warn {
+    background: rgba(255,176,0,0.08);
+    border-color: rgba(255,176,0,0.5);
+    color: var(--warn);
+  }
+
+  /* Specials */
+  .corner-mark {
+    position: absolute;
+    top: 60px; left: 72px;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    letter-spacing: 0.15em;
+  }
+  .terminal-prompt {
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    margin-top: 18px;
+    opacity: 0.9;
+  }
+  .terminal-prompt::before {
+    content: '$ ';
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<!-- PLAYLIST COVER -->
+<section class="thumb" data-thumb="playlist-cover">
+  <div class="thumb-head">
+    <div class="episode">SERIES · 11 EPISODES</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">From data → trained → served. Locally.</div>
+    <h1 class="title title-2line">Build &amp; Serve<br><span class="accent">Small Language Models</span></h1>
+    <p class="subtitle">11 short videos. Real Celery. Real LoRA. Real GGUF. Local GPU. No cloud.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">END‑TO‑END · LOCAL · 21 MIN</div>
+    <div>SmolLM2-135M · 105 MB GGUF · Ollama</div>
+  </div>
+</section>
+
+<!-- V01 — SLM 101 -->
+<section class="thumb" data-thumb="v01">
+  <div class="thumb-head">
+    <div class="episode">EP 01</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Definitions, lifecycle, when to use one</div>
+    <h1 class="title">Small Language<br>Model <span class="accent">101</span></h1>
+    <p class="subtitle">What "small" actually means, and why smaller often wins on narrow tasks.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">CONCEPTUAL · 1:55</div>
+    <div>spectrum, not a number</div>
+  </div>
+</section>
+
+<!-- V02 — Quickstart -->
+<section class="thumb" data-thumb="v02">
+  <div class="thumb-head">
+    <div class="episode">EP 02</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">From clone → seeded project in one click</div>
+    <h1 class="title">Local LLM Workspace<br><span class="accent">in 2 Minutes</span></h1>
+    <p class="subtitle">Fresh install to 20 raw rows + 200 gold rows on the data tab. No training. No setup.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">QUICKSTART · 2:10</div>
+    <div>click → seed → inspect</div>
+  </div>
+</section>
+
+<!-- V03 — Support FAQ -->
+<section class="thumb" data-thumb="v03">
+  <div class="thumb-head">
+    <div class="episode">EP 03</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Full pipeline walkthrough · inspect only</div>
+    <h1 class="title">Fine-Tune On<br><span class="accent">Support Tickets</span></h1>
+    <p class="subtitle">Every tab, every artifact. 20 source rows · 200 gold rows · 16/2/2 split.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">PIPELINE · 2:45</div>
+    <div>SFT · qa-pair adapter</div>
+  </div>
+</section>
+
+<!-- V04 — PII Detector -->
+<section class="thumb" data-thumb="v04">
+  <div class="thumb-head">
+    <div class="episode">EP 04</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Span-level entity extraction · 10 PII types</div>
+    <h1 class="title"><span class="accent">PII Detector</span><br>From Scratch</h1>
+    <p class="subtitle">email · phone · SSN · credit card · IP · 5 more — output: structured JSON.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">SPAN EXTRACTION · 2:26</div>
+    <div>scoring_mode = span_set</div>
+  </div>
+</section>
+
+<!-- V05 — Sentiment -->
+<section class="thumb" data-thumb="v05">
+  <div class="thumb-head">
+    <div class="episode">EP 05</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">3-way classification · sized for mobile CPU</div>
+    <h1 class="title">Sentiment<br><span class="accent">Classifier</span> + ONNX</h1>
+    <p class="subtitle">positive / neutral / negative · balanced 10/10/10 · ONNX-INT8 export path.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">CLASSIFICATION · 2:26</div>
+    <div>target = mobile_cpu</div>
+  </div>
+</section>
+
+<!-- V06 — BYO -->
+<section class="thumb" data-thumb="v06">
+  <div class="thumb-head">
+    <div class="episode">EP 06</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Bring your own CSV · skip the demos</div>
+    <h1 class="title">Train On<br><span class="accent">Your Own Data</span></h1>
+    <p class="subtitle">New project → upload CSV → ingestion. Same pipeline as the seeded demos.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">BYO DATA · 1:24</div>
+    <div>any CSV · JSONL · MD</div>
+  </div>
+</section>
+
+<!-- V09 — Training Run -->
+<section class="thumb" data-thumb="v09">
+  <div class="thumb-head">
+    <div class="episode">EP 07</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Real Celery worker · real LoRA · local GPU</div>
+    <h1 class="title">Train a Tiny<br>Model in <span class="accent">12 Seconds</span></h1>
+    <p class="subtitle">SmolLM2-135M · 2 epochs · 16 steps · adapter on disk when it's done.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">TRAINING · 1:26</div>
+    <div>PyTorch · PEFT · Celery</div>
+  </div>
+</section>
+
+<!-- V10 — Evaluation -->
+<section class="thumb" data-thumb="v10">
+  <div class="thumb-head">
+    <div class="episode">EP 08</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Score against a 200-row gold set</div>
+    <h1 class="title">Evaluate<br>Like You <span class="accent">Mean It</span></h1>
+    <p class="subtitle">Real predictions · real F1 · real Auto-Gate. Honest about what fails.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge badge-warn">GATE: FAIL · 1:17</div>
+    <div>exact_match=0 · F1=0.12</div>
+  </div>
+</section>
+
+<!-- V11 — Compression -->
+<section class="thumb" data-thumb="v11">
+  <div class="thumb-head">
+    <div class="episode">EP 09</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Merge LoRA + llama.cpp quantize</div>
+    <h1 class="title">256 MB → <span class="accent">105 MB</span><br>GGUF in 17s</h1>
+    <p class="subtitle">FP16 merged checkpoint · Q4_K_M quantization · ready for Ollama.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">COMPRESSION · 1:43</div>
+    <div>llama-quantize Q4_K_M</div>
+  </div>
+</section>
+
+<!-- V12 — Final -->
+<section class="thumb" data-thumb="v12">
+  <div class="thumb-head">
+    <div class="episode">EP 10</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">Ollama loads the GGUF · model responds</div>
+    <h1 class="title">Serve It,<br><span class="accent">Close The Loop</span></h1>
+    <p class="subtitle">ollama create → Playground → prompt → response. Real prediction. Local GPU.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">SERVE · 1:36</div>
+    <div>Ollama · OpenAI-compatible</div>
+  </div>
+</section>
+
+<!-- V14 — Architecture -->
+<section class="thumb" data-thumb="v14">
+  <div class="thumb-head">
+    <div class="episode">EP 11</div>
+    <div class="brand"><strong>BrewSLM</strong><br>@TensorGreed</div>
+  </div>
+  <div class="thumb-body">
+    <div class="hook">5 processes · 1 machine · 0 cloud calls</div>
+    <h1 class="title">How The <span class="accent">Stack</span><br>Fits Together</h1>
+    <p class="subtitle">FastAPI · React · Celery · Redis · Ollama. Where each piece runs.</p>
+  </div>
+  <div class="thumb-foot">
+    <div class="badge">ARCHITECTURE · 1:48</div>
+    <div>local-first by design</div>
+  </div>
+</section>
+
+</body>
+</html>
