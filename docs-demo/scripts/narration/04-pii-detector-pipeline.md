@@ -1,204 +1,165 @@
-# PII Detector Pipeline — Narration Skeleton
+# PII Detector Pipeline — Narration
 
-Status: ready for the inspect-only path. The #1 narration risk for
-this sample is **conflating cleaning-time PII redaction with the
-PII Detector model task** — they share the name "PII" but they are
-completely different features.
+Status: **synced** with the actual narrated take produced by
+`tts/generate_v04_narration.py` (Orpheus voice "leo") on 2026-05-20.
 
-Target length: 10–12 minutes (≈1600 words).
+The **Python script** at
+[tts/generate_v04_narration.py](../../../tts/generate_v04_narration.py)
+is the **authoritative source** of the spoken text. This file mirrors
+the same text plus stage directions / Playwright cues. Edit the
+script first.
+
+Total runtime: **2:26** (matches
+`docs-demo/recordings/raw/04-pii-detector-pipeline-narrated.mp4`).
+Section timings come from `tts/audio/v04-durations.json`.
 
 Companion to:
-`docs-demo/videos/04-pii-detector-pipeline/recording-plan.md`.
+[docs-demo/videos/04-pii-detector-pipeline/recording-plan.md](../../videos/04-pii-detector-pipeline/recording-plan.md).
+
+The key narrative beat is Section 3 (Cleaning) — the disambiguation
+between cleaning-time PII redaction and the PII Detector model task.
+That's the value of the entire video.
 
 ---
 
-## Cold open (0:00–0:40)
+## Pre-roll (not narrated)
 
-> "This is the PII Detector pipeline walkthrough. Before we click
-> anything, one thing you should know up front: the word 'PII' shows
-> up twice in this product, and they're completely different
-> features.
-> 
-> First, in the Cleaning tab, there's regex-based PII redaction. That
-> means: scan source text for things that *look* like email addresses
-> or SSNs, and replace them with `[REDACTED_EMAIL]`. It's a
-> data-cleaning step, not a model task.
-> 
-> Second, this sample — the PII Detector — is a *model* task. The
-> goal is to train a small model that, given text, emits a structured
-> JSON list of entities with their types and character offsets. That
-> output can drive a redaction pipeline, a LlamaFirewall scanner, or
-> a compliance audit log.
-> 
-> Same word, two completely different jobs. We'll touch both in this
-> video, and I'll call out the difference whenever we switch context."
+Playwright logs in as admin, clicks the **Demo · PII / PCI Detector**
+tile, lands on the Data tab. ~5 seconds before narration starts.
 
-## Section 1 — Seed + Data tab (0:40–2:30)
+## Section 1 — Cold open (0:00–0:19)
 
-**Action**: click PII / PCI Detector tile → land on Data tab.
+**On screen**: Data tab loaded; 61 raw documents listed below.
 
-> "I'll click the PII / PCI Detector tile. Same seeder behavior as
-> Support FAQ — 61 source rows imported, 200 gold rows, 45-8-8 split
-> pre-written.
-> 
-> Now look at the Data tab. We have 61 documents. Let me expand
-> one…"
+> "Welcome to the PII Detector pipeline walkthrough. This sample is
+> a span-level entity detector — you feed it a snippet of text, and
+> it emits a structured list of every personal-information span it
+> finds. Email, phone, social security, credit card — ten entity
+> types in total. There's a confusion risk we'll clear up in a
+> minute."
 
-**Action**: expand `[data-testid="expand-doc-61"]`.
+## Section 2 — Data tab + expand a raw row (0:19–0:32)
 
-> "…and you can see the row has *two* columns: a `text` field with
-> the raw sentence, and an `entities_json` field with the structured
-> ground truth. Each entity carries a type, character start and end
-> offsets, and the matched text.
-> 
-> This is the contract: the model has to learn to emit this exact
-> shape. We have ten entity types in this sample — email, phone,
-> SSN, credit card, person name, street address, date of birth, IP
-> address, API key, bank account."
+**On screen**: click `[data-testid^="expand-doc-"]` on the first
+row; the `text` and `entities_json` payload expand inline.
 
-## Section 2 — Cleaning tab (the disambiguation moment) (2:30–4:00)
+> "Data tab. Sixty-one source rows. Each row has two columns: the
+> text, and a structured list of every entity in that text. The
+> entity list is the ground truth — that's the shape the model has
+> to learn to produce. Expand a row to see what one looks like."
 
-**Action**: switch to Cleaning.
+## Section 3 — Cleaning tab (disambiguation) (0:32–0:53)
 
-> "Here it is. The Cleaning tab. Watch the PII redaction toggle.
-> 
-> If we turned this on and ran a cleaning batch, the cleaning service
-> would run regex patterns over every raw document and replace
-> detected patterns with placeholder tags. That's useful when your
-> source data shouldn't leave your perimeter unredacted — say you're
-> training on customer messages and want to scrub email addresses
-> from the text *before* the model ever sees them.
-> 
-> This is **not** the PII Detector. The detector is a downstream
-> model task we're going to train. The cleaning redaction is an
-> upstream data-cleaning option. Two different surfaces, two
-> different jobs.
-> 
-> One more nuance: if we did run the cleaning redaction, the
-> resulting cleaned text would *lose* the entity information,
-> because the entities would be replaced with `[REDACTED_*]` tags.
-> That defeats the detector model's purpose. So when training a
-> detector, don't redact at cleaning time — you'd lose your training
-> signal."
+**On screen**: click the **Cleaning** tab; the redaction toggles
+are visible.
 
-## Section 3 — Gold Set tab (4:00–4:45)
+> "Now the confusing part. The Cleaning tab has a personal-
+> information redaction option. That's a regex pre-processing step —
+> it can mask personal information in source text before training.
+> The PII Detector model in this sample is the opposite — it finds
+> personal information and emits a structured list. Same word in
+> the product name, two completely different features. We're not
+> running the redaction here."
 
-**Action**: switch to Gold Set.
+## Section 4 — Gold Set tab (0:53–1:04)
 
-> "Gold set. 200 entries. Locked. Same shape as the raw rows but
-> hand-verified. Per the evidence map, this covers all ten entity
-> types — person_name leads at 138 instances, api_key has the fewest
-> at 21. That distribution matches what you'd expect for real-world
-> PII: lots of names, few API keys."
+**On screen**: click **Gold Set**; "Entries 200" badge visible.
 
-## Section 4 — Synthetic span generation (4:45–6:30)
+> "Gold Set. Two hundred entries. Each one has a snippet, an
+> expected entity list, and a rationale. The eval handler scores
+> the model's predicted entities against the gold entities, per
+> entity type."
 
-**Action**: switch to Synthetic.
+## Section 5 — Synthetic tab (1:04–1:25)
 
-> "Synthetic generation. The mode is already set to span_extraction
-> because the seeded manifest carries the `span_set` scoring mode.
-> The synthetic generator will produce rows in the exact `{text,
-> entities: [...]}` shape the eval scores against.
-> 
-> The recommended teacher for span tasks is `qwen2.5:7b-instruct-q4_K_M`
-> or the 14B variant locally on Ollama. Qwen2.5 was trained on
-> structured output and emits cleaner JSON than llama3 for this kind
-> of task. The recommendation comes from the operator docs at
-> `slm-docs/docs/demos/pii-detector.md`.
-> 
-> See the warning banner — `TEACHER_MODEL_API_KEY` is missing. We
-> won't click Generate today. The detailed synthetic walkthrough is
-> in Video 04 of the series."
+**On screen**: click **Synthetic**; span generation mode visible.
 
-## Section 5 — Dataset Prep schema (6:30–7:45)
+> "Synthetic. The lever to grow sixty-one source rows into two
+> thousand training rows. For this sample, the generator runs in
+> span mode — you'd list the ten entity types you care about, and
+> the teacher model generates new text with matching entity
+> annotations. Local Ollama is wired up, but we're not running
+> generation here. It's runtime-heavy and lives in its own
+> walkthrough."
 
-**Action**: switch to Dataset Prep, open Schema Profile.
+## Section 6 — Dataset Prep tab (1:25–1:40)
 
-> "Dataset Prep. This is the headline panel for this sample. Look at
-> the prepared-manifest summary — specifically the output schema.
-> 
-> `scoring_mode: span_set`. That's the contract. The eval handler
-> dispatches on this value and runs entity-level matching: for every
-> predicted entity, look for a gold entity with the same type, start,
-> and end. Exact-match by default. Off-by-one boundary errors count
-> as a miss plus a hallucination.
-> 
-> Strict matching is the right contract for redaction: a 'John'
-> prediction for a gold 'John Smith Jr.' span breaks redaction just
-> as badly as missing the span entirely."
+**On screen**: click **Dataset Prep**; Schema Profile panel shows
+the `span_set` scoring mode.
 
-## Section 6 — Training Config + LoRA recommendations (7:45–9:15)
+> "Dataset Prep. The schema profile shows the scoring mode — span
+> set. That's the contract with eval: the model has to emit a
+> structured output with an entities array, and eval scores per
+> entity type. Splits are forty-five train, eight validation, eight
+> test."
 
-**Action**: Training Config → Essentials toggle → Advanced → Power
-Tools.
+## Section 7 — Tokenization tab (1:40–1:49)
 
-> "Training Config. By default we're in Essentials mode, with just
-> the launch-critical controls. Flip the toggle in the page header to
-> Advanced…"
+**On screen**: click **Tokenization**.
 
-**Action**: flip toggle.
+> "Tokenization. Same idea as the previous sample. Reports per-row
+> token counts and the maximum sequence length you'd budget for.
+> Surface only for this video."
 
-> "…and the Power Tools tab opens. This is where the LoRA controls
-> live. Defaults are rank 8, alpha 16, target modules `q_proj, v_proj`.
-> 
-> The pii-detector operator docs recommend bumping these for span
-> tasks: rank 16, alpha 32, and all four attention projections —
-> `q_proj, k_proj, v_proj, o_proj`. Roughly doubles training time
-> but typically lifts span-task F1 by 5–15 points. The recommendation
-> is in `slm-docs/docs/demos/pii-detector.md` under 'Improving F1
-> after the first training run.'"
+## Section 8 — Training tab → Training Config (Advanced) (1:49–2:09)
 
-## Section 7 — Eval surface (9:15–10:00)
+**On screen**: click **Training** → click **Open Training Config →**
+button → land on `/project/<id>/training-config` → click **Advanced**
+on the config-mode switch.
 
-**Action**: switch to Evaluation tab.
+> "Training tab — empty, expected. Into the Training Config page.
+> Defaults to Essentials. Flip to Advanced. For span extraction
+> tasks the docs recommend bumping low-rank adaptation from rank
+> eight to rank sixteen, and targeting all four attention
+> projections instead of two. The Advanced view exposes those
+> controls. Defaults work if you're starting out."
 
-> "Evaluation. Empty for now. When we have an experiment, this
-> surface emits the per-class breakdown — for the PII task that
-> means precision, recall, and F1 broken out by every entity type.
-> Compliance teams care way more about per-class recall than overall
-> F1: a 90% F1 model that misses every SSN is unshippable. The
-> per-class breakdown is the load-bearing report."
+## Section 9 — Evaluation tab + wrap (2:09–2:26)
 
-## Wrap (10:00–10:45)
+**On screen**: navigate back to `/project/<id>/pipeline/eval`;
+"No experiments to evaluate" empty state.
 
-> "That's the PII Detector pipeline. Three things to remember:
-> 
-> One — cleaning redaction and the detector model are completely
-> different features that happen to share the word 'PII'. Don't
-> conflate them.
-> 
-> Two — the output schema is the contract. `span_set` mode, strict
-> entity matching, per-class metrics.
-> 
-> Three — for span tasks, bump LoRA rank to 16 and target all four
-> attention projections. Default rank 8 is conservative; span tasks
-> like rank 16.
-> 
-> Next: the sentiment classifier in Video 07. Then we get into
-> training runs in Video 09."
+> "Evaluation tab. Empty until we have a finished experiment. For
+> this sample the eval handler scores per entity type — precision
+> and recall for email, phone, social security, and the other
+> seven. Next video: the sentiment classifier sample. Different
+> task profile, different scoring mode."
 
 ---
 
 ## Things to **not** say
 
-- Don't say "the model masks PII" — it detects, it doesn't mask. The
-  output of the detector is *structured JSON about PII locations*;
-  a downstream consumer (LlamaFirewall, your redaction pipeline)
-  decides what to do.
-- Don't say "the manifest has 60 source rows" — manifest prose is
-  stale; the file has 61.
-- Don't say cleaning redaction is "automatic" — it's a configurable
-  option behind a toggle.
+- Don't conflate cleaning-time PII redaction with the detector
+  model task — Section 3 exists to prevent this.
+- Don't say "the demo has 60 snippets" — that's the stale manifest
+  prose. The CSV has 61 rows; say 61 (open Q1).
+- Don't click the Synthetic Generate button. Even though Ollama is
+  configured, running span generation isn't in scope for this
+  inspection video; it has its own walkthrough.
+- Don't read literal tech tokens aloud (env var names, REST paths,
+  field names like `scoring_mode=span_set` — say "span set" as
+  plain English).
 
-## Optional advanced notes
+## Optional technical notes (background; not spoken)
 
-- The PII demo bundle includes two helper scripts (`_generate_bundle.py`
-  and `kaggle_pii_to_brewslm.py`) for developers extending the
-  sample. They are *not* part of this video — author appendix only.
-- The structured-extraction eval handler is in
-  `backend/app/services/eval_task_handler_service.py`; the span_set
-  scoring is dispatched from `output_schema.scoring_mode`.
-- The synthetic generator for span mode lives in
-  `backend/app/services/synthetic_service.py:generate_span_extraction_rows`
-  with batched-async support via Story 1.7's
-  `start_span_generation_task`.
+- `output_schema.scoring_mode = span_set` is the prepared manifest's
+  distinguishing field — that's what dispatches the eval handler
+  to span-level precision/recall scoring.
+- Recommended PEFT settings for span tasks (from
+  [slm-docs/docs/demos/pii-detector.md](../../../slm-docs/docs/demos/pii-detector.md)):
+  LoRA rank 16, target modules `q_proj, k_proj, v_proj, o_proj`.
+  Spoken in plain English as "rank sixteen, all four attention
+  projections."
+- All 10 entity types: email, phone, ssn, credit_card, person_name,
+  street_address, date_of_birth, ip_address, api_key, bank_account.
+- Gold counts skew toward person_name (138) and email (72); api_key
+  is rarest at 21 rows. Eval weights per-class recall, so the rare
+  classes still get measured.
+
+## Why no "missing teacher key" warning
+
+The original Video 04 plan pointed at a `WARN: missing
+TEACHER_MODEL_API_KEY` banner on the Synthetic tab. As of the
+2026-05-19 runtime decision, `backend/.env` now wires a real Ollama
+teacher; the banner no longer renders. Narration says "Local Ollama
+is wired up" instead.
