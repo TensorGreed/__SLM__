@@ -9,7 +9,10 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     viewport: { width: 1440, height: 900 },
-    video: 'on',
+    video: {
+      mode: 'on',
+      size: { width: 1440, height: 900 },
+    },
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
     launchOptions: {

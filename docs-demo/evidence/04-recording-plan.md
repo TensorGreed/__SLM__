@@ -48,7 +48,7 @@ Evidence:
 
 Recording setup should use:
 - URL: `http://localhost:5173/login`
-- Username: any value, for example `demo`
+- Username: **`admin`** (the bootstrap user; `AUTH_BOOTSTRAP_USERNAME` in `backend/.env`). **Not** any value — local login auto-creates unknown usernames as ENGINEER without project membership, which then 403s on `/api/projects/<id>`. Confirmed 2026-05-20 against the Video 02 dry-run.
 - Password: `sk-mock-admin-key`, unless `backend/.env` changes `API_KEY`
 
 ## Playwright

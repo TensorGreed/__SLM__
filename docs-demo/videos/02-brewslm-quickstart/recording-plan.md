@@ -26,7 +26,7 @@ Beginner. Assumes nothing about ML pipelines.
 | 2. Backend boot | `uvicorn app.main:app --reload --port 8000` from `backend/` (venv active) | `04-recording-plan.md`, `README.md` |
 | 3. Frontend boot | `npm run dev` from `frontend/` | `frontend/package.json` |
 | 4. Vite proxy | none needed; `frontend/vite.config.ts` already proxies `/api` to `http://localhost:8000` | `frontend/vite.config.ts` |
-| 5. Login credentials | username = anything (e.g. `demo`); password = `sk-mock-admin-key` (default `API_KEY` in `backend/.env.example:18`) | `backend/app/api/auth.py:168-169`, `backend/.env.example:18` |
+| 5. Login credentials | username = **`admin`** (the bootstrap user from `AUTH_BOOTSTRAP_USERNAME` in `backend/.env`); password = `sk-mock-admin-key` (default `API_KEY` in `backend/.env.example:18`). **Not `demo` or any other arbitrary username** — local login auto-creates new usernames as ENGINEER role with no project membership, which 403s on `/api/projects/<id>` after the seed lands. Discovered during the 2026-05-20 Video 02 recording dry-run. | `backend/app/api/auth.py:172-188`, `backend/.env:13` |
 | 6. Optional clean state | If a previous `support-faq` project exists in the DB, either delete it via the project list or use a disposable data dir as Codex did in the selector pass (`/tmp/slm-selector-pass.*`) | `docs-demo/evidence/11-selector-route-evidence.md` "Disposable Run Setup" |
 
 **Confirm app is ready** (manual smoke test before pressing Record):
@@ -50,8 +50,8 @@ re-verify.
 | Step | Action | What viewer sees | Narration checkpoint |
 |---|---|---|---|
 | 1.1 | Navigate to `http://localhost:5173/login` | BrewSLM login form | "This is BrewSLM running locally. We log in with a username and the local API key." |
-| 1.2 | Type `demo` in username | Username field fills | (silence) |
-| 1.3 | Type `sk-mock-admin-key` in password | Password field fills | "The default password is the `API_KEY` value in `backend/.env`." |
+| 1.2 | Type `admin` in username | Username field fills | (silence) |
+| 1.3 | Type `sk-mock-admin-key` in password | Password field fills | "The default password is the `API_KEY` value in `backend/.env`. The username has to be `admin` — that's the bootstrap user with project access." |
 | 1.4 | Click **Sign in** | Browser navigates to `/` (project list) | "And we're in." |
 
 **Selectors verified** (`docs-demo/evidence/11-selector-route-evidence.md`):

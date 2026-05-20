@@ -67,3 +67,12 @@ docs-demo/screenshots/*.webp
 !docs-demo/recordings/raw/.gitkeep
 !docs-demo/recordings/final/.gitkeep
 !docs-demo/screenshots/.gitkeep
+
+# TTS narration pipeline — local-only setup.
+# Tracks only the orchestration script + README; the cloned
+# third-party server, venv, and generated audio stay out of the repo
+# (reproducible from the script + the Ollama model).
+tts/Orpheus-FastAPI/
+tts/.venv/
+tts/audio/
+tts/__pycache__/
