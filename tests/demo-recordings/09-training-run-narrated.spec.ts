@@ -104,17 +104,47 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     await padTo(page, sectionStart, dur.cold_open);
 
     // ── Section: config recap (Essentials → Advanced) ────────────────
+    // Audio breakdown (~17.5s): ~1.5s intro, ~5s on Essentials
+    // (base model, epochs, batch size, LR), ~7s on Advanced (LoRA
+    // rank, target modules, optimizer), ~2s closing.
+    //
+    // The training-config page has TWO levels of tabs:
+    //   1. Mode toggle (top right): Essentials | Advanced
+    //   2. Setup sub-tabs (mid-page): Basics | Config | Power Tools | Review
+    //
+    // The form fields the narration names live in the SUB-TABS,
+    // not on the default landing view:
+    //   - "Base Model" / "Epochs" / "Batch Size" / "LR" live in Config
+    //   - "Advanced & PEFT" (LoRA / target modules / optimizer)
+    //     lives in Power Tools, which only renders in Advanced mode.
     sectionStart = Date.now();
     await page.getByRole('button', { name: /Open Training Config/ }).click();
     await page.waitForURL(/\/project\/\d+\/training-config/, { timeout: 15_000 });
     await page.waitForTimeout(1500);
-    // Center the Essentials/Advanced toggle so the viewer sees the
-    // switch + the form below it.
-    await focusOn(page, 'button[role="tab"]:has-text("Essentials")');
+
+    // First half — Essentials. Click the Config sub-tab so Base
+    // Model / Epochs / Batch Size / LR are actually rendered, then
+    // scroll the form into view.
+    await page.locator('button.training-setup-tab:has-text("Config")').click();
+    await page.waitForTimeout(600);
+    await focusOn(page, 'label.form-label:has-text("Base Model")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-config-essentials.png`, fullPage: false });
+    // Hold on Essentials/Config for ~45% of the section (covers the
+    // "Essentials view covers base model, epochs..." beat).
+    const essentialsHoldMs =
+        dur.config_recap * 1000 * 0.45 - (Date.now() - sectionStart);
+    if (essentialsHoldMs > 0) await page.waitForTimeout(essentialsHoldMs);
+
+    // Second half — Advanced. Flip the mode toggle (top-right) which
+    // unlocks the Power Tools sub-tab, then click into Power Tools
+    // and scroll to the "Advanced & PEFT" heading. That puts the
+    // LoRA / target-modules / optimizer fields on screen while
+    // narration names them.
     await page.getByRole('tab', { name: 'Advanced' }).click();
-    await page.waitForTimeout(1500);
-    await focusOn(page, 'button[role="tab"]:has-text("Advanced")');
+    await page.waitForTimeout(800);
+    await page.locator('button.training-setup-tab:has-text("Power Tools")').click();
+    await page.waitForTimeout(600);
+    await focusOn(page, 'h4.training-config-section-title:has-text("Advanced & PEFT")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-config-advanced.png`, fullPage: false });
     await padTo(page, sectionStart, dur.config_recap);
 
