@@ -100,7 +100,12 @@ def run_command(command: list[str], *, cwd: Path | None = None) -> None:
 def resolve_python_executable() -> str:
     explicit = os.getenv("PYTHON_EXECUTABLE", "").strip()
     if explicit:
-        path = Path(explicit).expanduser().resolve()
+        # Do NOT call .resolve() here — venv launchers like
+        # `.venv/bin/python` are symlinks to the system interpreter
+        # (e.g. /usr/bin/python3.12), and resolving the symlink loses
+        # the venv site-packages. Use the explicit path as-is so the
+        # subprocess inherits the venv's installed packages.
+        path = Path(explicit).expanduser()
         if path.exists():
             return str(path)
     return str(Path(sys.executable).resolve())
