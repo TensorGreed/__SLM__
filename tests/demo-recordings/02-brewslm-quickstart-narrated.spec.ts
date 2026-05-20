@@ -52,6 +52,21 @@ async function padTo(
     }
 }
 
+// Scroll the named element into the viewport center so the recorded
+// 1440x900 video actually shows what the narration is about.
+async function focusOn(
+    page: import('@playwright/test').Page,
+    selector: string,
+) {
+    const el = page.locator(selector).first();
+    if ((await el.count()) > 0) {
+        await el.evaluate((node) =>
+            node.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior }),
+        );
+        await page.waitForTimeout(300);
+    }
+}
+
 test('Video 02 — narrated take', async ({ page }) => {
     test.setTimeout(8 * 60_000); // total audio ≈ 3m46s + slack
 
@@ -73,6 +88,7 @@ test('Video 02 — narrated take', async ({ page }) => {
     // ── Section: tiles ───────────────────────────────────────────────
     sectionStart = Date.now();
     await expect(page.locator('.demo-project-tiles')).toBeVisible();
+    await focusOn(page, '.demo-project-tiles');
     const supportFaqTile = page.locator(
         '[aria-label="Open the Demo · Support FAQ demo project"]',
     );
@@ -87,6 +103,7 @@ test('Video 02 — narrated take', async ({ page }) => {
     await page.waitForURL(/\/project\/\d+\/pipeline\/data/, { timeout: 30_000 });
     await expect(page.locator('button.tab[title="Data"]')).toBeVisible();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v02n-data-tab.png`, fullPage: true });
     await padTo(page, sectionStart, dur.seed);
 
@@ -94,6 +111,7 @@ test('Video 02 — narrated take', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Cleaning"]').click();
     await page.waitForTimeout(800);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v02n-cleaning-tab.png`, fullPage: true });
     await padTo(page, sectionStart, dur.cleaning);
 
@@ -101,6 +119,7 @@ test('Video 02 — narrated take', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Gold Set"]').click();
     await page.waitForTimeout(800);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v02n-goldset-tab.png`, fullPage: false });
     await padTo(page, sectionStart, dur.goldset);
 
@@ -108,12 +127,14 @@ test('Video 02 — narrated take', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Dataset Prep"]').click();
     await page.waitForTimeout(800);
+    await focusOn(page, '.tab-content');
     await padTo(page, sectionStart, dur.dataprep);
 
     // ── Section: training (empty state) ──────────────────────────────
     sectionStart = Date.now();
     await page.locator('button.tab[title="Training"]').click();
     await page.waitForTimeout(800);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v02n-training-tab-empty.png`, fullPage: true });
     await padTo(page, sectionStart, dur.training);
 
@@ -123,8 +144,12 @@ test('Video 02 — narrated take', async ({ page }) => {
     await page.waitForTimeout(800);
     const firstExpander = page.locator('[data-testid^="expand-doc-"]').first();
     await expect(firstExpander).toBeVisible();
+    await focusOn(page, '[data-testid^="expand-doc-"]');
     await firstExpander.click();
     await page.waitForTimeout(1500);
+    // The expanded row is rendered just below the row that was clicked;
+    // re-focus so the {question, answer} payload is centered.
+    await focusOn(page, '[data-testid^="expand-doc-"]');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v02n-expanded-row.png`, fullPage: true });
     await padTo(page, sectionStart, dur.expand_wrap);
 });

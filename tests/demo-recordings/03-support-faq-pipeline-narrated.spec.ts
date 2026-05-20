@@ -40,6 +40,21 @@ async function padTo(
     if (remaining > 0) await page.waitForTimeout(remaining);
 }
 
+// Scroll the named element into the viewport center so the recorded
+// 1440x900 video shows what the narration is about.
+async function focusOn(
+    page: import('@playwright/test').Page,
+    selector: string,
+) {
+    const el = page.locator(selector).first();
+    if ((await el.count()) > 0) {
+        await el.evaluate((node) =>
+            node.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior }),
+        );
+        await page.waitForTimeout(300);
+    }
+}
+
 test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     test.setTimeout(10 * 60_000);
 
@@ -65,14 +80,17 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     // ── Section: cold open (on Data tab) ─────────────────────────────
     let sectionStart = Date.now();
     await page.waitForTimeout(1000); // give the page a moment to settle
+    await focusOn(page, '.tab-content');
     await padTo(page, sectionStart, dur.cold_open);
 
     // ── Section: data tab + expand a raw row ─────────────────────────
     sectionStart = Date.now();
     const firstExpander = page.locator('[data-testid^="expand-doc-"]').first();
     await expect(firstExpander).toBeVisible();
+    await focusOn(page, '[data-testid^="expand-doc-"]');
     await firstExpander.click();
     await page.waitForTimeout(2000);
+    await focusOn(page, '[data-testid^="expand-doc-"]');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-data-expanded.png`, fullPage: true });
     await padTo(page, sectionStart, dur.data);
 
@@ -80,6 +98,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Cleaning"]').click();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-cleaning-tab.png`, fullPage: true });
     await padTo(page, sectionStart, dur.cleaning);
 
@@ -87,6 +106,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Gold Set"]').click();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-goldset-tab.png`, fullPage: false });
     await padTo(page, sectionStart, dur.goldset);
 
@@ -94,6 +114,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Synthetic"]').click();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-synthetic-tab.png`, fullPage: true });
     await padTo(page, sectionStart, dur.synthetic);
 
@@ -101,6 +122,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Dataset Prep"]').click();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-dataprep-tab.png`, fullPage: true });
     await padTo(page, sectionStart, dur.dataprep);
 
@@ -108,6 +130,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     sectionStart = Date.now();
     await page.locator('button.tab[title="Tokenization"]').click();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-tokenization-tab.png`, fullPage: false });
     await padTo(page, sectionStart, dur.tokenization);
 
@@ -119,9 +142,11 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     await page.waitForURL(/\/project\/\d+\/training-config/, { timeout: 15_000 });
     await page.waitForTimeout(1500);
     // Default is Essentials; capture, then flip to Advanced.
+    await focusOn(page, 'button[role="tab"]:has-text("Essentials")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-training-config-essentials.png`, fullPage: false });
     await page.getByRole('tab', { name: 'Advanced' }).click();
     await page.waitForTimeout(1500);
+    await focusOn(page, 'button[role="tab"]:has-text("Advanced")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-training-config-advanced.png`, fullPage: false });
     await padTo(page, sectionStart, dur.training_config);
 
@@ -130,6 +155,7 @@ test('Video 03 — Support FAQ pipeline narrated', async ({ page }) => {
     await page.goto(`/project/${projectId}/pipeline/eval`);
     await expect(page.locator('button.tab[title="Evaluation"]')).toBeVisible();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v03-eval-tab.png`, fullPage: false });
     await padTo(page, sectionStart, dur.eval_wrap);
 });

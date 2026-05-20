@@ -40,6 +40,21 @@ async function padTo(
     if (remaining > 0) await page.waitForTimeout(remaining);
 }
 
+// Scroll the named element into the viewport center so the recorded
+// video (1440x900) actually shows what the narration is about.
+async function focusOn(
+    page: import('@playwright/test').Page,
+    selector: string,
+) {
+    const el = page.locator(selector).first();
+    if ((await el.count()) > 0) {
+        await el.evaluate((node) =>
+            node.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior }),
+        );
+        await page.waitForTimeout(300);
+    }
+}
+
 test('Video 10 — Evaluation narrated', async ({ page, request }) => {
     test.setTimeout(10 * 60_000);
 
@@ -79,6 +94,7 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
     // Navigate to the Evaluation tab — section starting point.
     await page.locator('button.tab[title="Evaluation"]').click();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.tab-content');
 
     // ── Section: cold open ───────────────────────────────────────────
     let sectionStart = Date.now();
@@ -121,10 +137,14 @@ test('Video 10 — Evaluation narrated', async ({ page, request }) => {
     await page.waitForTimeout(1500);
     await page.locator('button.tab[title="Evaluation"]').click();
     await page.waitForTimeout(1500);
+    // Scroll the Auto-Gate panel into the viewport — that's where the
+    // result lands.
+    await focusOn(page, ':text("Auto Gate")');
     await padTo(page, sectionStart, dur.watching);
 
     // ── Section: results ────────────────────────────────────────────
     sectionStart = Date.now();
+    await focusOn(page, ':text("Auto Gate")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v10-eval-tab-after.png`, fullPage: true });
     console.log(
         `[v10] eval result id=${evalResult.id} ` +

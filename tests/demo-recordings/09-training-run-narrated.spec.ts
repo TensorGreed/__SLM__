@@ -45,6 +45,23 @@ async function padTo(
     if (remaining > 0) await page.waitForTimeout(remaining);
 }
 
+// Playwright records video at the viewport size (1440x900). Without
+// scrolling, anything below the fold is invisible to the viewer even
+// though screenshot({fullPage: true}) captures it. Call this whenever
+// the narration is about to talk about a specific element.
+async function focusOn(
+    page: import('@playwright/test').Page,
+    selector: string,
+) {
+    const el = page.locator(selector).first();
+    if ((await el.count()) > 0) {
+        await el.evaluate((node) =>
+            node.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior }),
+        );
+        await page.waitForTimeout(300);
+    }
+}
+
 test('Video 09 — Training Run narrated', async ({ page, request }) => {
     test.setTimeout(10 * 60_000);
 
@@ -77,6 +94,9 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     // Navigate to the Training tab — section starting point.
     await page.locator('button.tab[title="Training"]').click();
     await page.waitForTimeout(1500);
+    // Bring the Training Runs section into view — that's the table the
+    // narration is about.
+    await focusOn(page, '.tab-content');
 
     // ── Section: cold open (Training tab empty state) ────────────────
     let sectionStart = Date.now();
@@ -88,9 +108,13 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     await page.getByRole('button', { name: /Open Training Config/ }).click();
     await page.waitForURL(/\/project\/\d+\/training-config/, { timeout: 15_000 });
     await page.waitForTimeout(1500);
+    // Center the Essentials/Advanced toggle so the viewer sees the
+    // switch + the form below it.
+    await focusOn(page, 'button[role="tab"]:has-text("Essentials")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-config-essentials.png`, fullPage: false });
     await page.getByRole('tab', { name: 'Advanced' }).click();
     await page.waitForTimeout(1500);
+    await focusOn(page, 'button[role="tab"]:has-text("Advanced")');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-config-advanced.png`, fullPage: false });
     await padTo(page, sectionStart, dur.config_recap);
 
@@ -98,6 +122,7 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     sectionStart = Date.now();
     await page.goto(`/project/${projectId}/pipeline/training`);
     await page.waitForTimeout(800);
+    await focusOn(page, '.tab-content');
 
     // Create the experiment via API. Overrides:
     // - SmolLM2-135M-Instruct: small, ungated, instruction-tuned.
@@ -137,10 +162,14 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     // Refresh the UI so the new experiment row shows up
     await page.reload();
     await page.waitForTimeout(1500);
+    // Scroll the runs list into view — that's where the new experiment
+    // appears.
+    await focusOn(page, '.training-experiment-item');
     await padTo(page, sectionStart, dur.kickoff);
 
     // ── Section: watching — wait for completion (status polling) ────
     sectionStart = Date.now();
+    await focusOn(page, '.training-experiment-item');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-training-running.png`, fullPage: true });
 
     // Poll until the API reports completed (or training section audio
@@ -164,10 +193,12 @@ test('Video 09 — Training Run narrated', async ({ page, request }) => {
     // Refresh once more to land the completed status in the UI
     await page.reload();
     await page.waitForTimeout(1500);
+    await focusOn(page, '.training-experiment-item');
     await padTo(page, sectionStart, dur.watching);
 
     // ── Section: results (completed state with metrics) ──────────────
     sectionStart = Date.now();
+    await focusOn(page, '.training-experiment-item');
     await page.screenshot({ path: `${SCREENSHOT_DIR}/v09-training-completed.png`, fullPage: true });
     await padTo(page, sectionStart, dur.results);
 
