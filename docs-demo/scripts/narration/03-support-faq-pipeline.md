@@ -1,159 +1,128 @@
-# Support FAQ Pipeline — Narration Skeleton
+# Support FAQ Pipeline — Narration
 
-Status: ready for first take of the *inspect-only* path. Real
-training run is a separate video (Video 09).
+Status: **synced** with the actual narrated take produced by
+`tts/generate_v03_narration.py` (Orpheus voice "leo") on 2026-05-20.
 
-Target length: 9–12 minutes (≈1500 words).
+The **Python script** at
+[tts/generate_v03_narration.py](../../../tts/generate_v03_narration.py)
+is the **authoritative source** of the spoken text. This file mirrors
+the same text plus stage directions / Playwright cues. Edit the
+script first.
+
+Total runtime: **2:45** (matches
+`docs-demo/recordings/raw/03-support-faq-pipeline-narrated.mp4`).
+Section timings below come from `tts/audio/v03-durations.json`.
 
 Companion to:
-`docs-demo/videos/03-support-faq-pipeline/recording-plan.md`.
+[docs-demo/videos/03-support-faq-pipeline/recording-plan.md](../../videos/03-support-faq-pipeline/recording-plan.md).
 
 ---
 
-## Cold open (0:00–0:30)
+## Pre-roll (not narrated)
 
-> "Welcome to the Support FAQ pipeline walkthrough. We're going to
-> take the simplest of the three official samples — twenty customer
-> tickets with hand-written answers — and walk it through every
-> pipeline tab that actually does something on a seeded demo. By the
-> end you'll know what each tab is for, which surfaces work without
-> any external runtime, and where you'd need to wire up a teacher
-> model or a training runtime to keep going."
+Playwright logs in, clicks the **Demo · Support FAQ** tile, lands on
+the Data tab. ~5 seconds of seed-time before narration starts.
 
-## Section 1 — Recap + seed (0:30–1:30)
+## Section 1 — Cold open (0:00–0:15)
 
-> "Quick recap from the quickstart video. We log in with the local
-> API key, we land on the project list, and we click the Demo Support
-> FAQ tile. That POSTs to the demo-projects endpoint, the backend
-> copies twenty rows of `tickets.csv` into the project's raw data,
-> imports 200 gold rows, and pre-builds an SFT split. Twenty seconds
-> later we're on the Data tab."
+**On screen**: Data tab loaded; 20 raw documents listed below.
 
-## Section 2 — Data Tab + raw rows (1:30–3:00)
+> "Welcome to the Support FAQ pipeline walkthrough. We're taking the
+> simplest of the three official samples — twenty customer tickets
+> with hand-written answers — and walking it through every pipeline
+> tab that does something useful on a seeded demo. No training, no
+> synthetic generation, just inspection."
 
-**Action**: scroll documents list, expand one row.
+## Section 2 — Data tab + expand a raw row (0:15–0:35)
 
-> "Each document on this list is one source ticket. The seeder turned
-> each CSV row into a RawDocument record. There's twenty of them
-> because there are twenty CSV rows.
-> 
-> Expand a row…"
+**On screen**: click `[data-testid^="expand-doc-"]` on the first row;
+the `question`/`answer` pair expands inline.
 
-**Beat**.
+> "Data tab. Twenty raw documents — one per source ticket. The
+> seeder turned each row into a raw document record. Expand one. You
+> see the shape: a question and an answer. This is what the model
+> has to learn — the agent's writing style for these specific
+> questions. Imagine pasting thousands of resolved tickets here and
+> you've got the dataset for a real support assistant."
 
-> "…and you see the shape: a `question` and an `answer`. This is
-> what the model needs to learn — the agent's writing style for
-> these specific questions. Imagine pasting *thousands* of resolved
-> tickets here and you've got the dataset for a real support
-> assistant."
+## Section 3 — Cleaning tab (0:35–0:56)
 
-## Section 3 — Cleaning tab (3:00–4:00)
+**On screen**: click the **Cleaning** tab; cleaning config form
+visible.
 
-**Action**: switch to Cleaning.
+> "Cleaning. Skip it for this sample — the corpus is already small
+> and clean. For a messy real-world corpus, this is where you'd
+> chunk long text, redact personal information, mask toxicity, and
+> score quality. Same word as the next sample's PII Detector, but
+> two completely different features — cleaning here is a regex
+> pre-processing step, the detector is a trained model."
 
-> "Cleaning. Skip this for the support-faq sample because the source
-> is already small and clean. But this is where you'd run chunking,
-> regex PII redaction, toxicity masking, and quality scoring on a
-> messy real-world corpus.
-> 
-> Take note of the PII redaction options. We'll talk about how those
-> differ from the PII Detector sample in Video 06 — same word, two
-> completely different features."
+## Section 4 — Gold Set tab (0:56–1:12)
 
-## Section 4 — Gold Set tab (4:00–5:00)
+**On screen**: click **Gold Set**; "Entries 200" badge + locked
+indicator visible. Viewport-only screenshot.
 
-**Action**: switch to Gold Set.
+> "Gold Set. Two hundred entries. Locked. This is the evaluation
+> ground truth — never trained against, only measured against. Each
+> row has a question, an expected answer, and a rationale. The eval
+> handler walks the entire two-hundred-row set after training and
+> reports the fraction the model got right."
 
-> "Gold Set. Two hundred entries. Locked. This is *evaluation* data,
-> not training data. The model never trains against gold — it gets
-> measured against it.
-> 
-> Each gold row carries a `question`, an `expected` answer, and a
-> `rationale` explaining what the row is testing. The eval handler
-> walks the entire 200-row set after training and tells you what
-> fraction the model got right."
+## Section 5 — Synthetic tab (1:12–1:30)
 
-## Section 5 — Synthetic tab (5:00–6:00)
+**On screen**: click **Synthetic**; mode toggles visible.
 
-**Action**: switch to Synthetic.
+> "Synthetic. The lever that scales twenty source rows into two
+> thousand training rows. It runs a teacher model — local Ollama on
+> this machine — over your cleaned corpus, asking the teacher to
+> generate matching question and answer pairs. Video Four is the
+> full walkthrough; we're not running it here."
 
-> "Synthetic. This is the lever you'd pull to scale 20 source rows
-> into 2000 training rows. The synthetic generator runs a teacher
-> LLM — Ollama locally, or any OpenAI-compatible endpoint — over
-> your cleaned chunks, asking the teacher to generate
-> question/answer pairs that fit the same style.
-> 
-> See the warning banner: `TEACHER_MODEL_API_KEY` is missing. The
-> generator won't run without one or without the demo-fallback flag.
-> We're not going to fix that right now — Video 04 is the full
-> synthetic-generation walkthrough."
+## Section 6 — Dataset Prep tab (1:30–1:48)
 
-## Section 6 — Dataset Prep tab (6:00–7:30)
-
-**Action**: switch to Dataset Prep; show Schema Profile.
+**On screen**: click **Dataset Prep**; Schema Profile + adapter
+preview visible.
 
 > "Dataset Prep. This is where the contract gets made. The adapter
-> applied here — `qa-pair` — is the transform that turns each row
-> into the `{question, answer}` shape the trainer expects.
-> 
-> Notice the prepared-manifest panel: 16 train rows, 2 validation, 2
-> test. That's the deterministic 70-15-15 split with a 2-row floor
-> on val and test. For larger corpora you'd see the floor disappear,
-> but with 20 source rows we get exactly this."
+> applied — question and answer pair — turns each row into the shape
+> the trainer expects. Splits are already written: sixteen train,
+> two validation, two test. That's the deterministic
+> seventy-fifteen-fifteen split with a two-row floor on validation
+> and test."
 
-## Section 7 — Tokenization tab (7:30–8:30)
+## Section 7 — Tokenization tab (1:48–2:04)
 
-**Action**: switch to Tokenization.
+**On screen**: click **Tokenization**.
 
-> "Tokenization runs a tokenizer over your prepared splits and tells
-> you the length distribution — how many tokens per row, what max
-> sequence length you'd want to budget. The actual analysis needs
-> the `transformers` library and a tokenizer download, which is its
-> own setup. For the demo we'll skip running it."
+> "Tokenization. Runs a tokenizer over the prepared splits and
+> reports the length distribution — how many tokens per row, what
+> maximum sequence length you'd budget for. The actual analysis
+> needs a tokenizer download, which is its own setup. Surface only
+> for this video."
 
-## Section 8 — Training Tab + Training Config (8:30–10:00)
+## Section 8 — Training tab → Training Config (2:04–2:28)
 
-**Action**: switch to Training. Then click into Training Config.
+**On screen**: click **Training** → click **Open Training Config →**
+button → land on `/project/<id>/training-config` → click **Advanced**
+tab on the config-mode switch.
 
-> "Training tab. 'No experiments yet.' Normal.
-> 
-> Let me jump into the Training Config page — the dedicated config
-> surface lives at `/project/<id>/training-config`."
+> "Training tab. No experiments yet — normal. Jumping into the
+> Training Config page. Essentials view by default — base model,
+> training mode, epochs, batch size, learning rate. Flip to Advanced
+> and you unlock the parameter controls: low-rank adaptation rank,
+> target modules, optimizer choice. The defaults work; the controls
+> are there when you need them. Launching a run is Video Nine."
 
-**Beat** as page loads.
+## Section 9 — Evaluation tab + wrap (2:28–2:45)
 
-> "There's an Essentials view by default that gives you the
-> launch-critical controls — base model, training mode, epochs,
-> batch size, learning rate. If you flip to Advanced mode (toggle in
-> the page header) you unlock the Power Tools tab with the PEFT
-> controls: LoRA rank, alpha, target modules, optimizer choice.
-> 
-> Default LoRA rank is 8, target modules are `q_proj, v_proj`. The
-> PII docs page recommend bumping to rank 16 and all four attention
-> projections for span tasks — that detail is in Video 06."
+**On screen**: navigate back to `/project/<id>/pipeline/eval`;
+"No experiments to evaluate" empty state.
 
-## Section 9 — Eval tab + wrap (10:00–11:00)
-
-**Action**: switch to Eval.
-
-> "Evaluation tab. Empty until we have an experiment to evaluate.
-> But this is where the per-class metrics would land — for the
-> Support FAQ sample's `instruction_sft` task profile, the eval
-> handler dispatch is still an open question in our evidence — see
-> open question 9 in `10-open-questions.md`.
-> 
-> What we *do* know: when there's a completed experiment, this
-> surface shows accuracy, F1, gates pass/fail, and the sample
-> predictions card with side-by-side prompt / expected / model
-> output."
-
-## Wrap (11:00–11:30)
-
-> "That's the Support FAQ pipeline. We touched ten tabs without
-> launching a single runtime-heavy job. Next video walks the same
-> shape for the PII Detector sample — where we'll actually
-> *distinguish* the two PII features. After that, sentiment
-> classification. Then we get into training runs."
+> "Evaluation tab. Empty until we have a finished experiment. This
+> is where accuracy, F1, gate pass and fail, and side-by-side
+> predictions would land. That's the Support FAQ tour. We touched
+> ten tabs without running anything heavy. Next video walks the
+> same shape for the PII Detector sample."
 
 ---
 
@@ -163,16 +132,29 @@ Companion to:
 - Don't say "the demo has 6 gold rows" — that's the stale manifest
   prose. Say 200.
 - Don't say cleaning automatically removes duplicates — it computes
-  hashes but row-removal is unverified (open Q10).
+  hashes but row-removal is unverified (open Q10 in
+  [10-open-questions.md](../../evidence/10-open-questions.md)).
+- Don't read literal tech tokens aloud. The on-screen action shows
+  them; the TTS engine will mispronounce them.
 
-## Optional technical notes (cut for beginner audience)
+## Optional technical notes (background; not spoken)
 
-- The `prepared-manifest` API at
-  `GET /api/projects/<id>/prepared-manifest` is the headline endpoint
-  for this walkthrough. It returns adapter id, task profile, field
-  mapping, output schema, and the train/val/test counts in one shot.
-- The `qa-pair` adapter is one of eight registered data adapters; see
-  `backend/app/services/data_adapter_service.py`.
+- The `prepared-manifest` API at `GET /api/projects/<id>/prepared-manifest`
+  is the headline endpoint for this walkthrough — returns adapter
+  id, task profile, field mapping, output schema, and the
+  train/val/test counts in one shot.
+- The QA-pair adapter is one of eight registered data adapters; see
+  [backend/app/services/data_adapter_service.py](../../../backend/app/services/data_adapter_service.py).
 - The deterministic split uses `random.seed(42)` by default in the
   seeder; manual splits via `POST /api/projects/<id>/dataset/split`
   can override.
+
+## Why no "missing teacher key" warning
+
+Before today, the Synthetic tab rendered a `WARN: missing
+TEACHER_MODEL_API_KEY` banner when the env var was unset. The
+Section 5 narration in earlier drafts pointed at that banner. As of
+2026-05-19 the runtime decision (Q21) wired a real Ollama teacher
+into `backend/.env`, so the banner no longer appears. The narration
+now says "local Ollama on this machine" instead of pointing at a
+warning that isn't there.
