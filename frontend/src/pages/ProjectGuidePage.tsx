@@ -127,6 +127,9 @@ export default function ProjectGuidePage() {
             <QuickstartCard
                 projectId={projectId}
                 hasBaseModel={Boolean(project.base_model_name)}
+                initialDismissedNudges={
+                    project.quickstart_tour_state?.dismissed_nudges ?? []
+                }
                 onRefresh={() => {
                     void refreshPipelineStatus();
                 }}

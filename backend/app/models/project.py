@@ -112,6 +112,16 @@ class Project(Base):
         default=None,
         nullable=True,
     )
+    # Per-project state for the project-guide quickstart tour
+    # nudges (Theme 1 Epic 2). Carries `dismissed_nudges: list[str]`
+    # so the floating "what just happened, do this next" callouts
+    # don't replay once the user has seen them. Nullable so
+    # existing projects round-trip unchanged.
+    quickstart_tour_state: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

@@ -206,6 +206,87 @@ class QuickstartTrainDefaultTests(unittest.TestCase):
             self.assertNotIn("base_model_name", resp.text)
 
 
+class QuickstartTourStateRoundTripTests(unittest.TestCase):
+    """The new `projects.quickstart_tour_state` JSON column (Theme 1 Epic 2)
+    holds dismissed nudge ids. The frontend writes via PUT /projects/{id}
+    and reads via GET. Confirm the round-trip preserves the shape and
+    doesn't bleed into other fields."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def _create_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/projects",
+            json={"name": name, "description": "quickstart tour tests"},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def test_default_tour_state_is_null_on_a_fresh_project(self):
+        project_id = self._create_project("qs-tour-default")
+        resp = self.client.get(f"/api/projects/{project_id}")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNone(resp.json().get("quickstart_tour_state"))
+
+    def test_dismissed_nudges_survive_a_round_trip(self):
+        project_id = self._create_project("qs-tour-roundtrip")
+        # Frontend dismiss flow: PUT the project with the new
+        # tour-state payload (mirrors what QuickstartCard does).
+        put_resp = self.client.put(
+            f"/api/projects/{project_id}",
+            json={
+                "quickstart_tour_state": {
+                    "dismissed_nudges": ["import_to_train"],
+                },
+            },
+        )
+        self.assertEqual(put_resp.status_code, 200, put_resp.text)
+        self.assertEqual(
+            put_resp.json()["quickstart_tour_state"],
+            {"dismissed_nudges": ["import_to_train"]},
+        )
+
+        # Re-read confirms the JSON column round-tripped.
+        get_resp = self.client.get(f"/api/projects/{project_id}")
+        self.assertEqual(
+            get_resp.json()["quickstart_tour_state"],
+            {"dismissed_nudges": ["import_to_train"]},
+        )
+
+    def test_appending_a_second_nudge_does_not_clobber_the_first(self):
+        project_id = self._create_project("qs-tour-append")
+        self.client.put(
+            f"/api/projects/{project_id}",
+            json={"quickstart_tour_state": {"dismissed_nudges": ["import_to_train"]}},
+        )
+        # Frontend always sends the full set, not a delta — confirm
+        # that contract works.
+        resp = self.client.put(
+            f"/api/projects/{project_id}",
+            json={
+                "quickstart_tour_state": {
+                    "dismissed_nudges": ["import_to_train", "train_to_eval"],
+                },
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(
+            resp.json()["quickstart_tour_state"]["dismissed_nudges"],
+            ["import_to_train", "train_to_eval"],
+        )
+
+
 class QuickstartEvaluateLatestTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

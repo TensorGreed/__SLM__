@@ -50,6 +50,21 @@ export interface Project {
      * the intent on first open (newbie UX Phase 3.1).
      */
     dataset_adapter_preset?: Record<string, unknown> | null;
+    /**
+     * Snapshot of the task-shape recipe (Theme 2) the user picked
+     * at first-dataset-import time. Populated by the
+     * recipe-apply flow.
+     */
+    selected_recipe?: Record<string, unknown> | null;
+    /**
+     * Per-project quickstart tour state (Theme 1 Epic 2).
+     * `dismissed_nudges` lists which "what just happened, do this
+     * next" callouts the user has already seen so they don't
+     * replay across sessions.
+     */
+    quickstart_tour_state?: {
+        dismissed_nudges?: string[];
+    } | null;
     created_at: string;
     updated_at: string;
 }

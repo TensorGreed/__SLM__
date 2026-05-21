@@ -40,6 +40,7 @@ class ProjectUpdate(BaseModel):
     beginner_mode: bool | None = None
     active_domain_blueprint_version: int | None = None
     selected_recipe: dict | None = None
+    quickstart_tour_state: dict | None = None
 
 
 class ProjectRecipeApplyRequest(BaseModel):
@@ -72,6 +73,7 @@ class ProjectResponse(BaseModel):
     beginner_mode: bool = False
     active_domain_blueprint_version: int | None = None
     selected_recipe: dict | None = None
+    quickstart_tour_state: dict | None = None
     created_at: datetime
     updated_at: datetime
 

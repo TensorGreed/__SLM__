@@ -21,6 +21,7 @@
 
 import { useState } from 'react';
 
+import api from '../../api/client';
 import {
     quickstartImportSample,
     quickstartTrainDefault,
@@ -30,6 +31,14 @@ import {
     type EvaluateLatestResponse,
 } from '../../api/quickstart';
 import { useToastStore } from '../../stores/toastStore';
+
+/**
+ * Tour nudge ids. Keep these stable — they're persisted on
+ * `project.quickstart_tour_state.dismissed_nudges` and the backend
+ * doesn't enumerate them; an unknown id is just "never dismissed."
+ */
+const NUDGE_IMPORT_TO_TRAIN = 'import_to_train';
+const NUDGE_TRAIN_TO_EVAL = 'train_to_eval';
 
 type ButtonState<T> =
     | { status: 'idle' }
@@ -56,12 +65,18 @@ interface QuickstartCardProps {
      * pipeline status — the checklist's checkmarks pick up the new
      * stage on the next render. */
     onRefresh?: () => void;
+    /** Nudge ids already dismissed on this project (sourced from
+     * `project.quickstart_tour_state.dismissed_nudges`). Dismissing
+     * one here PUTs back the updated set so the nudge doesn't
+     * replay on a future session. */
+    initialDismissedNudges?: string[];
 }
 
 export default function QuickstartCard({
     projectId,
     hasBaseModel,
     onRefresh,
+    initialDismissedNudges,
 }: QuickstartCardProps) {
     const [importState, setImportState] = useState<ButtonState<ImportSampleSummary>>({
         status: 'idle',
@@ -72,8 +87,43 @@ export default function QuickstartCard({
     const [evalState, setEvalState] = useState<ButtonState<EvaluateLatestResponse>>({
         status: 'idle',
     });
+    const [dismissedNudges, setDismissedNudges] = useState<Set<string>>(
+        () => new Set(initialDismissedNudges ?? []),
+    );
 
     const { addToast } = useToastStore();
+
+    // Persist a nudge dismissal to the project record so it doesn't
+    // replay across sessions. Best-effort: local state still flips
+    // even if the PUT errors (the user shouldn't see the nudge again
+    // this session regardless), but we surface a quiet warning toast
+    // so a persistent failure isn't fully silent.
+    const dismissNudge = (nudgeId: string) => {
+        if (dismissedNudges.has(nudgeId)) return;
+        const next = new Set(dismissedNudges);
+        next.add(nudgeId);
+        setDismissedNudges(next);
+        api
+            .put(`/projects/${projectId}`, {
+                quickstart_tour_state: { dismissed_nudges: Array.from(next) },
+            })
+            .catch(() => {
+                addToast(
+                    "Couldn't save tour preference (will re-show on refresh).",
+                    'warning',
+                    3500,
+                );
+            });
+    };
+
+    const showImportToTrainNudge =
+        importState.status === 'success'
+        && trainState.status === 'idle'
+        && !dismissedNudges.has(NUDGE_IMPORT_TO_TRAIN);
+    const showTrainToEvalNudge =
+        trainState.status === 'success'
+        && evalState.status === 'idle'
+        && !dismissedNudges.has(NUDGE_TRAIN_TO_EVAL);
 
     const runImport = async () => {
         setImportState({ status: 'running' });
@@ -192,6 +242,15 @@ export default function QuickstartCard({
                     successLabel="Started"
                     testid="quickstart-train"
                     disabledReason={!hasBaseModel ? 'no-base-model' : null}
+                    nudge={
+                        showImportToTrainNudge && importState.status === 'success'
+                            ? {
+                                testid: 'quickstart-train-nudge',
+                                message: `Imported ${importState.result.source_row_count} rows + ${importState.result.gold_row_count} gold-set entries + train/val/test splits. Train a model on them next.`,
+                                onDismiss: () => dismissNudge(NUDGE_IMPORT_TO_TRAIN),
+                            }
+                            : null
+                    }
                 />
 
                 {/* 3. Evaluate */}
@@ -210,10 +269,27 @@ export default function QuickstartCard({
                     runningLabel="Evaluating…"
                     successLabel="Evaluated"
                     testid="quickstart-eval"
+                    nudge={
+                        showTrainToEvalNudge && trainState.status === 'success'
+                            ? {
+                                testid: 'quickstart-eval-nudge',
+                                message: `Experiment #${trainState.result.experiment_id} started on ${trainState.result.base_model}. Once it's done, evaluate against the gold set.`,
+                                onDismiss: () => dismissNudge(NUDGE_TRAIN_TO_EVAL),
+                            }
+                            : null
+                    }
                 />
             </div>
         </section>
     );
+}
+
+interface TileNudge {
+    /** Stable nudge id, persisted in dismissed_nudges. */
+    testid: string;
+    /** Single-line "what just happened + do this next" copy. */
+    message: string;
+    onDismiss: () => void;
 }
 
 interface ActionTileProps<T> {
@@ -228,6 +304,8 @@ interface ActionTileProps<T> {
     successLabel: string;
     testid: string;
     disabledReason?: string | null;
+    /** Optional tour nudge shown above the tile header (Theme 1 Epic 2). */
+    nudge?: TileNudge | null;
 }
 
 function ActionTile<T>({
@@ -242,6 +320,7 @@ function ActionTile<T>({
     successLabel,
     testid,
     disabledReason,
+    nudge,
 }: ActionTileProps<T>) {
     const isRunning = state.status === 'running';
     const isSuccess = state.status === 'success';
@@ -265,13 +344,53 @@ function ActionTile<T>({
             style={{
                 padding: 'var(--space-md)',
                 borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border-color)',
+                border: nudge
+                    ? '1px solid var(--color-warning)'
+                    : '1px solid var(--border-color)',
                 background: 'var(--bg-card)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 'var(--space-sm)',
+                position: 'relative',
             }}
         >
+            {nudge && (
+                <div
+                    role="status"
+                    data-testid={nudge.testid}
+                    style={{
+                        margin: 'calc(-1 * var(--space-md)) calc(-1 * var(--space-md)) 0',
+                        padding: 'var(--space-sm) var(--space-md)',
+                        background: 'var(--color-warning-bg)',
+                        color: 'var(--color-warning)',
+                        borderTopLeftRadius: 'var(--radius-md)',
+                        borderTopRightRadius: 'var(--radius-md)',
+                        borderBottom: '1px solid var(--color-warning)',
+                        fontSize: '0.82rem',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 'var(--space-sm)',
+                    }}
+                >
+                    <span aria-hidden="true">💡 ↓</span>
+                    <span style={{ flex: 1 }}>{nudge.message}</span>
+                    <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={nudge.onDismiss}
+                        aria-label="Dismiss tour nudge"
+                        data-testid={`${nudge.testid}-dismiss`}
+                        style={{
+                            padding: 0,
+                            fontSize: '1rem',
+                            lineHeight: 1,
+                            color: 'var(--color-warning)',
+                        }}
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
             <div
                 style={{
                     display: 'flex',
