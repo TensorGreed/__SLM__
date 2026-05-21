@@ -75,3 +75,37 @@ export async function quickstartEvaluateLatest(
     );
     return res.data;
 }
+
+/**
+ * Eval-result inner shape returned by run_heldout_evaluation. Carries
+ * the scoring-mode-specific metrics + a pass_rate the UI can render
+ * as the headline number. Shape mirrors `EvalResultResponse` on the
+ * backend; declared loose because eval handlers ship per-task fields.
+ */
+export interface EvalResultInner {
+    experiment_id?: number;
+    dataset_name?: string;
+    eval_type?: string;
+    metrics?: Record<string, unknown>;
+    pass_rate?: number | null;
+    details?: Record<string, unknown>;
+    created_at?: string;
+}
+
+export interface BaselineEvalResponse {
+    status: 'baseline_complete';
+    experiment_id: number;
+    experiment_name: string;
+    base_model: string;
+    eval_type: string;
+    result: EvalResultInner;
+}
+
+export async function quickstartBaselineEval(
+    projectId: number,
+): Promise<BaselineEvalResponse> {
+    const res = await api.post<BaselineEvalResponse>(
+        `/projects/${projectId}/quickstart/baseline-eval`,
+    );
+    return res.data;
+}

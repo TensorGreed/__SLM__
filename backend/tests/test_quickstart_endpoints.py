@@ -1,11 +1,13 @@
-"""Tests for the project-guide quickstart endpoints (Theme 1 Epic 4):
-import-sample, train-default, evaluate-latest."""
+"""Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
+Theme 8 Epic 1): import-sample, train-default, evaluate-latest,
+baseline-eval."""
 
 from __future__ import annotations
 
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 TEST_DB_PATH = Path(__file__).resolve().parent / "quickstart_endpoints_test.db"
 TEST_DATA_DIR = Path(__file__).resolve().parent / "quickstart_endpoints_data"
@@ -320,6 +322,181 @@ class QuickstartEvaluateLatestTests(unittest.TestCase):
     def test_evaluate_latest_missing_project_returns_404(self):
         resp = self.client.post(
             "/api/projects/99999/quickstart/evaluate-latest",
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+
+
+class QuickstartBaselineEvalTests(unittest.TestCase):
+    """Theme 8 Epic 1 — baseline-eval. Creates a synthetic Experiment
+    keyed on (project, base_model) and runs `run_heldout_evaluation`
+    against the un-fine-tuned base model. The eval handler's local
+    inference is mocked so the suite stays hermetic."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def _create_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/projects",
+            json={"name": name, "description": "qs-baseline tests"},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def _seed_project_with_recipe_and_data(self, project_name: str) -> int:
+        """Apply qa-sft recipe (sets base_model_name) + import the
+        support-faq demo so the project has a prepared test split."""
+        project_id = self._create_project(project_name)
+        self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "qa-sft"},
+        )
+        self.client.post(
+            f"/api/projects/{project_id}/quickstart/import-sample",
+            json={},
+        )
+        return project_id
+
+    def test_baseline_rejects_project_without_base_model(self):
+        project_id = self._create_project("qs-baseline-no-model")
+        resp = self.client.post(
+            f"/api/projects/{project_id}/quickstart/baseline-eval",
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("base_model_name", resp.text)
+
+    def test_baseline_returns_409_when_no_test_split_yet(self):
+        project_id = self._create_project("qs-baseline-no-data")
+        self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "qa-sft"},
+        )
+        # Recipe applied (base_model set) but data not imported yet.
+        resp = self.client.post(
+            f"/api/projects/{project_id}/quickstart/baseline-eval",
+        )
+        self.assertEqual(resp.status_code, 409, resp.text)
+        self.assertIn("Import sample CSV", resp.text)
+
+    def test_baseline_eval_creates_synthetic_experiment_and_returns_metrics(self):
+        project_id = self._seed_project_with_recipe_and_data("qs-baseline-happy")
+
+        mock_predictions = [
+            {"prediction": "answer 1", "reference": "answer 1"},
+            {"prediction": "answer 2", "reference": "different"},
+            {"prediction": "answer 3", "reference": "answer 3"},
+        ]
+        mock_runtime = {
+            "engine": "transformers",
+            "device": "cpu",
+            "latency_ms_per_sample": 12.3,
+        }
+        with patch(
+            "app.services.evaluation_service._run_local_inference",
+            return_value=(mock_predictions, mock_runtime),
+        ):
+            resp = self.client.post(
+                f"/api/projects/{project_id}/quickstart/baseline-eval",
+            )
+
+        self.assertEqual(resp.status_code, 201, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["status"], "baseline_complete")
+        self.assertTrue(payload["base_model"])
+        self.assertIn("Baseline", payload["experiment_name"])
+        self.assertIn("experiment_id", payload)
+        self.assertIn("result", payload)
+
+        # The synthetic experiment is visible via the normal
+        # experiments list — that's how the Compare page can render
+        # baseline vs. trained side-by-side for free.
+        listing = self.client.get(f"/api/projects/{project_id}/training/experiments")
+        self.assertEqual(listing.status_code, 200, listing.text)
+        body = listing.json()
+        rows = body if isinstance(body, list) else (body.get("experiments") or [])
+        names = [exp.get("name") for exp in rows if isinstance(exp, dict)]
+        self.assertTrue(
+            any(n and n.startswith("Baseline") for n in names),
+            f"expected a Baseline experiment in {names!r}",
+        )
+
+    def test_baseline_eval_is_idempotent_for_same_base_model(self):
+        project_id = self._seed_project_with_recipe_and_data("qs-baseline-idempotent")
+
+        mock_predictions = [{"prediction": "x", "reference": "x"}]
+        mock_runtime = {"engine": "transformers", "device": "cpu"}
+        with patch(
+            "app.services.evaluation_service._run_local_inference",
+            return_value=(mock_predictions, mock_runtime),
+        ):
+            first = self.client.post(
+                f"/api/projects/{project_id}/quickstart/baseline-eval",
+            )
+            second = self.client.post(
+                f"/api/projects/{project_id}/quickstart/baseline-eval",
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(second.status_code, 201, second.text)
+        # Same synthetic experiment reused — we don't want a flood of
+        # "Baseline 1 / Baseline 2 / ..." rows from accidental re-clicks.
+        self.assertEqual(
+            first.json()["experiment_id"],
+            second.json()["experiment_id"],
+        )
+
+    def test_baseline_eval_supplies_model_path_override(self):
+        """The whole point of the baseline endpoint is to bypass the
+        artifact resolver — the synthetic experiment has no output_dir,
+        so `run_heldout_evaluation` must be called with the
+        `model_path=project.base_model_name` override. This test
+        verifies that contract via a capturing mock."""
+        project_id = self._seed_project_with_recipe_and_data("qs-baseline-model-path")
+
+        captured_calls: list[dict] = []
+
+        async def _fake_run_heldout(**kwargs):
+            captured_calls.append(kwargs)
+            return {
+                "experiment_id": kwargs.get("experiment_id"),
+                "dataset_name": kwargs.get("dataset_name"),
+                "eval_type": kwargs.get("eval_type"),
+                "metrics": {"exact_match": 0.42},
+                "pass_rate": 0.42,
+                "details": {},
+            }
+
+        with patch(
+            "app.api.quickstart.run_heldout_evaluation",
+            side_effect=_fake_run_heldout,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{project_id}/quickstart/baseline-eval",
+            )
+
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(len(captured_calls), 1)
+        call = captured_calls[0]
+        self.assertEqual(
+            call["model_path"],
+            "HuggingFaceTB/SmolLM2-135M-Instruct",
+        )
+        self.assertEqual(call["dataset_name"], "test")
+        self.assertEqual(call["temperature"], 0.0)
+
+    def test_baseline_eval_missing_project_returns_404(self):
+        resp = self.client.post(
+            "/api/projects/99999/quickstart/baseline-eval",
         )
         self.assertEqual(resp.status_code, 404, resp.text)
 

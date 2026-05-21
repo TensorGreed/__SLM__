@@ -25,7 +25,9 @@ import api from '../../api/client';
 import {
     quickstartImportSample,
     quickstartTrainDefault,
+    quickstartBaselineEval,
     quickstartEvaluateLatest,
+    type BaselineEvalResponse,
     type ImportSampleSummary,
     type TrainDefaultResponse,
     type EvaluateLatestResponse,
@@ -45,6 +47,39 @@ type ButtonState<T> =
     | { status: 'running' }
     | { status: 'success'; result: T }
     | { status: 'error'; message: string };
+
+/**
+ * Pick the headline metrics out of an EvalResult.metrics dict and
+ * render them as a short comma-separated string. The eval handler
+ * decides the metric shape per task profile (f1 / exact_match /
+ * accuracy / macro_f1 / pass_rate / ...), so we surface the
+ * familiar names first and fall back to whatever's in the dict.
+ */
+function summarizeMetrics(metrics: Record<string, unknown> | undefined): string {
+    if (!metrics || typeof metrics !== 'object') return 'no metrics';
+    const priority = [
+        'f1', 'exact_match', 'accuracy', 'macro_f1', 'precision', 'recall',
+        'pass_rate', 'llm_judge_pass_rate', 'groundedness', 'tool_success_rate',
+    ];
+    const out: string[] = [];
+    for (const key of priority) {
+        if (out.length >= 2) break;
+        const value = metrics[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            out.push(`${key} ${value.toFixed(2)}`);
+        }
+    }
+    if (out.length === 0) {
+        // Fallback: pick the first two numeric entries in insertion order.
+        for (const [key, value] of Object.entries(metrics)) {
+            if (out.length >= 2) break;
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                out.push(`${key} ${value.toFixed(2)}`);
+            }
+        }
+    }
+    return out.length ? out.join(' · ') : 'no metrics';
+}
 
 function extractErrorMessage(err: unknown): string {
     if (typeof err === 'object' && err !== null) {
@@ -85,6 +120,9 @@ export default function QuickstartCard({
         status: 'idle',
     });
     const [evalState, setEvalState] = useState<ButtonState<EvaluateLatestResponse>>({
+        status: 'idle',
+    });
+    const [baselineState, setBaselineState] = useState<ButtonState<BaselineEvalResponse>>({
         status: 'idle',
     });
     const [dismissedNudges, setDismissedNudges] = useState<Set<string>>(
@@ -179,6 +217,24 @@ export default function QuickstartCard({
         }
     };
 
+    const runBaseline = async () => {
+        setBaselineState({ status: 'running' });
+        try {
+            const res = await quickstartBaselineEval(projectId);
+            setBaselineState({ status: 'success', result: res });
+            addToast(
+                `Baseline established · ${summarizeMetrics(res.result.metrics)}`,
+                'success',
+                4500,
+            );
+            onRefresh?.();
+        } catch (err) {
+            const message = extractErrorMessage(err);
+            setBaselineState({ status: 'error', message });
+            addToast(`Baseline failed: ${message}`, 'error', 5000);
+        }
+    };
+
     return (
         <section
             className="card"
@@ -223,9 +279,30 @@ export default function QuickstartCard({
                     testid="quickstart-import"
                 />
 
-                {/* 2. Train default config */}
+                {/* 2. Baseline (untrained) — Theme 8 Epic 1 */}
                 <ActionTile
                     index={2}
+                    icon="📐"
+                    title="Baseline (untrained)"
+                    description={
+                        !hasBaseModel
+                            ? 'Pick a recipe first — baseline runs against the recipe\'s suggested model.'
+                            : baselineState.status === 'success'
+                                ? `Untrained baseline · ${summarizeMetrics(baselineState.result.result.metrics)}`
+                                : 'Optional but recommended — gives your post-training numbers an anchor.'
+                    }
+                    state={baselineState}
+                    onRun={runBaseline}
+                    runLabel="Run baseline"
+                    runningLabel="Evaluating…"
+                    successLabel="Baseline set"
+                    testid="quickstart-baseline"
+                    disabledReason={!hasBaseModel ? 'no-base-model' : null}
+                />
+
+                {/* 3. Train default config */}
+                <ActionTile
+                    index={3}
                     icon="🧪"
                     title="Train default config"
                     description={
@@ -253,14 +330,22 @@ export default function QuickstartCard({
                     }
                 />
 
-                {/* 3. Evaluate */}
+                {/* 4. Evaluate */}
                 <ActionTile
-                    index={3}
+                    index={4}
                     icon="📊"
                     title="Evaluate"
                     description={
                         evalState.status === 'success'
-                            ? `Eval on experiment #${evalState.result.experiment_id} — ${evalState.result.eval_type}`
+                            ? (
+                                baselineState.status === 'success'
+                                    // Show baseline → trained side-by-side so the
+                                    // lift from SFT is the headline number, not
+                                    // an absolute score the user has to
+                                    // contextualize on their own.
+                                    ? `Baseline ${summarizeMetrics(baselineState.result.result.metrics)} → trained ${summarizeMetrics((evalState.result.result as Record<string, unknown>)?.metrics as Record<string, unknown> | undefined)}`
+                                    : `Eval on experiment #${evalState.result.experiment_id} — ${evalState.result.eval_type}`
+                            )
                             : 'Runs eval on the latest experiment against your gold/test split.'
                     }
                     state={evalState}

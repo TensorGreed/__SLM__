@@ -1,24 +1,27 @@
-"""Project-guide quickstart endpoints (Theme 1 Epic 4).
+"""Project-guide quickstart endpoints (Theme 1 Epic 4 + Theme 8 Epic 1).
 
-Three one-click actions that turn the first three checklist items in
+Four one-click actions that turn the first checklist items in
 `ProjectGuidePage` into literal buttons rather than descriptions of
 what to click:
 
   - POST /api/projects/{id}/quickstart/import-sample
         Materialize a bundled demo dataset into the existing
-        project (raw + gold + prepared splits). Picks the bundle
-        based on the project's selected_recipe if no slug given.
+        project (raw + gold + prepared splits).
+
+  - POST /api/projects/{id}/quickstart/baseline-eval
+        Run an evaluation against the gold/test split using the
+        *un-fine-tuned* base model. Surfaces a pre-SFT anchor so
+        the post-training number has context. Creates / reuses a
+        synthetic "Baseline" Experiment so the result lands on the
+        normal eval plumbing.
 
   - POST /api/projects/{id}/quickstart/train-default
         Create + start a training experiment using the project's
-        existing defaults (base_model_name from the recipe-apply
-        flow; everything else falls through to the TrainingConfig
-        Pydantic defaults).
+        existing defaults.
 
   - POST /api/projects/{id}/quickstart/evaluate-latest
         Find the most recent completed training experiment in the
-        project and run a heldout evaluation against the
-        gold/test split.
+        project and run a heldout evaluation.
 
 These endpoints are thin wrappers around the existing service
 functions — they don't introduce new behaviour, they just remove the
@@ -71,6 +74,74 @@ async def _get_project_or_404(db: AsyncSession, project_id: int) -> Project:
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return project
+
+
+def _eval_type_for_project(project: Project) -> str:
+    """Pick the eval_type label for a quickstart eval call. The
+    eval handler reads the real metrics off `prepared/manifest.json`;
+    this label is mostly informational on the result row."""
+    snapshot = project.selected_recipe or {}
+    scoring_mode = str(snapshot.get("scoring_mode") or "").strip()
+    if scoring_mode == "span_set":
+        return "f1"
+    return "exact_match"
+
+
+def _short_model_name(model_id: str) -> str:
+    """Trim a HF model id to its trailing component for use in a
+    user-facing experiment name. `HuggingFaceTB/SmolLM2-135M-Instruct`
+    → `SmolLM2-135M-Instruct`."""
+    if not model_id:
+        return "base model"
+    return model_id.rsplit("/", 1)[-1] or model_id
+
+
+async def _find_or_create_baseline_experiment(
+    db: AsyncSession,
+    project_id: int,
+    base_model: str,
+) -> Experiment:
+    """Find the existing baseline Experiment for this project +
+    base_model combo, or create one. Scoped to (project_id,
+    base_model) so switching base models gives each its own
+    baseline row (useful when comparing recipes)."""
+    name = f"Baseline · {_short_model_name(base_model)}"[:255]
+    result = await db.execute(
+        select(Experiment)
+        .where(Experiment.project_id == project_id)
+        .where(Experiment.name == name)
+        .limit(1)
+    )
+    existing = result.scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    exp = Experiment(
+        project_id=project_id,
+        name=name,
+        description=(
+            "Synthetic baseline experiment — the un-fine-tuned base model "
+            "evaluated against the project's gold/test split. Anchors "
+            "post-SFT eval numbers so 'F1 0.65' has context."
+        ),
+        status=ExperimentStatus.COMPLETED,
+        training_mode=TrainingMode.SFT,
+        base_model=base_model,
+        # `output_dir` left empty on purpose — `run_heldout_evaluation`
+        # is called with `model_path=base_model` to bypass the artifact
+        # resolver. The empty output_dir is the signal this is a
+        # synthetic / baseline row.
+        output_dir=None,
+        config={
+            "is_baseline": True,
+            "source": "quickstart.baseline-eval",
+        },
+        final_train_loss=None,
+        final_eval_loss=None,
+    )
+    db.add(exp)
+    await db.flush()
+    return exp
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -234,7 +305,7 @@ async def quickstart_evaluate_latest(
             experiment_id=experiment.id,
             dataset_name="test",
             eval_type=eval_type,
-            max_samples=None,
+            max_samples=100,
             max_new_tokens=256,
             temperature=0.0,
             model_path=None,
@@ -246,6 +317,82 @@ async def quickstart_evaluate_latest(
     return {
         "status": "evaluation_complete",
         "experiment_id": experiment.id,
+        "eval_type": eval_type,
+        "result": result_dict,
+    }
+
+
+@router.post("/baseline-eval", status_code=201)
+async def quickstart_baseline_eval(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run eval against the gold/test split using the project's
+    un-fine-tuned base model. Creates (or reuses) a synthetic
+    Baseline experiment so the result row keeps its anchor in the
+    normal `EvalResult` plumbing; the Compare page then renders
+    "baseline vs. trained" side-by-side for free.
+
+    Requires:
+      - project.base_model_name set (i.e. recipe applied)
+      - imported / prepared data with a `test` split present
+
+    Returns the synthetic experiment_id + the eval result dict so
+    the UI tile can show "Baseline F1: 0.32" immediately."""
+    project = await _get_project_or_404(db, project_id)
+
+    base_model = str(project.base_model_name or "").strip()
+    if not base_model:
+        raise HTTPException(
+            400,
+            (
+                "Project has no base_model_name. Pick a recipe in the dataset-"
+                "import wizard, or set the model manually in Training → Config."
+            ),
+        )
+
+    baseline_exp = await _find_or_create_baseline_experiment(
+        db, project_id, base_model,
+    )
+    eval_type = _eval_type_for_project(project)
+
+    try:
+        result_dict = await run_heldout_evaluation(
+            db=db,
+            project_id=project_id,
+            experiment_id=baseline_exp.id,
+            dataset_name="test",
+            eval_type=eval_type,
+            max_samples=100,
+            max_new_tokens=256,
+            temperature=0.0,
+            # Bypass the artifact resolver — the baseline experiment
+            # has no output_dir; we want the raw base model loaded
+            # straight from the HF id.
+            model_path=base_model,
+            judge_model=None,
+        )
+    except ValueError as e:
+        detail = str(e)
+        # Map the two "data not ready yet" failure shapes
+        # (`run_heldout_evaluation` raises with these messages):
+        #   - "No datasets found in project N"        — nothing imported
+        #   - "Dataset '<name>' not found in project N" — no test split
+        if (
+            ("No datasets found" in detail)
+            or ("Dataset" in detail and "not found" in detail)
+        ):
+            raise HTTPException(
+                409,
+                "No test split found yet. Run 'Import sample CSV' first.",
+            )
+        raise HTTPException(400, detail)
+
+    return {
+        "status": "baseline_complete",
+        "experiment_id": baseline_exp.id,
+        "experiment_name": baseline_exp.name,
+        "base_model": base_model,
         "eval_type": eval_type,
         "result": result_dict,
     }

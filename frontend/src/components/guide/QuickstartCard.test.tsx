@@ -62,14 +62,16 @@ describe('QuickstartCard', () => {
         apiMock.delete.mockReset();
     });
 
-    it('renders three action tiles with idle badges', () => {
+    it('renders four action tiles with the correct step numbers', () => {
         render(<QuickstartCard projectId={1} hasBaseModel={true} />);
         expect(screen.getByTestId('quickstart-import')).toBeInTheDocument();
+        expect(screen.getByTestId('quickstart-baseline')).toBeInTheDocument();
         expect(screen.getByTestId('quickstart-train')).toBeInTheDocument();
         expect(screen.getByTestId('quickstart-eval')).toBeInTheDocument();
         expect(screen.getByTestId('quickstart-import-badge')).toHaveTextContent('Step 1');
-        expect(screen.getByTestId('quickstart-train-badge')).toHaveTextContent('Step 2');
-        expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('Step 3');
+        expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('Step 2');
+        expect(screen.getByTestId('quickstart-train-badge')).toHaveTextContent('Step 3');
+        expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('Step 4');
     });
 
     it('disables Train when the project has no base model yet', () => {
@@ -246,5 +248,105 @@ describe('QuickstartCard', () => {
             /Experiment #7 started on HuggingFaceTB\/SmolLM2-135M-Instruct/,
         );
         expect(nudge).toHaveTextContent(/evaluate against the gold set/i);
+    });
+
+    // ── Baseline tile (Theme 8 Epic 1) ──────────────────────────
+
+    const SAMPLE_BASELINE_RESULT = {
+        status: 'baseline_complete',
+        experiment_id: 42,
+        experiment_name: 'Baseline · SmolLM2-135M-Instruct',
+        base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct',
+        eval_type: 'exact_match',
+        result: {
+            experiment_id: 42,
+            dataset_name: 'test',
+            eval_type: 'exact_match',
+            metrics: { f1: 0.32, exact_match: 0.18 },
+            pass_rate: 0.18,
+            details: {},
+        },
+    };
+
+    it('disables the Baseline tile when no recipe / base_model is set', () => {
+        render(<QuickstartCard projectId={1} hasBaseModel={false} />);
+        const btn = screen.getByTestId('quickstart-baseline-button') as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(screen.getByTestId('quickstart-baseline-description')).toHaveTextContent(
+            /Pick a recipe first/,
+        );
+    });
+
+    it('runs the baseline action, flips to Done, surfaces the metrics in the tile', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_BASELINE_RESULT });
+        const onRefresh = vi.fn();
+        render(
+            <QuickstartCard projectId={1} hasBaseModel={true} onRefresh={onRefresh} />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(screen.getByTestId('quickstart-baseline-button'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('✓ Done');
+        });
+        expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/1/quickstart/baseline-eval',
+        );
+        const desc = screen.getByTestId('quickstart-baseline-description');
+        expect(desc).toHaveTextContent(/Untrained baseline/);
+        expect(desc).toHaveTextContent('f1 0.32');
+        expect(desc).toHaveTextContent('exact_match 0.18');
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('surfaces baseline error inline + does NOT call onRefresh', async () => {
+        apiMock.post.mockRejectedValueOnce({
+            response: { data: { detail: 'No test split found yet.' } },
+        });
+        const onRefresh = vi.fn();
+        render(
+            <QuickstartCard projectId={1} hasBaseModel={true} onRefresh={onRefresh} />,
+        );
+
+        const user = userEvent.setup();
+        await user.click(screen.getByTestId('quickstart-baseline-button'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('quickstart-baseline-error')).toBeInTheDocument();
+        });
+        expect(screen.getByTestId('quickstart-baseline-error')).toHaveTextContent(
+            'No test split found yet.',
+        );
+        expect(onRefresh).not.toHaveBeenCalled();
+    });
+
+    it('shows baseline → trained side-by-side on the Evaluate tile when both ran', async () => {
+        // Two sequential POSTs: baseline then eval. The mock returns
+        // each in the order they're called.
+        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_BASELINE_RESULT });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                ...SAMPLE_EVAL_RESULT,
+                result: { metrics: { f1: 0.65, exact_match: 0.5 } },
+            },
+        });
+        render(<QuickstartCard projectId={1} hasBaseModel={true} />);
+
+        const user = userEvent.setup();
+        await user.click(screen.getByTestId('quickstart-baseline-button'));
+        await waitFor(() => {
+            expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('✓ Done');
+        });
+
+        await user.click(screen.getByTestId('quickstart-eval-button'));
+        await waitFor(() => {
+            expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('✓ Done');
+        });
+
+        const evalDesc = screen.getByTestId('quickstart-eval-description');
+        expect(evalDesc).toHaveTextContent(/Baseline .* → trained/);
+        expect(evalDesc).toHaveTextContent('f1 0.32');
+        expect(evalDesc).toHaveTextContent('f1 0.65');
     });
 });
