@@ -197,7 +197,7 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   const [provider, setProvider] = useState<PlaygroundProvider>('mock');
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
   const [apiKey, setApiKey] = useState('');
-  const [modelName, setModelName] = useState('microsoft/phi-2');
+  const [modelName, setModelName] = useState('HuggingFaceTB/SmolLM2-135M-Instruct');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [temperature, setTemperature] = useState('0.2');
   const [maxTokens, setMaxTokens] = useState(512);

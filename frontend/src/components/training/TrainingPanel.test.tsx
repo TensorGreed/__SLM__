@@ -134,17 +134,17 @@ describe('TrainingPanel model wizard', () => {
           data: {
             project_id: 1,
             introspection: {
-              model_id: 'microsoft/phi-2',
+              model_id: 'HuggingFaceTB/SmolLM2-135M-Instruct',
               resolved: true,
               source: 'hf_config',
               architecture: 'causal_lm',
-              model_type: 'phi',
+              model_type: 'llama',
               context_length: 2048,
-              license: 'mit',
-              params_estimate_b: 2.7,
+              license: 'apache-2.0',
+              params_estimate_b: 0.135,
               memory_profile: {
-                estimated_min_vram_gb: 6.5,
-                estimated_ideal_vram_gb: 10.2,
+                estimated_min_vram_gb: 1.2,
+                estimated_ideal_vram_gb: 2.4,
               },
               warnings: [],
             },
@@ -422,7 +422,7 @@ describe('TrainingPanel model wizard', () => {
     expect(apiMock.post).toHaveBeenCalledWith(
       '/projects/1/training/model-selection/introspect',
       expect.objectContaining({
-        model_id: 'microsoft/phi-2',
+        model_id: 'HuggingFaceTB/SmolLM2-135M-Instruct',
       }),
     );
   });

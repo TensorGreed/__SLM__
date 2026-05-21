@@ -825,7 +825,7 @@ async def _execute_local_training_attempt(
     if mode == "create_and_start":
         name = str(base_cfg.get("name") or f"Workflow {node_id}").strip() or f"Workflow {node_id}"
         description = str(base_cfg.get("description") or "").strip()
-        base_model = str(base_cfg.get("base_model") or "microsoft/phi-2").strip() or "microsoft/phi-2"
+        base_model = str(base_cfg.get("base_model") or "HuggingFaceTB/SmolLM2-135M-Instruct").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
         training_mode = _coerce_training_mode(base_cfg.get("training_mode"))
         training_cfg = base_cfg.get("config")
         resolved_training_cfg = dict(training_cfg) if isinstance(training_cfg, dict) else {}

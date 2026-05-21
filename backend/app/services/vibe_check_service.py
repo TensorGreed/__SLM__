@@ -95,7 +95,7 @@ def _default_config() -> dict[str, Any]:
         "interval_steps": 50,
         "prompts": list(_DEFAULT_PROMPTS),
         "provider": "mock",
-        "model_name": "microsoft/phi-2",
+        "model_name": "HuggingFaceTB/SmolLM2-135M-Instruct",
         "api_url": "",
         "temperature": 0.2,
         "max_tokens": 220,
@@ -116,7 +116,7 @@ def _normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     )
     merged["prompts"] = _normalize_prompt_list(merged.get("prompts"))
     merged["provider"] = str(merged.get("provider") or "mock").strip() or "mock"
-    merged["model_name"] = str(merged.get("model_name") or "microsoft/phi-2").strip() or "microsoft/phi-2"
+    merged["model_name"] = str(merged.get("model_name") or "HuggingFaceTB/SmolLM2-135M-Instruct").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     merged["api_url"] = str(merged.get("api_url") or "").strip()
     merged["temperature"] = max(0.0, min(2.0, _coerce_float(merged.get("temperature"), 0.2)))
     merged["max_tokens"] = _coerce_int(merged.get("max_tokens"), 220, min_value=32, max_value=4096)
@@ -272,7 +272,7 @@ async def capture_vibe_check_snapshot(
 
     prompts = _normalize_prompt_list(cfg.get("prompts"))
     provider = str(cfg.get("provider") or "mock")
-    model_name = str(cfg.get("model_name") or base_model or "microsoft/phi-2").strip() or "microsoft/phi-2"
+    model_name = str(cfg.get("model_name") or base_model or "HuggingFaceTB/SmolLM2-135M-Instruct").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     api_url = str(cfg.get("api_url") or "").strip() or None
     temperature = float(cfg.get("temperature") or 0.2)
     max_tokens = int(cfg.get("max_tokens") or 220)

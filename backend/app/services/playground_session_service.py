@@ -446,7 +446,7 @@ async def list_playground_model_options(
     selected = options[:capped_limit]
     return {
         "project_id": project_id,
-        "default_model_name": _coerce_text(project.base_model_name) or "microsoft/phi-2",
+        "default_model_name": _coerce_text(project.base_model_name) or "HuggingFaceTB/SmolLM2-135M-Instruct",
         "count": len(selected),
         "models": selected,
     }

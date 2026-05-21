@@ -466,7 +466,7 @@ export default function ProjectAutopilotPage() {
                             <input
                                 value={baseModel}
                                 onChange={(e) => setBaseModel(e.target.value)}
-                                placeholder="e.g. microsoft/phi-2"
+                                placeholder="e.g. HuggingFaceTB/SmolLM2-135M-Instruct"
                             />
                         </label>
                         <label className="autopilot-field">

@@ -675,11 +675,11 @@ export default function ProjectListPage() {
                                     <label className="form-label">Base Model</label>
                                     <input
                                         className="input"
-                                        placeholder="e.g. microsoft/phi-2, meta-llama/Llama-3.2-1B"
+                                        placeholder="e.g. HuggingFaceTB/SmolLM2-135M-Instruct, meta-llama/Llama-3.2-1B"
                                         value={newModel}
                                         onChange={(e) => setNewModel(e.target.value)}
                                     />
-                                    <div className="form-hint">HuggingFace model ID (1B–8B recommended)</div>
+                                    <div className="form-hint">HuggingFace model ID (135M–8B; leave blank to inherit recipe default)</div>
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label"><Term id="domain_pack" advanced /></label>

@@ -783,7 +783,7 @@ def resolve_newbie_autopilot_intent(
     normalized_target = _normalize_target_profile(target_profile_id)
     target_defaults = _safe_defaults_for_target(normalized_target)
     safe_training_config = {
-        "base_model": "microsoft/phi-2",
+        "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
         "training_mode": "sft",
         "training_runtime_id": "auto",
         "trainer_backend": "auto",

@@ -441,15 +441,23 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
                 ],
             ),
         ]
+    # Gate thresholds calibrated 2026-05-21 for the new platform
+    # default (HuggingFaceTB/SmolLM2-135M-Instruct, a 135M-parameter
+    # model). Previous thresholds were tuned to a phi-2-class baseline
+    # (~2.7B params) and caused well-trained 135M first runs to fail
+    # required gates on demo-sized data even when the model had
+    # clearly learnt the task. Strict gates remain available via
+    # `evalpack.quality.strict` for users targeting production
+    # promotion. Roadmap context: ROADMAP-NEXT.md Theme 1 Epic 3.
     return [
         _build_task_spec(
             task_profile="instruction_sft",
             display_name="Instruction / QA",
             required_metric_ids=["exact_match", "f1"],
             gates=[
-                _gate("min_exact_match", "exact_match", 0.5, required=True),
-                _gate("min_f1", "f1", 0.6, required=True),
-                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.72, required=False),
+                _gate("min_exact_match", "exact_match", 0.4, required=True),
+                _gate("min_f1", "f1", 0.5, required=True),
+                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.65, required=False),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -458,9 +466,9 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="QA",
             required_metric_ids=["exact_match", "f1"],
             gates=[
-                _gate("min_exact_match", "exact_match", 0.55, required=True),
-                _gate("min_f1", "f1", 0.65, required=True),
-                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.72, required=False),
+                _gate("min_exact_match", "exact_match", 0.45, required=True),
+                _gate("min_f1", "f1", 0.55, required=True),
+                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.65, required=False),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -469,7 +477,9 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="Chat",
             required_metric_ids=["llm_judge_pass_rate"],
             gates=[
-                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.72, required=True),
+                # LLM-judge pass rate is inherently noisy on small
+                # models; surface it but don't gate on it by default.
+                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.6, required=False),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -478,8 +488,8 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="Classification",
             required_metric_ids=["accuracy", "macro_f1"],
             gates=[
-                _gate("min_accuracy", "accuracy", 0.55, required=True),
-                _gate("min_macro_f1", "macro_f1", 0.55, required=True),
+                _gate("min_accuracy", "accuracy", 0.5, required=True),
+                _gate("min_macro_f1", "macro_f1", 0.5, required=True),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -488,8 +498,8 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="Seq2Seq",
             required_metric_ids=["f1"],
             gates=[
-                _gate("min_f1", "f1", 0.58, required=True),
-                _gate("min_exact_match", "exact_match", 0.4, required=False),
+                _gate("min_f1", "f1", 0.5, required=True),
+                _gate("min_exact_match", "exact_match", 0.35, required=False),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -498,8 +508,8 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="RAG QA",
             required_metric_ids=["f1", "groundedness"],
             gates=[
-                _gate("min_f1", "f1", 0.62, required=True),
-                _gate("min_groundedness", "groundedness", 0.7, required=True),
+                _gate("min_f1", "f1", 0.55, required=True),
+                _gate("min_groundedness", "groundedness", 0.6, required=True),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -508,8 +518,8 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="Structured Extraction",
             required_metric_ids=["exact_match", "f1"],
             gates=[
-                _gate("min_exact_match", "exact_match", 0.45, required=True),
-                _gate("min_f1", "f1", 0.6, required=True),
+                _gate("min_exact_match", "exact_match", 0.35, required=True),
+                _gate("min_f1", "f1", 0.5, required=True),
             ],
         ),
         _build_task_spec(
@@ -517,7 +527,7 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="Tool Calling",
             required_metric_ids=["tool_success_rate"],
             gates=[
-                _gate("min_tool_success_rate", "tool_success_rate", 0.6, required=True),
+                _gate("min_tool_success_rate", "tool_success_rate", 0.5, required=True),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -526,7 +536,7 @@ def _default_task_specs_for_pack(kind: str) -> list[dict[str, Any]]:
             display_name="Preference / Alignment",
             required_metric_ids=["llm_judge_pass_rate"],
             gates=[
-                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.75, required=True),
+                _gate("min_llm_judge_pass_rate", "llm_judge_pass_rate", 0.65, required=True),
                 _gate("min_safety_pass_rate", "safety_pass_rate", 0.9, required=False),
             ],
         ),
@@ -537,10 +547,15 @@ _BUILTIN_EVALUATION_PACKS: list[dict[str, Any]] = [
     {
         "pack_id": "evalpack.general.default",
         "display_name": "General Default Gates",
-        "description": "Balanced domain-agnostic quality gates for most SLM projects.",
-        "version": "2.0.0",
+        "description": (
+            "Balanced domain-agnostic quality gates for most SLM projects. "
+            "Calibrated for the platform's first-run default model "
+            "(SmolLM2-135M-Instruct) on demo-sized datasets; promote to "
+            "evalpack.quality.strict for release-candidate runs."
+        ),
+        "version": "2.1.0",
         "owner": "platform",
-        "tags": ["general", "balanced", "default", "task-aware"],
+        "tags": ["general", "balanced", "default", "task-aware", "small-model"],
         "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
         "default_task_profile": "instruction_sft",
         "task_specs": _default_task_specs_for_pack("general"),

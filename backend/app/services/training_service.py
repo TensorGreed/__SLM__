@@ -431,7 +431,7 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
     try:
         project_id: int | None = None
         experiment_output_dir: Path | None = None
-        base_model = str(config.get("base_model") or "microsoft/phi-2").strip() or "microsoft/phi-2"
+        base_model = str(config.get("base_model") or "HuggingFaceTB/SmolLM2-135M-Instruct").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
         experiment_config_snapshot: dict[str, object] = dict(config or {})
         vibe_enabled = True
         vibe_interval_steps = 50

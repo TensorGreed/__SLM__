@@ -732,7 +732,7 @@ export default function TrainingPanel({
   const [trainingError, setTrainingError] = useState<string>('');
 
   const [name, setName] = useState('');
-  const [baseModel, setBaseModel] = useState('microsoft/phi-2');
+  const [baseModel, setBaseModel] = useState('HuggingFaceTB/SmolLM2-135M-Instruct');
   const [trainingMode, setTrainingMode] = useState('sft');
   const [trainingRuntimeId, setTrainingRuntimeId] = useState('auto');
   const [taskType, setTaskType] = useState('causal_lm');

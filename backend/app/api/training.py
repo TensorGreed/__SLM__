@@ -1995,7 +1995,7 @@ async def _orchestrate_newbie_autopilot_v2_impl(
         or _coerce_positive_int(safe_config.get("_autopilot_dataset_rows"))
         or 1000
     )
-    base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
+    base_model = str(safe_config.get("base_model") or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
     if training_mode_token == TrainingMode.DPO.value:
         training_mode = TrainingMode.DPO
@@ -2285,9 +2285,9 @@ async def _build_newbie_autopilot_plan_v2(
         model_id = requested_base_model
     else:
         model_id = (
-            str(top_recommendation.get("model_id") or "microsoft/phi-2")
+            str(top_recommendation.get("model_id") or "HuggingFaceTB/SmolLM2-135M-Instruct")
             if top_recommendation
-            else "microsoft/phi-2"
+            else "HuggingFaceTB/SmolLM2-135M-Instruct"
         )
     repaired_model_id, repaired_compatibility, auto_repair = _attempt_compatibility_auto_repair(
         model_id=model_id,
@@ -2706,7 +2706,7 @@ async def run_training_autopilot_one_click(
         or _coerce_positive_int(safe_config.get("_autopilot_dataset_rows"))
         or 1000
     )
-    base_model = str(safe_config.get("base_model") or "").strip() or "microsoft/phi-2"
+    base_model = str(safe_config.get("base_model") or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     training_mode_token = str(safe_config.get("training_mode") or "sft").strip().lower()
     if training_mode_token == TrainingMode.DPO.value:
         training_mode = TrainingMode.DPO
@@ -3316,7 +3316,7 @@ async def playground_chat(
     """Run a chat completion request for the project playground."""
     project = await _get_project_or_404(db, project_id)
 
-    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     runtime_resolution = resolve_playground_model_runtime(
         model_name=requested_model_name,
         provider=req.provider,
@@ -3398,7 +3398,7 @@ async def playground_chat_stream(
 ):
     """Stream incremental chat completion chunks (SSE)."""
     project = await _get_project_or_404(db, project_id)
-    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     runtime_resolution = resolve_playground_model_runtime(
         model_name=requested_model_name,
         provider=req.provider,
@@ -3532,7 +3532,7 @@ async def create_playground_session(
 ):
     """Create a playground session with optional initial history."""
     project = await _get_project_or_404(db, project_id)
-    model_name = str(req.model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     transcript = normalize_playground_messages(
         messages=[item.model_dump() for item in req.messages],
         system_prompt=req.system_prompt,
@@ -3638,7 +3638,7 @@ async def playground_rag_compare(
     messages = [{"role": "user", "content": user_prompt}]
 
     provider = str(req.provider or "mock").strip() or "mock"
-    base_model_name = str(req.base_model_name or project.base_model_name or "").strip() or "microsoft/phi-2"
+    base_model_name = str(req.base_model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     tuned_model_name = str(req.tuned_model_name or base_model_name).strip() or base_model_name
 
     try:
@@ -3872,7 +3872,7 @@ async def alignment_retrain_from_feedback(
 
     recipe_config = resolved["resolved_config"]
     recipe_config["train_file"] = final_train_path
-    recipe_config["base_model"] = project.base_model_name or "microsoft/phi-2"
+    recipe_config["base_model"] = project.base_model_name or "HuggingFaceTB/SmolLM2-135M-Instruct"
 
     # 5. Create and Start Experiment
     experiment_data = ExperimentCreate(
@@ -4006,7 +4006,7 @@ async def _resolve_effective_training_preview(
 ]:
     provided_config_fields = set(source_config.keys())
     if "base_model" not in source_config:
-        source_config["base_model"] = "microsoft/phi-2"
+        source_config["base_model"] = "HuggingFaceTB/SmolLM2-135M-Instruct"
 
     try:
         parsed_config = TrainingConfig.model_validate(source_config)
@@ -4207,7 +4207,7 @@ async def create_vibe_check_snapshot(
         output_dir=output_dir,
         step=step_value,
         total_steps=total_steps,
-        base_model=str(exp.base_model or "microsoft/phi-2"),
+        base_model=str(exp.base_model or "HuggingFaceTB/SmolLM2-135M-Instruct"),
         epoch=payload.epoch,
         train_loss=payload.train_loss,
         eval_loss=payload.eval_loss,
