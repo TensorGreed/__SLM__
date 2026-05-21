@@ -38,7 +38,7 @@ vi.mock('react-router-dom', async () => {
 
 import ProjectListPage from './ProjectListPage';
 
-describe('ProjectListPage beginner mode wizard', () => {
+describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
   beforeEach(() => {
     apiMock.get.mockReset();
     apiMock.post.mockReset();
@@ -56,134 +56,121 @@ describe('ProjectListPage beginner mode wizard', () => {
     createProjectMock.mockResolvedValue({ id: 101 });
   });
 
-  it('supports happy path create-from-brief flow', async () => {
+  it('opens to a single-question form: name + brief textarea + advanced toggle', async () => {
     const user = userEvent.setup();
-    apiMock.post.mockImplementation(async (url: string) => {
-      if (url === '/domain-blueprints/analyze') {
-        return {
-          data: {
-            blueprint: {
-              domain_name: 'Support',
-              problem_statement: 'Answer support FAQs.',
-              target_user_persona: 'Support agent',
-              task_family: 'qa',
-              input_modality: 'text',
-              expected_output_schema: { type: 'object', properties: { answer: 'string' }, required: ['answer'] },
-              expected_output_examples: [{ answer: 'Use reset flow.' }],
-              safety_compliance_notes: ['Do not leak secrets.'],
-              deployment_target_constraints: { target_profile_id: 'vllm_server' },
-              success_metrics: [{ metric_id: 'answer_correctness', label: 'Answer Correctness' }],
-              glossary: [{ term: 'task family', plain_language: 'Type of behavior', category: 'general' }],
-              confidence_score: 0.74,
-              unresolved_assumptions: [],
-            },
-            validation: { ok: true, errors: [], warnings: [] },
-            guidance: { recommended_next_actions: ['Review schema'], unresolved_questions: [] },
-          },
-        };
-      }
-      return { data: {} };
-    });
-
     render(<ProjectListPage />);
     await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
 
-    await user.type(screen.getByPlaceholderText('e.g. Support FAQ Assistant'), 'Beginner QA Project');
+    expect(screen.getByTestId('create-project-name')).toBeInTheDocument();
+    expect(screen.getByTestId('create-project-brief')).toBeInTheDocument();
+    expect(screen.getByTestId('create-project-advanced-toggle')).toBeInTheDocument();
+    // Advanced fields stay hidden by default.
+    expect(screen.queryByTestId('create-project-advanced')).not.toBeInTheDocument();
+    // Submit is disabled until both name + brief are filled.
+    expect(
+      (screen.getByTestId('create-project-submit') as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it('creates a brief-driven project on submit and navigates to /guide', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+
+    await user.type(screen.getByTestId('create-project-name'), 'Brief Driven Project');
     await user.type(
-      screen.getByPlaceholderText('Describe what model behavior you want and what success looks like.'),
-      'Build a support assistant for FAQ responses.',
+      screen.getByTestId('create-project-brief'),
+      'Answer support FAQs from resolved tickets. Friendly tone.',
     );
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-
-    const textareas = screen.getAllByPlaceholderText(/One example per line/i);
-    await user.type(textareas[0], 'How do I reset my password?');
-    await user.type(textareas[1], '{{"answer":"Use reset flow."}}');
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-
-    expect(await screen.findByText('What The System Understood')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Create From Brief' }));
+    await user.click(screen.getByTestId('create-project-submit'));
 
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledWith(
-        'Beginner QA Project',
-        'Answer support FAQs.',
+        'Brief Driven Project',
+        '',
         '',
         null,
         null,
         null,
         expect.objectContaining({
           beginnerMode: true,
-          briefText: 'Build a support assistant for FAQ responses.',
+          briefText: 'Answer support FAQs from resolved tickets. Friendly tone.',
           targetProfileId: 'vllm_server',
+        }),
+      );
+    });
+    expect(navigateMock).toHaveBeenCalledWith('/project/101/guide');
+  });
+
+  it('toggle reveals the dense advanced fields (sample I/O, base model, starter pack)', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+
+    await user.click(screen.getByTestId('create-project-advanced-toggle'));
+    const advanced = await screen.findByTestId('create-project-advanced');
+    expect(advanced).toBeInTheDocument();
+
+    // A handful of the advanced fields should now be reachable.
+    expect(screen.getByPlaceholderText(/One example per line\. Helps the brief analyzer/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/HuggingFaceTB\/SmolLM2-135M-Instruct/)).toBeInTheDocument();
+    // Deployment target select is inside the advanced block — assert one of its options exists.
+    expect(screen.getByRole('option', { name: /vLLM Server/i })).toBeInTheDocument();
+  });
+
+  it('passes parsed sample inputs/outputs when the user fills the advanced fields', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+
+    await user.type(screen.getByTestId('create-project-name'), 'With Samples');
+    await user.type(
+      screen.getByTestId('create-project-brief'),
+      'Classify reviews as positive / neutral / negative.',
+    );
+    await user.click(screen.getByTestId('create-project-advanced-toggle'));
+
+    const sampleInputs = screen.getByPlaceholderText(/One example per line\. Helps the brief analyzer/);
+    const sampleOutputs = screen.getByPlaceholderText(/JSON, e\.g\. \{"label":"urgent"\}/i);
+    await user.type(sampleInputs, 'I love this product');
+    await user.type(sampleOutputs, 'positive');
+
+    await user.click(screen.getByTestId('create-project-submit'));
+
+    await waitFor(() => {
+      expect(createProjectMock).toHaveBeenCalledWith(
+        'With Samples',
+        '',
+        '',
+        null,
+        null,
+        null,
+        expect.objectContaining({
+          sampleInputs: ['I love this product'],
+          sampleOutputs: ['positive'],
         }),
       );
     });
   });
 
-  it('surfaces unresolved assumptions for ambiguous briefs', async () => {
+  it('surfaces the API error message inline when create rejects', async () => {
     const user = userEvent.setup();
-    apiMock.post.mockResolvedValue({
-      data: {
-        blueprint: {
-          domain_name: 'General',
-          problem_statement: 'General assistant behavior.',
-          target_user_persona: 'Team users',
-          task_family: 'instruction_sft',
-          input_modality: 'text',
-          expected_output_schema: { type: 'object', properties: { answer: 'string' }, required: ['answer'] },
-          expected_output_examples: [],
-          safety_compliance_notes: [],
-          deployment_target_constraints: { target_profile_id: 'vllm_server' },
-          success_metrics: [{ metric_id: 'helpfulness_score', label: 'Helpfulness' }],
-          glossary: [{ term: 'confidence_score', plain_language: 'How complete the brief is', category: 'analysis' }],
-          confidence_score: 0.36,
-          unresolved_assumptions: ['No sample outputs were provided; output contract may need refinement.'],
-        },
-        validation: {
-          ok: true,
-          errors: [],
-          warnings: [{ message: 'Blueprint confidence is low due to missing context.' }],
-        },
-        guidance: {
-          recommended_next_actions: ['Add sample outputs'],
-          unresolved_questions: ['What output format should be enforced?'],
-        },
-      },
-    });
-
-    render(<ProjectListPage />);
-    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
-    await user.type(screen.getByPlaceholderText('e.g. Support FAQ Assistant'), 'Ambiguous Brief Project');
-    await user.type(
-      screen.getByPlaceholderText('Describe what model behavior you want and what success looks like.'),
-      'I need a model that helps with my domain.',
-    );
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-
-    expect(await screen.findByText('Assumptions And Warnings')).toBeInTheDocument();
-    expect(
-      screen.getByText('No sample outputs were provided; output contract may need refinement.'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Blueprint confidence is low due to missing context.')).toBeInTheDocument();
-  });
-
-  it('shows API error message when brief analysis fails', async () => {
-    const user = userEvent.setup();
-    apiMock.post.mockRejectedValue({
+    createProjectMock.mockRejectedValue({
       response: { data: { detail: 'Brief analysis failed due to invalid format.' } },
     });
 
     render(<ProjectListPage />);
     await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
-    await user.type(screen.getByPlaceholderText('e.g. Support FAQ Assistant'), 'Error Case Project');
+    await user.type(screen.getByTestId('create-project-name'), 'Error Case');
     await user.type(
-      screen.getByPlaceholderText('Describe what model behavior you want and what success looks like.'),
-      'This brief should trigger analyze error.',
+      screen.getByTestId('create-project-brief'),
+      'This brief should trigger create error.',
     );
-    await user.click(screen.getByRole('button', { name: 'Next' }));
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByTestId('create-project-submit'));
 
-    expect(await screen.findByText('Brief analysis failed due to invalid format.')).toBeInTheDocument();
+    expect(await screen.findByTestId('create-project-error')).toHaveTextContent(
+      'Brief analysis failed due to invalid format.',
+    );
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });
