@@ -7,6 +7,7 @@ import { Term } from '../shared/Term';
 import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import FailureClustersPanel from './FailureClustersPanel';
+import ActiveLearningPanel from './ActiveLearningPanel';
 import './EvalPanel.css';
 
 type EvalSubTab = 'runs' | 'workbench';
@@ -1568,6 +1569,14 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         eval_type: r.eval_type,
                         pass_rate: r.pass_rate,
                     }))}
+                />
+            )}
+
+            {selectedExp && evalResults.length > 0 && (
+                <ActiveLearningPanel
+                    projectId={projectId}
+                    experimentId={selectedExp}
+                    refreshToken={evalResults.length}
                 />
             )}
 

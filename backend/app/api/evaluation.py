@@ -32,6 +32,12 @@ from app.services.evaluation_service import (
     run_evaluation,
     run_heldout_evaluation,
 )
+from app.services.active_learning_service import (
+    DEFAULT_PROPOSE_ROWS,
+    MAX_PROPOSE_ROWS,
+    promote_active_learning_batch,
+    propose_active_learning_batch,
+)
 from app.services.evaluation_remediation_service import (
     RemediationPlanBlockedError,
     generate_remediation_plan,
@@ -517,3 +523,66 @@ async def get_eval_remediation_plan(
     if payload is None:
         raise HTTPException(404, f"Remediation plan '{plan_id}' not found in project {project_id}")
     return payload
+
+
+# ── Active-learning recommender (Theme 8 Epic 2) ────────────────────
+
+
+class ActiveLearningPromoteRequest(BaseModel):
+    row_indexes: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Row indexes (into the eval result's predictions array) "
+            "to promote into the synthetic training dataset. The "
+            "service ignores duplicates / out-of-range indexes; "
+            "already-promoted rows are reported as skipped."
+        ),
+    )
+
+
+@router.get("/active-learning/{experiment_id}/proposal")
+async def get_active_learning_proposal(
+    project_id: int,
+    experiment_id: int,
+    max_rows: int = DEFAULT_PROPOSE_ROWS,
+    db: AsyncSession = Depends(get_db),
+):
+    """Propose up to `max_rows` failed eval rows for the given
+    experiment, ranked by failure severity. Used by the
+    'Add these N examples to improve most' panel on the Eval tab."""
+    capped = max(1, min(MAX_PROPOSE_ROWS, int(max_rows or DEFAULT_PROPOSE_ROWS)))
+    return await propose_active_learning_batch(
+        db,
+        project_id=project_id,
+        experiment_id=experiment_id,
+        max_rows=capped,
+    )
+
+
+@router.post("/active-learning/{experiment_id}/promote", status_code=201)
+async def promote_active_learning_rows(
+    project_id: int,
+    experiment_id: int,
+    data: ActiveLearningPromoteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Append the selected rows' gold answers to the project's
+    SYNTHETIC dataset JSONL. Idempotent — re-running with the same
+    indexes is a no-op."""
+    try:
+        result = await promote_active_learning_batch(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            row_indexes=list(data.row_indexes or []),
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("project_not_found:") or detail.startswith("eval_result_not_found:"):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    return {
+        "status": "ok",
+        "experiment_id": experiment_id,
+        **result,
+    }
