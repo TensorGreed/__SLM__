@@ -141,6 +141,58 @@ const RUN_RESULT_SUCCESS = {
     written_path: '/var/brewslm/projects/77/synthetic/synthetic.jsonl',
 };
 
+const RECIPE_CATALOG_STUB = {
+    catalog_version: 'recipes.builtin/v1',
+    catalog_source: 'builtin',
+    recipe_count: 1,
+    recipes: [
+        {
+            id: 'classification',
+            name: 'Text Classifier',
+            headline: 'Classify text.',
+            description: '',
+            icon: '🏷️',
+            task_profile: 'classification',
+            adapter_id: 'classification-label',
+            scoring_mode: 'field_match',
+            default_input_column: 'text',
+            default_output_column: 'label',
+            suggested_base_model: 'SmolLM2-135M',
+            alt_base_models: [],
+            target_profile: 'mobile_cpu',
+            training_plan_profile: 'balanced',
+            eval_pack_id: 'evalpack.classification.default',
+            gold_template: {
+                shape_label: 'text_label',
+                min_rows_recommended: 100,
+                fields: [],
+                example_row: {},
+            },
+            sample_eval_prompts: [],
+            data_acquisition_hints: [],
+            shape_signatures: [],
+            catalog_source: 'builtin',
+            catalog_version: 'builtin-v1',
+            is_builtin: true,
+        },
+    ],
+};
+
+const RECIPE_SNIFF_STUB = {
+    headers: ['text', 'label'],
+    suggestions: [
+        {
+            recipe_id: 'classification',
+            recipe_name: 'Text Classifier',
+            icon: '🏷️',
+            confidence: 0.9,
+            matched_columns: { input: 'text', label: 'label' },
+            signature_index: 0,
+        },
+    ],
+    top_recipe_id: 'classification',
+};
+
 function defaultApiHandlers() {
     apiMock.get.mockImplementation(async (url: string) => {
         if (url === '/dataset-import/sources') {
@@ -153,11 +205,17 @@ function defaultApiHandlers() {
                 },
             };
         }
+        if (url === '/recipes') {
+            return { data: RECIPE_CATALOG_STUB };
+        }
         return { data: {} };
     });
     apiMock.post.mockImplementation(async (url: string) => {
         if (url === '/dataset-import/introspect') {
             return { data: HIGH_CONFIDENCE_INTROSPECTION };
+        }
+        if (url === '/recipes/sniff') {
+            return { data: RECIPE_SNIFF_STUB };
         }
         if (url === '/projects/77/dataset-import/preview') {
             return { data: PREVIEW_RESULT_WITH_REJECTS };
@@ -167,6 +225,16 @@ function defaultApiHandlers() {
         }
         return { data: {} };
     });
+}
+
+/**
+ * The dataset-import wizard now lands on a "Recipe" step after introspect.
+ * Tests that exercise the legacy map → preview → run flow click through
+ * the recipe picker's "Override" link to skip it.
+ */
+async function skipRecipeStep(user: ReturnType<typeof userEvent.setup>) {
+    const override = await screen.findByTestId('recipe-picker-override');
+    await user.click(override);
 }
 
 describe('DatasetImportWizard', () => {
@@ -194,6 +262,7 @@ describe('DatasetImportWizard', () => {
         const locatorInput = screen.getByTestId('locator-input');
         await user.type(locatorInput, '/tmp/data.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
 
         // Introspection POST happened with the right locator.
         await waitFor(() =>
@@ -267,6 +336,7 @@ describe('DatasetImportWizard', () => {
 
         await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
 
         // Low-confidence banner is shown; preview button disabled.
         expect(await screen.findByTestId('confidence-warning')).toBeInTheDocument();
@@ -288,6 +358,7 @@ describe('DatasetImportWizard', () => {
 
         await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
         await screen.findByText('Column signatures');
         await user.click(screen.getByTestId('preview-btn'));
         await screen.findByText('Dry-run summary');
@@ -327,6 +398,7 @@ describe('DatasetImportWizard', () => {
 
         await user.type(screen.getByTestId('locator-input'), '/tmp/nope.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        // No skipRecipeStep here — introspect fails, recipe step never opens.
 
         const errBanner = await screen.findByTestId('introspect-error');
         expect(errBanner.textContent).toContain('not found');
@@ -369,6 +441,7 @@ describe('DatasetImportWizard', () => {
         );
         await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
         await screen.findByText('Column signatures');
 
         const fieldMap = screen.getByTestId('field-map-input') as HTMLTextAreaElement;
@@ -462,6 +535,7 @@ describe('DatasetImportWizard', () => {
 
         await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
         await screen.findByText('Column signatures');
         await user.click(screen.getByTestId('preview-btn'));
         await screen.findByText('Dry-run summary');
@@ -518,6 +592,7 @@ describe('DatasetImportWizard', () => {
 
         await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
         await user.click(screen.getByTestId('introspect-btn'));
+        await skipRecipeStep(user);
         await screen.findByText('Column signatures');
         await user.click(screen.getByTestId('preview-btn'));
         await screen.findByText('Dry-run summary');

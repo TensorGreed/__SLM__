@@ -33,6 +33,8 @@ import {
     type SavedConfig,
     type ShapeHypothesisDict,
 } from '../../api/datasetImport';
+import type { Recipe, RecipeSuggestion } from '../../api/recipes';
+import RecipePicker from './RecipePicker';
 
 interface DatasetImportWizardProps {
     projectId: number;
@@ -41,7 +43,7 @@ interface DatasetImportWizardProps {
     onConfigSaved?: (config: SavedConfig) => void;
 }
 
-type WizardStep = 'source' | 'map' | 'preview';
+type WizardStep = 'source' | 'recipe' | 'map' | 'preview';
 
 interface SourceHelp {
     label: string;
@@ -171,6 +173,13 @@ export default function DatasetImportWizard({
     const [saveError, setSaveError] = useState<string>('');
     const [savedConfigName, setSavedConfigName] = useState<string | null>(null);
 
+    // Recipe picker state (Theme 2). Recorded for downstream defaults +
+    // shown as a summary chip in later steps. Empty when the user
+    // clicks "Override".
+    const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+    const [recipeSuggestion, setRecipeSuggestion] = useState<RecipeSuggestion | null>(null);
+    const [recipeOverridden, setRecipeOverridden] = useState(false);
+
     // Load source / mapper catalog once (best-effort — fall back to
     // built-in lists if the request fails).
     useEffect(() => {
@@ -217,7 +226,13 @@ export default function DatasetImportWizard({
             const topFieldMap = res.proposal?.field_map || res.hypotheses[0]?.field_map || {};
             setFieldMapJson(fieldMapToJsonString(topFieldMap));
             setForceLowConfidence(false);
-            setStep('map');
+            // Reset recipe state on every fresh introspect; the picker
+            // is shown next so the user lands on a sniffed task shape
+            // before the dense mapper config.
+            setSelectedRecipe(null);
+            setRecipeSuggestion(null);
+            setRecipeOverridden(false);
+            setStep('recipe');
         } catch (err) {
             setIntrospectError(extractErrorMessage(err));
         } finally {
@@ -336,8 +351,9 @@ export default function DatasetImportWizard({
 
     const stepLabel: Record<WizardStep, string> = {
         source: '1. Source',
-        map: '2. Map',
-        preview: '3. Preview & Confirm',
+        recipe: '2. Recipe',
+        map: '3. Map',
+        preview: '4. Preview & Confirm',
     };
 
     return (
@@ -388,33 +404,87 @@ export default function DatasetImportWizard({
                         />
                     )}
 
+                    {step === 'recipe' && introspection && (
+                        <>
+                            <RecipePicker
+                                headers={introspection.columns}
+                                onSelect={(recipe, suggestion) => {
+                                    setSelectedRecipe(recipe);
+                                    setRecipeSuggestion(suggestion);
+                                    setRecipeOverridden(false);
+                                    setStep('map');
+                                }}
+                                onOverride={() => {
+                                    setSelectedRecipe(null);
+                                    setRecipeSuggestion(null);
+                                    setRecipeOverridden(true);
+                                    setStep('map');
+                                }}
+                                onBack={() => setStep('source')}
+                            />
+                        </>
+                    )}
+
                     {step === 'map' && introspection && (
-                        <MapStep
-                            introspection={introspection}
-                            mappers={mappers}
-                            selectedMapperId={selectedMapperId}
-                            onSelectedMapperChange={(m) => {
-                                setSelectedMapperId(m);
-                                // Snap field_map to the new hypothesis when
-                                // switching ranked options.
-                                const hyp = introspection.hypotheses.find((h) => h.mapper_id === m);
-                                if (hyp) {
-                                    setFieldMapJson(fieldMapToJsonString(hyp.field_map));
-                                }
-                            }}
-                            fieldMapJson={fieldMapJson}
-                            onFieldMapChange={setFieldMapJson}
-                            fieldMapError={fieldMapParsed.error}
-                            isBelowThreshold={isBelowThreshold}
-                            forceLowConfidence={forceLowConfidence}
-                            onForceChange={setForceLowConfidence}
-                            confidenceThreshold={confidenceThreshold}
-                            previewing={previewing}
-                            previewError={previewError}
-                            canRunPreview={canRunPreview}
-                            onBack={() => setStep('source')}
-                            onPreview={handlePreview}
-                        />
+                        <>
+                            {selectedRecipe && (
+                                <RecipeSummaryChip
+                                    recipe={selectedRecipe}
+                                    suggestion={recipeSuggestion}
+                                    onChange={() => setStep('recipe')}
+                                />
+                            )}
+                            {recipeOverridden && (
+                                <div
+                                    role="note"
+                                    style={{
+                                        marginBottom: 'var(--space-md)',
+                                        padding: 'var(--space-sm) var(--space-md)',
+                                        fontSize: '0.85rem',
+                                        background: 'var(--color-warning-bg)',
+                                        color: 'var(--color-warning)',
+                                        borderRadius: 'var(--radius-md)',
+                                    }}
+                                >
+                                    Recipe picker overridden. Configuring mapping
+                                    manually.{' '}
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        style={{ padding: 0, fontSize: '0.85rem' }}
+                                        onClick={() => setStep('recipe')}
+                                    >
+                                        Show recipe suggestions →
+                                    </button>
+                                </div>
+                            )}
+                            <MapStep
+                                introspection={introspection}
+                                mappers={mappers}
+                                selectedMapperId={selectedMapperId}
+                                onSelectedMapperChange={(m) => {
+                                    setSelectedMapperId(m);
+                                    // Snap field_map to the new hypothesis when
+                                    // switching ranked options.
+                                    const hyp = introspection.hypotheses.find((h) => h.mapper_id === m);
+                                    if (hyp) {
+                                        setFieldMapJson(fieldMapToJsonString(hyp.field_map));
+                                    }
+                                }}
+                                fieldMapJson={fieldMapJson}
+                                onFieldMapChange={setFieldMapJson}
+                                fieldMapError={fieldMapParsed.error}
+                                isBelowThreshold={isBelowThreshold}
+                                forceLowConfidence={forceLowConfidence}
+                                onForceChange={setForceLowConfidence}
+                                confidenceThreshold={confidenceThreshold}
+                                previewing={previewing}
+                                previewError={previewError}
+                                canRunPreview={canRunPreview}
+                                onBack={() => setStep('recipe')}
+                                onPreview={handlePreview}
+                            />
+                        </>
                     )}
 
                     {step === 'preview' && previewResult && (
@@ -439,6 +509,60 @@ export default function DatasetImportWizard({
                     )}
                 </div>
             </div>
+        </div>
+    );
+}
+
+// ── Recipe summary chip (shown above the Map step) ──────────────────
+
+interface RecipeSummaryChipProps {
+    recipe: Recipe;
+    suggestion: RecipeSuggestion | null;
+    onChange: () => void;
+}
+
+function RecipeSummaryChip({ recipe, suggestion, onChange }: RecipeSummaryChipProps) {
+    const confidencePct =
+        suggestion && !suggestion.fallback ? Math.round(suggestion.confidence * 100) : null;
+    return (
+        <div
+            data-testid="recipe-summary-chip"
+            style={{
+                marginBottom: 'var(--space-md)',
+                padding: 'var(--space-sm) var(--space-md)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-md)',
+                fontSize: '0.9rem',
+            }}
+        >
+            <span style={{ fontSize: '1.2rem' }} aria-hidden="true">
+                {recipe.icon}
+            </span>
+            <div style={{ flex: 1 }}>
+                <strong>Recipe:</strong> {recipe.name}{' '}
+                {confidencePct !== null && (
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                        ({confidencePct}% match)
+                    </span>
+                )}
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                    <code>{recipe.task_profile}</code> ·{' '}
+                    <code>{recipe.scoring_mode}</code> · base{' '}
+                    <code>{recipe.suggested_base_model}</code>
+                </div>
+            </div>
+            <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ fontSize: '0.85rem' }}
+                onClick={onChange}
+            >
+                Change recipe
+            </button>
         </div>
     );
 }
