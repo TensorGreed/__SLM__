@@ -153,6 +153,146 @@ describe('ProjectListPage create modal (Theme 1 Epic 1)', () => {
     });
   });
 
+  // ── Decision-engine chip (Theme 7) ─────────────────────────
+
+  it('does not render the approach chip until the brief crosses the min length', async () => {
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+
+    // Type a very short brief — well below the 40-char threshold.
+    await user.type(screen.getByTestId('create-project-brief'), 'too short');
+
+    // No chip + no analyze call after a tick.
+    await new Promise((r) => setTimeout(r, 700));
+    expect(screen.queryByTestId('approach-chip')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('approach-chip-loading')).not.toBeInTheDocument();
+    expect(apiMock.post).not.toHaveBeenCalledWith(
+      '/domain-blueprints/analyze',
+      expect.anything(),
+    );
+  });
+
+  it('renders an SFT chip with no override link when the brief is style/structure-shaped', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url === '/domain-blueprints/analyze') {
+        return {
+          data: {
+            blueprint: { task_family: 'instruction_sft', confidence_score: 0.85 },
+            validation: { ok: true, errors: [], warnings: [] },
+            guidance: { recommended_next_actions: [], unresolved_questions: [] },
+            recommended_approach: {
+              approach: 'sft',
+              confidence: 0.85,
+              headline: 'SFT is the right call — style/structure shaping.',
+              rationale: 'You said "respond in our company tone".',
+              signals: ['keyword:style:tone'],
+              cta_label: 'Proceed with SFT',
+            },
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+
+    await user.type(
+      screen.getByTestId('create-project-brief'),
+      'Respond in our company tone and JSON output schema, friendly voice.',
+    );
+
+    const chip = await screen.findByTestId('approach-chip', {}, { timeout: 2000 });
+    expect(chip).toHaveAttribute('data-approach', 'sft');
+    expect(screen.getByTestId('approach-chip-headline')).toHaveTextContent(
+      /SFT is the right call/,
+    );
+    // SFT recommendation = no override link (no warning to dismiss).
+    expect(screen.queryByTestId('approach-chip-override')).not.toBeInTheDocument();
+  });
+
+  it('renders a warning chip + "stay with SFT anyway" link when the recommendation is rag_first', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url === '/domain-blueprints/analyze') {
+        return {
+          data: {
+            blueprint: { task_family: 'qa', confidence_score: 0.6 },
+            validation: { ok: true, errors: [], warnings: [] },
+            guidance: { recommended_next_actions: [], unresolved_questions: [] },
+            recommended_approach: {
+              approach: 'rag_first',
+              confidence: 0.75,
+              headline: 'Try RAG first — your brief points at retrieval.',
+              rationale: 'You said "answer FAQs from our docs".',
+              signals: ['keyword:rag:lookup'],
+              cta_label: 'Try RAG first',
+            },
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+
+    await user.type(
+      screen.getByTestId('create-project-brief'),
+      'Look up policy answers from our internal docs and respond to users.',
+    );
+
+    const chip = await screen.findByTestId('approach-chip', {}, { timeout: 2000 });
+    expect(chip).toHaveAttribute('data-approach', 'rag_first');
+    expect(screen.getByTestId('approach-chip-headline')).toHaveTextContent(
+      /Try RAG first/,
+    );
+    expect(screen.getByTestId('approach-chip-override')).toBeInTheDocument();
+  });
+
+  it('clicking the override link moves the chip to the acknowledged state', async () => {
+    apiMock.post.mockImplementation(async (url: string) => {
+      if (url === '/domain-blueprints/analyze') {
+        return {
+          data: {
+            blueprint: {},
+            validation: { ok: true, errors: [], warnings: [] },
+            guidance: { recommended_next_actions: [], unresolved_questions: [] },
+            recommended_approach: {
+              approach: 'distillation',
+              confidence: 0.7,
+              headline: 'Distillation could give a smaller, cheaper model.',
+              rationale: 'You said "smaller cheaper model"',
+              signals: ['keywords:distillation:smaller'],
+              cta_label: 'Look into distillation',
+            },
+          },
+        };
+      }
+      return { data: {} };
+    });
+
+    const user = userEvent.setup();
+    render(<ProjectListPage />);
+    await user.click(screen.getByRole('button', { name: /\+ New Project/i }));
+    await user.type(
+      screen.getByTestId('create-project-brief'),
+      'I want a smaller cheaper model that runs on edge devices, minimal latency.',
+    );
+
+    await screen.findByTestId('approach-chip', {}, { timeout: 2000 });
+    await user.click(screen.getByTestId('approach-chip-override'));
+
+    // Chip moves into the acknowledged state and the override link disappears.
+    expect(screen.queryByTestId('approach-chip')).not.toBeInTheDocument();
+    expect(screen.getByTestId('approach-chip-dismissed')).toHaveTextContent(
+      /Acknowledged — proceeding with SFT/,
+    );
+    expect(screen.queryByTestId('approach-chip-override')).not.toBeInTheDocument();
+  });
+
   it('surfaces the API error message inline when create rejects', async () => {
     const user = userEvent.setup();
     createProjectMock.mockRejectedValue({

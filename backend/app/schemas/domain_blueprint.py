@@ -128,12 +128,33 @@ class DomainBlueprintAnalyzeRequest(BaseModel):
         return _as_string_list(value)
 
 
+class ApproachRecommendationResponse(BaseModel):
+    """Decision engine output (Theme 7). Returned alongside the
+    blueprint so the create-modal chip can render before the user
+    commits to fine-tuning."""
+
+    approach: str = Field(
+        ...,
+        description=(
+            "One of: prompt_only, rag_first, sft, dpo, distillation. "
+            "Default fallthrough is `sft` — the engine only steers away "
+            "when the brief specifically points at a different approach."
+        ),
+    )
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    headline: str = ""
+    rationale: str = ""
+    signals: list[str] = Field(default_factory=list)
+    cta_label: str = ""
+
+
 class DomainBlueprintAnalyzeResponse(BaseModel):
     project_id: int | None = None
     blueprint: DomainBlueprintContract
     validation: DomainBlueprintValidationResult
     guidance: DomainBlueprintGuidance
     llm_enrichment: dict[str, Any] = Field(default_factory=dict)
+    recommended_approach: ApproachRecommendationResponse | None = None
 
 
 class DomainBlueprintSaveRequest(BaseModel):

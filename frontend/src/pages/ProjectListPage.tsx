@@ -2,10 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import api from '../api/client';
+import {
+    analyzeBrief,
+    type ApproachRecommendation,
+} from '../api/blueprintAnalyze';
 import DemoProjectTiles from '../components/dashboard/DemoProjectTiles';
 import FirstRunCheatSheet from '../components/dashboard/FirstRunCheatSheet';
 import ProjectCard from '../components/dashboard/ProjectCard';
 import TopBar from '../components/layout/TopBar';
+import ApproachChip from '../components/projects/ApproachChip';
 import EmptyState from '../components/shared/EmptyState';
 import Skeleton from '../components/shared/Skeleton';
 import Term from '../components/shared/Term';
@@ -17,6 +22,16 @@ import type {
     StarterPackSummary,
 } from '../types';
 import './ProjectListPage.css';
+
+/** Minimum brief length before the debounced decision-engine call
+ * fires. Below this threshold the brief is almost certainly too
+ * short to recommend anything useful — and we'd flicker the chip on
+ * every keystroke for no signal. */
+const APPROACH_CHIP_MIN_CHARS = 40;
+/** Debounce window before firing the analyze call. The decision
+ * engine itself is pure-Python and returns in <10 ms; this delay
+ * is purely about not hammering the endpoint per keystroke. */
+const APPROACH_CHIP_DEBOUNCE_MS = 600;
 
 const STATUS_FILTERS = ['all', 'draft', 'active', 'completed'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
@@ -57,6 +72,14 @@ export default function ProjectListPage() {
     const [deploymentTarget, setDeploymentTarget] = useState('vllm_server');
     const [analyzeError, setAnalyzeError] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
+
+    // Decision-engine chip state (Theme 7). Debounced analyze call
+    // fires whenever the brief crosses the minimum length threshold;
+    // the user can dismiss a non-SFT recommendation via the override
+    // link and proceed with SFT anyway.
+    const [approachRec, setApproachRec] = useState<ApproachRecommendation | null>(null);
+    const [approachLoading, setApproachLoading] = useState(false);
+    const [approachDismissed, setApproachDismissed] = useState(false);
 
     const [starterPacks, setStarterPacks] = useState<StarterPackSummary[]>([]);
     const [domainPacks, setDomainPacks] = useState<DomainPackSummary[]>([]);
@@ -101,6 +124,51 @@ export default function ProjectListPage() {
     const parsedSampleOutputs = useMemo(() => parseMultiline(sampleOutputsText), [sampleOutputsText]);
     const parsedRiskNotes = useMemo(() => parseMultiline(riskNotesText), [riskNotesText]);
 
+    // Theme 7 decision engine — debounced analyze call. Runs only
+    // while the create modal is open and the brief is long enough to
+    // produce meaningful signal. Cancels on every brief edit so the
+    // user doesn't see a stale chip mid-typing.
+    useEffect(() => {
+        if (!showModal) return;
+        const trimmed = briefText.trim();
+        if (trimmed.length < APPROACH_CHIP_MIN_CHARS) {
+            setApproachRec(null);
+            setApproachLoading(false);
+            return;
+        }
+        setApproachLoading(true);
+        let cancelled = false;
+        const timer = window.setTimeout(() => {
+            analyzeBrief({
+                brief_text: trimmed,
+                deployment_target: deploymentTarget,
+                llm_enrich: false,
+            })
+                .then((res) => {
+                    if (cancelled) return;
+                    setApproachRec(res.recommended_approach ?? null);
+                    // Reset dismissal whenever the brief content changes —
+                    // a new brief deserves a fresh recommendation.
+                    setApproachDismissed(false);
+                })
+                .catch(() => {
+                    if (cancelled) return;
+                    // Best-effort: chip is advisory, not blocking.
+                    // Silently swallow errors so the create button
+                    // stays unblocked.
+                    setApproachRec(null);
+                })
+                .finally(() => {
+                    if (cancelled) return;
+                    setApproachLoading(false);
+                });
+        }, APPROACH_CHIP_DEBOUNCE_MS);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [briefText, deploymentTarget, showModal]);
+
     const resetCreateModal = () => {
         setNewName('');
         setNewDesc('');
@@ -116,6 +184,9 @@ export default function ProjectListPage() {
         setDeploymentTarget('vllm_server');
         setAnalyzeError('');
         setShowAdvanced(false);
+        setApproachRec(null);
+        setApproachLoading(false);
+        setApproachDismissed(false);
     };
 
     const openCreateModal = () => {
@@ -316,6 +387,12 @@ export default function ProjectListPage() {
                                     We'll analyze this and set sensible defaults — base model,
                                     task profile, output schema. You can change anything later.
                                 </div>
+                                <ApproachChip
+                                    recommendation={approachRec}
+                                    loading={approachLoading}
+                                    dismissed={approachDismissed}
+                                    onDismiss={() => setApproachDismissed(true)}
+                                />
                             </div>
 
                             <button

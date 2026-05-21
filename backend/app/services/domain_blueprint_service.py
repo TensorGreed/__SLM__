@@ -15,6 +15,7 @@ from app.config import settings
 from app.models.domain_blueprint import DomainBlueprintRevision, DomainBlueprintStatus
 from app.models.project import Project
 from app.schemas.domain_blueprint import (
+    ApproachRecommendationResponse,
     DomainBlueprintAnalyzeRequest,
     DomainBlueprintAnalyzeResponse,
     DomainBlueprintContract,
@@ -29,6 +30,7 @@ from app.schemas.domain_blueprint import (
     SuccessMetric,
 )
 from app.services.artifact_registry_service import publish_artifact
+from app.services.decision_engine_service import infer_recommended_approach
 from app.services.synthetic_service import call_teacher_model
 
 
@@ -874,12 +876,21 @@ async def analyze_domain_brief(
     validation = validate_domain_blueprint(enriched_blueprint)
     guidance = _build_guidance(enriched_blueprint, validation, task_reasons)
 
+    # Theme 7 decision engine — "do you even need SFT?" recommender.
+    # Pure-Python, deterministic, no extra LLM call. Surfaces as a
+    # chip in the brief-driven create modal.
+    recommendation = infer_recommended_approach(brief, enriched_blueprint)
+    recommended_approach = ApproachRecommendationResponse.model_validate(
+        recommendation.model_dump(),
+    )
+
     return DomainBlueprintAnalyzeResponse(
         project_id=project_id,
         blueprint=enriched_blueprint,
         validation=validation,
         guidance=guidance,
         llm_enrichment=llm_meta,
+        recommended_approach=recommended_approach,
     )
 
 
