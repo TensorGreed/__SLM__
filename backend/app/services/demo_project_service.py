@@ -218,52 +218,28 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-async def seed_demo_project(
+async def _materialize_demo_bundle_into_project(
     db: AsyncSession,
+    project: Project,
     slug: str,
+    manifest: dict[str, Any],
+    demo_dir: Path,
     *,
+    project_name: str,
     actor_user_id: int | None = None,
-) -> tuple[Project, dict[str, Any]]:
-    """Create (or return) the demo project for ``slug``. Idempotent."""
-
-    manifest = _load_manifest(slug)
-    demo_dir = Path(manifest["_dir"])
-
-    project_name = str(manifest.get("name") or slug)
-    existing = await _find_project_by_name(db, project_name)
-    if existing is not None:
-        return existing, {"slug": slug, "created": False, "project_id": existing.id}
-
-    description = str(manifest.get("description") or "")
-    suggested_brief = str(manifest.get("suggested_brief") or "")
-    target_profile = str(manifest.get("target_profile") or "vllm_server")
-    plan_profile = str(manifest.get("training_preferred_plan_profile") or "balanced")
-    eval_pack = manifest.get("evaluation_preferred_pack_id") or None
+) -> dict[str, Any]:
+    """Write a demo bundle's data (raw + gold + prepared splits) into
+    an already-created Project. Returns the summary dict that callers
+    surface to the API client. The caller is responsible for adding
+    the Project to the session, flushing once project.id is needed,
+    and committing the transaction.
+    """
 
     task_profile = str(manifest.get("task_profile") or "instruction_sft")
     adapter_id = _adapter_for_task(task_profile)
     input_field = str(manifest.get("dataset_input_field") or "input")
     output_field = str(manifest.get("dataset_output_field") or "output")
-
-    project = Project(
-        name=project_name,
-        description=description,
-        status=ProjectStatus.ACTIVE,
-        pipeline_stage=PipelineStage.TRAINING,
-        beginner_mode=True,
-        target_profile_id=target_profile,
-        training_preferred_plan_profile=plan_profile,
-        evaluation_preferred_pack_id=eval_pack,
-        dataset_adapter_preset={
-            "demo_slug": slug,
-            "suggested_brief": suggested_brief,
-            "adapter_id": adapter_id,
-            "task_profile": task_profile,
-            "field_mapping": {"input": input_field, "output": output_field},
-        },
-    )
-    db.add(project)
-    await db.flush()  # populate project.id
+    suggested_brief = str(manifest.get("suggested_brief") or "")
 
     # 1) Raw source dataset ----------------------------------------------------
     # NOTE: dataset_type is RAW (not CLEANED) so the Pipeline → Data tab
@@ -560,7 +536,145 @@ async def seed_demo_project(
         "task_profile": task_profile,
         "suggested_brief": suggested_brief,
     }
+    return summary
+
+
+async def seed_demo_project(
+    db: AsyncSession,
+    slug: str,
+    *,
+    actor_user_id: int | None = None,
+) -> tuple[Project, dict[str, Any]]:
+    """Create (or return) the demo project for ``slug``. Idempotent."""
+
+    manifest = _load_manifest(slug)
+    demo_dir = Path(manifest["_dir"])
+
+    project_name = str(manifest.get("name") or slug)
+    existing = await _find_project_by_name(db, project_name)
+    if existing is not None:
+        return existing, {"slug": slug, "created": False, "project_id": existing.id}
+
+    description = str(manifest.get("description") or "")
+    suggested_brief = str(manifest.get("suggested_brief") or "")
+    target_profile = str(manifest.get("target_profile") or "vllm_server")
+    plan_profile = str(manifest.get("training_preferred_plan_profile") or "balanced")
+    eval_pack = manifest.get("evaluation_preferred_pack_id") or None
+
+    task_profile = str(manifest.get("task_profile") or "instruction_sft")
+    adapter_id = _adapter_for_task(task_profile)
+    input_field = str(manifest.get("dataset_input_field") or "input")
+    output_field = str(manifest.get("dataset_output_field") or "output")
+
+    project = Project(
+        name=project_name,
+        description=description,
+        status=ProjectStatus.ACTIVE,
+        pipeline_stage=PipelineStage.TRAINING,
+        beginner_mode=True,
+        target_profile_id=target_profile,
+        training_preferred_plan_profile=plan_profile,
+        evaluation_preferred_pack_id=eval_pack,
+        dataset_adapter_preset={
+            "demo_slug": slug,
+            "suggested_brief": suggested_brief,
+            "adapter_id": adapter_id,
+            "task_profile": task_profile,
+            "field_mapping": {"input": input_field, "output": output_field},
+        },
+    )
+    db.add(project)
+    await db.flush()  # populate project.id
+
+    summary = await _materialize_demo_bundle_into_project(
+        db,
+        project,
+        slug,
+        manifest,
+        demo_dir,
+        project_name=project_name,
+        actor_user_id=actor_user_id,
+    )
     return project, summary
 
 
-__all__ = ["list_demo_archetypes", "seed_demo_project"]
+# Recipe id → preferred demo bundle slug. Used by the project-guide
+# quickstart "Import sample CSV" button to pick a bundle that matches
+# the task shape the user's already locked in via the recipe picker.
+# When the user hasn't picked a recipe, fall back to support-faq —
+# the most domain-generic Q&A bundle.
+RECIPE_TO_DEMO_SLUG: dict[str, str] = {
+    "qa-sft": "support-faq",
+    "classification": "sentiment-classifier",
+    "span-extraction": "pii-detector",
+    "summarization": "support-faq",
+    "code-review": "support-faq",
+    "generic-sft": "support-faq",
+}
+
+
+def derive_demo_slug_for_project(project: Project) -> str:
+    """Pick the best demo bundle slug for a project. Reads
+    `project.selected_recipe.recipe_id` if present; otherwise
+    defaults to `support-faq`."""
+    snapshot = project.selected_recipe or {}
+    recipe_id = str(snapshot.get("recipe_id") or "").strip()
+    return RECIPE_TO_DEMO_SLUG.get(recipe_id, "support-faq")
+
+
+async def apply_demo_bundle_to_project(
+    db: AsyncSession,
+    project_id: int,
+    slug: str | None = None,
+    *,
+    actor_user_id: int | None = None,
+) -> dict[str, Any]:
+    """Materialize a demo bundle into an existing project (no new
+    Project is created). Used by the project-guide "Import sample CSV"
+    quickstart action.
+
+    If `slug` is None, the bundle is derived from the project's
+    `selected_recipe` (Theme 2). The project's pipeline_stage is
+    advanced to TRAINING on success so downstream steps (training,
+    eval) unlock immediately.
+
+    Raises:
+        ValueError("project_not_found:{project_id}") if the project doesn't exist.
+        ValueError("demo_slug_unknown:{slug}") for unknown slugs.
+        ValueError("demo_manifest_invalid:{slug}") for malformed bundles.
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise ValueError(f"project_not_found:{project_id}")
+
+    resolved_slug = (slug or "").strip() or derive_demo_slug_for_project(project)
+    manifest = _load_manifest(resolved_slug)
+    demo_dir = Path(manifest["_dir"])
+
+    project_name = project.name
+    summary = await _materialize_demo_bundle_into_project(
+        db,
+        project,
+        resolved_slug,
+        manifest,
+        demo_dir,
+        project_name=project_name,
+        actor_user_id=actor_user_id,
+    )
+    # Data is materialized + prepared splits exist: the project is
+    # now ready to train. Advance the pipeline stage past INGESTION
+    # so the guide-page checklist flips its "Ingest source data"
+    # checkmark on the next refresh.
+    project.pipeline_stage = PipelineStage.TRAINING
+    await db.flush()
+    return summary
+
+
+__all__ = [
+    "list_demo_archetypes",
+    "seed_demo_project",
+    "apply_demo_bundle_to_project",
+    "derive_demo_slug_for_project",
+    "RECIPE_TO_DEMO_SLUG",
+]

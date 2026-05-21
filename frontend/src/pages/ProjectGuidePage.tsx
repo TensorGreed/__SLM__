@@ -6,6 +6,7 @@ import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { getPipelineStageIndex, getRecommendedAction, PIPELINE_STAGE_LABEL } from '../utils/flowGuide';
 import { useProgressionState } from '../components/gamification/useProgressionPoll';
+import QuickstartCard from '../components/guide/QuickstartCard';
 import './ProjectGuidePage.css';
 
 // Map each guide step id to the achievement id that, when unlocked,
@@ -30,7 +31,8 @@ interface GuideStep {
 export default function ProjectGuidePage() {
     const navigate = useNavigate();
     const { setActiveProject } = useProjectStore();
-    const { projectId, project, pipelineStatus } = useOutletContext<ProjectWorkspaceContextValue>();
+    const { projectId, project, pipelineStatus, refreshPipelineStatus } =
+        useOutletContext<ProjectWorkspaceContextValue>();
     const [toggleLoading, setToggleLoading] = useState(false);
 
     const currentStage = pipelineStatus?.current_stage || project.pipeline_stage;
@@ -121,6 +123,14 @@ export default function ProjectGuidePage() {
                     <span className="badge badge-info">{pipelineStatus?.progress_percent ?? 0}% complete</span>
                 </div>
             </section>
+
+            <QuickstartCard
+                projectId={projectId}
+                hasBaseModel={Boolean(project.base_model_name)}
+                onRefresh={() => {
+                    void refreshPipelineStatus();
+                }}
+            />
 
             <section className="card project-guide-next">
                 <div>
