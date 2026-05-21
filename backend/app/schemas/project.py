@@ -39,6 +39,11 @@ class ProjectUpdate(BaseModel):
     budget_settings: dict | None = None
     beginner_mode: bool | None = None
     active_domain_blueprint_version: int | None = None
+    selected_recipe: dict | None = None
+
+
+class ProjectRecipeApplyRequest(BaseModel):
+    recipe_id: str = Field(..., min_length=1, max_length=128)
 
 
 class ProjectDomainPackAssignRequest(BaseModel):
@@ -66,6 +71,7 @@ class ProjectResponse(BaseModel):
     budget_settings: dict | None = None
     beginner_mode: bool = False
     active_domain_blueprint_version: int | None = None
+    selected_recipe: dict | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -270,7 +270,12 @@ export default function ProjectPipelinePage() {
                     onStart={() => {
                         setWizardDismissed(true);
                         setActiveTab('data');
-                        navigate(`/project/${projectId}/pipeline/data`);
+                        // ?import=auto tells IngestionPanel to open the
+                        // DatasetImportWizard immediately, so the user
+                        // lands one click from upload → recipe pick
+                        // without hunting for the "Import dataset"
+                        // button. The panel consumes + clears the param.
+                        navigate(`/project/${projectId}/pipeline/data?import=auto`);
                     }}
                 />
             ) : (

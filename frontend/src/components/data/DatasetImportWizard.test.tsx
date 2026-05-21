@@ -16,6 +16,8 @@ const { apiMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
         post: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn(),
     },
 }));
 
@@ -194,6 +196,19 @@ const RECIPE_SNIFF_STUB = {
 };
 
 function defaultApiHandlers() {
+    apiMock.put.mockImplementation(async (url: string, body?: unknown) => {
+        if (url === '/projects/77/recipe') {
+            return {
+                data: {
+                    id: 77,
+                    selected_recipe: {
+                        recipe_id: (body as { recipe_id?: string })?.recipe_id ?? '',
+                    },
+                },
+            };
+        }
+        return { data: {} };
+    });
     apiMock.get.mockImplementation(async (url: string) => {
         if (url === '/dataset-import/sources') {
             return { data: { sources: ['jsonl', 'csv', 'hf', 'kaggle'] } };
@@ -241,6 +256,8 @@ describe('DatasetImportWizard', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        apiMock.put.mockReset();
+        apiMock.delete.mockReset();
         defaultApiHandlers();
     });
 
@@ -457,6 +474,71 @@ describe('DatasetImportWizard', () => {
         expect(
             (screen.getByTestId('field-map-input') as HTMLTextAreaElement).value,
         ).toContain('text_field');
+    });
+
+    it('persists the picked recipe to the project (PUT /projects/77/recipe)', async () => {
+        const user = userEvent.setup();
+        render(
+            <DatasetImportWizard projectId={77} onClose={() => undefined} />,
+        );
+
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+
+        // Pick the top sniffed recipe.
+        const pick = await screen.findByTestId('recipe-select-classification');
+        await user.click(pick);
+
+        await waitFor(() =>
+            expect(apiMock.put).toHaveBeenCalledWith(
+                '/projects/77/recipe',
+                { recipe_id: 'classification' },
+            ),
+        );
+
+        // Wizard advances to the Map step with a "Change recipe" chip showing.
+        expect(await screen.findByTestId('recipe-summary-chip')).toBeInTheDocument();
+        expect(screen.queryByTestId('recipe-persist-error')).not.toBeInTheDocument();
+    });
+
+    it('surfaces a non-blocking warning if recipe persistence fails', async () => {
+        apiMock.put.mockImplementation(async () => {
+            throw new Error('500 backend down');
+        });
+
+        const user = userEvent.setup();
+        render(
+            <DatasetImportWizard projectId={77} onClose={() => undefined} />,
+        );
+
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+
+        const pick = await screen.findByTestId('recipe-select-classification');
+        await user.click(pick);
+
+        // We still land on the Map step (best-effort persist), but a
+        // banner explains the side-effect didn't take.
+        expect(await screen.findByTestId('recipe-persist-error')).toHaveTextContent(
+            /500 backend down/,
+        );
+    });
+
+    it('skips persistence and persists nothing when the user clicks Override', async () => {
+        const user = userEvent.setup();
+        render(
+            <DatasetImportWizard projectId={77} onClose={() => undefined} />,
+        );
+
+        await user.type(screen.getByTestId('locator-input'), '/tmp/data.jsonl');
+        await user.click(screen.getByTestId('introspect-btn'));
+
+        const override = await screen.findByTestId('recipe-picker-override');
+        await user.click(override);
+
+        // Map step opened, but PUT /recipe was never called.
+        expect(await screen.findByText('Column signatures')).toBeInTheDocument();
+        expect(apiMock.put).not.toHaveBeenCalled();
     });
 
     it('renders an auth note for hf source', async () => {

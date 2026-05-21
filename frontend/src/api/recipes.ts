@@ -112,3 +112,17 @@ export async function sniffRecipeFromHeaders(headers: string[]): Promise<SniffRe
     const res = await api.post<SniffResponse>('/recipes/sniff', { headers });
     return res.data;
 }
+
+/**
+ * Snapshot a recipe onto a project + propagate its suggested base
+ * model into `base_model_name`. Returns the updated ProjectResponse.
+ */
+export async function applyRecipeToProject(
+    projectId: number,
+    recipeId: string,
+): Promise<unknown> {
+    const res = await api.put(`/projects/${projectId}/recipe`, {
+        recipe_id: recipeId,
+    });
+    return res.data;
+}

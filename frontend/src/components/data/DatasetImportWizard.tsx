@@ -33,6 +33,7 @@ import {
     type SavedConfig,
     type ShapeHypothesisDict,
 } from '../../api/datasetImport';
+import { applyRecipeToProject } from '../../api/recipes';
 import type { Recipe, RecipeSuggestion } from '../../api/recipes';
 import RecipePicker from './RecipePicker';
 
@@ -179,6 +180,7 @@ export default function DatasetImportWizard({
     const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
     const [recipeSuggestion, setRecipeSuggestion] = useState<RecipeSuggestion | null>(null);
     const [recipeOverridden, setRecipeOverridden] = useState(false);
+    const [recipePersistError, setRecipePersistError] = useState<string>('');
 
     // Load source / mapper catalog once (best-effort — fall back to
     // built-in lists if the request fails).
@@ -412,12 +414,27 @@ export default function DatasetImportWizard({
                                     setSelectedRecipe(recipe);
                                     setRecipeSuggestion(suggestion);
                                     setRecipeOverridden(false);
+                                    setRecipePersistError('');
+                                    // Best-effort persist: snapshot the
+                                    // recipe + propagate the suggested
+                                    // base model to the project so the
+                                    // Training tab inherits sensible
+                                    // defaults. The picker UX still
+                                    // advances even if the call fails;
+                                    // the import flow doesn't depend on
+                                    // this side-effect.
+                                    applyRecipeToProject(projectId, recipe.id).catch(
+                                        (err) => {
+                                            setRecipePersistError(extractErrorMessage(err));
+                                        },
+                                    );
                                     setStep('map');
                                 }}
                                 onOverride={() => {
                                     setSelectedRecipe(null);
                                     setRecipeSuggestion(null);
                                     setRecipeOverridden(true);
+                                    setRecipePersistError('');
                                     setStep('map');
                                 }}
                                 onBack={() => setStep('source')}
@@ -433,6 +450,25 @@ export default function DatasetImportWizard({
                                     suggestion={recipeSuggestion}
                                     onChange={() => setStep('recipe')}
                                 />
+                            )}
+                            {recipePersistError && (
+                                <div
+                                    role="alert"
+                                    data-testid="recipe-persist-error"
+                                    style={{
+                                        marginBottom: 'var(--space-md)',
+                                        padding: 'var(--space-sm) var(--space-md)',
+                                        fontSize: '0.85rem',
+                                        background: 'var(--color-warning-bg)',
+                                        color: 'var(--color-warning)',
+                                        borderRadius: 'var(--radius-md)',
+                                    }}
+                                >
+                                    Recipe selection didn't persist to the project
+                                    record ({recipePersistError}). You can continue
+                                    importing; training defaults will need to be set
+                                    by hand later.
+                                </div>
                             )}
                             {recipeOverridden && (
                                 <div

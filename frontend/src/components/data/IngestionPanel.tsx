@@ -1,4 +1,5 @@
 import { Fragment, useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { RawDocument, DocumentStatus } from '../../types';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
@@ -125,6 +126,20 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
     const [uploadProgress, setUploadProgress] = useState('');
     const [showImportWizard, setShowImportWizard] = useState(false);
     const [savedMappingsRefreshKey, setSavedMappingsRefreshKey] = useState(0);
+
+    // Auto-open the DatasetImportWizard when arriving via the
+    // GettingStartedWizard's "Start" button (which navigates with
+    // ?import=auto). Consume the param so a refresh doesn't keep
+    // re-opening the modal after the user has dismissed it once.
+    const [searchParams, setSearchParams] = useSearchParams();
+    useEffect(() => {
+        if (searchParams.get('import') === 'auto') {
+            setShowImportWizard(true);
+            const next = new URLSearchParams(searchParams);
+            next.delete('import');
+            setSearchParams(next, { replace: true });
+        }
+    }, [searchParams, setSearchParams]);
     // Per-document expand state for the inline 10-random-rows
     // accordion. Stored as a Set so toggling one document doesn't
     // re-render every row.

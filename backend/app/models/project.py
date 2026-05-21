@@ -103,6 +103,15 @@ class Project(Base):
         default=None,
         nullable=True,
     )
+    # Snapshot of the task-shape recipe (Theme 2) the user picked
+    # at first-dataset-import time. Nullable so projects created
+    # before the picker existed survive untouched; populated by
+    # `recipe_apply_service.apply_recipe_to_project`.
+    selected_recipe: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

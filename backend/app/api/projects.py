@@ -20,6 +20,7 @@ from app.schemas.project import (
     ProjectDomainProfileAssignRequest,
     ProjectCreate,
     ProjectListResponse,
+    ProjectRecipeApplyRequest,
     ProjectResponse,
     ProjectStatsResponse,
     ProjectUpdate,
@@ -35,6 +36,11 @@ from app.services.nl2pipeline_service import magic_create_pipeline_recipe
 from app.services.pipeline_recipe_service import apply_pipeline_recipe_blueprint
 from app.services.dataset_service import save_project_dataset_adapter_preference
 from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
+from app.services.recipe_apply_service import (
+    RecipeNotFoundError,
+    apply_recipe_to_project,
+    clear_recipe_from_project,
+)
 from app.services.starter_pack_service import get_starter_pack_by_id
 from app.services.domain_blueprint_service import (
     DomainBlueprintValidationError,
@@ -400,6 +406,37 @@ async def update_project(
 
     await db.flush()
     await db.refresh(project)
+    return ProjectResponse.model_validate(project)
+
+
+@router.put("/{project_id}/recipe", response_model=ProjectResponse)
+async def apply_project_recipe(
+    project_id: int,
+    data: ProjectRecipeApplyRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Snapshot a Theme 2 recipe onto the project and adopt its
+    suggested base model. Returns the updated project."""
+    try:
+        project = await apply_recipe_to_project(db, project_id, data.recipe_id)
+    except RecipeNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return ProjectResponse.model_validate(project)
+
+
+@router.delete("/{project_id}/recipe", response_model=ProjectResponse)
+async def clear_project_recipe(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the recipe snapshot from a project. Does not roll back
+    `base_model_name`; the user can edit that in project settings."""
+    try:
+        project = await clear_recipe_from_project(db, project_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return ProjectResponse.model_validate(project)
 
 
