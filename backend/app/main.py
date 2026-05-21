@@ -45,6 +45,7 @@ from app.api.domain_blueprints import router as domain_blueprints_router
 from app.api.artifacts import router as artifacts_router
 from app.api.targets import router as targets_router
 from app.api.starter_packs import router as starter_packs_router
+from app.api.recipes import router as recipes_router
 from app.api.models import router as base_models_router
 from app.api.adapter_studio import router as adapter_studio_router
 from app.api.autopilot import router as autopilot_router
@@ -260,6 +261,7 @@ app.include_router(domain_blueprints_router, prefix="/api", dependencies=API_DEP
 app.include_router(artifacts_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(targets_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(starter_packs_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(recipes_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(base_models_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(adapter_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(autopilot_router, prefix="/api", dependencies=API_DEPENDENCIES)

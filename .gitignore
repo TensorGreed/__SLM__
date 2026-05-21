@@ -45,6 +45,7 @@ backend/tests/*_data/
 *.log
 .DS_Store
 roadmap*.*
+ROADMAP*
 SprintPlan_25March.txt
 .vscode/*
 !.vscode/tasks.json
