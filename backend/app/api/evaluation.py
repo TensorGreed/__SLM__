@@ -586,3 +586,52 @@ async def promote_active_learning_rows(
         "experiment_id": experiment_id,
         **result,
     }
+
+
+# ── Per-cluster failure explanations (Theme 8 Epic 3) ───────────────
+
+
+@router.post("/{eval_result_id}/clusters/{cluster_id}/explain", status_code=200)
+async def explain_failure_cluster_endpoint(
+    project_id: int,
+    eval_result_id: int,
+    cluster_id: str,
+    force: bool = False,
+    max_exemplars: int = 5,
+    judge_model: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate (or return cached) a one-line LLM-judge explanation
+    for a failure cluster. Used by the Eval tab's
+    `FailureClustersPanel` when the user expands a cluster.
+
+    Returns 200 with `status="judge_unavailable"` when no judge
+    model is configured — the UI then renders a soft fallback
+    rather than breaking the expand interaction.
+    """
+    # Local import to avoid the circular dep at module load time
+    # (cluster_explanation_service depends on evaluation_service).
+    from app.services.cluster_explanation_service import (
+        explain_failure_cluster,
+    )
+
+    try:
+        payload = await explain_failure_cluster(
+            db,
+            project_id=project_id,
+            eval_result_id=eval_result_id,
+            cluster_id=cluster_id,
+            max_exemplars=max(1, min(20, int(max_exemplars))),
+            force_refresh=bool(force),
+            judge_model=judge_model,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("eval_result_not_found:"):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    return {
+        "project_id": project_id,
+        "eval_result_id": eval_result_id,
+        **payload,
+    }

@@ -2,6 +2,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import './FailureClustersPanel.css';
 
+interface ClusterExplanation {
+    state: 'loading' | 'ok' | 'judge_unavailable' | 'error' | 'cluster_not_found';
+    text?: string;
+    note?: string;
+    model?: string;
+    cached?: boolean;
+}
+
+interface ClusterExplanationResponse {
+    cluster_id: string;
+    explanation: string;
+    status: 'ok' | 'judge_unavailable' | 'error' | 'cluster_not_found';
+    cached: boolean;
+    generated_at: string | null;
+    model: string | null;
+    exemplar_count: number;
+    note?: string | null;
+}
+
 interface EvalResultSummary {
     id: number;
     dataset_name: string;
@@ -77,6 +96,13 @@ export default function FailureClustersPanel({
     const [isLoading, setIsLoading] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
+    // Theme 8 Epic 3: per-cluster LLM-judge explanation, keyed by
+    // cluster_id. Server-side cache lives on the EvalResult; this
+    // session-local map tracks loading + in-flight state so the UI
+    // can show a spinner without re-fetching on every expand.
+    const [explanations, setExplanations] = useState<
+        Record<string, ClusterExplanation>
+    >({});
 
     useEffect(() => {
         if (selectedResultId === '' && evalResults.length > 0) {
@@ -98,6 +124,7 @@ export default function FailureClustersPanel({
             );
             setClusters(res.data);
             setExpandedClusters(new Set());
+            setExplanations({});
         } catch (err) {
             setErrorMessage(errorDetail(err, 'Failed to load failure clusters.'));
             setClusters(null);
@@ -112,17 +139,73 @@ export default function FailureClustersPanel({
         }
     }, [selectedResultId, fetchClusters]);
 
-    const toggleCluster = useCallback((clusterId: string) => {
-        setExpandedClusters((prev) => {
-            const next = new Set(prev);
-            if (next.has(clusterId)) {
-                next.delete(clusterId);
-            } else {
-                next.add(clusterId);
+    const fetchExplanation = useCallback(
+        async (clusterId: string, opts?: { force?: boolean }) => {
+            if (typeof selectedResultId !== 'number') return;
+            setExplanations((prev) => ({
+                ...prev,
+                [clusterId]: { ...(prev[clusterId] ?? {}), state: 'loading' },
+            }));
+            try {
+                const res = await api.post<ClusterExplanationResponse>(
+                    `/projects/${projectId}/evaluation/${selectedResultId}/clusters/${encodeURIComponent(clusterId)}/explain`,
+                    null,
+                    { params: opts?.force ? { force: true } : undefined },
+                );
+                const payload = res.data;
+                const status = (payload.status || 'error') as ClusterExplanation['state'];
+                setExplanations((prev) => ({
+                    ...prev,
+                    [clusterId]: {
+                        state: status,
+                        text: payload.explanation || '',
+                        note: payload.note || undefined,
+                        model: payload.model || undefined,
+                        cached: payload.cached,
+                    },
+                }));
+            } catch (err) {
+                setExplanations((prev) => ({
+                    ...prev,
+                    [clusterId]: {
+                        state: 'error',
+                        note: errorDetail(err, 'Failed to fetch explanation.'),
+                    },
+                }));
             }
-            return next;
-        });
-    }, []);
+        },
+        [projectId, selectedResultId],
+    );
+
+    const toggleCluster = useCallback(
+        (clusterId: string) => {
+            const isCurrentlyExpanded = expandedClusters.has(clusterId);
+            // Lazy-fetch the explanation only the first time this
+            // cluster is expanded *this session*. Server caches the
+            // result on the EvalResult so the POST is cheap on
+            // subsequent sessions, but we still skip it once local
+            // state has a verdict to avoid the spinner flash.
+            const shouldFetch =
+                !isCurrentlyExpanded && !explanations[clusterId]?.state;
+            setExpandedClusters((prev) => {
+                const next = new Set(prev);
+                if (next.has(clusterId)) {
+                    next.delete(clusterId);
+                } else {
+                    next.add(clusterId);
+                }
+                return next;
+            });
+            if (shouldFetch) {
+                setExplanations((prev) => ({
+                    ...prev,
+                    [clusterId]: { state: 'loading' },
+                }));
+                void fetchExplanation(clusterId);
+            }
+        },
+        [expandedClusters, explanations, fetchExplanation],
+    );
 
     const summary = useMemo(() => {
         if (!clusters) {
@@ -245,6 +328,14 @@ export default function FailureClustersPanel({
                                 </button>
                                 {expanded && (
                                     <div className="failure-cluster-body">
+                                        <ClusterExplanationChip
+                                            explanation={explanations[cluster.cluster_id]}
+                                            onRetry={() =>
+                                                void fetchExplanation(cluster.cluster_id, {
+                                                    force: true,
+                                                })
+                                            }
+                                        />
                                         {cluster.classifier_reason && (
                                             <p className="failure-cluster-reason">{cluster.classifier_reason}</p>
                                         )}
@@ -328,5 +419,95 @@ export default function FailureClustersPanel({
                 </div>
             )}
         </div>
+    );
+}
+
+
+interface ClusterExplanationChipProps {
+    explanation: ClusterExplanation | undefined;
+    onRetry: () => void;
+}
+
+function ClusterExplanationChip({
+    explanation,
+    onRetry,
+}: ClusterExplanationChipProps) {
+    if (!explanation || explanation.state === 'loading') {
+        return (
+            <p
+                className="failure-cluster-explanation failure-cluster-explanation-loading"
+                data-testid="cluster-explanation-loading"
+            >
+                💡 Analyzing the cluster…
+            </p>
+        );
+    }
+    if (explanation.state === 'ok' && explanation.text) {
+        return (
+            <p
+                className="failure-cluster-explanation failure-cluster-explanation-ok"
+                data-testid="cluster-explanation-ok"
+            >
+                <span aria-hidden="true">💡 </span>
+                <strong>{explanation.text}</strong>
+                {explanation.cached && (
+                    <span
+                        className="failure-cluster-explanation-note"
+                        data-testid="cluster-explanation-cached"
+                    >
+                        {' '}· cached
+                    </span>
+                )}
+                {explanation.model && (
+                    <span className="failure-cluster-explanation-note">
+                        {' '}· {explanation.model}
+                    </span>
+                )}
+            </p>
+        );
+    }
+    if (explanation.state === 'judge_unavailable') {
+        return (
+            <p
+                className="failure-cluster-explanation failure-cluster-explanation-soft"
+                data-testid="cluster-explanation-judge-unavailable"
+            >
+                💡 No judge model configured — explanations skipped.
+                {explanation.note && (
+                    <span className="failure-cluster-explanation-note">
+                        {' '}{explanation.note}
+                    </span>
+                )}
+            </p>
+        );
+    }
+    if (explanation.state === 'cluster_not_found') {
+        return (
+            <p
+                className="failure-cluster-explanation failure-cluster-explanation-soft"
+                data-testid="cluster-explanation-missing"
+            >
+                💡 Cluster no longer present in this eval result.
+            </p>
+        );
+    }
+    // 'error'
+    return (
+        <p
+            className="failure-cluster-explanation failure-cluster-explanation-error"
+            data-testid="cluster-explanation-error"
+        >
+            💡 Couldn't generate explanation
+            {explanation.note ? `: ${explanation.note}` : '.'}
+            {' '}
+            <button
+                type="button"
+                className="failure-cluster-explanation-retry"
+                onClick={onRetry}
+                data-testid="cluster-explanation-retry"
+            >
+                Retry
+            </button>
+        </p>
     );
 }

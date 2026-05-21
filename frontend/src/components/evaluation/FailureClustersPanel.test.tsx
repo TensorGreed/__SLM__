@@ -78,6 +78,10 @@ const CLUSTER_RESPONSE = {
 describe('FailureClustersPanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        apiMock.patch.mockReset();
+        apiMock.put.mockReset();
+        apiMock.delete.mockReset();
     });
 
     it('fetches clusters for the first eval result and renders counts + remediation plan', async () => {
@@ -114,6 +118,19 @@ describe('FailureClustersPanel', () => {
 
     it('expands a cluster on click and reveals its exemplar prompt/prediction', async () => {
         apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
+        // Theme 8 Epic 3: expand also fires the explain POST.
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                cluster_id: 'cluster-1',
+                explanation: '',
+                status: 'judge_unavailable',
+                cached: false,
+                generated_at: null,
+                model: null,
+                exemplar_count: 0,
+                note: 'No judge configured.',
+            },
+        });
 
         const user = userEvent.setup();
         render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
@@ -135,6 +152,179 @@ describe('FailureClustersPanel', () => {
         expect(
             screen.getByText('It was Brian Mulroney in 1980.'),
         ).toBeInTheDocument();
+    });
+
+    // ── Theme 8 Epic 3 — per-cluster failure explanations ────────
+
+    it('fires explain POST on first cluster expand + renders the explanation', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                cluster_id: 'cluster-1',
+                explanation: 'Model is dropping the negation in "not urgent".',
+                status: 'ok',
+                cached: false,
+                generated_at: '2026-05-21T12:00:00Z',
+                model: 'gpt-4o-mini',
+                exemplar_count: 3,
+            },
+        });
+
+        const user = userEvent.setup();
+        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) =>
+            btn.textContent?.includes('hallucination'),
+        );
+        await user.click(targetHead!);
+
+        // The mocked POST resolves on the next microtask, so we
+        // skip asserting the transient loading state (race-prone)
+        // and assert the final POST contract + OK render directly.
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/evaluation/501/clusters/cluster-1/explain',
+                null,
+                expect.any(Object),
+            );
+        });
+
+        const ok = await screen.findByTestId('cluster-explanation-ok');
+        expect(ok).toHaveTextContent(/Model is dropping the negation/);
+        expect(ok).toHaveTextContent(/gpt-4o-mini/);
+    });
+
+    it('does not re-fire the explain POST when re-expanding the same cluster', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                cluster_id: 'cluster-1',
+                explanation: 'First explanation text.',
+                status: 'ok',
+                cached: false,
+                generated_at: null,
+                model: 'gpt-4o-mini',
+                exemplar_count: 3,
+            },
+        });
+
+        const user = userEvent.setup();
+        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+
+        const findHead = async () => {
+            const buttons = await screen.findAllByRole('button');
+            return buttons.find((btn) => btn.textContent?.includes('hallucination'))!;
+        };
+        await user.click(await findHead());
+        await waitFor(() =>
+            expect(screen.getByTestId('cluster-explanation-ok')).toBeInTheDocument(),
+        );
+
+        // Collapse + re-expand → no second POST should fire.
+        await user.click(await findHead());
+        await user.click(await findHead());
+        await screen.findByTestId('cluster-explanation-ok');
+        expect(apiMock.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows the soft-fallback chip when the backend reports judge_unavailable', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                cluster_id: 'cluster-1',
+                explanation: '',
+                status: 'judge_unavailable',
+                cached: false,
+                generated_at: null,
+                model: null,
+                exemplar_count: 5,
+                note: 'No judge model is configured.',
+            },
+        });
+
+        const user = userEvent.setup();
+        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) =>
+            btn.textContent?.includes('hallucination'),
+        );
+        await user.click(targetHead!);
+
+        const soft = await screen.findByTestId('cluster-explanation-judge-unavailable');
+        expect(soft).toHaveTextContent(/No judge model/);
+        // Exemplars + classifier reason still render — explanation is
+        // additive, not a replacement.
+        expect(
+            screen.getByText('Who was Prime Minister in 1980?'),
+        ).toBeInTheDocument();
+    });
+
+    it('renders the cached badge when the backend reports cached=true', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                cluster_id: 'cluster-1',
+                explanation: 'Cached explanation.',
+                status: 'ok',
+                cached: true,
+                generated_at: '2026-05-21T12:00:00Z',
+                model: 'gpt-4o-mini',
+                exemplar_count: 3,
+            },
+        });
+
+        const user = userEvent.setup();
+        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) =>
+            btn.textContent?.includes('hallucination'),
+        );
+        await user.click(targetHead!);
+
+        await screen.findByTestId('cluster-explanation-cached');
+    });
+
+    it('shows error + retry button when explain POST fails, retry re-fires', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockRejectedValueOnce({
+            response: { data: { detail: 'judge endpoint exploded' } },
+        });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                cluster_id: 'cluster-1',
+                explanation: 'Retry succeeded.',
+                status: 'ok',
+                cached: false,
+                generated_at: null,
+                model: 'gpt-4o-mini',
+                exemplar_count: 3,
+            },
+        });
+
+        const user = userEvent.setup();
+        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) =>
+            btn.textContent?.includes('hallucination'),
+        );
+        await user.click(targetHead!);
+
+        const err = await screen.findByTestId('cluster-explanation-error');
+        expect(err).toHaveTextContent(/judge endpoint exploded/);
+
+        await user.click(screen.getByTestId('cluster-explanation-retry'));
+        const ok = await screen.findByTestId('cluster-explanation-ok');
+        expect(ok).toHaveTextContent('Retry succeeded.');
+        expect(apiMock.post).toHaveBeenCalledTimes(2);
     });
 
     it('refetches when the user switches eval result in the dropdown', async () => {
