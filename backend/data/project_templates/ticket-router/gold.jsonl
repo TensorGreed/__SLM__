@@ -1,10 +1,200 @@
-{"key": "g001", "input": {"ticket": "Charged $49 yesterday but I cancelled my plan two weeks ago. Where do I dispute this?"}, "expected": {"label": "billing"}, "rationale": "Refund / disputed charge → billing."}
-{"key": "g002", "input": {"ticket": "Single Sign-On with Okta stopped working this morning. SAML response shows 'audience mismatch' error."}, "expected": {"label": "technical"}, "rationale": "Integration error / debug → technical."}
-{"key": "g003", "input": {"ticket": "How do I transfer ownership of my workspace to a different email? I'm leaving the company."}, "expected": {"label": "account"}, "rationale": "Account ownership / lifecycle → account."}
-{"key": "g004", "input": {"ticket": "We have a 9-figure budget for ML infra this year. Can we get on a call with your AE to discuss volume terms?"}, "expected": {"label": "sales"}, "rationale": "Volume / pricing inquiry → sales."}
-{"key": "g005", "input": {"ticket": "Subpoena duces tecum received. Please contact our general counsel at legal@example.com for production schedule."}, "expected": {"label": "legal"}, "rationale": "Legal process service → legal."}
-{"key": "g006", "input": {"ticket": "Promised credit from the December outage hasn't appeared on my January invoice. Who do I follow up with?"}, "expected": {"label": "billing"}, "rationale": "Credit / invoice adjustment → billing."}
-{"key": "g007", "input": {"ticket": "POST /v1/projects returning 500 since the deploy you announced this morning. Production is broken."}, "expected": {"label": "technical"}, "rationale": "API error / production-broken → technical."}
-{"key": "g008", "input": {"ticket": "Can you change the company name on my account? We just rebranded."}, "expected": {"label": "account"}, "rationale": "Account-data update → account."}
-{"key": "g009", "input": {"ticket": "Considering switching from Vendor X — can we get a custom migration path scoped? We'd commit to a 3-year deal."}, "expected": {"label": "sales"}, "rationale": "Competitive-migration + commit → sales."}
-{"key": "g010", "input": {"ticket": "Cease and desist request: a third party is using our trademark on a page hosted via your service. URL attached."}, "expected": {"label": "legal"}, "rationale": "IP / trademark dispute → legal."}
+{"key": "g001", "input": {"ticket": "Charged $49 yesterday but I cancelled my plan two weeks ago. Where do I dispute this?"}, "expected": {"label": "billing"}, "rationale": "Refund / disputed charge."}
+{"key": "g002", "input": {"ticket": "Refund my last invoice; service has been down all week."}, "expected": {"label": "billing"}, "rationale": "Refund request tied to outage."}
+{"key": "g003", "input": {"ticket": "My credit card on file was declined and now my account is in 'past due'. Card is fine, please retry."}, "expected": {"label": "billing"}, "rationale": "Payment-retry / past-due."}
+{"key": "g004", "input": {"ticket": "Why did you charge me for 12 seats when we only have 7 active users?"}, "expected": {"label": "billing"}, "rationale": "Seat-count overcharge."}
+{"key": "g005", "input": {"ticket": "Promised discount code 'LAUNCH50' isn't applying at checkout."}, "expected": {"label": "billing"}, "rationale": "Coupon-application failure."}
+{"key": "g006", "input": {"ticket": "Receipt is missing our VAT number. Can you reissue with the correct tax info?"}, "expected": {"label": "billing"}, "rationale": "Receipt / tax-info correction."}
+{"key": "g007", "input": {"ticket": "I see an unexpected $200 'overage' line on my last invoice. We never crossed the included quota."}, "expected": {"label": "billing"}, "rationale": "Overage dispute."}
+{"key": "g008", "input": {"ticket": "Switched annual but I think I'm still being billed monthly. Confused."}, "expected": {"label": "billing"}, "rationale": "Plan-switch billing confusion."}
+{"key": "g009", "input": {"ticket": "Auto-renewal kicked in even though I cancelled in Settings → Billing two weeks ago."}, "expected": {"label": "billing"}, "rationale": "Unwanted auto-renewal charge."}
+{"key": "g010", "input": {"ticket": "How do I download my invoice for March? Email never arrived."}, "expected": {"label": "billing"}, "rationale": "Missing-invoice retrieval."}
+{"key": "g011", "input": {"ticket": "Pricing on your site says $29 but I'm getting charged $39 each month. What changed?"}, "expected": {"label": "billing"}, "rationale": "Price discrepancy."}
+{"key": "g012", "input": {"ticket": "Need a W-9 form for our accounts-payable team to process your invoice."}, "expected": {"label": "billing"}, "rationale": "Tax form request from AP."}
+{"key": "g013", "input": {"ticket": "Currency on my invoice is USD but I'm in the UK — can I switch to GBP?"}, "expected": {"label": "billing"}, "rationale": "Currency / locale on invoice."}
+{"key": "g014", "input": {"ticket": "I removed a seat from my workspace mid-cycle; will I be prorated?"}, "expected": {"label": "billing"}, "rationale": "Mid-cycle proration question."}
+{"key": "g015", "input": {"ticket": "Got an email saying my payment failed but my card statement shows the charge went through."}, "expected": {"label": "billing"}, "rationale": "Conflicting payment status."}
+{"key": "g016", "input": {"ticket": "Can you split my invoice into two — one for each cost center?"}, "expected": {"label": "billing"}, "rationale": "Invoice splitting / multi-cost-center."}
+{"key": "g017", "input": {"ticket": "Refund the unused portion of my annual plan, please. I cancelled today."}, "expected": {"label": "billing"}, "rationale": "Annual-plan unused-portion refund."}
+{"key": "g018", "input": {"ticket": "Two invoices arrived for the same period — one says $99 the other $129."}, "expected": {"label": "billing"}, "rationale": "Duplicate invoice with mismatch."}
+{"key": "g019", "input": {"ticket": "Where do I update my billing address? Moving offices next week."}, "expected": {"label": "billing"}, "rationale": "Billing-address update."}
+{"key": "g020", "input": {"ticket": "PO #4421 from our procurement team — please reference it on the next invoice."}, "expected": {"label": "billing"}, "rationale": "PO reference on invoice."}
+{"key": "g021", "input": {"ticket": "Coupon I bought from your reseller didn't apply. Receipt attached."}, "expected": {"label": "billing"}, "rationale": "Reseller-coupon redemption."}
+{"key": "g022", "input": {"ticket": "Charged for a 'team' tier but I'm the only user."}, "expected": {"label": "billing"}, "rationale": "Wrong-tier charge."}
+{"key": "g023", "input": {"ticket": "Need to change the payment method from card to ACH."}, "expected": {"label": "billing"}, "rationale": "Payment-method change."}
+{"key": "g024", "input": {"ticket": "Your reseller in EU is charging us in EUR but our agreement says USD. Help."}, "expected": {"label": "billing"}, "rationale": "Reseller currency mismatch."}
+{"key": "g025", "input": {"ticket": "Why am I being billed in advance? Our contract said arrears."}, "expected": {"label": "billing"}, "rationale": "Billing-cadence mismatch vs. contract."}
+{"key": "g026", "input": {"ticket": "Add my company VAT ID to every future invoice please: GB123456789."}, "expected": {"label": "billing"}, "rationale": "Persistent VAT ID change."}
+{"key": "g027", "input": {"ticket": "Tax line item is showing 8.875% but New York City is 8.875% combined — should be split, no?"}, "expected": {"label": "billing"}, "rationale": "Tax-line breakdown question."}
+{"key": "g028", "input": {"ticket": "Late-fee was applied even though we paid within the net-30 window."}, "expected": {"label": "billing"}, "rationale": "Late-fee dispute."}
+{"key": "g029", "input": {"ticket": "Where's my refund? Cancelled three weeks ago and nothing on the card yet."}, "expected": {"label": "billing"}, "rationale": "Refund-not-received follow-up."}
+{"key": "g030", "input": {"ticket": "Bill-pay through our procurement portal failed twice. Can you confirm receipt of our wire?"}, "expected": {"label": "billing"}, "rationale": "Procurement / wire confirmation."}
+{"key": "g031", "input": {"ticket": "Need an itemized invoice for our accounts auditor. The current one is too summary."}, "expected": {"label": "billing"}, "rationale": "Itemized invoice for audit."}
+{"key": "g032", "input": {"ticket": "Account in arrears notice received — but autopay was set up two months ago. Why didn't it run?"}, "expected": {"label": "billing"}, "rationale": "Autopay failure-to-run."}
+{"key": "g033", "input": {"ticket": "Discount expired but I'm pretty sure it shouldn't have — you said it'd carry through to renewal."}, "expected": {"label": "billing"}, "rationale": "Discount-expiry dispute."}
+{"key": "g034", "input": {"ticket": "Charged for a trial that I never activated."}, "expected": {"label": "billing"}, "rationale": "Trial-charge that shouldn't have happened."}
+{"key": "g035", "input": {"ticket": "Need a statement showing all payments year-to-date for our auditor."}, "expected": {"label": "billing"}, "rationale": "Annual payment statement."}
+{"key": "g036", "input": {"ticket": "Refund my last invoice in full; I'm closing the account today."}, "expected": {"label": "billing"}, "rationale": "Closure-coupled full refund."}
+{"key": "g037", "input": {"ticket": "Bank fraud-flagged your charge; need details to clear it with my card issuer."}, "expected": {"label": "billing"}, "rationale": "Fraud-investigation detail request."}
+{"key": "g038", "input": {"ticket": "Renewal price jumped 30% with no notice."}, "expected": {"label": "billing"}, "rationale": "Renewal-price-jump complaint."}
+{"key": "g039", "input": {"ticket": "Yearly invoice should be net-60 per our MSA — yours says net-30."}, "expected": {"label": "billing"}, "rationale": "Net-terms mismatch vs MSA."}
+{"key": "g040", "input": {"ticket": "Charged twice on the same day for the same amount. Card statement attached."}, "expected": {"label": "billing"}, "rationale": "Duplicate same-day charge."}
+{"key": "g041", "input": {"ticket": "Single Sign-On with Okta stopped working this morning. SAML response shows 'audience mismatch' error."}, "expected": {"label": "technical"}, "rationale": "Integration error / debug."}
+{"key": "g042", "input": {"ticket": "POST /v1/projects returning 500 since the deploy you announced this morning. Production is broken."}, "expected": {"label": "technical"}, "rationale": "API 500 after deploy."}
+{"key": "g043", "input": {"ticket": "Mobile app crashes on launch on iOS 17.4; reinstalled twice."}, "expected": {"label": "technical"}, "rationale": "App-crash on a specific OS version."}
+{"key": "g044", "input": {"ticket": "Webhook deliveries to https://hooks.example.com fail with TLS handshake errors."}, "expected": {"label": "technical"}, "rationale": "Webhook delivery / TLS bug."}
+{"key": "g045", "input": {"ticket": "Dashboard charts have been blank for three days. Network tab shows /api/metrics returning 500."}, "expected": {"label": "technical"}, "rationale": "Visible UI bug with backend trace."}
+{"key": "g046", "input": {"ticket": "Pagination on /v1/orders is returning duplicate IDs on every other page."}, "expected": {"label": "technical"}, "rationale": "Pagination bug."}
+{"key": "g047", "input": {"ticket": "Search returns no results for queries that obviously match. Worked yesterday."}, "expected": {"label": "technical"}, "rationale": "Search-index regression."}
+{"key": "g048", "input": {"ticket": "Rate limit (429) hitting on every request from our prod servers; we're well below the 1000/min documented limit."}, "expected": {"label": "technical"}, "rationale": "Rate-limit miscalculation bug."}
+{"key": "g049", "input": {"ticket": "OAuth callback returns 'invalid_grant'; integration has been working fine for six months."}, "expected": {"label": "technical"}, "rationale": "OAuth regression."}
+{"key": "g050", "input": {"ticket": "PDF export downloads but the file is 0 bytes across Chrome, Safari, and Firefox."}, "expected": {"label": "technical"}, "rationale": "Cross-browser export bug."}
+{"key": "g051", "input": {"ticket": "Drag-and-drop file upload fails silently in Edge. Drop event fires but nothing uploads."}, "expected": {"label": "technical"}, "rationale": "Browser-specific UI bug."}
+{"key": "g052", "input": {"ticket": "Custom domain SSL cert won't provision; ACME challenge keeps timing out on your side."}, "expected": {"label": "technical"}, "rationale": "Cert provisioning bug."}
+{"key": "g053", "input": {"ticket": "GraphQL query returns a 'Cannot return null for non-nullable field' error on a documented optional field."}, "expected": {"label": "technical"}, "rationale": "GraphQL schema bug."}
+{"key": "g054", "input": {"ticket": "Real-time updates stopped pushing through WebSocket; reconnect loops indefinitely."}, "expected": {"label": "technical"}, "rationale": "WebSocket regression."}
+{"key": "g055", "input": {"ticket": "Slack notifications stopped arriving last night; channel re-auth doesn't help."}, "expected": {"label": "technical"}, "rationale": "Notification-integration outage."}
+{"key": "g056", "input": {"ticket": "Bulk CSV import fails on rows containing non-ASCII characters even though the file is UTF-8."}, "expected": {"label": "technical"}, "rationale": "Encoding-handling bug."}
+{"key": "g057", "input": {"ticket": "Trying to update password through API — keeps returning 422 with no detail field."}, "expected": {"label": "technical"}, "rationale": "API error-detail missing."}
+{"key": "g058", "input": {"ticket": "Audit log shows actions from a user who's no longer on the team."}, "expected": {"label": "technical"}, "rationale": "Stale-session / audit-log bug."}
+{"key": "g059", "input": {"ticket": "Workspace search has been timing out for the past hour. Frontend shows a spinner that never resolves."}, "expected": {"label": "technical"}, "rationale": "Search latency / timeout."}
+{"key": "g060", "input": {"ticket": "AES-256 encryption settings page is throwing a 500 when I try to upload my public key."}, "expected": {"label": "technical"}, "rationale": "Settings-page bug."}
+{"key": "g061", "input": {"ticket": "Embeddable widget script renders blank on Firefox 124 but fine elsewhere."}, "expected": {"label": "technical"}, "rationale": "Widget browser-specific bug."}
+{"key": "g062", "input": {"ticket": "Bulk delete from the admin panel timed out at 60s but the items show as still present."}, "expected": {"label": "technical"}, "rationale": "Bulk-delete timeout bug."}
+{"key": "g063", "input": {"ticket": "Switching themes (dark / light) makes the whole dashboard freeze for ~10 seconds."}, "expected": {"label": "technical"}, "rationale": "Theme-switching UI bug."}
+{"key": "g064", "input": {"ticket": "Stripe integration shows 'connection lost' even though I just reconnected via your OAuth flow."}, "expected": {"label": "technical"}, "rationale": "OAuth/integration state bug."}
+{"key": "g065", "input": {"ticket": "Service is fine on my account but my colleague says they get a blank page after login."}, "expected": {"label": "technical"}, "rationale": "Account-specific user-side bug."}
+{"key": "g066", "input": {"ticket": "Pre-signed S3 URL you return for downloads expires after 5 minutes but says 'valid for 1 hour' in your docs."}, "expected": {"label": "technical"}, "rationale": "Doc-vs-reality discrepancy bug."}
+{"key": "g067", "input": {"ticket": "Trying to export a 50k-row report — gets to ~90% and dies with no error."}, "expected": {"label": "technical"}, "rationale": "Large-export failure."}
+{"key": "g068", "input": {"ticket": "iOS app keeps logging me out every few hours; happens only on cellular, not Wi-Fi."}, "expected": {"label": "technical"}, "rationale": "Network-conditional bug."}
+{"key": "g069", "input": {"ticket": "Webhook signature verification fails on every payload even though my secret matches yours."}, "expected": {"label": "technical"}, "rationale": "Webhook-signature bug."}
+{"key": "g070", "input": {"ticket": "Bulk-tag operation shows 'success' but only half the items actually got tagged."}, "expected": {"label": "technical"}, "rationale": "Bulk-operation partial-failure."}
+{"key": "g071", "input": {"ticket": "API returns 401 for valid token; happens intermittently — maybe 1 in 20 requests."}, "expected": {"label": "technical"}, "rationale": "Intermittent 401 / token-handling bug."}
+{"key": "g072", "input": {"ticket": "Calendar integration pushes duplicates of every event into Outlook."}, "expected": {"label": "technical"}, "rationale": "Calendar-integration duplication."}
+{"key": "g073", "input": {"ticket": "API response timing has degraded from ~200ms to ~3s across all endpoints since 9am Pacific."}, "expected": {"label": "technical"}, "rationale": "Platform-wide latency regression."}
+{"key": "g074", "input": {"ticket": "I cannot scroll past the first 50 items in the data grid; pagination buttons are missing."}, "expected": {"label": "technical"}, "rationale": "Pagination-UI bug."}
+{"key": "g075", "input": {"ticket": "Two-factor SMS never arrives. Tried three carriers."}, "expected": {"label": "technical"}, "rationale": "2FA SMS delivery bug."}
+{"key": "g076", "input": {"ticket": "Live chat widget renders behind our header — overlapping z-index issue."}, "expected": {"label": "technical"}, "rationale": "Embed CSS / z-index bug."}
+{"key": "g077", "input": {"ticket": "Snowflake destination connector stopped syncing rows yesterday; no error in logs."}, "expected": {"label": "technical"}, "rationale": "Destination-connector silent failure."}
+{"key": "g078", "input": {"ticket": "Trial signups via /signup return 'something went wrong' on every attempt from incognito."}, "expected": {"label": "technical"}, "rationale": "Signup-flow regression."}
+{"key": "g079", "input": {"ticket": "JS console shows 'unhandled rejection' errors from your dashboard every few seconds."}, "expected": {"label": "technical"}, "rationale": "JS unhandled-rejection."}
+{"key": "g080", "input": {"ticket": "Export-to-Sheets exports a file with broken UTF-8 in column headers."}, "expected": {"label": "technical"}, "rationale": "Sheets-export encoding bug."}
+{"key": "g081", "input": {"ticket": "How do I add a second user to my workspace? Can't find the invite flow."}, "expected": {"label": "account"}, "rationale": "How-to: add user."}
+{"key": "g082", "input": {"ticket": "Can you delete my account and all associated data? I'm closing the company."}, "expected": {"label": "account"}, "rationale": "Account deletion / closure."}
+{"key": "g083", "input": {"ticket": "Trying to enable 2FA but the QR won't scan."}, "expected": {"label": "account"}, "rationale": "2FA enablement how-to."}
+{"key": "g084", "input": {"ticket": "Need to change the email associated with my account."}, "expected": {"label": "account"}, "rationale": "Account email change."}
+{"key": "g085", "input": {"ticket": "Forgot the email on my account. Can you look up by company domain?"}, "expected": {"label": "account"}, "rationale": "Account lookup by domain."}
+{"key": "g086", "input": {"ticket": "Locked out — too many failed logins; reset email isn't arriving."}, "expected": {"label": "account"}, "rationale": "Lockout / reset flow."}
+{"key": "g087", "input": {"ticket": "How do I transfer ownership of my workspace to a different email? I'm leaving the company."}, "expected": {"label": "account"}, "rationale": "Ownership transfer."}
+{"key": "g088", "input": {"ticket": "Want to merge two team accounts created accidentally. Both have data."}, "expected": {"label": "account"}, "rationale": "Account-merge request."}
+{"key": "g089", "input": {"ticket": "Username change request — old one has my deadname."}, "expected": {"label": "account"}, "rationale": "Username / display-name change."}
+{"key": "g090", "input": {"ticket": "Add my partner as a guest user with read-only access to one project."}, "expected": {"label": "account"}, "rationale": "Guest-user invite."}
+{"key": "g091", "input": {"ticket": "Need to change the company name on my account; we just rebranded."}, "expected": {"label": "account"}, "rationale": "Org-name update."}
+{"key": "g092", "input": {"ticket": "Cannot upload my profile picture — says 'file too large' but it's only 200KB."}, "expected": {"label": "account"}, "rationale": "Profile-update workflow question (not infra bug)."}
+{"key": "g093", "input": {"ticket": "How do I revoke a contractor's access without deleting their tasks?"}, "expected": {"label": "account"}, "rationale": "Access revocation while preserving data."}
+{"key": "g094", "input": {"ticket": "Deactivate user alice@example.com; she's leaving us Friday."}, "expected": {"label": "account"}, "rationale": "User deactivation."}
+{"key": "g095", "input": {"ticket": "What happens to my data if I cancel?"}, "expected": {"label": "account"}, "rationale": "Pre-cancellation data-handling question."}
+{"key": "g096", "input": {"ticket": "Can you change my workspace URL slug from acme-co to acme-inc?"}, "expected": {"label": "account"}, "rationale": "Workspace-slug change."}
+{"key": "g097", "input": {"ticket": "Where do I find my account ID? Support says they need it but I don't see it in Settings."}, "expected": {"label": "account"}, "rationale": "Account-ID lookup."}
+{"key": "g098", "input": {"ticket": "Need to grant access to our security auditor for one week."}, "expected": {"label": "account"}, "rationale": "Temporary-access grant."}
+{"key": "g099", "input": {"ticket": "Trying to remove my old email from the account — it's a colon-separated mess in the UI."}, "expected": {"label": "account"}, "rationale": "Multi-email cleanup."}
+{"key": "g100", "input": {"ticket": "Can I have two workspaces under one login?"}, "expected": {"label": "account"}, "rationale": "Multi-workspace configuration question."}
+{"key": "g101", "input": {"ticket": "How do I export everything before I close my account?"}, "expected": {"label": "account"}, "rationale": "Pre-closure data export."}
+{"key": "g102", "input": {"ticket": "Need to restore a workspace that I deleted by accident yesterday."}, "expected": {"label": "account"}, "rationale": "Workspace-restoration request."}
+{"key": "g103", "input": {"ticket": "Grant admin privileges to bob@example.com so he can manage billing."}, "expected": {"label": "account"}, "rationale": "Role / permission upgrade."}
+{"key": "g104", "input": {"ticket": "Why can't I see the 'Admin' tab? I'm the workspace owner."}, "expected": {"label": "account"}, "rationale": "Permission-visibility question."}
+{"key": "g105", "input": {"ticket": "Set up SCIM provisioning from our IdP — need the SCIM endpoint URL and token."}, "expected": {"label": "account"}, "rationale": "SCIM provisioning setup."}
+{"key": "g106", "input": {"ticket": "How do I rename my workspace?"}, "expected": {"label": "account"}, "rationale": "Workspace-rename how-to."}
+{"key": "g107", "input": {"ticket": "Want to switch from individual to organization account so I can invite team members."}, "expected": {"label": "account"}, "rationale": "Plan-tier / account-shape switch."}
+{"key": "g108", "input": {"ticket": "Time zone in my account is wrong — set to UTC; should be America/Los_Angeles."}, "expected": {"label": "account"}, "rationale": "Profile time-zone update."}
+{"key": "g109", "input": {"ticket": "Add a recovery email so I'm not stuck if my primary is compromised."}, "expected": {"label": "account"}, "rationale": "Recovery-email setup."}
+{"key": "g110", "input": {"ticket": "I want to disable other users from seeing my activity log."}, "expected": {"label": "account"}, "rationale": "Activity-log visibility settings."}
+{"key": "g111", "input": {"ticket": "Show me all the API keys associated with my account so I can audit them."}, "expected": {"label": "account"}, "rationale": "API-key audit / review."}
+{"key": "g112", "input": {"ticket": "Need to assign new owner before I leave the company — what's the procedure?"}, "expected": {"label": "account"}, "rationale": "Owner-transfer procedure."}
+{"key": "g113", "input": {"ticket": "How do I bulk-invite 50 users from a CSV?"}, "expected": {"label": "account"}, "rationale": "Bulk-user-invite how-to."}
+{"key": "g114", "input": {"ticket": "Limit access to one project for our contractor; they shouldn't see everything."}, "expected": {"label": "account"}, "rationale": "Per-project permission scoping."}
+{"key": "g115", "input": {"ticket": "Change my notification preferences — too many emails per day."}, "expected": {"label": "account"}, "rationale": "Notification-preference change."}
+{"key": "g116", "input": {"ticket": "How long is data retained after account deletion?"}, "expected": {"label": "account"}, "rationale": "Post-deletion retention policy question."}
+{"key": "g117", "input": {"ticket": "Set me up with read-only access — I'm an investor who wants to monitor but not touch anything."}, "expected": {"label": "account"}, "rationale": "Read-only role assignment."}
+{"key": "g118", "input": {"ticket": "Why can't I disable my own account? The button is greyed out."}, "expected": {"label": "account"}, "rationale": "Account-disable workflow question."}
+{"key": "g119", "input": {"ticket": "Group multiple users into a 'team' so I can assign permissions in one shot."}, "expected": {"label": "account"}, "rationale": "Team / group creation."}
+{"key": "g120", "input": {"ticket": "Need to suspend a user's access temporarily without deleting their work."}, "expected": {"label": "account"}, "rationale": "Temporary suspension."}
+{"key": "g121", "input": {"ticket": "Interested in your enterprise plan — what's the pricing for 100 seats with SSO?"}, "expected": {"label": "sales"}, "rationale": "Enterprise-plan pricing inquiry."}
+{"key": "g122", "input": {"ticket": "Do you offer volume discounts for non-profits? We're a 501(c)(3) and would need ~30 seats."}, "expected": {"label": "sales"}, "rationale": "Non-profit / volume discount."}
+{"key": "g123", "input": {"ticket": "Curious about your AI-add-on tier. Is there a free trial?"}, "expected": {"label": "sales"}, "rationale": "Add-on trial inquiry."}
+{"key": "g124", "input": {"ticket": "Looking to switch from a competitor — would you waive the setup fee?"}, "expected": {"label": "sales"}, "rationale": "Competitive-migration ask."}
+{"key": "g125", "input": {"ticket": "What's the difference between Pro and Business tier?"}, "expected": {"label": "sales"}, "rationale": "Tier-comparison question."}
+{"key": "g126", "input": {"ticket": "Could we get a custom demo for our team next Tuesday?"}, "expected": {"label": "sales"}, "rationale": "Demo / discovery request."}
+{"key": "g127", "input": {"ticket": "Reseller program — do you have one? I work with mid-market SaaS buyers."}, "expected": {"label": "sales"}, "rationale": "Reseller-program inquiry."}
+{"key": "g128", "input": {"ticket": "What's your enterprise SLA? We need 99.99% uptime."}, "expected": {"label": "sales"}, "rationale": "Enterprise SLA inquiry."}
+{"key": "g129", "input": {"ticket": "Procurement asked for a W-9 and your insurance certificate."}, "expected": {"label": "sales"}, "rationale": "Procurement docs (pre-sales)."}
+{"key": "g130", "input": {"ticket": "We have a 9-figure budget for ML infra this year. Can we get on a call with your AE to discuss volume terms?"}, "expected": {"label": "sales"}, "rationale": "Large-account engagement."}
+{"key": "g131", "input": {"ticket": "Will you support our preferred annual-contract negotiation? We're a Fortune 500."}, "expected": {"label": "sales"}, "rationale": "Enterprise contract negotiation."}
+{"key": "g132", "input": {"ticket": "Need a custom onboarding plan with white-glove migration from our current vendor."}, "expected": {"label": "sales"}, "rationale": "White-glove onboarding scope."}
+{"key": "g133", "input": {"ticket": "What's the SLA difference between your Business and Enterprise plans?"}, "expected": {"label": "sales"}, "rationale": "SLA-tier comparison."}
+{"key": "g134", "input": {"ticket": "Considering signing a 3-year deal but need predictable pricing — any locked rates?"}, "expected": {"label": "sales"}, "rationale": "Multi-year deal / price-lock."}
+{"key": "g135", "input": {"ticket": "Where can I download a brochure with all your enterprise features for our procurement deck?"}, "expected": {"label": "sales"}, "rationale": "Marketing-collateral request."}
+{"key": "g136", "input": {"ticket": "Is there an academic discount? We're a university research lab."}, "expected": {"label": "sales"}, "rationale": "Academic discount inquiry."}
+{"key": "g137", "input": {"ticket": "Can I demo the platform without signing up first?"}, "expected": {"label": "sales"}, "rationale": "Anonymous-demo request."}
+{"key": "g138", "input": {"ticket": "What's included in the data-residency add-on? Pricing?"}, "expected": {"label": "sales"}, "rationale": "Add-on pricing detail."}
+{"key": "g139", "input": {"ticket": "Need a partner-program info pack — we want to embed your platform in our solution."}, "expected": {"label": "sales"}, "rationale": "Partner / embed-program inquiry."}
+{"key": "g140", "input": {"ticket": "Can we do a paid pilot with 5 users for 60 days before signing the master agreement?"}, "expected": {"label": "sales"}, "rationale": "Pilot-deal structure."}
+{"key": "g141", "input": {"ticket": "We're a startup with seed funding — any startup discount?"}, "expected": {"label": "sales"}, "rationale": "Startup-discount inquiry."}
+{"key": "g142", "input": {"ticket": "Quote needed for 50 seats annual, billed yearly."}, "expected": {"label": "sales"}, "rationale": "Quote / pricing request."}
+{"key": "g143", "input": {"ticket": "Comparing your offering vs. CompetitorX — could you send a feature matrix?"}, "expected": {"label": "sales"}, "rationale": "Competitive feature comparison."}
+{"key": "g144", "input": {"ticket": "What integrations come included in the Enterprise plan vs. as add-ons?"}, "expected": {"label": "sales"}, "rationale": "Integration-tier inquiry."}
+{"key": "g145", "input": {"ticket": "Need a Statement of Work template before we sign — your AE mentioned you have one."}, "expected": {"label": "sales"}, "rationale": "SOW template request."}
+{"key": "g146", "input": {"ticket": "Looking to onboard 200 seats this quarter — what's the process for a deal this size?"}, "expected": {"label": "sales"}, "rationale": "Mid-market deal process."}
+{"key": "g147", "input": {"ticket": "Considering switching from your free plan to Pro; what data carries over?"}, "expected": {"label": "sales"}, "rationale": "Free-to-paid migration (pre-sales)."}
+{"key": "g148", "input": {"ticket": "Government / public-sector pricing? We need a FedRAMP-aligned offering."}, "expected": {"label": "sales"}, "rationale": "GovCloud / FedRAMP inquiry."}
+{"key": "g149", "input": {"ticket": "Where can I find your reference customers in the healthcare sector?"}, "expected": {"label": "sales"}, "rationale": "Reference-customer inquiry."}
+{"key": "g150", "input": {"ticket": "What's your usage-based pricing tier above 1M API calls/month?"}, "expected": {"label": "sales"}, "rationale": "Usage-tier pricing question."}
+{"key": "g151", "input": {"ticket": "Pre-sales question: do you have a SOC 2 Type 2 report I could share with my CISO?"}, "expected": {"label": "sales"}, "rationale": "SOC 2 in a pre-sale context."}
+{"key": "g152", "input": {"ticket": "Asking about your Enterprise SSO add-on — Okta and Azure AD supported?"}, "expected": {"label": "sales"}, "rationale": "SSO add-on pre-sale."}
+{"key": "g153", "input": {"ticket": "What does it cost to add API-only access for our partners?"}, "expected": {"label": "sales"}, "rationale": "API-only / partner-tier pricing."}
+{"key": "g154", "input": {"ticket": "Need a custom NDA template before our scoping call. Yours doesn't match our company standard."}, "expected": {"label": "sales"}, "rationale": "Pre-NDA scoping (sales-led handoff)."}
+{"key": "g155", "input": {"ticket": "Looking for case studies from other SaaS startups using your platform."}, "expected": {"label": "sales"}, "rationale": "Case-study request."}
+{"key": "g156", "input": {"ticket": "Can I get a Snowflake-style consumption pricing instead of seats?"}, "expected": {"label": "sales"}, "rationale": "Alternative pricing-model inquiry."}
+{"key": "g157", "input": {"ticket": "Our procurement says they need a vendor risk-assessment questionnaire completed."}, "expected": {"label": "sales"}, "rationale": "Vendor-risk Q (pre-sales)."}
+{"key": "g158", "input": {"ticket": "What's the deal-desk process for a 5-year, 1000-seat agreement?"}, "expected": {"label": "sales"}, "rationale": "Enterprise deal-desk inquiry."}
+{"key": "g159", "input": {"ticket": "Can you waive the data-egress fee for the first migration?"}, "expected": {"label": "sales"}, "rationale": "Onboarding-fee waiver ask."}
+{"key": "g160", "input": {"ticket": "Looking to bundle your platform with our existing observability stack — partnership opportunity?"}, "expected": {"label": "sales"}, "rationale": "Bundle / partnership inquiry."}
+{"key": "g161", "input": {"ticket": "Subpoena duces tecum received. Please contact our general counsel at legal@example.com for production schedule."}, "expected": {"label": "legal"}, "rationale": "Subpoena / legal process."}
+{"key": "g162", "input": {"ticket": "Cease and desist request: a third party is using our trademark on a page hosted via your service."}, "expected": {"label": "legal"}, "rationale": "IP / trademark dispute."}
+{"key": "g163", "input": {"ticket": "GDPR data-subject request received for user ID 4421 — they're requesting full export under Article 15."}, "expected": {"label": "legal"}, "rationale": "GDPR DSAR forwarding."}
+{"key": "g164", "input": {"ticket": "DMCA takedown notice for content hosted by one of our users."}, "expected": {"label": "legal"}, "rationale": "DMCA forwarding."}
+{"key": "g165", "input": {"ticket": "Compliance audit needs your SOC 2 Type 2 report. Who do I contact for a signed copy?"}, "expected": {"label": "legal"}, "rationale": "Compliance / audit doc request."}
+{"key": "g166", "input": {"ticket": "Service of process: please confirm registered agent for legal notice service."}, "expected": {"label": "legal"}, "rationale": "Service-of-process confirmation."}
+{"key": "g167", "input": {"ticket": "Counsel requesting copies of all support tickets for our org for an ongoing matter."}, "expected": {"label": "legal"}, "rationale": "Discovery / litigation request."}
+{"key": "g168", "input": {"ticket": "Privacy Officer here — confirming receipt of your DPA. Need to clarify section 3.2 sub-processor list."}, "expected": {"label": "legal"}, "rationale": "Data Processing Agreement clarification."}
+{"key": "g169", "input": {"ticket": "Notice of intent to file claim — please confirm registered agent."}, "expected": {"label": "legal"}, "rationale": "Pre-litigation notice."}
+{"key": "g170", "input": {"ticket": "Need a signed NDA before we share our architecture diagrams with your team."}, "expected": {"label": "legal"}, "rationale": "NDA request (legal review)."}
+{"key": "g171", "input": {"ticket": "Counter-notification under DMCA Section 512(g) for content removed last week."}, "expected": {"label": "legal"}, "rationale": "DMCA counter-notice."}
+{"key": "g172", "input": {"ticket": "CCPA opt-out request: please halt sale of my personal information."}, "expected": {"label": "legal"}, "rationale": "CCPA privacy request."}
+{"key": "g173", "input": {"ticket": "Restraining order has been filed naming our company. Forwarding for your records and legal handling."}, "expected": {"label": "legal"}, "rationale": "Restraining order notice."}
+{"key": "g174", "input": {"ticket": "Trademark infringement claim filed against a user on your platform; our IP counsel needs to coordinate."}, "expected": {"label": "legal"}, "rationale": "Inter-counsel coordination."}
+{"key": "g175", "input": {"ticket": "Forwarding civil discovery request — production deadline is 30 days from receipt."}, "expected": {"label": "legal"}, "rationale": "Civil discovery production."}
+{"key": "g176", "input": {"ticket": "Request for legal hold on all communications for user account user_88102."}, "expected": {"label": "legal"}, "rationale": "Litigation hold."}
+{"key": "g177", "input": {"ticket": "Notice from a data protection authority (Bavarian DPA) requesting investigation cooperation."}, "expected": {"label": "legal"}, "rationale": "Regulatory authority outreach."}
+{"key": "g178", "input": {"ticket": "Antitrust inquiry from the FTC — need to coordinate document production with your in-house counsel."}, "expected": {"label": "legal"}, "rationale": "Regulatory antitrust inquiry."}
+{"key": "g179", "input": {"ticket": "Patent infringement claim involving our integration with your API; routing to your IP counsel."}, "expected": {"label": "legal"}, "rationale": "Patent claim coordination."}
+{"key": "g180", "input": {"ticket": "EU Standard Contractual Clauses need to be re-executed under the 2021 framework."}, "expected": {"label": "legal"}, "rationale": "SCC re-execution (privacy/legal)."}
+{"key": "g181", "input": {"ticket": "Tax authority audit covering 2022; please send your TIN affidavit and W-9 history."}, "expected": {"label": "legal"}, "rationale": "Tax-audit doc request (legal handles)."}
+{"key": "g182", "input": {"ticket": "Cease publishing materials referencing our former employee under their old role title."}, "expected": {"label": "legal"}, "rationale": "Defamation / publication concern."}
+{"key": "g183", "input": {"ticket": "Notice of acquisition: our company is being acquired. Need to update the contracting entity."}, "expected": {"label": "legal"}, "rationale": "M&A entity-change."}
+{"key": "g184", "input": {"ticket": "We've received a GDPR Article 33 notification from your platform about a sub-processor incident; need details."}, "expected": {"label": "legal"}, "rationale": "Sub-processor incident follow-up."}
+{"key": "g185", "input": {"ticket": "Our outside counsel needs to review your most recent privacy policy + redlines from the last revision."}, "expected": {"label": "legal"}, "rationale": "Privacy-policy review for counsel."}
+{"key": "g186", "input": {"ticket": "Force majeure declaration regarding service disruption during the regional power event."}, "expected": {"label": "legal"}, "rationale": "Force majeure communication."}
+{"key": "g187", "input": {"ticket": "MSA renewal: our legal team flagged section 12 (limitation of liability). Need to negotiate."}, "expected": {"label": "legal"}, "rationale": "MSA-renewal redlines."}
+{"key": "g188", "input": {"ticket": "Confidential — our legal department has been notified of a data-subject deletion request that conflicts with retention."}, "expected": {"label": "legal"}, "rationale": "Privacy / retention conflict (legal escalation)."}
+{"key": "g189", "input": {"ticket": "Letter from regulator: please halt all marketing in jurisdiction X pending an investigation."}, "expected": {"label": "legal"}, "rationale": "Regulator-imposed restriction."}
+{"key": "g190", "input": {"ticket": "Class-action notice received naming your platform; forwarding to your legal team."}, "expected": {"label": "legal"}, "rationale": "Class-action notice forwarding."}
+{"key": "g191", "input": {"ticket": "We received a UK ICO inquiry following a privacy complaint. Need to coordinate the response."}, "expected": {"label": "legal"}, "rationale": "ICO inquiry coordination."}
+{"key": "g192", "input": {"ticket": "Letter from Federal Trade Commission requesting voluntary information production."}, "expected": {"label": "legal"}, "rationale": "FTC voluntary-production request."}
+{"key": "g193", "input": {"ticket": "Whistleblower complaint forwarded to our compliance team mentions your platform; need cooperation in our internal investigation."}, "expected": {"label": "legal"}, "rationale": "Whistleblower investigation cooperation."}
+{"key": "g194", "input": {"ticket": "European customer right-to-be-forgotten request — must delete all of their data within 30 days."}, "expected": {"label": "legal"}, "rationale": "GDPR Article 17 erasure."}
+{"key": "g195", "input": {"ticket": "Court-issued preservation order for all account records from the past 18 months."}, "expected": {"label": "legal"}, "rationale": "Court-issued preservation order."}
+{"key": "g196", "input": {"ticket": "Settlement negotiation underway with one of our customers; please halt processing of related accounts."}, "expected": {"label": "legal"}, "rationale": "Settlement-related processing hold."}
+{"key": "g197", "input": {"ticket": "Bar Association inquiry about lawyer-client privilege handling for one of our enterprise tenants."}, "expected": {"label": "legal"}, "rationale": "Privilege handling inquiry."}
+{"key": "g198", "input": {"ticket": "EU AI Act compliance: need confirmation that your model meets transparency obligations."}, "expected": {"label": "legal"}, "rationale": "EU AI Act compliance."}
+{"key": "g199", "input": {"ticket": "Counsel here — please escalate any account changes for client X to me before processing."}, "expected": {"label": "legal"}, "rationale": "Counsel-escalation flag."}
+{"key": "g200", "input": {"ticket": "Regulator demanded full export of our communications under MiFID II — coordinating with your team."}, "expected": {"label": "legal"}, "rationale": "MiFID II regulatory production."}

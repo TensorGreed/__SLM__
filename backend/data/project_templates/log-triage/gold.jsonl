@@ -1,12 +1,200 @@
-{"key": "g001", "input": {"log_line": "FATAL: master postgres process exited; replica promotion failed; database is unavailable"}, "expected": {"label": "critical"}, "rationale": "Database unavailable = page-on-call territory."}
-{"key": "g002", "input": {"log_line": "ERROR: failed to send password-reset email to user_id=88102 after 3 retries — SMTP timeout"}, "expected": {"label": "error"}, "rationale": "Visible-to-user but recoverable + bounded blast radius."}
-{"key": "g003", "input": {"log_line": "WARN: query plan changed for SELECT on users; new plan uses seq-scan instead of index"}, "expected": {"label": "warning"}, "rationale": "Performance degradation, not failure."}
-{"key": "g004", "input": {"log_line": "INFO: webhook https://customer.example.com/hook delivered for event evt_88a3b status=200"}, "expected": {"label": "info"}, "rationale": "Normal-success audit log."}
-{"key": "g005", "input": {"log_line": "GET /healthz 200 OK 1ms"}, "expected": {"label": "noise"}, "rationale": "Healthcheck — should be filtered from dashboards."}
-{"key": "g006", "input": {"log_line": "SECURITY: detected SQL injection attempt in request POST /v1/search by IP 198.51.100.7 — request blocked"}, "expected": {"label": "critical"}, "rationale": "Security event that should page even though the request was blocked."}
-{"key": "g007", "input": {"log_line": "DEBUG: parsed 14 trace spans for request req_4421ab"}, "expected": {"label": "noise"}, "rationale": "Per-request debug telemetry — pure noise."}
-{"key": "g008", "input": {"log_line": "ERROR: rate limit exceeded on /v1/login for IP 203.0.113.17 — possible credential stuffing"}, "expected": {"label": "error"}, "rationale": "Bounded incident — block engaged, no breach yet. Promote to critical only if pattern continues."}
-{"key": "g009", "input": {"log_line": "WARN: replication lag on replica_3 = 14s (threshold 5s) — promoting to PagerDuty if it crosses 60s"}, "expected": {"label": "warning"}, "rationale": "Self-describing threshold language → warning, not critical."}
-{"key": "g010", "input": {"log_line": "INFO: new project created project_id=901 by user_id=44102"}, "expected": {"label": "info"}, "rationale": "Audit-grade operational info."}
-{"key": "g011", "input": {"log_line": "FATAL: encryption key rotation failed on tenant tnt_44a — customer data temporarily inaccessible to all users in tenant"}, "expected": {"label": "critical"}, "rationale": "Tenant-wide data inaccessibility = critical even though no data loss."}
-{"key": "g012", "input": {"log_line": "DEBUG: hit serialization cache for User<id=88102>"}, "expected": {"label": "noise"}, "rationale": "Internal-instrumentation noise; should never appear in alerting."}
+{"key": "g001", "input": {"log_line": "FATAL: master postgres process exited; replica promotion failed; database is unavailable"}, "expected": {"label": "critical"}, "rationale": "Database unavailable = page-on-call."}
+{"key": "g002", "input": {"log_line": "FATAL: filesystem '/data' read-only; database refuses writes"}, "expected": {"label": "critical"}, "rationale": "Read-only fs blocks all writes."}
+{"key": "g003", "input": {"log_line": "SECURITY: detected SQL injection attempt blocked from IP 198.51.100.7 on /v1/search"}, "expected": {"label": "critical"}, "rationale": "Security event — page even when blocked."}
+{"key": "g004", "input": {"log_line": "FATAL: encryption key rotation failed on tenant tnt_44a — customer data temporarily inaccessible"}, "expected": {"label": "critical"}, "rationale": "Tenant-wide data inaccessibility."}
+{"key": "g005", "input": {"log_line": "ALERT: 50 admin login attempts in 60s from IP 203.0.113.42 — possible brute force"}, "expected": {"label": "critical"}, "rationale": "Brute-force pattern against admin accounts."}
+{"key": "g006", "input": {"log_line": "ERROR: GDPR data subject deletion request for user_id=12001 failed mid-way — partial-delete state"}, "expected": {"label": "critical"}, "rationale": "Compliance-failure with regulatory deadline."}
+{"key": "g007", "input": {"log_line": "ERROR: stripe webhook signature mismatch on event evt_77231 — possible replay attack"}, "expected": {"label": "critical"}, "rationale": "Payment-fraud indicator."}
+{"key": "g008", "input": {"log_line": "FATAL: out of memory; oom-killer terminated process pid=1234 (postgres)"}, "expected": {"label": "critical"}, "rationale": "OOM kill of DB = page."}
+{"key": "g009", "input": {"log_line": "SECURITY: jwt token with elevated 'role=admin' claim issued by unrecognized key"}, "expected": {"label": "critical"}, "rationale": "Forged auth token / signing-key compromise."}
+{"key": "g010", "input": {"log_line": "FATAL: kafka cluster lost quorum; producer queue depth = 240k and growing"}, "expected": {"label": "critical"}, "rationale": "Quorum loss + queue overflow."}
+{"key": "g011", "input": {"log_line": "ALERT: SSL certificate for api.example.com expires in 90 minutes; auto-renew failed"}, "expected": {"label": "critical"}, "rationale": "Imminent cert expiry on prod TLS."}
+{"key": "g012", "input": {"log_line": "FATAL: replication lag on all replicas exceeds 600s — failover not possible"}, "expected": {"label": "critical"}, "rationale": "All replicas stale = no safe failover."}
+{"key": "g013", "input": {"log_line": "ERROR: payment gateway timeout after 30s — customer charged but order not created"}, "expected": {"label": "critical"}, "rationale": "Customer charged + missing order = data loss equivalent."}
+{"key": "g014", "input": {"log_line": "SECURITY: PII access by deactivated user account user_5523 (deactivated 9 days ago)"}, "expected": {"label": "critical"}, "rationale": "Deactivated account accessing PII."}
+{"key": "g015", "input": {"log_line": "FATAL: pod cluster lost networking — all services reporting unreachable"}, "expected": {"label": "critical"}, "rationale": "Total network partition."}
+{"key": "g016", "input": {"log_line": "ERROR: customer PII export downloaded by support engineer who lacks PII access scope"}, "expected": {"label": "critical"}, "rationale": "Unauthorized PII access by employee."}
+{"key": "g017", "input": {"log_line": "FATAL: storage controller iops degraded 90% — write latency >5s"}, "expected": {"label": "critical"}, "rationale": "Storage subsystem near-failure."}
+{"key": "g018", "input": {"log_line": "SECURITY: detected exfiltration pattern — 4GB of customer data egressed to unrecognized IP"}, "expected": {"label": "critical"}, "rationale": "Data-exfil pattern."}
+{"key": "g019", "input": {"log_line": "ERROR: cron job 'nightly_billing_close' failed — invoices not generated for 12k accounts"}, "expected": {"label": "critical"}, "rationale": "Revenue-impacting job failure."}
+{"key": "g020", "input": {"log_line": "FATAL: HSM connection lost — encryption signing operations queued indefinitely"}, "expected": {"label": "critical"}, "rationale": "HSM loss = signing outage."}
+{"key": "g021", "input": {"log_line": "SECURITY: account takeover suspected — password change + email change + MFA disabled within 60s"}, "expected": {"label": "critical"}, "rationale": "ATO pattern."}
+{"key": "g022", "input": {"log_line": "FATAL: dns resolution failing for 90% of upstream lookups — cluster effectively offline"}, "expected": {"label": "critical"}, "rationale": "DNS outage affecting cluster."}
+{"key": "g023", "input": {"log_line": "ERROR: KMS key 'pii-2024' entered PendingDeletion state — encryption writes will fail in 30 days"}, "expected": {"label": "critical"}, "rationale": "KMS deletion timer started."}
+{"key": "g024", "input": {"log_line": "FATAL: oauth provider returning 500 for 100% of token requests — login broken"}, "expected": {"label": "critical"}, "rationale": "Auth-provider outage = login outage."}
+{"key": "g025", "input": {"log_line": "SECURITY: anomalous traffic from internal pod — outbound connections to known malware C2 server"}, "expected": {"label": "critical"}, "rationale": "Internal pod beaconing C2."}
+{"key": "g026", "input": {"log_line": "ERROR: backup integrity check failed — last 3 daily backups corrupted, restore impossible"}, "expected": {"label": "critical"}, "rationale": "Backup chain broken."}
+{"key": "g027", "input": {"log_line": "FATAL: production database accepting writes from primary AND replica — split-brain detected"}, "expected": {"label": "critical"}, "rationale": "Split brain = data divergence."}
+{"key": "g028", "input": {"log_line": "ALERT: 99.99% of API requests returning 5xx for the past 2 minutes"}, "expected": {"label": "critical"}, "rationale": "Total API outage."}
+{"key": "g029", "input": {"log_line": "ERROR: payment confirmation webhook delivery rate has been 0% for 15 minutes"}, "expected": {"label": "critical"}, "rationale": "Webhook outage on payment-critical events."}
+{"key": "g030", "input": {"log_line": "FATAL: tls handshake failure on management plane — all admin actions blocked"}, "expected": {"label": "critical"}, "rationale": "Admin plane lockout."}
+{"key": "g031", "input": {"log_line": "SECURITY: kubernetes service account token leaked via exposed config endpoint"}, "expected": {"label": "critical"}, "rationale": "Credential leak."}
+{"key": "g032", "input": {"log_line": "ERROR: customer billing data was overwritten by failed migration — restore from backup required"}, "expected": {"label": "critical"}, "rationale": "Customer-data corruption."}
+{"key": "g033", "input": {"log_line": "FATAL: redis cluster experienced majority node failure — cache unavailable"}, "expected": {"label": "critical"}, "rationale": "Cache-tier total failure."}
+{"key": "g034", "input": {"log_line": "SECURITY: container escape detected on pod worker-44b — host filesystem accessed"}, "expected": {"label": "critical"}, "rationale": "Container breakout."}
+{"key": "g035", "input": {"log_line": "ALERT: 100% of customer-facing endpoints timing out for the last 90 seconds"}, "expected": {"label": "critical"}, "rationale": "Total customer-facing outage."}
+{"key": "g036", "input": {"log_line": "ERROR: PCI-DSS audit log writer crashed; payment-card events undocumented for 4 minutes"}, "expected": {"label": "critical"}, "rationale": "PCI audit-trail gap."}
+{"key": "g037", "input": {"log_line": "FATAL: vault sealed unexpectedly — secrets unavailable cluster-wide"}, "expected": {"label": "critical"}, "rationale": "Vault sealed = secrets outage."}
+{"key": "g038", "input": {"log_line": "SECURITY: privileged role assigned to user without approval workflow"}, "expected": {"label": "critical"}, "rationale": "Privilege escalation bypass."}
+{"key": "g039", "input": {"log_line": "ERROR: kafka topic 'orders' consumer lag = 12 hours and growing"}, "expected": {"label": "critical"}, "rationale": "Consumer-lag breach affecting orders."}
+{"key": "g040", "input": {"log_line": "FATAL: storage volume detached from primary database node mid-write"}, "expected": {"label": "critical"}, "rationale": "Storage detached mid-write."}
+{"key": "g041", "input": {"log_line": "ERROR: failed to send password-reset email to user_id=88102 after 3 retries — SMTP timeout"}, "expected": {"label": "error"}, "rationale": "Visible-to-user but bounded."}
+{"key": "g042", "input": {"log_line": "ERROR: 500 Internal Server Error on POST /v1/orders/checkout — NullPointerException"}, "expected": {"label": "error"}, "rationale": "App error with bounded scope."}
+{"key": "g043", "input": {"log_line": "ERROR: connection refused while contacting redis://cache-primary:6379; falling back to local cache"}, "expected": {"label": "error"}, "rationale": "Recoverable via fallback."}
+{"key": "g044", "input": {"log_line": "ERROR: webhook delivery to customer endpoint failed after 5 retries — last status 502"}, "expected": {"label": "error"}, "rationale": "Bounded customer-side failure."}
+{"key": "g045", "input": {"log_line": "ERROR: thumbnail generation failed for asset_id=99012 — ImagickException permission denied"}, "expected": {"label": "error"}, "rationale": "Single-asset failure."}
+{"key": "g046", "input": {"log_line": "ERROR: cron job 'nightly_invoice_pdf_export' failed exit_code=137 (killed after 1800s)"}, "expected": {"label": "error"}, "rationale": "Background job failure, not customer-blocking."}
+{"key": "g047", "input": {"log_line": "ERROR: schema migration 20240515_add_user_country failed: column 'country' already exists"}, "expected": {"label": "error"}, "rationale": "Migration idempotency error."}
+{"key": "g048", "input": {"log_line": "ERROR: rate limit (429) hit on /v1/auth/login for IP 203.0.113.17"}, "expected": {"label": "error"}, "rationale": "Rate-limit block; bounded."}
+{"key": "g049", "input": {"log_line": "ERROR: GraphQL resolver 'ordersByUser' threw TypeError: Cannot read property 'total' of undefined"}, "expected": {"label": "error"}, "rationale": "Resolver crash on single request."}
+{"key": "g050", "input": {"log_line": "ERROR: failed to publish to kafka topic 'order-events' — NotLeaderForPartitionException"}, "expected": {"label": "error"}, "rationale": "Partition-leader transient."}
+{"key": "g051", "input": {"log_line": "ERROR: TypeError in /v1/orders/replay: orders.map is not a function (orders=null)"}, "expected": {"label": "error"}, "rationale": "Null-handling bug."}
+{"key": "g052", "input": {"log_line": "ERROR: container OOMKilled — pod=worker-7b6 memory limit=2Gi observed=2.1Gi"}, "expected": {"label": "error"}, "rationale": "Single-pod OOM."}
+{"key": "g053", "input": {"log_line": "ERROR: stripe charge create returned 'card_declined' for customer cus_44a1b"}, "expected": {"label": "error"}, "rationale": "Single-charge decline."}
+{"key": "g054", "input": {"log_line": "ERROR: sendgrid delivery for support@customer.com bounced with reason 'mailbox does not exist'"}, "expected": {"label": "error"}, "rationale": "Single-email bounce."}
+{"key": "g055", "input": {"log_line": "ERROR: failed to deserialize webhook payload for event_id=evt_8821 — schema version unknown"}, "expected": {"label": "error"}, "rationale": "Schema-mismatch on single event."}
+{"key": "g056", "input": {"log_line": "ERROR: pdf rendering pipeline error on report report_4421 — fallback to no-pdf email"}, "expected": {"label": "error"}, "rationale": "Single-report failure with fallback."}
+{"key": "g057", "input": {"log_line": "ERROR: invoice generation failed for invoice_id=INV-1234 — missing customer tax_id"}, "expected": {"label": "error"}, "rationale": "Data-quality error on single invoice."}
+{"key": "g058", "input": {"log_line": "ERROR: 503 Service Unavailable from upstream search service; circuit-breaker opened"}, "expected": {"label": "error"}, "rationale": "Upstream temporary outage with breaker."}
+{"key": "g059", "input": {"log_line": "ERROR: handler /v1/integrations/sync threw ECONNREFUSED to partner API"}, "expected": {"label": "error"}, "rationale": "Partner-side outage."}
+{"key": "g060", "input": {"log_line": "ERROR: lock acquisition timed out for resource billing_run_4421 after 30s"}, "expected": {"label": "error"}, "rationale": "Lock-acquisition timeout."}
+{"key": "g061", "input": {"log_line": "ERROR: failed to attach storage volume to pod worker-8a — AlreadyAttached"}, "expected": {"label": "error"}, "rationale": "Volume-attach conflict."}
+{"key": "g062", "input": {"log_line": "ERROR: sentry replay upload failed for user session sess_44a — payload too large"}, "expected": {"label": "error"}, "rationale": "Telemetry-upload bounded failure."}
+{"key": "g063", "input": {"log_line": "ERROR: queue 'image_processing' returned 503 to producer — backoff and retry"}, "expected": {"label": "error"}, "rationale": "Queue temporary 503 with retry."}
+{"key": "g064", "input": {"log_line": "ERROR: signature verification failed for inbound webhook from partner X — request rejected"}, "expected": {"label": "error"}, "rationale": "Signature mismatch on single inbound."}
+{"key": "g065", "input": {"log_line": "ERROR: cache eviction occurred mid-request — request retried successfully"}, "expected": {"label": "error"}, "rationale": "Cache eviction with successful retry."}
+{"key": "g066", "input": {"log_line": "ERROR: deserialization failed for user_id=33772 'last_seen_at' field — fallback to NULL"}, "expected": {"label": "error"}, "rationale": "Field deserialization fallback."}
+{"key": "g067", "input": {"log_line": "ERROR: image upload failed for user_id=44102 — content-type 'application/octet-stream' rejected"}, "expected": {"label": "error"}, "rationale": "Content-type validation rejection."}
+{"key": "g068", "input": {"log_line": "ERROR: scheduled task 'rebuild_search_index' failed — disk full on indexer node"}, "expected": {"label": "error"}, "rationale": "Disk-full on background task."}
+{"key": "g069", "input": {"log_line": "ERROR: rate limit downstream — twilio API returned 429 for SMS send"}, "expected": {"label": "error"}, "rationale": "Downstream-rate-limit on SMS."}
+{"key": "g070", "input": {"log_line": "ERROR: invariant violation in OrderService.persistLineItems — duplicate line item"}, "expected": {"label": "error"}, "rationale": "Invariant violation single transaction."}
+{"key": "g071", "input": {"log_line": "ERROR: failed to acquire DB connection — pool exhausted (100/100 in use)"}, "expected": {"label": "error"}, "rationale": "Pool exhaustion."}
+{"key": "g072", "input": {"log_line": "ERROR: notification delivery skipped for user 22102 — invalid push token"}, "expected": {"label": "error"}, "rationale": "Single user with invalid push token."}
+{"key": "g073", "input": {"log_line": "ERROR: cron job 'expire_trials' failed mid-run — partial trial expirations"}, "expected": {"label": "error"}, "rationale": "Partial-completion of background job."}
+{"key": "g074", "input": {"log_line": "ERROR: image transcode pipeline returned 'codec not supported' for media_id=88102"}, "expected": {"label": "error"}, "rationale": "Single-media codec failure."}
+{"key": "g075", "input": {"log_line": "ERROR: backup upload to s3 retried 3 times — final attempt failed; will retry next cycle"}, "expected": {"label": "error"}, "rationale": "Backup upload bounded failure with self-recovery."}
+{"key": "g076", "input": {"log_line": "ERROR: opensearch index mapping conflict on field 'tags.color' — document skipped"}, "expected": {"label": "error"}, "rationale": "Mapping conflict on single doc."}
+{"key": "g077", "input": {"log_line": "ERROR: pdf signing service returned 'invalid certificate' — fallback to unsigned"}, "expected": {"label": "error"}, "rationale": "Signing failure with documented fallback."}
+{"key": "g078", "input": {"log_line": "ERROR: graphql query exceeded depth limit; rejected for client app version 2.4.0"}, "expected": {"label": "error"}, "rationale": "Client-issued problematic query."}
+{"key": "g079", "input": {"log_line": "ERROR: workflow_run wf_4421 failed at step 7/12 — handler timeout"}, "expected": {"label": "error"}, "rationale": "Workflow step failure (bounded)."}
+{"key": "g080", "input": {"log_line": "ERROR: failed to compute embeddings for batch batch_88a — model quota exceeded for the hour"}, "expected": {"label": "error"}, "rationale": "Hourly-quota bounded failure."}
+{"key": "g081", "input": {"log_line": "WARN: query plan changed for SELECT on users; new plan uses seq-scan instead of index"}, "expected": {"label": "warning"}, "rationale": "Plan regression; perf degradation."}
+{"key": "g082", "input": {"log_line": "WARN: response time p95 for /v1/search exceeds 800ms (threshold 500ms) over last 5 minutes"}, "expected": {"label": "warning"}, "rationale": "Latency SLO drift."}
+{"key": "g083", "input": {"log_line": "WARN: disk usage on /var/lib/postgresql at 87% (threshold 80%)"}, "expected": {"label": "warning"}, "rationale": "Disk-usage drift toward critical."}
+{"key": "g084", "input": {"log_line": "WARN: connection pool 'orders_db' utilization 92%; saturating soon"}, "expected": {"label": "warning"}, "rationale": "Pool saturation impending."}
+{"key": "g085", "input": {"log_line": "WARN: replication lag on replica_3 = 14s (threshold 5s)"}, "expected": {"label": "warning"}, "rationale": "Replication lag drift."}
+{"key": "g086", "input": {"log_line": "WARN: certificate transparency log shows new cert for *.example.com issued by unfamiliar CA"}, "expected": {"label": "warning"}, "rationale": "Unfamiliar CA in CT log — verify intentional."}
+{"key": "g087", "input": {"log_line": "WARN: feature 'webhook-signatures' enabled but 12% of inbound webhooks lack expected header"}, "expected": {"label": "warning"}, "rationale": "Partial-adoption / contract drift."}
+{"key": "g088", "input": {"log_line": "WARN: GC pause of 1.8s observed on JVM pid=4421 — exceeds 1s SLO"}, "expected": {"label": "warning"}, "rationale": "GC-pause drift past SLO."}
+{"key": "g089", "input": {"log_line": "WARN: TLS handshake retry to upstream auth-service took 4 attempts before succeeding"}, "expected": {"label": "warning"}, "rationale": "Intermittent network noise."}
+{"key": "g090", "input": {"log_line": "WARN: cache hit rate on 'product_catalog' dropped to 41% (24h avg 78%)"}, "expected": {"label": "warning"}, "rationale": "Cache-hit drop."}
+{"key": "g091", "input": {"log_line": "WARN: deprecated API version v1 used by client 'PartnerBot/2.1' — sunsets in 30 days"}, "expected": {"label": "warning"}, "rationale": "Deprecation reminder."}
+{"key": "g092", "input": {"log_line": "WARN: feature flag 'experimental_checkout' enabled for 3% — error rate 2.4x baseline"}, "expected": {"label": "warning"}, "rationale": "Feature-flag drift signal."}
+{"key": "g093", "input": {"log_line": "WARN: queue depth on 'email_dispatch' = 4,200 (threshold 1,000)"}, "expected": {"label": "warning"}, "rationale": "Queue-depth drift."}
+{"key": "g094", "input": {"log_line": "WARN: outbound DNS lookups to internal *.local resolved via public resolver — possible DNS leak"}, "expected": {"label": "warning"}, "rationale": "DNS-leak indicator."}
+{"key": "g095", "input": {"log_line": "WARN: latency for /v1/api/products climbing — p50 30ms → 220ms over 30 minutes"}, "expected": {"label": "warning"}, "rationale": "Latency trending wrong direction."}
+{"key": "g096", "input": {"log_line": "WARN: memory usage on api-pod-3 = 75% (limit 80%) — approaching OOM"}, "expected": {"label": "warning"}, "rationale": "Pod approaching memory limit."}
+{"key": "g097", "input": {"log_line": "WARN: error rate on internal-tools API = 3.2% (baseline 0.5%)"}, "expected": {"label": "warning"}, "rationale": "Error-rate elevated but not critical."}
+{"key": "g098", "input": {"log_line": "WARN: rate-limit threshold approaching for /v1/exports — 87% of quota used at 16h00"}, "expected": {"label": "warning"}, "rationale": "Rate-limit drift toward exhaustion."}
+{"key": "g099", "input": {"log_line": "WARN: customer support ticket volume 2x baseline; possible degradation"}, "expected": {"label": "warning"}, "rationale": "Support-volume canary."}
+{"key": "g100", "input": {"log_line": "WARN: snapshot age on staging environment = 8 days (threshold 7)"}, "expected": {"label": "warning"}, "rationale": "Snapshot freshness drift."}
+{"key": "g101", "input": {"log_line": "WARN: outbound webhook delivery error rate = 4% for customer endpoints (baseline <1%)"}, "expected": {"label": "warning"}, "rationale": "Customer-webhook health drift."}
+{"key": "g102", "input": {"log_line": "WARN: pod restart count on worker-7 = 5 in last hour"}, "expected": {"label": "warning"}, "rationale": "Pod restart pattern."}
+{"key": "g103", "input": {"log_line": "WARN: log volume from billing-service 3x baseline — possible loop or noise"}, "expected": {"label": "warning"}, "rationale": "Log-spam drift indicator."}
+{"key": "g104", "input": {"log_line": "WARN: tls cert for partner.example.com expires in 14 days"}, "expected": {"label": "warning"}, "rationale": "Cert expiry approaching."}
+{"key": "g105", "input": {"log_line": "WARN: backup transfer to off-site took 6 hours (avg 2 hours)"}, "expected": {"label": "warning"}, "rationale": "Backup duration drift."}
+{"key": "g106", "input": {"log_line": "WARN: container restart due to liveness probe failure on api-7"}, "expected": {"label": "warning"}, "rationale": "Single-restart event."}
+{"key": "g107", "input": {"log_line": "WARN: anomaly detector flagged unusual login pattern from user 88102 — geo + device new"}, "expected": {"label": "warning"}, "rationale": "Anomalous-but-not-blocked login."}
+{"key": "g108", "input": {"log_line": "WARN: data deduplication efficiency on snapshot = 1.1x (baseline 4x)"}, "expected": {"label": "warning"}, "rationale": "Dedup-effectiveness drift."}
+{"key": "g109", "input": {"log_line": "WARN: rate of dropped messages from kafka consumer = 0.5% (baseline 0%)"}, "expected": {"label": "warning"}, "rationale": "Message-drop drift."}
+{"key": "g110", "input": {"log_line": "WARN: HTTP/2 stream errors increasing on api-gateway — investigate"}, "expected": {"label": "warning"}, "rationale": "HTTP/2 layer noise."}
+{"key": "g111", "input": {"log_line": "WARN: AB test 'checkout_v2' showing 1.5% drop in conversion vs control"}, "expected": {"label": "warning"}, "rationale": "Experiment-conversion warning."}
+{"key": "g112", "input": {"log_line": "WARN: 25% of requests on /v1/embeddings approaching token-quota limit"}, "expected": {"label": "warning"}, "rationale": "Quota-headroom drift."}
+{"key": "g113", "input": {"log_line": "WARN: cdn cache hit ratio for static assets at 88% (target 95%)"}, "expected": {"label": "warning"}, "rationale": "CDN efficiency drift."}
+{"key": "g114", "input": {"log_line": "WARN: queue 'image_processing' p99 wait time exceeds 30s (SLO 10s)"}, "expected": {"label": "warning"}, "rationale": "Queue p99 SLO breach."}
+{"key": "g115", "input": {"log_line": "WARN: percentage of 5xx responses on partner integration = 2% (baseline <0.5%)"}, "expected": {"label": "warning"}, "rationale": "Partner-side error rate up."}
+{"key": "g116", "input": {"log_line": "WARN: secret rotation overdue for credential 'stripe-webhook-secret' (last rotated 95 days ago)"}, "expected": {"label": "warning"}, "rationale": "Rotation-policy drift."}
+{"key": "g117", "input": {"log_line": "WARN: connection pool to redis has 1 unhealthy node out of 6"}, "expected": {"label": "warning"}, "rationale": "Partial redis-cluster health degradation."}
+{"key": "g118", "input": {"log_line": "WARN: kubernetes namespace 'logging' near resource quota — 92% of CPU used"}, "expected": {"label": "warning"}, "rationale": "Namespace-quota drift."}
+{"key": "g119", "input": {"log_line": "WARN: load average on api-pod-3 sustained at 12 (cores=8) for 10 minutes"}, "expected": {"label": "warning"}, "rationale": "Sustained-load above core count."}
+{"key": "g120", "input": {"log_line": "WARN: spans dropped at OpenTelemetry collector due to backpressure"}, "expected": {"label": "warning"}, "rationale": "Telemetry-pipeline backpressure."}
+{"key": "g121", "input": {"log_line": "INFO: user_id=42118 logged in via SSO provider=okta"}, "expected": {"label": "info"}, "rationale": "Routine login event."}
+{"key": "g122", "input": {"log_line": "INFO: deployment service=api version=2024.05.21.103412 completed in 247s"}, "expected": {"label": "info"}, "rationale": "Routine successful deploy."}
+{"key": "g123", "input": {"log_line": "INFO: scheduled backup of database 'orders' to s3 completed; size=4.2GB"}, "expected": {"label": "info"}, "rationale": "Backup success."}
+{"key": "g124", "input": {"log_line": "INFO: webhook https://customer.example.com/hooks delivered for event_id=evt_77231 status=200 latency=143ms"}, "expected": {"label": "info"}, "rationale": "Successful webhook delivery."}
+{"key": "g125", "input": {"log_line": "INFO: cron job 'daily_user_export' completed — exported 12,481 rows in 3m12s"}, "expected": {"label": "info"}, "rationale": "Background-job success."}
+{"key": "g126", "input": {"log_line": "INFO: invoice INV-9921 generated for customer cus_4422; total $487.50 USD"}, "expected": {"label": "info"}, "rationale": "Operational audit event."}
+{"key": "g127", "input": {"log_line": "INFO: feature flag 'new_dashboard' returned variant=control for user 33772"}, "expected": {"label": "info"}, "rationale": "Flag-evaluation event."}
+{"key": "g128", "input": {"log_line": "INFO: cache 'session_store' resized 256MB → 512MB"}, "expected": {"label": "info"}, "rationale": "Configuration change record."}
+{"key": "g129", "input": {"log_line": "INFO: new project created project_id=901 by user_id=44102"}, "expected": {"label": "info"}, "rationale": "Audit event."}
+{"key": "g130", "input": {"log_line": "INFO: customer cus_99001 upgraded from plan=free to plan=pro"}, "expected": {"label": "info"}, "rationale": "Customer lifecycle event."}
+{"key": "g131", "input": {"log_line": "INFO: AB test 'checkout_v2_button' opened; 50/50 split"}, "expected": {"label": "info"}, "rationale": "Experiment lifecycle event."}
+{"key": "g132", "input": {"log_line": "INFO: nightly model retraining pipeline kicked off — experiment_id=exp_4421"}, "expected": {"label": "info"}, "rationale": "Pipeline-start event."}
+{"key": "g133", "input": {"log_line": "INFO: rate limit window reset for IP 198.51.100.5 after 5-minute cooldown"}, "expected": {"label": "info"}, "rationale": "Rate-limit lifecycle event."}
+{"key": "g134", "input": {"log_line": "INFO: feature 'webhook-signatures' rollout reached 100% of customers"}, "expected": {"label": "info"}, "rationale": "Rollout milestone."}
+{"key": "g135", "input": {"log_line": "INFO: scheduled certificate renewal succeeded for api.example.com — expires 2025-05-21"}, "expected": {"label": "info"}, "rationale": "Cert renewal success."}
+{"key": "g136", "input": {"log_line": "INFO: new API key created for service-account 'analytics-prod' by admin@example.com"}, "expected": {"label": "info"}, "rationale": "Admin audit event."}
+{"key": "g137", "input": {"log_line": "INFO: tenant tnt_8821 onboarded — 142 seats provisioned"}, "expected": {"label": "info"}, "rationale": "Tenant-provisioning event."}
+{"key": "g138", "input": {"log_line": "INFO: data export pipeline 'monthly_billing' completed for customer cus_4422"}, "expected": {"label": "info"}, "rationale": "Pipeline-completion event."}
+{"key": "g139", "input": {"log_line": "INFO: search index 'products' rebuilt in 12 minutes; 4.2M docs indexed"}, "expected": {"label": "info"}, "rationale": "Index-build success."}
+{"key": "g140", "input": {"log_line": "INFO: gdpr deletion request for user_id=12001 completed successfully"}, "expected": {"label": "info"}, "rationale": "Privacy operation success."}
+{"key": "g141", "input": {"log_line": "INFO: archived 142 inactive projects per retention policy"}, "expected": {"label": "info"}, "rationale": "Retention-policy execution."}
+{"key": "g142", "input": {"log_line": "INFO: kubernetes hpa scaled deployment 'api' from 3 to 5 replicas"}, "expected": {"label": "info"}, "rationale": "Autoscaling event."}
+{"key": "g143", "input": {"log_line": "INFO: new oauth client registered: client_id=client_8821 by acme.com"}, "expected": {"label": "info"}, "rationale": "OAuth-client provisioning event."}
+{"key": "g144", "input": {"log_line": "INFO: snapshot 'pre-deploy-2024-05-22' created for staging environment"}, "expected": {"label": "info"}, "rationale": "Snapshot-create audit."}
+{"key": "g145", "input": {"log_line": "INFO: maintenance window opened — service=billing duration=4h"}, "expected": {"label": "info"}, "rationale": "Maintenance lifecycle."}
+{"key": "g146", "input": {"log_line": "INFO: data-residency provision satisfied for customer in DE region"}, "expected": {"label": "info"}, "rationale": "Compliance-event audit."}
+{"key": "g147", "input": {"log_line": "INFO: kafka topic 'order-events' rebalanced consumer group successfully"}, "expected": {"label": "info"}, "rationale": "Routine rebalance."}
+{"key": "g148", "input": {"log_line": "INFO: schema evolution applied — added field 'sentiment' to event 'review_submitted'"}, "expected": {"label": "info"}, "rationale": "Schema evolution audit."}
+{"key": "g149", "input": {"log_line": "INFO: integration with Slack workspace 'acme' authorized"}, "expected": {"label": "info"}, "rationale": "Integration-authorization event."}
+{"key": "g150", "input": {"log_line": "INFO: data classification job tagged 12k objects as 'public', 4k as 'restricted'"}, "expected": {"label": "info"}, "rationale": "Classification-pipeline summary."}
+{"key": "g151", "input": {"log_line": "INFO: feature_request_id=fr_44a submitted by customer cus_8821"}, "expected": {"label": "info"}, "rationale": "Customer-feedback event."}
+{"key": "g152", "input": {"log_line": "INFO: account merge completed: account_id=88a + account_id=4421 → account_id=88a"}, "expected": {"label": "info"}, "rationale": "Account lifecycle event."}
+{"key": "g153", "input": {"log_line": "INFO: support ticket TICKET-9921 closed by agent agent_44 — resolution 'fixed'"}, "expected": {"label": "info"}, "rationale": "Support-resolution audit event."}
+{"key": "g154", "input": {"log_line": "INFO: scheduled invoice email sent to billing@acme.co for INV-7721"}, "expected": {"label": "info"}, "rationale": "Routine billing email."}
+{"key": "g155", "input": {"log_line": "INFO: kubectl rollout restart deployment/api-service completed (5/5 pods ready)"}, "expected": {"label": "info"}, "rationale": "Rollout-restart audit."}
+{"key": "g156", "input": {"log_line": "INFO: 144 GDPR consent records refreshed for active EU users"}, "expected": {"label": "info"}, "rationale": "Compliance batch audit."}
+{"key": "g157", "input": {"log_line": "INFO: outbound api call to partner X — request_id=req_4421 latency=210ms"}, "expected": {"label": "info"}, "rationale": "Partner-call audit (within SLO)."}
+{"key": "g158", "input": {"log_line": "INFO: tenant tnt_4421 enabled MFA enforcement for all users"}, "expected": {"label": "info"}, "rationale": "Tenant security-config event."}
+{"key": "g159", "input": {"log_line": "INFO: scheduled snapshot freeze for environment staging completed — 4 GB"}, "expected": {"label": "info"}, "rationale": "Snapshot job success."}
+{"key": "g160", "input": {"log_line": "INFO: payment processor reconciliation completed — 4421 transactions matched"}, "expected": {"label": "info"}, "rationale": "Reconciliation audit event."}
+{"key": "g161", "input": {"log_line": "INFO: serving HTTP 200 GET /v1/health from instance api-pod-7c9 latency=2ms"}, "expected": {"label": "noise"}, "rationale": "Healthcheck — filter from dashboards."}
+{"key": "g162", "input": {"log_line": "DEBUG: middleware 'request-id' attached request_id=req_abcd1234 to incoming call"}, "expected": {"label": "noise"}, "rationale": "Per-request debug telemetry."}
+{"key": "g163", "input": {"log_line": "DEBUG: cache hit key=product:90211 ttl_remaining=43s"}, "expected": {"label": "noise"}, "rationale": "Cache-hit debug."}
+{"key": "g164", "input": {"log_line": "GET /healthz 200 OK 1ms"}, "expected": {"label": "noise"}, "rationale": "Healthcheck."}
+{"key": "g165", "input": {"log_line": "DEBUG: established connection to db replica replica_2 in 4ms"}, "expected": {"label": "noise"}, "rationale": "Connection-pool debug."}
+{"key": "g166", "input": {"log_line": "INFO: liveness probe responded 200 in 1ms"}, "expected": {"label": "noise"}, "rationale": "Liveness probe."}
+{"key": "g167", "input": {"log_line": "OK: kubernetes liveness check at /health on pod billing-api-5d returned 200"}, "expected": {"label": "noise"}, "rationale": "k8s health probe."}
+{"key": "g168", "input": {"log_line": "DEBUG: SQL query SELECT 1 executed in 0.4ms on connection 19"}, "expected": {"label": "noise"}, "rationale": "Health-query debug."}
+{"key": "g169", "input": {"log_line": "DEBUG: parsed JSON body for incoming request; size=212 bytes"}, "expected": {"label": "noise"}, "rationale": "Per-request parsing debug."}
+{"key": "g170", "input": {"log_line": "DEBUG: middleware 'auth-extract' parsed JWT for sub=user_42118 exp=1716345600"}, "expected": {"label": "noise"}, "rationale": "JWT-parse debug."}
+{"key": "g171", "input": {"log_line": "DEBUG: handler /v1/me responded in 6ms with cache_hit=true"}, "expected": {"label": "noise"}, "rationale": "Handler-trace debug."}
+{"key": "g172", "input": {"log_line": "INFO: prometheus scrape from 10.0.1.42 completed in 18ms"}, "expected": {"label": "noise"}, "rationale": "Metrics-scrape audit (noise on dashboards)."}
+{"key": "g173", "input": {"log_line": "GET /metrics 200 8ms"}, "expected": {"label": "noise"}, "rationale": "Prometheus scrape probe."}
+{"key": "g174", "input": {"log_line": "OK: readiness probe pass on pod search-api-12b at 14:22:01.412Z"}, "expected": {"label": "noise"}, "rationale": "Readiness probe."}
+{"key": "g175", "input": {"log_line": "DEBUG: trace id span 0xabc123 closed; total spans=14"}, "expected": {"label": "noise"}, "rationale": "Trace-span debug."}
+{"key": "g176", "input": {"log_line": "DEBUG: scheduled task 'sweep_expired_sessions' processed 142 sessions in 4ms"}, "expected": {"label": "noise"}, "rationale": "Routine sweep debug."}
+{"key": "g177", "input": {"log_line": "DEBUG: connection pool 'cache' acquired in 0.2ms"}, "expected": {"label": "noise"}, "rationale": "Pool-acquire debug."}
+{"key": "g178", "input": {"log_line": "DEBUG: hit serialization cache for User<id=88102>"}, "expected": {"label": "noise"}, "rationale": "Cache-hit debug."}
+{"key": "g179", "input": {"log_line": "DEBUG: parsed 14 trace spans for request req_4421ab"}, "expected": {"label": "noise"}, "rationale": "Trace-parse debug."}
+{"key": "g180", "input": {"log_line": "INFO: kubelet probe ready response on pod ingress-7"}, "expected": {"label": "noise"}, "rationale": "kubelet probe."}
+{"key": "g181", "input": {"log_line": "OK: GET /api/status 200 OK 3ms from monitoring-bot/1.0"}, "expected": {"label": "noise"}, "rationale": "Monitoring-bot probe."}
+{"key": "g182", "input": {"log_line": "DEBUG: closing idle DB connection conn_44 after 60s idle"}, "expected": {"label": "noise"}, "rationale": "Idle-connection cleanup debug."}
+{"key": "g183", "input": {"log_line": "TRACE: ENTER handler /v1/orders (request_id=req_8821)"}, "expected": {"label": "noise"}, "rationale": "Trace-level entry log."}
+{"key": "g184", "input": {"log_line": "TRACE: EXIT handler /v1/orders (request_id=req_8821) in 12ms"}, "expected": {"label": "noise"}, "rationale": "Trace-level exit log."}
+{"key": "g185", "input": {"log_line": "DEBUG: metric counter 'orders.placed' incremented by 1"}, "expected": {"label": "noise"}, "rationale": "Counter-increment debug."}
+{"key": "g186", "input": {"log_line": "DEBUG: feature-flag cache refresh completed; 142 flags loaded"}, "expected": {"label": "noise"}, "rationale": "Flag-cache refresh debug."}
+{"key": "g187", "input": {"log_line": "DEBUG: gc collection (young gen) freed 8MB in 3ms"}, "expected": {"label": "noise"}, "rationale": "Routine GC debug."}
+{"key": "g188", "input": {"log_line": "DEBUG: WebSocket pong received from client conn=ws_4421"}, "expected": {"label": "noise"}, "rationale": "WS keepalive."}
+{"key": "g189", "input": {"log_line": "DEBUG: replica replica_1 ack at LSN 0/A4B22FE0"}, "expected": {"label": "noise"}, "rationale": "Replication keepalive debug."}
+{"key": "g190", "input": {"log_line": "DEBUG: nginx upstream pool refresh on instance api-7"}, "expected": {"label": "noise"}, "rationale": "Upstream-pool refresh debug."}
+{"key": "g191", "input": {"log_line": "DEBUG: ssl session cache hit for IP 10.0.1.5"}, "expected": {"label": "noise"}, "rationale": "SSL-cache debug."}
+{"key": "g192", "input": {"log_line": "OK: prom-blackbox probe to https://api.example.com/health = 200 in 12ms"}, "expected": {"label": "noise"}, "rationale": "Blackbox-prober probe."}
+{"key": "g193", "input": {"log_line": "DEBUG: opentelemetry batch span exporter flushed 142 spans"}, "expected": {"label": "noise"}, "rationale": "OTel exporter debug."}
+{"key": "g194", "input": {"log_line": "DEBUG: redis SUBSCRIBE channel 'events:billing' established"}, "expected": {"label": "noise"}, "rationale": "Redis-subscribe debug."}
+{"key": "g195", "input": {"log_line": "DEBUG: zip distinct events 4421 from buffer to s3 part 1/3"}, "expected": {"label": "noise"}, "rationale": "Background-zip debug."}
+{"key": "g196", "input": {"log_line": "DEBUG: lru cache 'thumbnails' evicted oldest entry size=44KB"}, "expected": {"label": "noise"}, "rationale": "LRU-cache eviction debug."}
+{"key": "g197", "input": {"log_line": "TRACE: handler returned 200 in 1ms"}, "expected": {"label": "noise"}, "rationale": "Per-request handler trace."}
+{"key": "g198", "input": {"log_line": "DEBUG: thread pool 'http-server' active=12 / max=100"}, "expected": {"label": "noise"}, "rationale": "Thread-pool stat debug."}
+{"key": "g199", "input": {"log_line": "DEBUG: kafka consumer lag report — partition 0 lag=4, partition 1 lag=2"}, "expected": {"label": "noise"}, "rationale": "Routine lag debug."}
+{"key": "g200", "input": {"log_line": "DEBUG: pubsub keepalive ping for subscription 'orders' at 14:22:01Z"}, "expected": {"label": "noise"}, "rationale": "Pubsub keepalive."}
