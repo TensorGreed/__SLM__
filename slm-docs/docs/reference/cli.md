@@ -38,6 +38,10 @@ brewslm support-bundle  Create, list, download redacted bundles
 brewslm scaffold      Generate plugin starter (adapter, runtime, domain-pack, eval-pack)
 brewslm extensions    List, validate, reload plugins
 brewslm eval          Gold-set ops, run, compare, clusters, remediate
+brewslm auth          Login + whoami
+brewslm template      List, get, instantiate Project Templates (cloneable starting kits)
+brewslm serve         Plan / start / get / stop serve runs for a compressed export
+brewslm version       Print CLI + (with --remote) backend version
 ```
 
 ## Project
@@ -203,6 +207,51 @@ brewslm extensions validate --kind adapter --module my.adapter
 brewslm extensions reload   --kind adapter            # omit --kind for all
 ```
 
+## Auth (Theme 5 Epic 1)
+
+```sh
+# Exchange username + password for a JWT. Bare token on stdout for
+# pipe-into-eval flows; --json for the full response; --save persists
+# to ~/.brewslm/token (0600 on POSIX).
+brewslm auth login --username admin --password "$PW"
+brewslm auth login --username admin --save                # --password resolves via BREWSLM_PASSWORD env or prompt
+
+# Inspect the principal + project memberships for the current token.
+brewslm auth whoami
+```
+
+## Project Templates (Theme 5 Epic 1)
+
+Cloneable starting kits (8 shipped). Each carries ~200 hand-curated
+gold rows + a recipe snapshot + a recommended base model.
+
+```sh
+brewslm template list                                     # table view
+brewslm template get ticket-router                        # JSON detail
+brewslm template instantiate ticket-router --name "Acme"  # clone → new project
+brewslm template instantiate log-triage                   # name defaults to template's display name
+```
+
+## Serve (Theme 5 Epic 1 — Video 10)
+
+Start a serve template (Ollama / vLLM / llama.cpp) on a compressed
+export. Wraps `/api/projects/{pid}/export/{eid}/serve-*`.
+
+```sh
+brewslm serve plan  --project 1 --export-id 12
+brewslm serve start --project 1 --export-id 12 --template-id ollama_local
+brewslm serve get   --project 1 --run-id srv-abc --logs-tail 200
+brewslm serve stop  --project 1 --run-id srv-abc
+```
+
+## Version
+
+```sh
+brewslm version                                           # CLI version
+brewslm version --remote                                  # + probes /api/health
+brewslm --version                                         # short form
+```
+
 ## Eval
 
 ```sh
@@ -241,3 +290,4 @@ The CLI follows shell convention:
 
 - [API surface](api-surface.md) — equivalent HTTP endpoints.
 - [Glossary](glossary.md) — every term the CLI prints.
+- [Full auto-generated reference](cli-full.md) — every flag for every subcommand.

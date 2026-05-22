@@ -12,14 +12,14 @@ Auto-generated from `brewslm --help`. For curated examples and the trio (UI / CL
 ## `brewslm`
 
 ```text
-usage: brewslm [-h] [--api-base API_BASE] [--token TOKEN] [--timeout-seconds TIMEOUT_SECONDS]
-               {project,dataset,adapter,models,ingest,preflight,train,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval}
+usage: brewslm [-h] [--version] [--api-base API_BASE] [--token TOKEN] [--timeout-seconds TIMEOUT_SECONDS]
+               {project,dataset,adapter,models,ingest,preflight,train,experiment,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval,auth,template,serve,version}
                ...
 
 BrewSLM command line client
 
 positional arguments:
-  {project,dataset,adapter,models,ingest,preflight,train,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval}
+  {project,dataset,adapter,models,ingest,preflight,train,experiment,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval,auth,template,serve,version}
     project             Manage project settings (budget, etc)
     dataset             Dataset upload/import helpers
     adapter             Dataset Adapter Studio workflows
@@ -27,6 +27,8 @@ positional arguments:
     ingest              Import remote dataset (HF/Kaggle/URL)
     preflight           Run training preflight for project config
     train               Launch / manage training runs (start, rerun, clone, pause, resume, checkpoints)
+    experiment          Manage experiment lifecycle (reset / delete / archive-failed). Replaces the hand-crafted SQL +
+                        mv commands needed after a stale-checkpoint or compat-gate failure.
     repro               Reproducibility helpers (manifest dump).
     manifest            brewslm.yaml export / validate / diff / apply helpers (P23).
     pipeline            End-to-end pipeline helpers (P23).
@@ -42,9 +44,14 @@ positional arguments:
     extensions          List / validate / reload extension plugins (P37).
     eval                Evaluation workflows: pack generation, gold-set ops, label, run, compare, clusters,
                         remediation.
+    auth                Authentication helpers (login, whoami).
+    template            Project Templates: cloneable starting kits with bundled gold sets.
+    serve               Serve-run management for compressed exports (Video 10).
+    version             Show the brewslm CLI version + the connected API version.
 
 options:
   -h, --help            show this help message and exit
+  --version             show program's version number and exit
   --api-base API_BASE   API base URL (default: http://127.0.0.1:8000/api)
   --token TOKEN         API token (or set BREWSLM_TOKEN)
   --timeout-seconds TIMEOUT_SECONDS
@@ -54,11 +61,13 @@ options:
 ## `brewslm project`  {#cmd-project}
 
 ```text
-usage: brewslm project [-h] {budget,create,bootstrap,blueprint,budget-set} ...
+usage: brewslm project [-h] {budget,list-demos,create-demo,create,bootstrap,blueprint,budget-set} ...
 
 positional arguments:
-  {budget,create,bootstrap,blueprint,budget-set}
+  {budget,list-demos,create-demo,create,bootstrap,blueprint,budget-set}
     budget              Show project budget and spend
+    list-demos          List pre-loaded demo project archetypes (newbie UX Phase 3).
+    create-demo         Seed (or fetch) a pre-loaded demo project — idempotent.
     create              Create a project (quickstart template supported)
     bootstrap           Analyze a plain-English brief and bootstrap a Domain Blueprint workflow.
     blueprint           Inspect project Domain Blueprint revisions.
@@ -76,6 +85,25 @@ usage: brewslm project budget [-h] --id PROJECT_ID
 options:
   -h, --help            show this help message and exit
   --id PROJECT_ID, --project-id PROJECT_ID
+```
+
+### `brewslm project list-demos`  {#cmd-project-list-demos}
+
+```text
+usage: brewslm project list-demos [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `brewslm project create-demo`  {#cmd-project-create-demo}
+
+```text
+usage: brewslm project create-demo [-h] --slug SLUG
+
+options:
+  -h, --help   show this help message and exit
+  --slug SLUG  Demo archetype slug (e.g. support-faq, sentiment-classifier).
 ```
 
 ### `brewslm project create`  {#cmd-project-create}
@@ -643,6 +671,43 @@ options:
   --resume-from-description RESUME_FROM_DESCRIPTION
                         Optional description for the forked experiment created by --resume-from-step.
   --json
+```
+
+## `brewslm experiment`  {#cmd-experiment}
+
+```text
+usage: brewslm experiment [-h] {reset,delete,archive-failed} ...
+
+positional arguments:
+  {reset,delete,archive-failed}
+    reset               Flip a FAILED experiment back to PENDING + archive its output dir + drop stale checkpoint
+                        rows.
+    delete              Permanently delete an experiment + its output directory. Refuses RUNNING experiments.
+    archive-failed      Sweep every FAILED experiment in a project through reset. One-call cleanup after a chain of
+                        failures.
+
+options:
+  -h, --help            show this help message and exit
+```
+
+### `brewslm experiment reset`  {#cmd-experiment-reset}
+
+```text
+usage: brewslm experiment reset [-h] --project PROJECT_ID --exp EXPERIMENT_ID
+
+options:
+  -h, --help            show this help message and exit
+  --project PROJECT_ID, --project-id PROJECT_ID
+  --exp EXPERIMENT_ID, --experiment-id EXPERIMENT_ID
+```
+
+## `brewslm mv`  {#cmd-mv}
+
+```text
+usage: brewslm [-h] [--version] [--api-base API_BASE] [--token TOKEN] [--timeout-seconds TIMEOUT_SECONDS]
+               {project,dataset,adapter,models,ingest,preflight,train,experiment,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval,auth,template,serve,version}
+               ...
+brewslm: error: argument command: invalid choice: 'mv' (choose from 'project', 'dataset', 'adapter', 'models', 'ingest', 'preflight', 'train', 'experiment', 'repro', 'manifest', 'pipeline', 'export', 'doctor', 'optimize', 'autopilot', 'deploy', 'logs', 'support-bundle', 'scaffold', 'extensions', 'eval', 'auth', 'template', 'serve', 'version')
 ```
 
 ## `brewslm repro`  {#cmd-repro}
@@ -1233,10 +1298,10 @@ options:
 ## `brewslm score`  {#cmd-score}
 
 ```text
-usage: brewslm [-h] [--api-base API_BASE] [--token TOKEN] [--timeout-seconds TIMEOUT_SECONDS]
-               {project,dataset,adapter,models,ingest,preflight,train,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval}
+usage: brewslm [-h] [--version] [--api-base API_BASE] [--token TOKEN] [--timeout-seconds TIMEOUT_SECONDS]
+               {project,dataset,adapter,models,ingest,preflight,train,experiment,repro,manifest,pipeline,export,doctor,optimize,autopilot,deploy,logs,support-bundle,scaffold,extensions,eval,auth,template,serve,version}
                ...
-brewslm: error: argument command: invalid choice: 'score' (choose from 'project', 'dataset', 'adapter', 'models', 'ingest', 'preflight', 'train', 'repro', 'manifest', 'pipeline', 'export', 'doctor', 'optimize', 'autopilot', 'deploy', 'logs', 'support-bundle', 'scaffold', 'extensions', 'eval')
+brewslm: error: argument command: invalid choice: 'score' (choose from 'project', 'dataset', 'adapter', 'models', 'ingest', 'preflight', 'train', 'experiment', 'repro', 'manifest', 'pipeline', 'export', 'doctor', 'optimize', 'autopilot', 'deploy', 'logs', 'support-bundle', 'scaffold', 'extensions', 'eval', 'auth', 'template', 'serve', 'version')
 ```
 
 ## `brewslm logs`  {#cmd-logs}

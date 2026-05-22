@@ -19,9 +19,15 @@ except ModuleNotFoundError:  # pragma: no cover - runtime guard for bare Python 
     httpx = None  # type: ignore[assignment]
 
 
+__version__ = "0.1.0"
+
 DEFAULT_API_BASE = os.environ.get("BREWSLM_API_BASE", "http://127.0.0.1:8000/api")
 DEFAULT_TOKEN = os.environ.get("BREWSLM_TOKEN", "").strip()
 DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("BREWSLM_TIMEOUT_SECONDS", "60"))
+DEFAULT_TOKEN_FILE = os.environ.get(
+    "BREWSLM_TOKEN_FILE",
+    str(Path.home() / ".brewslm" / "token"),
+)
 DEFAULT_INTENT = "Fine-tune a practical assistant on my imported dataset."
 TERMINAL_IMPORT_STATES = {"completed", "failed", "error", "cancelled"}
 
@@ -2973,10 +2979,222 @@ def run_eval(args: argparse.Namespace, client: ApiClient) -> int:
     raise ValueError(f"Unsupported eval subcommand '{subcommand}'.")
 
 
+def _resolve_password(args: argparse.Namespace) -> str:
+    """Resolve the login password from --password, env, or stdin prompt."""
+    if args.password:
+        return str(args.password)
+    env_value = os.environ.get("BREWSLM_PASSWORD", "").strip()
+    if env_value:
+        return env_value
+    try:
+        import getpass
+
+        return getpass.getpass(f"Password for {args.username}: ")
+    except (EOFError, KeyboardInterrupt) as e:
+        raise ValueError("Password required (use --password, BREWSLM_PASSWORD, or interactive stdin).") from e
+
+
+def _persist_token(token: str, *, token_file: str) -> Path:
+    """Write the token to disk with 0600 perms on POSIX."""
+    path = Path(token_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token.strip() + "\n", encoding="utf-8")
+    try:
+        # Tighten perms — owner read/write only. No-op on Windows.
+        path.chmod(0o600)
+    except OSError:
+        # Best-effort; the file is written either way.
+        pass
+    return path
+
+
+def run_auth(args: argparse.Namespace, client: "ApiClient") -> int:
+    subcommand = args.subcommand
+    if subcommand == "login":
+        password = _resolve_password(args)
+        payload = client.request(
+            "POST",
+            "/api/auth/local/login",
+            json_body={"username": args.username, "password": password},
+        )
+        token = ""
+        if isinstance(payload, dict):
+            token = str(payload.get("token") or "").strip()
+        if not token:
+            raise RuntimeError("Login response did not include a token.")
+        if args.save:
+            written = _persist_token(token, token_file=args.token_file)
+            print(f"Token written to {written} (0600).", file=sys.stderr)
+        if args.json:
+            _print_json(payload)
+        else:
+            # Bare token on stdout so users can pipe into eval / xargs.
+            print(token)
+        return 0
+    if subcommand == "whoami":
+        payload = client.request("GET", "/api/auth/me")
+        if args.json or not isinstance(payload, dict):
+            _print_json(payload)
+            return 0
+        principal = payload.get("principal") or {}
+        memberships = payload.get("memberships") or []
+        if not payload.get("auth_enabled"):
+            print("Auth disabled (AUTH_ENABLED=false). No principal.")
+            return 0
+        print(f"user_id:  {principal.get('user_id', '?')}")
+        print(f"username: {principal.get('username', '?')}")
+        print(f"role:     {principal.get('role', '?')}")
+        prefix = principal.get("api_key_prefix") or ""
+        if prefix:
+            print(f"api_key:  {prefix}…")
+        print(f"projects: {len(memberships)}")
+        for m in memberships:
+            print(f"  - project {m.get('project_id')}: {m.get('role')}")
+        return 0
+    raise ValueError(f"Unsupported auth subcommand '{subcommand}'.")
+
+
+def run_template(args: argparse.Namespace, client: "ApiClient") -> int:
+    subcommand = args.subcommand
+    if subcommand == "list":
+        payload = client.request("GET", "/api/project-templates")
+        if args.json or not isinstance(payload, dict):
+            _print_json(payload)
+            return 0
+        rows = payload.get("templates") or []
+        if not rows:
+            print("(no templates registered)")
+            return 0
+        print(f"{'SLUG':32}  {'TASK':18}  {'MIN ROWS':8}  NAME")
+        for t in rows:
+            slug = str(t.get("slug", ""))[:32]
+            task = str(t.get("task_profile", ""))[:18]
+            min_rows = t.get("minimum_dataset_size", "")
+            print(f"{slug:32}  {task:18}  {str(min_rows):>8}  {t.get('name', '')}")
+        return 0
+    if subcommand == "get":
+        payload = client.request("GET", f"/api/project-templates/{args.slug}")
+        _print_json(payload)
+        return 0
+    if subcommand == "instantiate":
+        body: dict[str, Any] = {}
+        if args.project_name:
+            body["project_name"] = args.project_name
+        payload = client.request(
+            "POST",
+            f"/api/project-templates/{args.slug}/instantiate",
+            json_body=body,
+        )
+        if args.json or not isinstance(payload, dict):
+            _print_json(payload)
+            return 0
+        pid = payload.get("id")
+        name = payload.get("name")
+        recipe = (payload.get("selected_recipe") or {}).get("recipe_id")
+        base_model = payload.get("base_model_name") or ""
+        print(f"Created project #{pid}: {name}")
+        if recipe:
+            print(f"  recipe:      {recipe}")
+        if base_model:
+            print(f"  base_model:  {base_model}")
+        return 0
+    raise ValueError(f"Unsupported template subcommand '{subcommand}'.")
+
+
+def run_serve(args: argparse.Namespace, client: "ApiClient") -> int:
+    subcommand = args.subcommand
+    if subcommand == "plan":
+        body: dict[str, Any] = {}
+        if args.host:
+            body["host"] = args.host
+        if args.port is not None:
+            body["port"] = int(args.port)
+        if args.smoke_test_prompt:
+            body["smoke_test_prompt"] = args.smoke_test_prompt
+        payload = client.request(
+            "POST",
+            f"/api/projects/{args.project_id}/export/{args.export_id}/serve-plan",
+            json_body=body,
+        )
+        _print_json(payload)
+        return 0
+    if subcommand == "start":
+        body = {}
+        if args.template_id:
+            body["template_id"] = args.template_id
+        if args.host:
+            body["host"] = args.host
+        if args.port is not None:
+            body["port"] = int(args.port)
+        if args.smoke_test_prompt:
+            body["smoke_test_prompt"] = args.smoke_test_prompt
+        payload = client.request(
+            "POST",
+            f"/api/projects/{args.project_id}/export/{args.export_id}/serve-runs/start",
+            json_body=body,
+        )
+        if args.json or not isinstance(payload, dict):
+            _print_json(payload)
+            return 0
+        run_id = payload.get("run_id") or payload.get("id")
+        status = payload.get("status") or "pending"
+        host = payload.get("host") or ""
+        port = payload.get("port") or ""
+        print(f"Serve run started: {run_id} ({status})")
+        if host or port:
+            print(f"  endpoint: {host}:{port}")
+        return 0
+    if subcommand == "get":
+        payload = client.request(
+            "GET",
+            f"/api/projects/{args.project_id}/export/serve-runs/{args.run_id}",
+            params={"logs_tail": int(args.logs_tail)},
+        )
+        _print_json(payload)
+        return 0
+    if subcommand == "stop":
+        payload = client.request(
+            "POST",
+            f"/api/projects/{args.project_id}/export/serve-runs/{args.run_id}/stop",
+        )
+        _print_json(payload)
+        return 0
+    raise ValueError(f"Unsupported serve subcommand '{subcommand}'.")
+
+
+def run_version(args: argparse.Namespace, client: "ApiClient") -> int:
+    info: dict[str, Any] = {
+        "cli_version": __version__,
+        "api_base": client._client.base_url.__str__() if hasattr(client, "_client") else None,
+    }
+    if args.remote:
+        try:
+            health = client.request("GET", "/api/health")
+            if isinstance(health, dict):
+                info["api_version"] = health.get("version")
+                info["api_status"] = health.get("status")
+        except RuntimeError as e:
+            info["api_error"] = str(e)
+    if args.json:
+        _print_json(info)
+        return 0
+    print(f"brewslm {info['cli_version']}")
+    if info.get("api_version"):
+        print(f"backend {info['api_version']} ({info.get('api_status', 'ok')})")
+    elif args.remote and info.get("api_error"):
+        print(f"backend probe failed: {info['api_error']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="brewslm",
         description="BrewSLM command line client",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"brewslm {__version__}",
     )
     parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="API base URL (default: %(default)s)")
     parser.add_argument("--token", default=DEFAULT_TOKEN, help="API token (or set BREWSLM_TOKEN)")
@@ -4321,6 +4539,182 @@ def build_parser() -> argparse.ArgumentParser:
         ev_label, ev_run, ev_compare, ev_clusters, ev_remediate,
     ):
         sub.set_defaults(func=run_eval)
+
+    # --- Theme 5 Epic 1: video-flow gap fills -----------------------------
+    # auth login / whoami — needed when AUTH_ENABLED=true so scripted
+    # users can bootstrap a token without touching the UI.
+    auth_parser = subparsers.add_parser(
+        "auth",
+        help="Authentication helpers (login, whoami).",
+    )
+    auth_sub = auth_parser.add_subparsers(dest="subcommand", required=True)
+
+    auth_login = auth_sub.add_parser(
+        "login",
+        help=(
+            "Exchange username + password for a JWT (POST /api/auth/local/login). "
+            "Token is printed to stdout; optionally writes to a file."
+        ),
+    )
+    auth_login.add_argument("--username", required=True, help="Username (e.g. 'admin').")
+    auth_login.add_argument(
+        "--password",
+        default=None,
+        help=(
+            "Password. Falls back to BREWSLM_PASSWORD env var, then a "
+            "blocking stdin prompt if neither is set."
+        ),
+    )
+    auth_login.add_argument(
+        "--save",
+        action="store_true",
+        help=(
+            f"Persist the token to the brewslm token file "
+            f"(default: {DEFAULT_TOKEN_FILE}, override via BREWSLM_TOKEN_FILE). "
+            "Permissions are tightened to 0600 on POSIX."
+        ),
+    )
+    auth_login.add_argument(
+        "--token-file",
+        dest="token_file",
+        default=DEFAULT_TOKEN_FILE,
+        help="Path to write the token when --save is set.",
+    )
+    auth_login.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the full login response as JSON instead of just the token.",
+    )
+    auth_login.set_defaults(func=run_auth)
+
+    auth_whoami = auth_sub.add_parser(
+        "whoami",
+        help="Show the principal + project memberships for the current token (GET /api/auth/me).",
+    )
+    auth_whoami.add_argument("--json", action="store_true")
+    auth_whoami.set_defaults(func=run_auth)
+
+    # template list / get / instantiate — wraps the project_template
+    # primitive shipped 2026-05-22. Mirrors the UI's Project Templates
+    # gallery on the project-list page.
+    template_parser = subparsers.add_parser(
+        "template",
+        help="Project Templates: cloneable starting kits with bundled gold sets.",
+    )
+    template_sub = template_parser.add_subparsers(dest="subcommand", required=True)
+
+    tp_list = template_sub.add_parser(
+        "list",
+        help="List the catalog of project templates (GET /api/project-templates).",
+    )
+    tp_list.add_argument("--json", action="store_true")
+    tp_list.set_defaults(func=run_template)
+
+    tp_get = template_sub.add_parser(
+        "get",
+        help="Show metadata for a single template (GET /api/project-templates/{slug}).",
+    )
+    tp_get.add_argument("slug", help="Template slug, e.g. 'ticket-router'.")
+    tp_get.add_argument("--json", action="store_true")
+    tp_get.set_defaults(func=run_template)
+
+    tp_inst = template_sub.add_parser(
+        "instantiate",
+        help=(
+            "Clone a template into a new project "
+            "(POST /api/project-templates/{slug}/instantiate). "
+            "Name collisions get a ' (2)' suffix server-side."
+        ),
+    )
+    tp_inst.add_argument("slug", help="Template slug, e.g. 'ticket-router'.")
+    tp_inst.add_argument(
+        "--name",
+        dest="project_name",
+        default=None,
+        help="Project name (defaults to the template's display name).",
+    )
+    tp_inst.add_argument("--json", action="store_true")
+    tp_inst.set_defaults(func=run_template)
+
+    # serve start / list / get / stop / plan — Video 10 (Ollama serve).
+    # Wraps the existing /api/projects/{id}/export/{export_id}/serve-*
+    # endpoints so users can register a compressed export with the
+    # serve-template runner without leaving the terminal.
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Serve-run management for compressed exports (Video 10).",
+    )
+    serve_sub = serve_parser.add_subparsers(dest="subcommand", required=True)
+
+    sv_plan = serve_sub.add_parser(
+        "plan",
+        help="Render available serve templates + health/smoke snippets for an export.",
+    )
+    sv_plan.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    sv_plan.add_argument("--export-id", dest="export_id", type=int, required=True)
+    sv_plan.add_argument("--host", default=None)
+    sv_plan.add_argument("--port", type=int, default=None)
+    sv_plan.add_argument(
+        "--smoke-prompt",
+        dest="smoke_test_prompt",
+        default=None,
+        help="Optional smoke-test prompt to bake into the rendered curl snippet.",
+    )
+    sv_plan.add_argument("--json", action="store_true")
+    sv_plan.set_defaults(func=run_serve)
+
+    sv_start = serve_sub.add_parser(
+        "start",
+        help="Start a local serve process for a chosen template (Ollama / vLLM / llama.cpp).",
+    )
+    sv_start.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    sv_start.add_argument("--export-id", dest="export_id", type=int, required=True)
+    sv_start.add_argument(
+        "--template-id",
+        dest="template_id",
+        default=None,
+        help=(
+            "Serve-template id to launch (e.g. 'ollama_local'). "
+            "Omit to let the planner pick the first available."
+        ),
+    )
+    sv_start.add_argument("--host", default=None)
+    sv_start.add_argument("--port", type=int, default=None)
+    sv_start.add_argument("--smoke-prompt", dest="smoke_test_prompt", default=None)
+    sv_start.add_argument("--json", action="store_true")
+    sv_start.set_defaults(func=run_serve)
+
+    sv_get = serve_sub.add_parser(
+        "get",
+        help="Status + log tail for a running serve process.",
+    )
+    sv_get.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    sv_get.add_argument("--run-id", dest="run_id", required=True)
+    sv_get.add_argument("--logs-tail", dest="logs_tail", type=int, default=200)
+    sv_get.add_argument("--json", action="store_true")
+    sv_get.set_defaults(func=run_serve)
+
+    sv_stop = serve_sub.add_parser(
+        "stop",
+        help="Stop a running serve process.",
+    )
+    sv_stop.add_argument("--project", "--project-id", dest="project_id", type=int, required=True)
+    sv_stop.add_argument("--run-id", dest="run_id", required=True)
+    sv_stop.add_argument("--json", action="store_true")
+    sv_stop.set_defaults(func=run_serve)
+
+    # version — prints CLI version + (optionally) backend version.
+    version_parser = subparsers.add_parser(
+        "version",
+        help="Show the brewslm CLI version + the connected API version.",
+    )
+    version_parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="Also probe GET /api/health for the backend version.",
+    )
+    version_parser.add_argument("--json", action="store_true")
+    version_parser.set_defaults(func=run_version)
 
     return parser
 
