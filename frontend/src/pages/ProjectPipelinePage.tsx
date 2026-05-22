@@ -13,6 +13,7 @@ import EvalPanel from '../components/evaluation/EvalPanel';
 import CompressionPanel from '../components/compression/CompressionPanel';
 import ExportPanel from '../components/export/ExportPanel';
 import GettingStartedWizard from '../components/shared/GettingStartedWizard';
+import TabVideoLink from '../components/video/TabVideoLink';
 import api from '../api/client';
 import { PIPELINE_TABS } from '../types';
 import type { TabKey } from '../types';
@@ -302,7 +303,10 @@ export default function ProjectPipelinePage() {
                             );
                         })}
                     </div>
-                    <div className="tab-content">{renderTabContent()}</div>
+                    <div className="tab-content">
+                        <TabVideoLink tabKey={resolvedTab} />
+                        {renderTabContent()}
+                    </div>
                 </div>
             )}
         </div>

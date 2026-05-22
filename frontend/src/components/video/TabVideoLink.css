@@ -1,0 +1,57 @@
+/* TabVideoLink — inline "Watch the walkthrough" affordance above
+   each pipeline tab body. Matches the monochrome / dashed-outline
+   reveal style of CommandSnippet. */
+
+.tab-video-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    margin: 0 0 var(--space-md) 0;
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition:
+        border-color var(--transition-fast),
+        color var(--transition-fast),
+        background var(--transition-fast);
+}
+
+.tab-video-link:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+    background: var(--gray-50);
+}
+
+.tab-video-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.tab-video-link__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    line-height: 1;
+    color: var(--text-primary);
+}
+
+.tab-video-link__label strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.tab-video-link__time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    padding: 1px 6px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+}

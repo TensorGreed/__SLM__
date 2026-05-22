@@ -1,0 +1,230 @@
+/* YouTubeEmbedModal — embedded walkthrough modal. Reuses the base
+   .modal-overlay + .modal classes for backdrop, blur, animation,
+   and shadow. Adds layout for the player + chapter sidebar. */
+
+.video-embed-overlay {
+    /* Bump the base modal width to host a 16:9 player + chapter
+       sidebar comfortably. */
+    z-index: 1100;
+}
+
+.video-embed-modal {
+    /* Override the .modal min/max so the player isn't squashed. */
+    min-width: min(960px, 95vw);
+    max-width: min(1100px, 95vw);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+}
+
+.video-embed-modal__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-lg) var(--space-xl);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.video-embed-modal__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.3;
+}
+
+.video-embed-modal__close {
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 3px 8px;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+    line-height: 1;
+}
+
+.video-embed-modal__close:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.video-embed-modal__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 240px;
+    gap: var(--space-md);
+    padding: var(--space-lg) var(--space-xl);
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* 16:9 player container with aspect-ratio so iframe fills it. */
+.video-embed-modal__player {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: var(--gray-1000);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+}
+
+.video-embed-modal__iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+.video-embed-modal__unpublished {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    padding: var(--space-xl);
+    background: var(--gray-1000);
+    color: var(--gray-100);
+    text-align: center;
+}
+
+.video-embed-modal__unpublished-headline {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--gray-0);
+}
+
+.video-embed-modal__unpublished-sub {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--gray-300);
+    max-width: 380px;
+    line-height: 1.5;
+}
+
+.video-embed-modal__channel-link {
+    margin-top: var(--space-sm);
+}
+
+.video-embed-modal__chapters {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.video-embed-modal__chapters-head {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding-bottom: var(--space-xs);
+    border-bottom: 1px solid var(--border-muted);
+    margin-bottom: var(--space-xs);
+}
+
+.video-embed-modal__chapter-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.video-embed-modal__chapter {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    align-items: center;
+    gap: var(--space-sm);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    text-align: left;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition:
+        border-color var(--transition-fast),
+        color var(--transition-fast),
+        background var(--transition-fast);
+}
+
+.video-embed-modal__chapter:hover {
+    border-color: var(--border-default);
+    color: var(--text-primary);
+    background: var(--gray-50);
+}
+
+.video-embed-modal__chapter.is-active {
+    border-color: var(--gray-1000);
+    background: var(--gray-1000);
+    color: var(--gray-0);
+}
+
+.video-embed-modal__chapter-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: inherit;
+    opacity: 0.85;
+}
+
+.video-embed-modal__chapter.is-active .video-embed-modal__chapter-time {
+    opacity: 1;
+}
+
+.video-embed-modal__chapter-label {
+    line-height: 1.3;
+}
+
+.video-embed-modal__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-xl);
+    border-top: 1px solid var(--border-muted);
+    background: var(--bg-primary);
+}
+
+.video-embed-modal__external {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px dashed var(--border-default);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.video-embed-modal__external:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.video-embed-modal__external--disabled {
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+}
+
+.video-embed-modal__external--disabled:hover {
+    border-color: var(--border-default);
+    color: var(--text-tertiary);
+}
+
+/* Narrow screens: stack chapters under the player. */
+@media (max-width: 760px) {
+    .video-embed-modal__body {
+        grid-template-columns: 1fr;
+    }
+    .video-embed-modal__chapter-list {
+        max-height: 180px;
+    }
+}
