@@ -1,0 +1,56 @@
+{
+  "slug": "contract-clause-extractor",
+  "name": "Contract Clause Extractor",
+  "headline": "Find liability, termination, jurisdiction, and IP clauses in contract text.",
+  "description": "A span-extraction template for legal-ops teams. Train a small model to read a paragraph of contract text and emit a JSON array of every clause-type span it contains — type, start offset, end offset, raw text. Output drops directly into review queues, redlining tools, or compliance dashboards. Covers liability_cap, termination, jurisdiction, governing_law, confidentiality, indemnification, payment_terms, warranty, dispute_resolution, ip_assignment.",
+  "icon": "📜",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 100,
+  "recipe_id": "span-extraction",
+  "task_profile": "structured_extraction",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "clauses.csv",
+  "dataset_input_field": "text",
+  "dataset_output_field": "entities_json",
+  "output_schema": {
+    "scoring_mode": "span_set",
+    "properties": {
+      "entities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "start": { "type": "integer" },
+            "end": { "type": "integer" },
+            "text": { "type": "string" }
+          },
+          "required": ["type", "start", "end", "text"]
+        }
+      }
+    },
+    "required": ["entities"]
+  },
+  "entity_types": [
+    "liability_cap",
+    "termination",
+    "jurisdiction",
+    "governing_law",
+    "confidentiality",
+    "indemnification",
+    "payment_terms",
+    "warranty",
+    "dispute_resolution",
+    "ip_assignment"
+  ],
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen/Qwen2.5-1.5B-Instruct"
+  ],
+  "suggested_brief": "Train a span-level contract clause extractor. Input: paragraph of contract text. Output: JSON array of {type, start, end, text} for each clause. Recall matters more than precision — missed clauses become compliance risk; false positives are cheap to dismiss."
+}

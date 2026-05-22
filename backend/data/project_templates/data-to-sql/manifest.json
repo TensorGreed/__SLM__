@@ -1,0 +1,25 @@
+{
+  "slug": "data-to-sql",
+  "name": "Data-to-SQL Assistant",
+  "headline": "Turn plain-English business questions into runnable SQL against your schema.",
+  "description": "An instruction-SFT template for analytics and ops teams who want a small local model to translate questions like 'how many active subscribers in EU last month' into a parameterized SQL query against a known schema. Trains on (question, schema, SQL) triples so the model learns table joins, date filters, and the schema's column naming conventions. Pair with a downstream SQL validator and read-only DB role for production use.",
+  "icon": "🗃️",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 100,
+  "recipe_id": "generic-sft",
+  "task_profile": "instruction_sft",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "queries.csv",
+  "dataset_input_field": "question",
+  "dataset_output_field": "sql",
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    "Qwen/Qwen2.5-Coder-3B-Instruct",
+    "HuggingFaceTB/SmolLM2-135M-Instruct"
+  ],
+  "suggested_brief": "Train a NL-to-SQL model on our analytics schema (orders, users, subscriptions, events, products). Output: a single SQL statement, no commentary. Always end with a semicolon. Prefer ANSI-standard syntax; use schema-qualified table names. When the question is ambiguous, choose the most restrictive interpretation."
+}

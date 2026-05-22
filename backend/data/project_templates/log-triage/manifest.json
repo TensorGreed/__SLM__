@@ -1,0 +1,26 @@
+{
+  "slug": "log-triage",
+  "name": "Log Triage Assistant",
+  "headline": "Classify production log lines into critical / error / warning / info / noise.",
+  "description": "A 5-class classification template for SRE and platform teams drowning in log volume. Train a small model to tag every log line with its real triage priority so dashboards, alerts, and paging routes can filter on a semantic class rather than just log-level. Targets sub-50ms inference on mobile-cpu so it can run inline in a log shipper or a Fluent Bit Lua filter without a GPU round-trip.",
+  "icon": "🩺",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 150,
+  "recipe_id": "classification",
+  "task_profile": "classification",
+  "target_profile": "mobile_cpu",
+  "training_preferred_plan_profile": "fast-iteration",
+  "evaluation_preferred_pack_id": "evalpack.classification.default",
+  "dataset_filename": "logs.csv",
+  "dataset_input_field": "log_line",
+  "dataset_output_field": "severity",
+  "labels": ["critical", "error", "warning", "info", "noise"],
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "distilbert-base-uncased"
+  ],
+  "suggested_brief": "Train a 5-class log triage classifier (critical / error / warning / info / noise) for our production log stream. Class definitions: critical = page someone NOW (data loss, security breach, total outage); error = visible-to-users but not paging; warning = degraded but functioning; info = normal operation, useful for audit; noise = healthchecks, debug spam. Macro-F1 above 0.80. Must run sub-50ms on a single CPU core."
+}

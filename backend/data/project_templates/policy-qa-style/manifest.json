@@ -1,0 +1,25 @@
+{
+  "slug": "policy-qa-style",
+  "name": "Policy Q&A Style Adapter",
+  "headline": "Answer employee policy questions in a consistent compliant voice.",
+  "description": "An instruction-SFT template for HR, IT, and InfoSec policy teams. Train a small model to answer free-form policy questions in a strict, citation-friendly style: short opening summary, the relevant policy clause, and a 'when in doubt, escalate to <team>' closer. Pattern fits HR helpdesks, security operations Slack bots, and compliance hotlines where consistency of voice matters as much as factual correctness.",
+  "icon": "📘",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 80,
+  "recipe_id": "qa-sft",
+  "task_profile": "instruction_sft",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "policies.csv",
+  "dataset_input_field": "question",
+  "dataset_output_field": "answer",
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen/Qwen2.5-1.5B-Instruct"
+  ],
+  "suggested_brief": "Train a policy Q&A assistant that answers in a fixed three-part style: (1) one-sentence summary, (2) the exact policy clause that applies, (3) escalation team. Tone: terse, neutral, no hedging. Cite the policy section by name in every answer."
+}

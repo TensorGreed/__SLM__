@@ -1,0 +1,26 @@
+{
+  "slug": "agent-tool-call",
+  "name": "Agent Tool-Call Fine-Tune",
+  "headline": "Train a small model to pick the right tool and emit valid JSON args.",
+  "description": "An instruction-SFT template for teams building local agents (MCP servers, internal copilots, support bots) that need consistent tool-call behavior on cheaper hardware. Train a small model to read a user request plus a tool catalog and emit a single tool-call JSON object — exact tool name, correct arg shape, no hallucinated tools, no chatter. Pair with constrained JSON decoding at serve-time for hard guarantees.",
+  "icon": "🛠️",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 120,
+  "recipe_id": "generic-sft",
+  "task_profile": "instruction_sft",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "tool_calls.csv",
+  "dataset_input_field": "request",
+  "dataset_output_field": "tool_call",
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen/Qwen2.5-1.5B-Instruct",
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+  ],
+  "suggested_brief": "Train a tool-calling SLM. Input: user request + tool catalog. Output: single JSON object {\"tool\": \"<name>\", \"args\": {...}}. Validity rules: emit only tools from the catalog, no extra fields, JSON parseable on first try. When no tool fits, emit {\"tool\": \"none\", \"args\": {}} rather than hallucinating."
+}

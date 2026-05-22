@@ -30,11 +30,21 @@ from app.services.project_template_service import (
 class ProjectTemplateCatalogTests(unittest.TestCase):
     """Catalog reads (no DB needed; pure file-system inspection)."""
 
-    def test_list_includes_both_shipped_templates(self):
+    def test_list_includes_all_eight_shipped_templates(self):
         catalog = list_project_templates()
         slugs = {t["slug"] for t in catalog}
-        self.assertIn("security-alert-summarizer", slugs)
-        self.assertIn("ticket-router", slugs)
+        expected = {
+            "security-alert-summarizer",
+            "ticket-router",
+            "contract-clause-extractor",
+            "policy-qa-style",
+            "email-chat-tone",
+            "agent-tool-call",
+            "data-to-sql",
+            "log-triage",
+        }
+        missing = expected - slugs
+        self.assertEqual(missing, set(), f"missing templates: {missing}")
 
     def test_each_template_carries_the_required_metadata(self):
         for template in list_project_templates():
@@ -175,6 +185,42 @@ class ProjectTemplateInstantiateApiTests(unittest.TestCase):
             json={"project_name": "x"},
         )
         self.assertEqual(resp.status_code, 404, resp.text)
+
+    def test_every_shipped_template_round_trips_through_instantiate(self):
+        """Smoke each of the 8 shipped templates by instantiating a
+        fresh project from each one. Catches manifest schema breaks,
+        bad CSV escaping, missing files, or recipe-id typos across
+        the whole catalog in one shot."""
+        for slug in [
+            "contract-clause-extractor",
+            "policy-qa-style",
+            "email-chat-tone",
+            "agent-tool-call",
+            "data-to-sql",
+            "log-triage",
+        ]:
+            with self.subTest(slug=slug):
+                resp = self.client.post(
+                    f"/api/project-templates/{slug}/instantiate",
+                    json={"project_name": f"smoke-test-{slug}"},
+                )
+                self.assertEqual(resp.status_code, 201, resp.text)
+                project = resp.json()
+                self.assertEqual(project["name"], f"smoke-test-{slug}")
+                # selected_recipe should be populated (recipe-apply
+                # hook fires inside instantiate). The recipe_id is
+                # whatever the template's manifest declared.
+                snapshot = project.get("selected_recipe") or {}
+                self.assertTrue(
+                    snapshot.get("recipe_id"),
+                    f"{slug} did not populate selected_recipe.recipe_id",
+                )
+                # base_model_name carries the template's first
+                # recommended pick.
+                self.assertTrue(
+                    project.get("base_model_name"),
+                    f"{slug} did not set base_model_name",
+                )
 
 
 if __name__ == "__main__":
