@@ -69,6 +69,7 @@ from app.api.support_bundles import (
 )
 from app.api.extensions import router as extensions_router
 from app.api.demo_projects import router as demo_projects_router
+from app.api.project_templates import router as project_templates_router
 from app.api.quickstart import router as quickstart_router
 from app.services.domain_pack_service import ensure_default_domain_pack
 from app.services.domain_hook_service import load_hook_plugins_from_settings
@@ -279,6 +280,7 @@ app.include_router(support_bundles_router, prefix="/api", dependencies=API_DEPEN
 app.include_router(support_bundles_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(extensions_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(demo_projects_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(project_templates_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(quickstart_router, prefix="/api", dependencies=API_DEPENDENCIES)
 
 

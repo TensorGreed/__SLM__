@@ -1,0 +1,46 @@
+ticket,label
+"My credit card was charged twice for invoice INV-0001 on April 14. Please refund the duplicate charge.",billing
+"Login keeps redirecting to a 500 error after I enter my password. Cleared cache, still broken.",technical
+"Can you delete my account and all associated data? I'm closing the company.",account
+"Interested in your enterprise plan — what's the pricing for 100 seats with SSO?",sales
+"We received a subpoena from the SF District Court re: user @example.com. Please route to your legal team for handling.",legal
+"The amount on my receipt doesn't match what's shown in the dashboard. Receipt says $49 but dashboard charged $59.",billing
+"Webhook deliveries to our endpoint started failing with TLS handshake errors yesterday. We didn't change anything on our end.",technical
+"How do I add a second user to my workspace? Can't find the invite flow.",account
+"Do you offer volume discounts for non-profits? We're a 501(c)(3) and would need ~30 seats.",sales
+"GDPR data-subject request received for user ID 4421 — they're requesting full export under Article 15. Please coordinate with your legal counsel.",legal
+"I was promised a 30% discount when I upgraded to annual billing but the invoice shows full price. Can you adjust?",billing
+"API rate limit error 429 hitting on every request from our prod servers. We're well below the 1000/min documented limit.",technical
+"Trying to enable 2FA but the QR code won't scan. Got a setup key — where do I paste it?",account
+"Curious about your AI-add-on tier. Is there a free trial? Our team has 12 people.",sales
+"Compliance audit needs your SOC 2 Type 2 report. Who do I contact for a signed copy?",legal
+"Invoice for March hasn't arrived. Auto-emails went to my spam in February but I'm not seeing March even there.",billing
+"Dashboard charts have been blank for 3 days. Network tab shows /api/metrics returning 500.",technical
+"Forgot the email on my account. Can you look up by company domain?",account
+"Looking to switch from a competitor — would you waive the setup fee for a multi-year contract?",sales
+"DMCA takedown notice for content hosted on your service by one of our users. Forwarding the original notice.",legal
+"Got hit with a $200 overage charge but our dashboard says we only used 60% of the included quota.",billing
+"Slack integration disconnected itself overnight. Reauth doesn't fix it.",technical
+"Need to change the email associated with my account but the support email isn't accepting my new one.",account
+"What's the difference between Pro and Business tier? Need to decide before EOQ for our team's plan.",sales
+"Counsel requesting copies of all support tickets associated with our org for an ongoing litigation matter. Will provide formal discovery request.",legal
+"Refund for a 7-day-old subscription that I never used. Auto-charged yesterday on renewal.",billing
+"Mobile app crashes every time I open it on iOS 17.4. Reinstalling didn't help.",technical
+"Locked out after too many failed login attempts. Password reset email isn't arriving.",account
+"Could we get a custom demo for our team next Tuesday? We're evaluating against 3 vendors.",sales
+"Service of process for our company at this address. Please confirm forwarding instructions.",legal
+"Discount code BLACKFRIDAY2023 isn't applying at checkout. Was that supposed to expire?",billing
+"OAuth callback from your platform returns 'invalid_grant' error. App has been working fine for 6 months.",technical
+"Cannot upload my profile picture. Says 'file too large' but it's only 200KB.",account
+"Add-on pricing question: is the Analytics module included in Enterprise or extra?",sales
+"Privacy Officer here — confirming receipt of your DPA. Need to clarify section 3.2 sub-processor list.",legal
+"Got billed for a seat that was deactivated last quarter. Can we credit that back?",billing
+"PDF export downloads but the file is 0 bytes. Tried Chrome, Safari, and Firefox — same result.",technical
+"Want to merge two team accounts that were created accidentally. Both have data we want to keep.",account
+"Reseller program — do you have one? I work with mid-market SaaS buyers and would like to refer.",sales
+"Need a signed Letter of Confidentiality before we share architecture diagrams with your team for the integration.",legal
+"Refund request for accidental yearly renewal — I meant to downgrade to monthly before the cycle.",billing
+"Webhook secret leaked in our public GitHub repo by accident. How do I rotate it on your side?",technical
+"Username change request — old one has my deadname.",account
+"Procurement asked for a W-9 and your insurance certificate. Where do I get these?",sales
+"Notice of intent to file claim — please confirm registered agent for legal notice service.",legal

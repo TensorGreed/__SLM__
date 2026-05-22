@@ -1,0 +1,26 @@
+{
+  "slug": "ticket-router",
+  "name": "Ticket Router SLM",
+  "headline": "Auto-route inbound support tickets to the right team in <100ms.",
+  "description": "A multi-class classification template for customer-support orgs. Train a small model to read an incoming ticket and tag it with one of 5 destinations: billing, technical, account, sales, legal. Targets sub-100ms inference on mobile-cpu hardware so it can run on the support gateway without a GPU round-trip. Use case: SaaS support inboxes, e-commerce post-purchase queues, internal IT helpdesks.",
+  "icon": "📨",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 150,
+  "recipe_id": "classification",
+  "task_profile": "classification",
+  "target_profile": "mobile_cpu",
+  "training_preferred_plan_profile": "fast-iteration",
+  "evaluation_preferred_pack_id": "evalpack.classification.default",
+  "dataset_filename": "tickets.csv",
+  "dataset_input_field": "ticket",
+  "dataset_output_field": "label",
+  "labels": ["billing", "technical", "account", "sales", "legal"],
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "distilbert-base-uncased"
+  ],
+  "suggested_brief": "Train a 5-way ticket-routing classifier (billing / technical / account / sales / legal) for our SaaS support inbox. Macro-F1 above 0.85 is the bar. Must run sub-100ms on a single CPU core because it lives in the support gateway."
+}

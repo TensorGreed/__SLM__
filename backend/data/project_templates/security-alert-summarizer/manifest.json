@@ -1,0 +1,25 @@
+{
+  "slug": "security-alert-summarizer",
+  "name": "Security Alert Summarizer",
+  "headline": "Turn vendor advisories + CVE descriptions into one-line exec summaries.",
+  "description": "A summarization template for security teams. Train a small model to read verbose CVE descriptions, vendor advisories, or threat-intel snippets and emit a single sentence the on-call engineer can scan in 3 seconds. Pattern fits CISO digests, paging-channel summaries, and ticket auto-tagging.",
+  "icon": "🚨",
+  "is_template": true,
+  "template_version": "v1",
+  "minimum_dataset_size": 80,
+  "recipe_id": "summarization",
+  "task_profile": "summarization",
+  "target_profile": "vllm_server",
+  "training_preferred_plan_profile": "balanced",
+  "evaluation_preferred_pack_id": "evalpack.general.default",
+  "dataset_filename": "alerts.csv",
+  "dataset_input_field": "advisory",
+  "dataset_output_field": "summary",
+  "gold_filename": "gold.jsonl",
+  "recommended_base_models": [
+    "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen/Qwen2.5-1.5B-Instruct"
+  ],
+  "suggested_brief": "Train a small model to summarize security advisories into a single sentence: severity, affected component, action. Tone: terse, no marketing language. Never lose the patch-deadline or affected-version detail."
+}

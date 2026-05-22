@@ -11,6 +11,7 @@ import FirstRunCheatSheet from '../components/dashboard/FirstRunCheatSheet';
 import ProjectCard from '../components/dashboard/ProjectCard';
 import TopBar from '../components/layout/TopBar';
 import ApproachChip from '../components/projects/ApproachChip';
+import ProjectTemplateGallery from '../components/projects/ProjectTemplateGallery';
 import EmptyState from '../components/shared/EmptyState';
 import Skeleton from '../components/shared/Skeleton';
 import Term from '../components/shared/Term';
@@ -319,6 +320,8 @@ export default function ProjectListPage() {
                 <FirstRunCheatSheet />
 
                 <DemoProjectTiles />
+
+                <ProjectTemplateGallery hideWhenEmpty />
 
                 {isLoadingProjects ? (
                     <div className="project-grid">
