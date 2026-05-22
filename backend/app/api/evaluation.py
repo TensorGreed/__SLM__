@@ -635,3 +635,27 @@ async def explain_failure_cluster_endpoint(
         "eval_result_id": eval_result_id,
         **payload,
     }
+
+
+# ── "Did SFT help?" lift summary (Theme 8 Epic 4) ───────────────────
+
+
+@router.get("/sft-lift-summary")
+async def get_sft_lift_summary(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute the baseline → trained lift summary for this project.
+    Used by the Eval tab's "Did SFT help?" panel. Returns
+    `status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
+    the comparison can't be built — never 404 unless the project is
+    missing — so the UI can render an informative fallback."""
+    from app.services.sft_lift_summary_service import compute_sft_lift_summary
+
+    try:
+        return await compute_sft_lift_summary(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith("project_not_found:"):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)

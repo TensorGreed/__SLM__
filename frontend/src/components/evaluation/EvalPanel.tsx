@@ -8,6 +8,7 @@ import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
+import SftLiftPanel from './SftLiftPanel';
 import './EvalPanel.css';
 
 type EvalSubTab = 'runs' | 'workbench';
@@ -1576,6 +1577,13 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 <ActiveLearningPanel
                     projectId={projectId}
                     experimentId={selectedExp}
+                    refreshToken={evalResults.length}
+                />
+            )}
+
+            {selectedExp && evalResults.length > 0 && (
+                <SftLiftPanel
+                    projectId={projectId}
                     refreshToken={evalResults.length}
                 />
             )}
