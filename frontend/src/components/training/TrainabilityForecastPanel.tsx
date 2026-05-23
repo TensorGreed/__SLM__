@@ -21,6 +21,7 @@ import type {
     SuggestedActionKind,
 } from '../../api/trainabilityForecast';
 import { fetchTrainingForecast } from '../../api/trainabilityForecast';
+import TrainAnywayButton from './TrainAnywayButton';
 import './TrainabilityForecastPanel.css';
 
 interface Props {
@@ -151,6 +152,10 @@ export default function TrainabilityForecastPanel({ projectId, onActionClicked }
                     />
                 ))}
             </ul>
+            <TrainAnywayButton
+                verdict={result.overall}
+                confidencePct={result.confidence_pct}
+            />
             {result.cache_hit && (
                 <p className="trainability-forecast__cache-note">
                     Cached result — click Refresh to recompute.

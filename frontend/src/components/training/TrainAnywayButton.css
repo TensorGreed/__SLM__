@@ -1,0 +1,77 @@
+/* TrainAnywayButton — verdict-aware CTA anchored to the existing
+   training launch button. Rendered in the footer of
+   TrainabilityForecastPanel. */
+
+.train-anyway {
+    margin-top: var(--space-md);
+    padding-top: var(--space-sm);
+    border-top: 1px dashed var(--border-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+}
+
+.train-anyway__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+        border-color var(--transition-fast),
+        background var(--transition-fast),
+        color var(--transition-fast);
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.train-anyway__btn:hover {
+    background: var(--gray-50);
+}
+
+.train-anyway__btn--ok {
+    border-color: var(--color-success, #18a058);
+    background: var(--color-success, #18a058);
+    color: var(--gray-0, #fff);
+}
+
+.train-anyway__btn--ok:hover {
+    background: var(--color-success-hover, #149450);
+}
+
+.train-anyway__btn--warn {
+    border-color: var(--color-warning, #f0a020);
+    color: var(--color-warning-fg, #936203);
+    background: var(--color-warning-bg, rgba(240, 160, 32, 0.10));
+}
+
+.train-anyway__btn--warn:hover {
+    background: var(--color-warning-bg-hover, rgba(240, 160, 32, 0.18));
+}
+
+.train-anyway__btn--block {
+    border-color: var(--color-error, #d03050);
+    color: var(--color-error-fg, #8c1f37);
+    background: var(--color-error-bg, rgba(208, 48, 80, 0.08));
+}
+
+.train-anyway__btn--block:hover {
+    background: var(--color-error-bg-hover, rgba(208, 48, 80, 0.18));
+}
+
+.train-anyway__arrow {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.train-anyway__hint {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    line-height: 1.4;
+}
