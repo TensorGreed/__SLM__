@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
+import CoachStrip from '../coach/CoachStrip';
 import './GoldSetPanel.css';
 
 interface GoldSetPanelProps {
@@ -51,6 +52,8 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                         <button className="btn btn-secondary" onClick={handleLock}>🔒 Lock</button>
                     </div>
                 </div>
+
+                <CoachStrip projectId={projectId} stage="gold_set" />
 
                 <div className="qa-form">
                     <div className="form-group">

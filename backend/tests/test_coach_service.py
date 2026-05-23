@@ -31,11 +31,17 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.coach_service import (  # noqa: E402
+    CLASS_BALANCE_TOPUP_DEFAULT,
+    DIVERSITY_TOPUP_DEFAULT,
+    DOC_ERROR_MIN_TOTAL,
+    DOC_ERROR_RATE_WARN,
     GOLD_ROW_COMFORTABLE_MIN,
     GOLD_ROW_THIN_MAX,
     SUGGESTED_TOPUP_CEILING,
     SUGGESTED_TOPUP_FLOOR,
+    _cleaning_stage_suggestions,
     _data_stage_suggestions,
+    _gold_set_stage_suggestions,
     _topup_count,
 )
 
@@ -237,6 +243,237 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
         s = suggestions[0]
         self.assertEqual(s["action"]["kind"], "navigate")
         self.assertEqual(s["action"]["params"]["target"], "recipe-picker")
+
+
+class CoachServiceCleaningStageTests(unittest.IsolatedAsyncioTestCase):
+    """Phase 2: ``_cleaning_stage_suggestions`` direct calls with
+    patched data loaders. Mirrors the patched-loader pattern from the
+    data-stage tests."""
+
+    async def _suggestions(
+        self,
+        *,
+        pii_stats: dict,
+        status_counts: dict,
+    ) -> list[dict]:
+        from unittest.mock import patch
+
+        class _StubProject:
+            id = 7
+            selected_recipe = {"recipe_id": "classification"}
+
+        async def _async_pii(*_a, **_k):
+            return pii_stats
+
+        async def _async_status(*_a, **_k):
+            return status_counts
+
+        with (
+            patch(
+                "app.services.coach_service._read_pii_stats",
+                side_effect=_async_pii,
+            ),
+            patch(
+                "app.services.coach_service._read_doc_status_breakdown",
+                side_effect=_async_status,
+            ),
+        ):
+            return await _cleaning_stage_suggestions(
+                db=None,  # type: ignore[arg-type]
+                project=_StubProject(),
+            )
+
+    async def test_no_pii_and_no_errors_emits_no_suggestions(self):
+        suggestions = await self._suggestions(
+            pii_stats={"total_pii": 0, "docs_with_pii": 0, "pii_types": []},
+            status_counts={"accepted": 50},
+        )
+        self.assertEqual(suggestions, [])
+
+    async def test_pii_findings_emit_warning_with_navigate_action(self):
+        suggestions = await self._suggestions(
+            pii_stats={
+                "total_pii": 12,
+                "docs_with_pii": 4,
+                "pii_types": ["email", "phone"],
+            },
+            status_counts={"accepted": 50},
+        )
+        ids = {s["id"] for s in suggestions}
+        self.assertIn("cleaning:pii-findings", ids)
+        s = next(s for s in suggestions if s["id"] == "cleaning:pii-findings")
+        self.assertEqual(s["severity"], "warning")
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(s["action"]["params"]["target"], "cleaning-pii-review")
+        # Title carries the counts so the user gets a one-glance answer
+        # without expanding the body.
+        self.assertIn("12", s["title"])
+        self.assertIn("4", s["title"])
+        self.assertEqual(s["context"]["pii_types"], ["email", "phone"])
+
+    async def test_doc_error_rate_below_floor_emits_no_failure_suggestion(self):
+        # 5 docs total — below DOC_ERROR_MIN_TOTAL — even with all
+        # failures we suppress the alarm. Avoids flagging tiny test
+        # corpora.
+        self.assertEqual(DOC_ERROR_MIN_TOTAL, 10)
+        suggestions = await self._suggestions(
+            pii_stats={"total_pii": 0, "docs_with_pii": 0, "pii_types": []},
+            status_counts={"error": 5},
+        )
+        ids = {s["id"] for s in suggestions}
+        self.assertNotIn("cleaning:doc-error-rate", ids)
+
+    async def test_doc_error_rate_at_warning_level_emits_warning(self):
+        # 10% error rate over 30 docs (3 errors / 27 accepted) — past
+        # the 5% threshold but under the 20% critical cutoff.
+        suggestions = await self._suggestions(
+            pii_stats={"total_pii": 0, "docs_with_pii": 0, "pii_types": []},
+            status_counts={"accepted": 27, "error": 3},
+        )
+        ids = {s["id"] for s in suggestions}
+        self.assertIn("cleaning:doc-error-rate", ids)
+        s = next(s for s in suggestions if s["id"] == "cleaning:doc-error-rate")
+        self.assertEqual(s["severity"], "warning")
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(s["context"]["total_docs"], 30)
+        self.assertEqual(s["context"]["error_count"], 3)
+        self.assertAlmostEqual(s["context"]["error_rate"], 0.1)
+        self.assertAlmostEqual(s["context"]["warn_threshold"], DOC_ERROR_RATE_WARN)
+
+    async def test_doc_error_rate_above_critical_threshold_escalates(self):
+        # 25% error rate — past the 20% critical cutoff.
+        suggestions = await self._suggestions(
+            pii_stats={"total_pii": 0, "docs_with_pii": 0, "pii_types": []},
+            status_counts={"accepted": 30, "error": 10},
+        )
+        s = next(s for s in suggestions if s["id"] == "cleaning:doc-error-rate")
+        self.assertEqual(s["severity"], "critical")
+
+
+class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
+    """Phase 2: ``_gold_set_stage_suggestions`` — exercises class
+    imbalance + diversity translations + the no-recipe fallback."""
+
+    async def _suggestions(
+        self,
+        *,
+        gold_rows: list[dict],
+        task_profile: str | None = "classification",
+        with_recipe: bool = True,
+    ) -> list[dict]:
+        from unittest.mock import MagicMock, patch
+
+        class _StubProject:
+            id = 11
+            selected_recipe = (
+                {"recipe_id": "classification"} if with_recipe else None
+            )
+
+        recipe_stub = MagicMock()
+        recipe_stub.task_profile = task_profile
+
+        async def _async_rows(*_a, **_k):
+            return gold_rows
+
+        with (
+            patch(
+                "app.services.trainability_forecast_service._load_gold_rows",
+                side_effect=_async_rows,
+            ),
+            patch(
+                "app.services.recipe_service.get_recipe",
+                return_value=recipe_stub if with_recipe else None,
+            ),
+        ):
+            return await _gold_set_stage_suggestions(
+                db=None,  # type: ignore[arg-type]
+                project=_StubProject(),
+            )
+
+    async def test_no_recipe_returns_navigate_to_recipe_picker(self):
+        suggestions = await self._suggestions(
+            gold_rows=[], with_recipe=False
+        )
+        self.assertEqual(len(suggestions), 1)
+        s = suggestions[0]
+        self.assertEqual(s["id"], "gold_set:no-recipe")
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(s["action"]["params"]["target"], "recipe-picker")
+
+    async def test_severe_class_imbalance_triggers_critical(self):
+        # 90/10 split → very low Shannon entropy → "block" severity
+        # in trainability terms → maps to coach "critical".
+        gold_rows = (
+            [{"question": f"q{i}", "answer": "a", "label": "billing"} for i in range(90)]
+            + [{"question": f"q{i + 90}", "answer": "a", "label": "technical"} for i in range(10)]
+        )
+        suggestions = await self._suggestions(gold_rows=gold_rows)
+        ids = {s["id"] for s in suggestions}
+        self.assertIn("gold_set:class-imbalance", ids)
+        s = next(s for s in suggestions if s["id"] == "gold_set:class-imbalance")
+        self.assertEqual(s["severity"], "critical")
+        # Action targets the under-represented label specifically + uses
+        # the class_balance_fill playbook (Epic 2b).
+        self.assertEqual(s["action"]["kind"], "run_playbook")
+        self.assertEqual(s["action"]["params"]["mode"], "class_balance_fill")
+        self.assertEqual(s["action"]["params"]["target_class"], "technical")
+        self.assertEqual(
+            s["action"]["params"]["target_count"],
+            CLASS_BALANCE_TOPUP_DEFAULT,
+        )
+
+    async def test_balanced_classes_emit_no_imbalance_suggestion(self):
+        # 3 balanced classes → Shannon entropy ≈ ln(3) ≈ 1.10, above
+        # the trainability service's CLASS_ENTROPY_WARN (1.0) → "ok"
+        # → coach emits no suggestion.
+        # (Binary 50/50 has entropy ≈ 0.69 which the trainability
+        # signal still classifies as "warn" by its own threshold —
+        # Coach mirrors that semantic faithfully.)
+        labels = ["billing", "technical", "shipping"]
+        gold_rows = []
+        for label_idx, label in enumerate(labels):
+            for i in range(15):
+                gold_rows.append({
+                    "question": (
+                        f"label-{label_idx} q{i} "
+                        f"{'token' * (i % 7)} {'word' * (i % 11)} unique{label_idx}-{i}"
+                    ),
+                    "answer": "a",
+                    "label": label,
+                })
+        suggestions = await self._suggestions(gold_rows=gold_rows)
+        ids = {s["id"] for s in suggestions}
+        self.assertNotIn("gold_set:class-imbalance", ids)
+
+    async def test_low_diversity_emits_paraphrase_suggestion(self):
+        # Identical rows → mean pairwise Jaccard = 1.0 → diversity
+        # warn.
+        gold_rows = [
+            {"question": "what is the refund policy?", "answer": "30 days", "label": "billing"}
+            for _ in range(8)
+        ]
+        suggestions = await self._suggestions(gold_rows=gold_rows)
+        ids = {s["id"] for s in suggestions}
+        self.assertIn("gold_set:diversity-low", ids)
+        s = next(s for s in suggestions if s["id"] == "gold_set:diversity-low")
+        self.assertEqual(s["severity"], "warning")
+        self.assertEqual(s["action"]["kind"], "run_playbook")
+        self.assertEqual(s["action"]["params"]["mode"], "positives_paraphrase")
+        self.assertEqual(
+            s["action"]["params"]["target_count"], DIVERSITY_TOPUP_DEFAULT
+        )
+
+    async def test_class_imbalance_and_diversity_can_coexist(self):
+        # 95/5 skew + identical texts inside each class → both
+        # signals fire. Coach surfaces both suggestions side-by-side.
+        gold_rows = (
+            [{"question": "billing q?", "answer": "a", "label": "billing"} for _ in range(19)]
+            + [{"question": "tech q?", "answer": "a", "label": "technical"} for _ in range(1)]
+        )
+        suggestions = await self._suggestions(gold_rows=gold_rows)
+        ids = {s["id"] for s in suggestions}
+        self.assertIn("gold_set:class-imbalance", ids)
+        self.assertIn("gold_set:diversity-low", ids)
 
 
 if __name__ == "__main__":
