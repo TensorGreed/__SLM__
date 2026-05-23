@@ -8,6 +8,7 @@ import WorkspaceFlowHint from '../components/layout/WorkspaceFlowHint';
 import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import ProgressChip from '../components/gamification/ProgressChip';
+import CoachToggle from '../components/coach/CoachToggle';
 import { useGamificationPoller } from '../components/gamification/useProgressionPoll';
 import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -89,6 +90,7 @@ export default function ProjectWorkspaceLayout() {
                     actions={
                         <>
                             <ProgressChip projectId={projectId} />
+                            <CoachToggle projectId={projectId} />
                             <ManifestExportButton
                                 projectId={projectId}
                                 projectName={activeProject.name}

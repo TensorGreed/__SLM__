@@ -11,6 +11,7 @@ import EDADashboard from './EDADashboard';
 import DatasetImportWizard from './DatasetImportWizard';
 import DocumentSampleAccordion from './DocumentSampleAccordion';
 import SavedMappingsPanel from './SavedMappingsPanel';
+import CoachStrip from '../coach/CoachStrip';
 import './IngestionPanel.css';
 
 interface IngestionPanelProps {
@@ -1014,6 +1015,8 @@ export default function IngestionPanel({ projectId, onNextStep }: IngestionPanel
                     <h3 className="docs-title">Ingested Documents</h3>
                     <span className="docs-count badge badge-accent">{documents.length}</span>
                 </div>
+
+                <CoachStrip projectId={projectId} stage="data" />
 
                 {isLoading ? (
                     <div className="docs-loading">
