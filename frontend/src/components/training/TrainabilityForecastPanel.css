@@ -1,0 +1,207 @@
+/* TrainabilityForecastPanel — pre-training "is this trainable?"
+   sanity panel. Mounted above the Run Preflight button so the
+   forecast lands before the user commits to a training run. */
+
+.trainability-forecast {
+    border: 1px solid var(--border-default);
+    border-left: 3px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    padding: var(--space-md) var(--space-lg);
+    margin-bottom: var(--space-lg);
+}
+
+.trainability-forecast--ok {
+    border-left-color: var(--color-success, #18a058);
+    background: var(--bg-secondary);
+}
+
+.trainability-forecast--warn {
+    border-left-color: var(--color-warning, #f0a020);
+    background: var(--bg-secondary);
+}
+
+.trainability-forecast--block {
+    border-left-color: var(--color-error, #d03050);
+    background: var(--bg-secondary);
+}
+
+.trainability-forecast__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+}
+
+.trainability-forecast__head-main {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.trainability-forecast__verdict-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+}
+
+.trainability-forecast__verdict-badge--ok {
+    border-color: var(--color-success, #18a058);
+    color: var(--color-success-fg, #0c6b3a);
+    background: var(--color-success-bg, rgba(24, 160, 88, 0.08));
+}
+
+.trainability-forecast__verdict-badge--warn {
+    border-color: var(--color-warning, #f0a020);
+    color: var(--color-warning-fg, #936203);
+    background: var(--color-warning-bg, rgba(240, 160, 32, 0.10));
+}
+
+.trainability-forecast__verdict-badge--block {
+    border-color: var(--color-error, #d03050);
+    color: var(--color-error-fg, #8c1f37);
+    background: var(--color-error-bg, rgba(208, 48, 80, 0.08));
+}
+
+.trainability-forecast__confidence {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.trainability-forecast__refresh {
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.trainability-forecast__refresh:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.trainability-forecast__refresh:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.trainability-forecast__signals {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.trainability-forecast__signal {
+    display: grid;
+    grid-template-columns: 24px 1fr auto;
+    align-items: start;
+    gap: var(--space-sm);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background: var(--bg-primary);
+}
+
+.trainability-forecast__signal-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--gray-0);
+    line-height: 1;
+}
+
+.trainability-forecast__signal-icon--ok {
+    background: var(--color-success, #18a058);
+}
+
+.trainability-forecast__signal-icon--warn {
+    background: var(--color-warning, #f0a020);
+}
+
+.trainability-forecast__signal-icon--block {
+    background: var(--color-error, #d03050);
+}
+
+.trainability-forecast__signal-body {
+    min-width: 0;
+}
+
+.trainability-forecast__signal-headline {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.trainability-forecast__signal-detail {
+    margin: 3px 0 0 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+}
+
+.trainability-forecast__action {
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+    white-space: nowrap;
+}
+
+.trainability-forecast__action:hover {
+    border-color: var(--border-strong);
+    background: var(--gray-50);
+}
+
+.trainability-forecast__loading,
+.trainability-forecast__error {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.trainability-forecast__error {
+    color: var(--color-error-fg, #8c1f37);
+}
+
+.trainability-forecast__retry {
+    margin-top: var(--space-xs);
+    border: 1px solid var(--border-default);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.trainability-forecast__cache-note {
+    margin: var(--space-sm) 0 0 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-style: italic;
+}

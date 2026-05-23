@@ -5234,3 +5234,32 @@ async def list_all(
     """List all experiments for a project."""
     exps = await list_experiments(db, project_id)
     return [ExperimentResponse.model_validate(e) for e in exps]
+
+
+@router.get("/forecast")
+async def get_training_forecast(
+    project_id: int,
+    refresh: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Predict whether the project's training run will clear default
+    Auto-Gates *before* the user clicks Train. USER-SUCCESS Epic 1.
+
+    Returns the 5-signal forecast: row count, class balance, gold-set
+    diversity, format consistency, and overall gate-pass probability.
+    Cached on `Project.training_forecast_cache`; pass `?refresh=true`
+    to bypass the cache.
+
+    400 — project has no selected recipe (the forecast needs a recipe
+    to know what task profile / gate set to score against).
+    404 — project not found.
+    """
+    from app.services.trainability_forecast_service import forecast_training
+
+    try:
+        return await forecast_training(db, project_id, use_cache=not refresh)
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(404, message)
+        raise HTTPException(400, message)

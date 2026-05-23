@@ -122,6 +122,17 @@ class Project(Base):
         default=None,
         nullable=True,
     )
+    # Cached trainability forecast (USER-SUCCESS Epic 1).
+    # Computed by `trainability_forecast_service.forecast_training`;
+    # keyed on (dataset_version, recipe_id, base_model_name) so the
+    # diversity-score embed pass is reused across reads. Invalidates
+    # when any cache-key input changes. Nullable so existing
+    # projects round-trip unchanged.
+    training_forecast_cache: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

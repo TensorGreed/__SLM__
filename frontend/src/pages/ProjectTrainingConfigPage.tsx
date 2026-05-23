@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
+import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectTrainingConfigPage.css';
@@ -56,6 +57,19 @@ export default function ProjectTrainingConfigPage() {
                 </div>
             </section>
 
+            <TrainabilityForecastPanel
+                projectId={projectId}
+                onActionClicked={(kind) => {
+                    // Suggested-action one-click router. Each action
+                    // routes to the surface that resolves it: synth_*
+                    // → Synthetic tab; fix_gold_rows → Gold Set tab.
+                    if (kind === 'fix_gold_rows') {
+                        navigate(`/project/${projectId}/pipeline/goldset`);
+                    } else {
+                        navigate(`/project/${projectId}/pipeline/synthetic`);
+                    }
+                }}
+            />
             <TrainingPanel
                 projectId={projectId}
                 title="Create and Configure Experiment"
