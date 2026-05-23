@@ -7,7 +7,7 @@ title: Auto API index
 
 # Auto-generated API reference
 
-**SLM Platform** — version `0.1.0`. 321 endpoint(s) across 37 tag(s).
+**SLM Platform** — version `0.1.0`. 379 endpoint(s) across 44 tag(s).
 
 This section is auto-generated from the FastAPI OpenAPI spec. For curated narrative
 + UI / CLI walkthroughs see the linked workflow pages. The live Swagger UI is at
@@ -18,39 +18,46 @@ This section is auto-generated from the FastAPI OpenAPI spec. For curated narrat
 | Tag | Endpoints |
 |---|---|
 | [Adapter Studio](adapter-studio.md) | 9 |
+| [Annotation](annotation.md) | 10 |
 | [Artifacts](artifacts.md) | 5 |
 | [Audit](audit.md) | 1 |
 | [Auth](auth.md) | 8 |
 | [Autopilot](autopilot.md) | 10 |
 | [Base Models](base-models.md) | 7 |
-| [Cleaning](cleaning.md) | 3 |
+| [Cleaning](cleaning.md) | 5 |
 | [Comparison](comparison.md) | 1 |
 | [Compression](compression.md) | 7 |
+| [Dataset Import](dataset-import.md) | 9 |
 | [Dataset Prep](dataset-prep.md) | 13 |
+| [DemoProjects](demoprojects.md) | 2 |
 | [Deployments](deployments.md) | 15 |
 | [Domain Blueprints](domain-blueprints.md) | 10 |
 | [Domain Packs](domain-packs.md) | 7 |
 | [Domain Profiles](domain-profiles.md) | 5 |
-| [Evaluation](evaluation.md) | 16 |
+| [Evaluation](evaluation.md) | 21 |
 | [Export](export.md) | 15 |
 | [Extensions](extensions.md) | 4 |
 | [FailureClusters](failureclusters.md) | 2 |
+| [Gamification](gamification.md) | 2 |
 | [Gold Dataset](gold-dataset.md) | 4 |
 | [Gold Set Workbench](gold-set-workbench.md) | 4 |
 | [Hardware](hardware.md) | 2 |
-| [Ingestion](ingestion.md) | 13 |
+| [Ingestion](ingestion.md) | 14 |
 | [Manifest](manifest.md) | 8 |
 | [Misc](misc.md) | 1 |
 | [Pipeline](pipeline.md) | 30 |
-| [Projects](projects.md) | 12 |
+| [Project Templates](project-templates.md) | 3 |
+| [Projects](projects.md) | 15 |
+| [Quickstart](quickstart.md) | 4 |
+| [Recipes](recipes.md) | 3 |
 | [Registry](registry.md) | 7 |
 | [RunEvents](runevents.md) | 2 |
 | [Secrets](secrets.md) | 3 |
 | [Settings](settings.md) | 2 |
 | [Starter Packs](starter-packs.md) | 4 |
 | [SupportBundles](supportbundles.md) | 3 |
-| [Synthetic](synthetic.md) | 4 |
+| [Synthetic](synthetic.md) | 14 |
 | [Targets](targets.md) | 3 |
 | [Timeline](timeline.md) | 1 |
 | [Tokenization](tokenization.md) | 2 |
-| [Training](training.md) | 78 |
+| [Training](training.md) | 82 |

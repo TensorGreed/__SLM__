@@ -1,5 +1,5 @@
 ---
-sidebar_position: 23
+sidebar_position: 27
 title: Ingestion
 ---
 
@@ -7,7 +7,7 @@ title: Ingestion
 
 # Ingestion
 
-Auto-generated reference for the **Ingestion** API. 13 endpoint(s).
+Auto-generated reference for the **Ingestion** API. 14 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -304,6 +304,38 @@ Process (parse) an ingested document to extract text.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `DocumentResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/ingestion/documents/{document_id}/sample`
+
+**Get Document Sample**
+
+Return ``n`` random rows from a RawDocument's source file.
+
+Used by the Data tab's accordion preview so a user who imported
+100K rows from HuggingFace can eyeball what's actually in the
+dataset without leaving the page. Supports JSONL, JSON arrays,
+CSV, TSV, and plain-text files; everything else returns
+``{"rows": []}`` with a clear note rather than a 500.
+
+For large files we reservoir-sample as we scan so memory stays
+flat regardless of row count. JSON arrays are bounded — files >
+64MB get rejected (they'd need to load fully into memory).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `document_id` | `path` | `integer` | yes |  |
+| `n` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

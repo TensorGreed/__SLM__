@@ -1,5 +1,5 @@
 ---
-sidebar_position: 27
+sidebar_position: 32
 title: Projects
 ---
 
@@ -7,7 +7,7 @@ title: Projects
 
 # Projects
 
-Auto-generated reference for the **Projects** API. 12 endpoint(s).
+Auto-generated reference for the **Projects** API. 15 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -142,6 +142,8 @@ Content type: `application/json` — `ProjectUpdate`
 | `budget_settings` | `object \\| null` | no |  |
 | `beginner_mode` | `boolean \\| null` | no |  |
 | `active_domain_blueprint_version` | `integer \\| null` | no |  |
+| `selected_recipe` | `object \\| null` | no |  |
+| `quickstart_tour_state` | `object \\| null` | no |  |
 
 **Responses**
 
@@ -265,6 +267,79 @@ Check if the project is ready for deployment/export based on gates.
 | Status | Schema | Description |
 |---|---|---|
 | `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/prepared-manifest`
+
+**Get Prepared Manifest**
+
+Return the project's prepared/manifest.json contents (or `{}`
+when missing). Lets UI surfaces — the SyntheticPanel in particular
+— auto-detect task_profile / scoring_mode / labels / entity_types /
+output_schema without having to scan the filesystem themselves.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `PUT /api/projects/{project_id}/recipe`
+
+**Apply Project Recipe**
+
+Snapshot a Theme 2 recipe onto the project and adopt its
+suggested base model. Returns the updated project.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ProjectRecipeApplyRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `recipe_id` | `string` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `ProjectResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/recipe`
+
+**Clear Project Recipe**
+
+Clear the recipe snapshot from a project. Does not roll back
+`base_model_name`; the user can edit that in project settings.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `ProjectResponse` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 

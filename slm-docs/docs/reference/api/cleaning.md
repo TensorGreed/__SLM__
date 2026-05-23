@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 9
 title: Cleaning
 ---
 
@@ -7,7 +7,7 @@ title: Cleaning
 
 # Cleaning
 
-Auto-generated reference for the **Cleaning** API. 3 endpoint(s).
+Auto-generated reference for the **Cleaning** API. 5 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -17,13 +17,35 @@ For curated narrative + UI / CLI walkthroughs see the corresponding section unde
 
 **Get Cleaned Chunks**
 
-Return all cleaned text chunks for a project (from .chunks.jsonl files).
+Return cleaned text chunks for a project.
+
+Streams ``.chunks.jsonl`` files for the project line-by-line so a
+74k-chunk project doesn't stream 37MB of JSON to the browser on
+every "Load from Cleaned Data" click. Three modes:
+
+- **random_sample=true** (default) — reservoir sample ``limit``
+  chunks across the whole pool. Each call returns a different
+  sample unless ``seed`` is provided.
+- **random_sample=false, offset=N** — paginated: skip the first
+  N chunks, return the next ``limit``. Useful for "Load more".
+- ``limit=0`` returns just the total count + no rows. Cheapest
+  way to ask "how many chunks does this project have?"
+
+Response:
+  - ``chunks``: list of chunk dicts (``document_id`` is injected)
+  - ``total``: full chunk count across the project
+  - ``returned``: len(chunks)
+  - ``limit`` / ``offset`` / ``random_sample`` / ``seed``: echoed
 
 **Parameters**
 
 | Name | In | Type | Required | Description |
 |---|---|---|---|---|
 | `project_id` | `path` | `integer` | yes |  |
+| `limit` | `query` | `integer` | no |  |
+| `offset` | `query` | `integer` | no |  |
+| `random_sample` | `query` | `boolean` | no |  |
+| `seed` | `query` | `integer \\| null` | no |  |
 
 **Responses**
 
@@ -88,6 +110,76 @@ Content type: `application/json` — `CleanBatchRequest`
 | `chunk_overlap` | `integer` | no |  |
 | `redact_pii` | `boolean` | no |  |
 | `redact_toxicity` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/cleaning/clean-batch-async`
+
+**Clean Batch Async**
+
+Start a cleaning batch as a background task; return a task_id.
+
+The synchronous ``clean-batch`` endpoint holds the HTTP request
+open for the entire job. With large documents (100K-row HF
+imports), that exceeds the dev proxy's 10-minute timeout and the
+frontend sees a "network error" while the worker is still
+cleaning. This variant detaches the work from the request
+lifetime — the response returns within milliseconds with a
+``task_id`` the frontend polls via :func:`task_status`.
+
+The job itself runs on the same event loop as the API, against a
+fresh DB session per the lifecycle pattern used elsewhere
+(``cloud_burst_service``).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `CleanBatchRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `document_ids` | `integer[]` | yes |  |
+| `chunk_size` | `integer` | no |  |
+| `chunk_overlap` | `integer` | no |  |
+| `redact_pii` | `boolean` | no |  |
+| `redact_toxicity` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `202` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/cleaning/tasks/{task_id}`
+
+**Task Status**
+
+Poll a backgrounded cleaning job for progress + results.
+
+Returns 404 when the id is unknown (process restarted, registry
+evicted the record, or the id was never created). The frontend
+treats 404 the same as a fatal failure — the task can't be
+resumed.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `task_id` | `path` | `string` | yes |  |
 
 **Responses**
 

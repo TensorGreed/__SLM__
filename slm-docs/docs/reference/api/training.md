@@ -1,5 +1,5 @@
 ---
-sidebar_position: 38
+sidebar_position: 45
 title: Training
 ---
 
@@ -7,7 +7,7 @@ title: Training
 
 # Training
 
-Auto-generated reference for the **Training** API. 78 endpoint(s).
+Auto-generated reference for the **Training** API. 82 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -80,6 +80,37 @@ Content type: `application/json` — `ExperimentCreate`
 | Status | Schema | Description |
 |---|---|---|
 | `201` | `ExperimentResponse` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/training/forecast`
+
+**Get Training Forecast**
+
+Predict whether the project's training run will clear default
+Auto-Gates *before* the user clicks Train. USER-SUCCESS Epic 1.
+
+Returns the 5-signal forecast: row count, class balance, gold-set
+diversity, format consistency, and overall gate-pass probability.
+Cached on `Project.training_forecast_cache`; pass `?refresh=true`
+to bypass the cache.
+
+400 — project has no selected recipe (the forecast needs a recipe
+to know what task profile / gate set to score against).
+404 — project not found.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `refresh` | `query` | `boolean` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -519,6 +550,27 @@ Content type: `application/json` — `CloudBurstQuoteRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/training/experiments/bulk-archive-failed`
+
+**Bulk Archive Failed Endpoint**
+
+Sweep every FAILED experiment in the project through
+reset_experiment. One-button cleanup after a chain of failures.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `POST /api/projects/{project_id}/training/experiments/effective-config`
 
 **Effective Training Config**
@@ -566,6 +618,28 @@ Content type: `application/json` — `TrainingEffectiveConfigRequest`
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `config` | `object` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `DELETE /api/projects/{project_id}/training/experiments/{experiment_id}`
+
+**Delete Experiment Endpoint**
+
+Hard delete an experiment: DB row + checkpoint rows + output
+dir gone for good. Refuses RUNNING experiments.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
 
 **Responses**
 
@@ -1558,6 +1632,29 @@ Cancel a running training experiment.
 **Training Preflight For Experiment**
 
 Run preflight checks for an existing experiment config.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/training/experiments/{experiment_id}/reset`
+
+**Reset**
+
+Flip a FAILED experiment back to PENDING and clear stale state
+(archive the output dir to .bak.<ts>, drop its checkpoint rows).
+Idempotent. Refuses RUNNING experiments — cancel first.
 
 **Parameters**
 

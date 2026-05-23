@@ -1,5 +1,5 @@
 ---
-sidebar_position: 16
+sidebar_position: 19
 title: Evaluation
 ---
 
@@ -7,7 +7,7 @@ title: Evaluation
 
 # Evaluation
 
-Auto-generated reference for the **Evaluation** API. 16 endpoint(s).
+Auto-generated reference for the **Evaluation** API. 21 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -199,6 +199,30 @@ Content type: `application/json` — `HeldoutEvalRunRequest`
 | Status | Schema | Description |
 |---|---|---|
 | `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/sft-lift-summary`
+
+**Get Sft Lift Summary**
+
+Compute the baseline → trained lift summary for this project.
+Used by the Eval tab's "Did SFT help?" panel. Returns
+`status="no_baseline"` / `"no_trained"` / `"no_overlap"` when
+the comparison can't be built — never 404 unless the project is
+missing — so the UI can render an informative fallback.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
 | `422` | `HTTPValidationError` | Validation Error |
 
 
@@ -413,6 +437,130 @@ Cluster row-level eval failures by `(reason_code, output_pattern)` (P12).
 | `eval_result_id` | `path` | `integer` | yes |  |
 | `max_failures` | `query` | `integer` | no |  |
 | `max_exemplars_per_cluster` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/evaluation/active-learning/{experiment_id}/promote`
+
+**Promote Active Learning Rows**
+
+Append the selected rows' gold answers to the project's
+SYNTHETIC dataset JSONL. Idempotent — re-running with the same
+indexes is a no-op.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `ActiveLearningPromoteRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `row_indexes` | `integer[]` | no | Row indexes (into the eval result's predictions array) to promote into the synthetic training dataset. The service ignores duplicates / out-of-range indexes; already-promoted rows are reported as skipped. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `201` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/evaluation/active-learning/{experiment_id}/proposal`
+
+**Get Active Learning Proposal**
+
+Propose up to `max_rows` failed eval rows for the given
+experiment, ranked by failure severity. Used by the
+'Add these N examples to improve most' panel on the Eval tab.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `experiment_id` | `path` | `integer` | yes |  |
+| `max_rows` | `query` | `integer` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/evaluation/{eval_result_id}/clusters/{cluster_id}/augment`
+
+**Augment Failure Cluster Endpoint**
+
+Generate cluster-targeted synthetic training data for a
+specific failure cluster (USER-SUCCESS Epic 2b).
+
+Calls the CLUSTER_TARGETED playbook for the project's recipe with
+the cluster's exemplars + reason code as context. Generated rows
+land in the project's synthetic dataset with provenance
+``synth_source = "playbook:<recipe>:cluster_targeted:cluster=<cluster_id>"``
+and ``review_status = "pending"`` so they pass through the synth
+review queue before entering training.
+
+Returns the PlaybookResult dict (rows + backend_used +
+elapsed_sec + prompt_snippet).
+
+503 when no synth backend is reachable. 404 when the eval /
+cluster / project isn't found. 400 for everything else.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `eval_result_id` | `path` | `integer` | yes |  |
+| `cluster_id` | `path` | `string` | yes |  |
+| `target_count` | `query` | `integer` | no |  |
+| `backend` | `query` | `string \\| null` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/evaluation/{eval_result_id}/clusters/{cluster_id}/explain`
+
+**Explain Failure Cluster Endpoint**
+
+Generate (or return cached) a one-line LLM-judge explanation
+for a failure cluster. Used by the Eval tab's
+`FailureClustersPanel` when the user expands a cluster.
+
+Returns 200 with `status="judge_unavailable"` when no judge
+model is configured — the UI then renders a soft fallback
+rather than breaking the expand interaction.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `eval_result_id` | `path` | `integer` | yes |  |
+| `cluster_id` | `path` | `string` | yes |  |
+| `force` | `query` | `boolean` | no |  |
+| `max_exemplars` | `query` | `integer` | no |  |
+| `judge_model` | `query` | `string \\| null` | no |  |
 
 **Responses**
 
