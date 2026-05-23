@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import PlaybookPickerPanel from './PlaybookPickerPanel';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
@@ -527,6 +528,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
 
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
+            <PlaybookPickerPanel projectId={projectId} />
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
                 {prefillSourceStage && (

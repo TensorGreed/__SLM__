@@ -1,0 +1,146 @@
+"""Ollama-based synthetic-data backend (USER-SUCCESS Epic 2).
+
+Talks to a local Ollama server via its OpenAI-compatible
+`/v1/chat/completions` endpoint. Picks the largest installed model
+from a preference order (Llama 3.1 8B → Qwen 2.5 7B → Mistral 7B →
+first listed) unless the caller pins a specific one.
+
+Reachability is cheap to check: a `GET /api/tags` is non-streaming
+and returns immediately when the daemon is up.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any
+
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - tests guard via mocks
+    httpx = None  # type: ignore[assignment]
+
+
+DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+
+# Preference order — we want the strongest realistic model that
+# Ollama users typically have pulled. Tags are matched as substrings
+# (so `llama3.1:8b-instruct-q4_K_M` matches `llama3.1`).
+PREFERRED_MODEL_PATTERNS: list[str] = [
+    "llama3.1",
+    "llama3",
+    "qwen2.5",
+    "qwen2",
+    "mistral",
+    "phi3",
+    "gemma",
+]
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    """Reasoning models (Qwen QwQ, DeepSeek-R1) emit `<think>...</think>`
+    blocks. We discard those before handing the response to the
+    playbook parser."""
+    if not text:
+        return ""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+class OllamaBackend:
+    """Ollama OpenAI-compatible chat completion backend."""
+
+    name: str = "ollama"
+
+    def __init__(
+        self,
+        *,
+        host: str = DEFAULT_OLLAMA_HOST,
+        model: str | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ):
+        self._host = host.rstrip("/")
+        self._timeout = timeout_seconds
+        # Resolve the model lazily on first complete() if not pinned.
+        self._model: str | None = model or None
+
+    @classmethod
+    def is_available(cls) -> bool:
+        """True when an Ollama daemon answers `GET /api/tags` on the
+        configured host. Uses a 1-second timeout so the check is cheap
+        even when Ollama is down."""
+        if httpx is None:
+            return False
+        try:
+            resp = httpx.get(f"{DEFAULT_OLLAMA_HOST}/api/tags", timeout=1.0)
+            return resp.status_code == 200
+        except Exception:  # noqa: BLE001 — any error means "not available"
+            return False
+
+    def describe(self) -> str:
+        if self._model:
+            return f"{self.name}:{self._model}"
+        return self.name
+
+    async def _resolve_model(self) -> str:
+        if self._model:
+            return self._model
+        if httpx is None:
+            raise RuntimeError("httpx is not installed; install httpx to use OllamaBackend.")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{self._host}/api/tags")
+            resp.raise_for_status()
+            data = resp.json()
+        models = [m.get("name", "") for m in (data.get("models") or [])]
+        if not models:
+            raise RuntimeError(
+                f"Ollama is reachable at {self._host} but has no models installed. "
+                f"Run `ollama pull llama3.1:8b` (or any model) first."
+            )
+        # Pick the first model in the preference list that matches any
+        # of the installed tags. Substring match so quantization
+        # suffixes (`:8b-q4`) don't break the match.
+        for pattern in PREFERRED_MODEL_PATTERNS:
+            for tag in models:
+                if pattern in tag:
+                    self._model = tag
+                    return tag
+        # Nothing matched — fall back to the first available tag.
+        self._model = models[0]
+        return self._model
+
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> str:
+        if httpx is None:
+            raise RuntimeError("httpx is not installed; install httpx to use OllamaBackend.")
+        model = await self._resolve_model()
+        messages: list[dict[str, Any]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(
+                f"{self._host}/v1/chat/completions",
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        # OpenAI-compatible response shape.
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as e:
+            raise RuntimeError(f"Ollama returned an unexpected response shape: {data!r}") from e
+        return _strip_thinking_blocks(str(content or ""))

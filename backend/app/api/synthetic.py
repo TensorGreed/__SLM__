@@ -240,3 +240,84 @@ async def save_spans(
         db, project_id, req.rows, req.min_confidence
     )
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────
+# USER-SUCCESS Epic 2 — playbook-driven synth.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class RunPlaybookRequest(BaseModel):
+    mode: str = Field(..., description="Synth mode, e.g. 'positives_paraphrase'.")
+    target_count: int = Field(30, ge=1, le=500)
+    target_class: str | None = Field(default=None)
+    backend: str | None = Field(default=None, description="Optional backend pin, e.g. 'ollama:llama3.1:8b'.")
+
+
+@router.get("/playbooks")
+async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Catalog of registered playbooks; if the project has a selected
+    recipe, filter to playbooks compatible with that recipe."""
+    from app.models.project import Project
+    from app.services.synth_playbook_service import available_playbooks_for_recipe
+    from app.services.synth_playbooks import list_playbooks
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    recipe = (project.selected_recipe or {}).get("recipe_id")
+    if recipe:
+        return {
+            "project_id": project_id,
+            "recipe_id": recipe,
+            "playbooks": available_playbooks_for_recipe(recipe),
+        }
+    # No recipe — return the full catalog so the user can preview.
+    return {
+        "project_id": project_id,
+        "recipe_id": None,
+        "playbooks": list_playbooks(),
+    }
+
+
+@router.post("/run-playbook")
+async def run_synth_playbook(
+    project_id: int,
+    req: RunPlaybookRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a playbook against the project's gold rows, generate
+    synthetic training data, and persist accepted rows into the
+    project's synthetic dataset.
+
+    Returns a PlaybookResult: rows + backend_used + elapsed_sec +
+    prompt_snippet.
+    """
+    from app.services.synth_backends import SynthBackendError
+    from app.services.synth_playbook_service import run_playbook
+    from app.services.synth_playbooks import SynthMode
+
+    try:
+        mode = SynthMode(req.mode)
+    except ValueError:
+        raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
+
+    try:
+        result = await run_playbook(
+            db,
+            project_id,
+            mode,
+            target_count=req.target_count,
+            target_class=req.target_class,
+            backend=req.backend,
+        )
+    except SynthBackendError as e:
+        raise HTTPException(503, str(e))
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(404, message)
+        raise HTTPException(400, message)
+
+    return result
