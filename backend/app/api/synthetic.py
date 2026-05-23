@@ -7,13 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.services.synthetic_service import (
     MAX_TOTAL_ROWS,
+    PER_BATCH_CONVERSATION_CAP,
+    PER_BATCH_ROW_CAP,
     generate_conversation_dialogues,
     generate_qa_pairs,
     generate_span_extraction_rows,
-    get_span_task_status,
+    get_synth_task_status,
     save_synthetic_batch,
     save_synthetic_conversation_batch,
     save_synthetic_span_batch,
+    start_conversation_generation_task,
+    start_qa_generation_task,
     start_span_generation_task,
 )
 
@@ -26,6 +30,47 @@ class GenerateRequest(BaseModel):
     api_url: str = ""
     api_key: str = ""
     model_name: str = "llama3"
+
+
+class GenerateAsyncRequest(BaseModel):
+    """Body for the long-running batched QA-pair generator.
+
+    Mirrors ``GenerateSpanAsyncRequest`` — single-call ``/generate``
+    is capped at 50 pairs per LLM round-trip, this endpoint chunks
+    server-side into ``PER_BATCH_ROW_CAP`` calls and (when
+    ``use_all_chunks`` is set) feeds each batch a fresh random sample
+    of the project's cleaned chunks."""
+
+    target_rows: int = Field(..., ge=1, le=MAX_TOTAL_ROWS)
+    api_url: str = ""
+    api_key: str = ""
+    model_name: str = "llama3"
+    use_all_chunks: bool = Field(
+        default=True,
+        description=(
+            "When true, source text for each batch is a fresh random "
+            "sample (~4–8k tokens) of the project's cleaned chunks. "
+            "When false, ``source_text`` is reused verbatim for every "
+            "batch."
+        ),
+    )
+    source_text: str = ""
+
+
+class GenerateConversationAsyncRequest(BaseModel):
+    """Body for the long-running batched conversation generator.
+
+    Conversations are heavier than single QA pairs so the per-batch
+    cap is smaller (``PER_BATCH_CONVERSATION_CAP``)."""
+
+    target_rows: int = Field(..., ge=1, le=MAX_TOTAL_ROWS)
+    min_turns: int = Field(3, ge=1, le=20)
+    max_turns: int = Field(5, ge=1, le=20)
+    api_url: str = ""
+    api_key: str = ""
+    model_name: str = "llama3"
+    use_all_chunks: bool = Field(default=True)
+    source_text: str = ""
 
 
 class SaveBatchRequest(BaseModel):
@@ -212,16 +257,82 @@ async def generate_spans_async(
         "task_id": task.task_id,
         "status": task.status,
         "target_rows": task.target_rows,
-        "batches_total": (req.target_rows + 49) // 50,
+        "batches_total": (req.target_rows + PER_BATCH_ROW_CAP - 1) // PER_BATCH_ROW_CAP,
+    }
+
+
+@router.post("/generate-async", status_code=202)
+async def generate_qa_async(
+    project_id: int,
+    req: GenerateAsyncRequest,
+):
+    """Kick off a batched QA-pair generation job. Returns immediately
+    with a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}``
+    for progress + accumulated pairs.
+
+    Lifts the 50-pair cap that the sync ``/generate`` endpoint enforces:
+    the server batches into ``PER_BATCH_ROW_CAP`` chunks and (when
+    ``use_all_chunks`` is set) samples fresh source text per batch."""
+    try:
+        task = start_qa_generation_task(
+            project_id=project_id,
+            target_rows=req.target_rows,
+            api_url=req.api_url,
+            api_key=req.api_key,
+            model_name=req.model_name,
+            use_all_chunks=req.use_all_chunks,
+            source_text=req.source_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {
+        "task_id": task.task_id,
+        "status": task.status,
+        "target_rows": task.target_rows,
+        "batches_total": (req.target_rows + PER_BATCH_ROW_CAP - 1) // PER_BATCH_ROW_CAP,
+    }
+
+
+@router.post("/generate-conversations-async", status_code=202)
+async def generate_conversations_async(
+    project_id: int,
+    req: GenerateConversationAsyncRequest,
+):
+    """Kick off a batched multi-turn conversation generation job.
+    Conversations are heavier than QA pairs, so the per-batch cap is
+    ``PER_BATCH_CONVERSATION_CAP`` rather than ``PER_BATCH_ROW_CAP``."""
+    try:
+        task = start_conversation_generation_task(
+            project_id=project_id,
+            target_rows=req.target_rows,
+            min_turns=req.min_turns,
+            max_turns=req.max_turns,
+            api_url=req.api_url,
+            api_key=req.api_key,
+            model_name=req.model_name,
+            use_all_chunks=req.use_all_chunks,
+            source_text=req.source_text,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {
+        "task_id": task.task_id,
+        "status": task.status,
+        "target_rows": task.target_rows,
+        "batches_total": (
+            (req.target_rows + PER_BATCH_CONVERSATION_CAP - 1)
+            // PER_BATCH_CONVERSATION_CAP
+        ),
     }
 
 
 @router.get("/tasks/{task_id}")
 async def get_synthetic_task(project_id: int, task_id: str):
-    """Read the live state of a batched span-generation job. Returns
-    ``rows`` once the task has completed (or partial rows while still
-    running)."""
-    task = get_span_task_status(task_id)
+    """Read the live state of any batched synthetic-generation job
+    (span, qa, or conversation). Returns ``rows`` once the task has
+    completed (or partial rows while still running). The ``task_kind``
+    field on the response disambiguates the row shape for the client."""
+    task = get_synth_task_status(task_id)
     if task is None:
         raise HTTPException(404, f"Synthetic task {task_id!r} not found")
     if task.project_id != project_id:

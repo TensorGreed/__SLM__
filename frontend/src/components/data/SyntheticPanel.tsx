@@ -8,6 +8,14 @@ import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
 
 interface SyntheticPanelProps { projectId: number; onNextStep?: () => void; }
 
+// Mirror the backend's MAX_TOTAL_ROWS / PER_BATCH_* caps so the form
+// can decide whether to switch to the batched async endpoint vs. the
+// single-shot sync one. Keep these in sync with
+// backend/app/services/synthetic_service.py.
+const MAX_TOTAL_ROWS_FRONTEND = 5000;
+const PER_BATCH_ROW_CAP_FRONTEND = 50;
+const PER_BATCH_CONVERSATION_CAP_FRONTEND = 5;
+
 interface Chunk {
     chunk_id: number;
     text: string;
@@ -90,14 +98,16 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const [generatedConversations, setGeneratedConversations] = useState<any[]>([]);
     const [generatedSpans, setGeneratedSpans] = useState<SpanRow[]>([]);
     const [numSpans, setNumSpans] = useState(5);
-    // When true, span_extraction generation runs server-side as a
-    // batched async task: ceil(numSpans / 50) calls each fed a fresh
-    // randomized sample of the project's cleaned chunks. The textarea
-    // / chunk picker selection is ignored in this mode.
+    // When true, generation runs server-side as a batched async task
+    // — each batch is fed a fresh randomized sample of the project's
+    // cleaned chunks. The textarea / chunk picker selection is
+    // ignored. Applies to QA, conversation, and span_extraction modes
+    // alike (USER-SUCCESS Epic 2c parity).
     const [useAllChunks, setUseAllChunks] = useState(false);
-    // Live status of the in-flight async span job. ``null`` when no
-    // task is running. The poller drives this every ~3s.
-    const [spanTaskStatus, setSpanTaskStatus] = useState<{
+    // Live status of the in-flight async job (QA / conversation /
+    // span). ``null`` when no task is running. The poller drives this
+    // every ~3s.
+    const [asyncTaskStatus, setAsyncTaskStatus] = useState<{
         task_id: string;
         status: string;
         target_rows: number;
@@ -210,11 +220,11 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
 
             const parsedPairs = Number(cfg.num_pairs);
             if (Number.isFinite(parsedPairs) && parsedPairs > 0) {
-                setNumPairs(Math.max(1, Math.min(50, Math.round(parsedPairs))));
+                setNumPairs(Math.max(1, Math.min(MAX_TOTAL_ROWS_FRONTEND, Math.round(parsedPairs))));
             }
             const parsedDialogues = Number(cfg.num_dialogues);
             if (Number.isFinite(parsedDialogues) && parsedDialogues > 0) {
-                setNumDialogues(Math.max(1, Math.min(20, Math.round(parsedDialogues))));
+                setNumDialogues(Math.max(1, Math.min(MAX_TOTAL_ROWS_FRONTEND, Math.round(parsedDialogues))));
             }
             const parsedMinTurns = Number(cfg.min_turns);
             const parsedMaxTurns = Number(cfg.max_turns);
@@ -356,39 +366,124 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     // signals intent and keeps the request alive long enough.
     const LONG_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
+    // Poll an async generation task until it completes/fails. Updates
+    // ``asyncTaskStatus`` as batches land and returns the final
+    // ``rows`` array (qa / conversation / span row shape, depending
+    // on the task kind). Shared across QA / Conversation / Span.
+    const pollAsyncTask = async (
+        taskId: string,
+        initial: {
+            status: string;
+            target_rows: number;
+            batches_total: number;
+        },
+        labelForErrors: string,
+    ): Promise<any[]> => {
+        setAsyncTaskStatus({
+            task_id: taskId,
+            status: initial.status,
+            target_rows: initial.target_rows,
+            rows_so_far: 0,
+            batches_done: 0,
+            batches_total: initial.batches_total,
+        });
+        while (true) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const statusRes = await api.get(
+                `/projects/${projectId}/synthetic/tasks/${taskId}`,
+            );
+            const data = statusRes.data;
+            setAsyncTaskStatus({
+                task_id: taskId,
+                status: data.status,
+                target_rows: data.target_rows,
+                rows_so_far: data.rows_so_far,
+                batches_done: data.batches_done,
+                batches_total: data.batches_total,
+                error: data.error,
+            });
+            if (data.status === 'completed' || data.status === 'failed') {
+                if (data.status === 'failed') {
+                    toast.error(
+                        data.error || `${labelForErrors} generation failed.`,
+                    );
+                } else if (data.error) {
+                    // Partial success — some batches errored but the
+                    // task completed with the rows that did succeed.
+                    toast.warning(
+                        `Generation finished with warnings: ${data.error}`,
+                    );
+                }
+                return data.rows || [];
+            }
+        }
+    };
+
     const handleGenerate = async () => {
-        // useAllChunks span_extraction mode doesn't need source_text
-        // — the server samples from the cleaned-chunk pool per batch.
-        const skipSourceCheck =
-            generationMode === 'span_extraction' && useAllChunks;
+        // useAllChunks doesn't need source_text — the server samples
+        // from the cleaned-chunk pool per batch.
+        const skipSourceCheck = useAllChunks;
         if (!skipSourceCheck && !sourceText.trim()) return;
         setIsGenerating(true);
         try {
             if (generationMode === 'qa') {
-                const res = await api.post(
-                    `/projects/${projectId}/synthetic/generate`,
-                    {
-                        source_text: sourceText,
-                        num_pairs: numPairs,
-                        api_url: apiUrl,
-                        api_key: apiKey,
-                        model_name: modelName,
-                    },
-                    { timeout: LONG_REQUEST_TIMEOUT_MS },
-                );
-                setGeneratedPairs(res.data.pairs || []);
-                setGeneratedConversations([]);
-                setGeneratedSpans([]);
-            } else if (generationMode === 'span_extraction') {
-                // Two paths: a single-batch sync call (≤50 rows AND
+                // Two paths: a single-batch sync call (≤50 pairs AND
                 // user is feeding their own source_text), or a
-                // batched async task (>50 rows OR sample-from-all-
+                // batched async task (>50 pairs OR sample-from-all-
                 // cleaned-chunks mode). The async task is server-
                 // looped at PER_BATCH_ROW_CAP=50 per call and uses a
                 // fresh randomized chunk sample each batch.
-                const wantsAsync = numSpans > 50 || useAllChunks;
+                const wantsAsync =
+                    numPairs > PER_BATCH_ROW_CAP_FRONTEND || useAllChunks;
                 if (wantsAsync) {
-                    setSpanTaskStatus(null);
+                    setAsyncTaskStatus(null);
+                    setGeneratedPairs([]);
+                    setGeneratedConversations([]);
+                    setGeneratedSpans([]);
+                    const startRes = await api.post(
+                        `/projects/${projectId}/synthetic/generate-async`,
+                        {
+                            target_rows: numPairs,
+                            api_url: apiUrl,
+                            api_key: apiKey,
+                            model_name: modelName,
+                            use_all_chunks: useAllChunks,
+                            source_text: useAllChunks ? '' : sourceText,
+                        },
+                    );
+                    const rows = await pollAsyncTask(
+                        startRes.data.task_id,
+                        {
+                            status: startRes.data.status,
+                            target_rows: startRes.data.target_rows,
+                            batches_total: startRes.data.batches_total,
+                        },
+                        'Q&A',
+                    );
+                    setGeneratedPairs(rows);
+                    setGeneratedConversations([]);
+                    setGeneratedSpans([]);
+                } else {
+                    const res = await api.post(
+                        `/projects/${projectId}/synthetic/generate`,
+                        {
+                            source_text: sourceText,
+                            num_pairs: numPairs,
+                            api_url: apiUrl,
+                            api_key: apiKey,
+                            model_name: modelName,
+                        },
+                        { timeout: LONG_REQUEST_TIMEOUT_MS },
+                    );
+                    setGeneratedPairs(res.data.pairs || []);
+                    setGeneratedConversations([]);
+                    setGeneratedSpans([]);
+                }
+            } else if (generationMode === 'span_extraction') {
+                const wantsAsync =
+                    numSpans > PER_BATCH_ROW_CAP_FRONTEND || useAllChunks;
+                if (wantsAsync) {
+                    setAsyncTaskStatus(null);
                     setGeneratedSpans([]);
                     setGeneratedPairs([]);
                     setGeneratedConversations([]);
@@ -404,48 +499,18 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             source_text: useAllChunks ? '' : sourceText,
                         },
                     );
-                    const taskId = startRes.data.task_id;
-                    setSpanTaskStatus({
-                        task_id: taskId,
-                        status: startRes.data.status,
-                        target_rows: startRes.data.target_rows,
-                        rows_so_far: 0,
-                        batches_done: 0,
-                        batches_total: startRes.data.batches_total,
-                    });
-                    // Poll until the task reports completed/failed.
-                    while (true) {
-                        await new Promise((r) => setTimeout(r, 3000));
-                        const statusRes = await api.get(
-                            `/projects/${projectId}/synthetic/tasks/${taskId}`,
-                        );
-                        const data = statusRes.data;
-                        setSpanTaskStatus({
-                            task_id: taskId,
-                            status: data.status,
-                            target_rows: data.target_rows,
-                            rows_so_far: data.rows_so_far,
-                            batches_done: data.batches_done,
-                            batches_total: data.batches_total,
-                            error: data.error,
-                        });
-                        if (data.status === 'completed' || data.status === 'failed') {
-                            setGeneratedSpans(data.rows || []);
-                            if (data.status === 'failed') {
-                                toast.error(
-                                    data.error || 'Span generation failed.',
-                                );
-                            } else if (data.error) {
-                                // Partial success — some batches errored
-                                // but the task completed with the rows
-                                // that did succeed.
-                                toast.warning(
-                                    `Generation finished with warnings: ${data.error}`,
-                                );
-                            }
-                            break;
-                        }
-                    }
+                    const rows = await pollAsyncTask(
+                        startRes.data.task_id,
+                        {
+                            status: startRes.data.status,
+                            target_rows: startRes.data.target_rows,
+                            batches_total: startRes.data.batches_total,
+                        },
+                        'Span',
+                    );
+                    setGeneratedSpans(rows);
+                    setGeneratedPairs([]);
+                    setGeneratedConversations([]);
                 } else {
                     const res = await api.post(
                         `/projects/${projectId}/synthetic/generate-spans`,
@@ -464,22 +529,62 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     setGeneratedConversations([]);
                 }
             } else {
-                const res = await api.post(
-                    `/projects/${projectId}/synthetic/generate-conversations`,
-                    {
-                        source_text: sourceText,
-                        num_dialogues: numDialogues,
-                        min_turns: minTurns,
-                        max_turns: Math.max(minTurns, maxTurns),
-                        api_url: apiUrl,
-                        api_key: apiKey,
-                        model_name: modelName,
-                    },
-                    { timeout: LONG_REQUEST_TIMEOUT_MS },
-                );
-                setGeneratedConversations(res.data.conversations || []);
-                setGeneratedPairs([]);
-                setGeneratedSpans([]);
+                // Conversation mode — per-batch cap is smaller (5)
+                // since multi-turn dialogues are heavier than QA
+                // pairs. Async kicks in any time the user asks for
+                // more than the per-batch cap, or when useAllChunks
+                // is set (server samples chunks per batch).
+                const wantsAsync =
+                    numDialogues > PER_BATCH_CONVERSATION_CAP_FRONTEND
+                    || useAllChunks;
+                if (wantsAsync) {
+                    setAsyncTaskStatus(null);
+                    setGeneratedConversations([]);
+                    setGeneratedPairs([]);
+                    setGeneratedSpans([]);
+                    const startRes = await api.post(
+                        `/projects/${projectId}/synthetic/generate-conversations-async`,
+                        {
+                            target_rows: numDialogues,
+                            min_turns: minTurns,
+                            max_turns: Math.max(minTurns, maxTurns),
+                            api_url: apiUrl,
+                            api_key: apiKey,
+                            model_name: modelName,
+                            use_all_chunks: useAllChunks,
+                            source_text: useAllChunks ? '' : sourceText,
+                        },
+                    );
+                    const rows = await pollAsyncTask(
+                        startRes.data.task_id,
+                        {
+                            status: startRes.data.status,
+                            target_rows: startRes.data.target_rows,
+                            batches_total: startRes.data.batches_total,
+                        },
+                        'Conversation',
+                    );
+                    setGeneratedConversations(rows);
+                    setGeneratedPairs([]);
+                    setGeneratedSpans([]);
+                } else {
+                    const res = await api.post(
+                        `/projects/${projectId}/synthetic/generate-conversations`,
+                        {
+                            source_text: sourceText,
+                            num_dialogues: numDialogues,
+                            min_turns: minTurns,
+                            max_turns: Math.max(minTurns, maxTurns),
+                            api_url: apiUrl,
+                            api_key: apiKey,
+                            model_name: modelName,
+                        },
+                        { timeout: LONG_REQUEST_TIMEOUT_MS },
+                    );
+                    setGeneratedConversations(res.data.conversations || []);
+                    setGeneratedPairs([]);
+                    setGeneratedSpans([]);
+                }
             }
             setSaveResult(null);
         } catch (err: any) {
@@ -544,6 +649,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                         <select
                             className="input"
                             value={generationMode}
+                            data-testid="synth-generation-mode"
                             onChange={(e) => {
                                 const nextMode = e.target.value as GenerationMode;
                                 setGenerationMode(nextMode);
@@ -634,11 +740,33 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                 className="input"
                                 type="number"
                                 value={numPairs}
-                                onChange={e => setNumPairs(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+                                onChange={e =>
+                                    setNumPairs(
+                                        Math.max(
+                                            1,
+                                            Math.min(
+                                                MAX_TOTAL_ROWS_FRONTEND,
+                                                Number(e.target.value) || 1,
+                                            ),
+                                        ),
+                                    )
+                                }
                                 min={1}
-                                max={50}
+                                max={MAX_TOTAL_ROWS_FRONTEND}
                                 style={{ width: 120 }}
+                                data-testid="qa-num-pairs"
                             />
+                            <div
+                                style={{
+                                    fontSize: '0.75rem',
+                                    color: 'var(--text-tertiary)',
+                                    marginTop: 4,
+                                }}
+                            >
+                                {numPairs > PER_BATCH_ROW_CAP_FRONTEND
+                                    ? `Will run in ${Math.ceil(numPairs / PER_BATCH_ROW_CAP_FRONTEND)} background batches.`
+                                    : 'Single-shot generation.'}
+                            </div>
                         </div>
                     ) : generationMode === 'span_extraction' ? (
                         <>
@@ -684,76 +812,6 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     placeholder="email, phone, ssn, credit_card, person_name"
                                 />
                             </div>
-                            <div
-                                className="form-group"
-                                style={{
-                                    marginBottom: 0,
-                                    flexBasis: '100%',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                }}
-                            >
-                                <label
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                        cursor: 'pointer',
-                                        fontSize: '0.85rem',
-                                    }}
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={useAllChunks}
-                                        onChange={(e) =>
-                                            setUseAllChunks(e.target.checked)
-                                        }
-                                        data-testid="span-use-all-chunks"
-                                    />
-                                    Sample randomly from all cleaned chunks (per batch)
-                                </label>
-                                <span
-                                    style={{
-                                        fontSize: '0.75rem',
-                                        color: 'var(--text-tertiary)',
-                                    }}
-                                >
-                                    Ignores the source-text textarea; each
-                                    batch gets a fresh 4–8k-token sample.
-                                </span>
-                            </div>
-                            {spanTaskStatus && (
-                                <div
-                                    data-testid="span-task-progress"
-                                    style={{
-                                        flexBasis: '100%',
-                                        padding: 'var(--space-sm)',
-                                        background: 'var(--bg-secondary)',
-                                        border: '1px solid var(--border-color)',
-                                        borderRadius: 'var(--radius-sm)',
-                                        fontSize: '0.85rem',
-                                    }}
-                                >
-                                    <strong>{spanTaskStatus.status}</strong>
-                                    {' — '}
-                                    batch {spanTaskStatus.batches_done} /{' '}
-                                    {spanTaskStatus.batches_total}
-                                    {' · '}
-                                    {spanTaskStatus.rows_so_far} /{' '}
-                                    {spanTaskStatus.target_rows} rows
-                                    {spanTaskStatus.error && (
-                                        <div
-                                            style={{
-                                                color: 'var(--color-error, #c00)',
-                                                marginTop: 4,
-                                            }}
-                                        >
-                                            {spanTaskStatus.error}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
                         </>
                     ) : (
                         <>
@@ -763,11 +821,33 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                                     className="input"
                                     type="number"
                                     value={numDialogues}
-                                    onChange={e => setNumDialogues(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                                    onChange={e =>
+                                        setNumDialogues(
+                                            Math.max(
+                                                1,
+                                                Math.min(
+                                                    MAX_TOTAL_ROWS_FRONTEND,
+                                                    Number(e.target.value) || 1,
+                                                ),
+                                            ),
+                                        )
+                                    }
                                     min={1}
-                                    max={20}
+                                    max={MAX_TOTAL_ROWS_FRONTEND}
                                     style={{ width: 100 }}
+                                    data-testid="conversation-num-dialogues"
                                 />
+                                <div
+                                    style={{
+                                        fontSize: '0.75rem',
+                                        color: 'var(--text-tertiary)',
+                                        marginTop: 4,
+                                    }}
+                                >
+                                    {numDialogues > PER_BATCH_CONVERSATION_CAP_FRONTEND
+                                        ? `Will run in ${Math.ceil(numDialogues / PER_BATCH_CONVERSATION_CAP_FRONTEND)} background batches.`
+                                        : 'Single-shot generation.'}
+                                </div>
                             </div>
                             <div className="form-group" style={{ marginBottom: 0 }}>
                                 <label className="form-label">Min Turns</label>
@@ -799,16 +879,91 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             </div>
                         </>
                     )}
+                    {/* Shared row: "use all cleaned chunks" toggle + async
+                        progress display. Applies to QA, conversation, and
+                        span_extraction alike — when checked, generation
+                        becomes a server-batched async task that samples
+                        4–8k tokens from the cleaned-chunk pool per batch. */}
+                    <div
+                        className="form-group"
+                        style={{
+                            marginBottom: 0,
+                            flexBasis: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                        }}
+                    >
+                        <label
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                cursor: 'pointer',
+                                fontSize: '0.85rem',
+                            }}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={useAllChunks}
+                                onChange={(e) =>
+                                    setUseAllChunks(e.target.checked)
+                                }
+                                data-testid="synth-use-all-chunks"
+                            />
+                            Sample randomly from all cleaned chunks (per batch)
+                        </label>
+                        <span
+                            style={{
+                                fontSize: '0.75rem',
+                                color: 'var(--text-tertiary)',
+                            }}
+                        >
+                            Ignores the source-text textarea; each
+                            batch gets a fresh 4–8k-token sample.
+                        </span>
+                    </div>
+                    {asyncTaskStatus && (
+                        <div
+                            data-testid="synth-task-progress"
+                            style={{
+                                flexBasis: '100%',
+                                padding: 'var(--space-sm)',
+                                background: 'var(--bg-secondary)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-sm)',
+                                fontSize: '0.85rem',
+                            }}
+                        >
+                            <strong>{asyncTaskStatus.status}</strong>
+                            {' — '}
+                            batch {asyncTaskStatus.batches_done} /{' '}
+                            {asyncTaskStatus.batches_total}
+                            {' · '}
+                            {asyncTaskStatus.rows_so_far} /{' '}
+                            {asyncTaskStatus.target_rows} rows
+                            {asyncTaskStatus.error && (
+                                <div
+                                    style={{
+                                        color: 'var(--color-error, #c00)',
+                                        marginTop: 4,
+                                    }}
+                                >
+                                    {asyncTaskStatus.error}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <button
                         className="btn btn-primary"
                         onClick={handleGenerate}
                         disabled={
                             isGenerating
                             || (
-                                // span_extraction + useAllChunks supplies its
-                                // source server-side per batch, so an empty
-                                // textarea is fine in that one combo.
-                                !(generationMode === 'span_extraction' && useAllChunks)
+                                // useAllChunks supplies source server-side
+                                // per batch (any mode), so an empty
+                                // textarea is fine in that case.
+                                !useAllChunks
                                 && !sourceText.trim()
                             )
                         }
@@ -858,14 +1013,13 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                             )}
                         </h3>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            {generationMode === 'span_extraction'
-                                && chunkPoolTotal > chunks.length && (
+                            {chunkPoolTotal > chunks.length && (
                                 <button
                                     className="btn btn-primary"
                                     style={{ fontSize: 'var(--font-size-xs)' }}
                                     onClick={useAllChunksFromPicker}
                                     title={`Use the full pool of ${chunkPoolTotal.toLocaleString()} chunks. Each generation batch will sample 4–8k tokens randomly server-side — no need to load them all in the browser.`}
-                                    data-testid="span-use-all-from-picker"
+                                    data-testid="synth-use-all-from-picker"
                                 >
                                     📦 Use all {chunkPoolTotal.toLocaleString()} (auto-sample per batch)
                                 </button>

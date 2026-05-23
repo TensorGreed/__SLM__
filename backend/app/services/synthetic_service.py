@@ -1525,7 +1525,7 @@ class SyntheticSpanTask:
         }
 
 
-_SYNTHETIC_TASKS: dict[str, SyntheticSpanTask] = {}
+_SYNTHETIC_TASKS: dict[str, Any] = {}
 _SYNTHETIC_TASKS_LOCK = threading.Lock()
 _MAX_TRACKED_SYNTHETIC_TASKS: int = 64
 
@@ -1737,4 +1737,359 @@ def get_span_task_status(task_id: str) -> SyntheticSpanTask | None:
     """Return the in-memory task record for a given id, or None if
     it's already been evicted or never existed."""
     with _SYNTHETIC_TASKS_LOCK:
+        task = _SYNTHETIC_TASKS.get(task_id)
+        if isinstance(task, SyntheticSpanTask):
+            return task
+        # Legacy callers may call this for any kind — we return None
+        # for non-span tasks here to preserve the original contract.
+        # New code should call `get_synth_task_status()` instead.
+        if task is not None:
+            return None
+        return None
+
+
+def get_synth_task_status(
+    task_id: str,
+) -> "SyntheticSpanTask | SyntheticQaTask | SyntheticConversationTask | None":
+    """Generic task-status lookup that works for span, qa, and
+    conversation kinds. Frontend should use this for the
+    ``GET /synthetic/tasks/{task_id}`` poll endpoint."""
+    with _SYNTHETIC_TASKS_LOCK:
         return _SYNTHETIC_TASKS.get(task_id)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# QA-pair async batched generation (USER-SUCCESS Epic 2c parity).
+#
+# Mirrors the span-extraction async machinery: target rows up to
+# MAX_TOTAL_ROWS, server batches into PER_BATCH_ROW_CAP-sized chunks,
+# `use_all_chunks=True` samples a fresh 4-8k-char window from the
+# project's cleaned corpus per batch.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class SyntheticQaTask:
+    """In-memory record of a batched QA-pair generation job."""
+
+    task_id: str
+    project_id: int
+    target_rows: int
+    api_url: str
+    api_key: str
+    model_name: str
+    use_all_chunks: bool
+    source_text: str
+
+    status: str = "pending"
+    rows: list[dict] = field(default_factory=list)
+    batches_done: int = 0
+    batches_total: int = 0
+    error: str | None = None
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "task_kind": "qa",
+            "project_id": self.project_id,
+            "status": self.status,
+            "target_rows": self.target_rows,
+            "rows_so_far": len(self.rows),
+            "batches_done": self.batches_done,
+            "batches_total": self.batches_total,
+            "rows": list(self.rows),
+            "error": self.error,
+            "started_at": self.started_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "finished_at": (
+                self.finished_at.isoformat() if self.finished_at else None
+            ),
+        }
+
+
+async def _run_qa_generation_task(task: SyntheticQaTask) -> None:
+    """Drive one batched QA-pair generation job to completion.
+    Per-batch behavior matches `_run_span_generation_task`: load
+    chunks if needed, loop, swallow per-batch failures + continue."""
+    task.status = "running"
+    task.updated_at = datetime.now(timezone.utc)
+
+    pool: list[str] = []
+    if task.use_all_chunks:
+        try:
+            pool = await _load_project_cleaned_chunks(task.project_id)
+        except Exception as exc:  # noqa: BLE001
+            task.status = "failed"
+            task.error = f"failed to load cleaned chunks: {exc}"
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            return
+        if not pool:
+            task.status = "failed"
+            task.error = (
+                "use_all_chunks=true but no cleaned chunks were found "
+                "for this project. Run Data Cleaning first."
+            )
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            return
+
+    remaining = task.target_rows
+    task.batches_total = (
+        (task.target_rows + PER_BATCH_ROW_CAP - 1) // PER_BATCH_ROW_CAP
+    )
+    rng = random.Random()
+
+    try:
+        async with async_session_factory() as db:
+            while remaining > 0:
+                rows_this_batch = min(PER_BATCH_ROW_CAP, remaining)
+                if task.use_all_chunks:
+                    target_chars = rng.randint(SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS)
+                    source_text = _sample_chunks_for_batch(
+                        pool, target_chars=target_chars, rng=rng
+                    )
+                else:
+                    source_text = task.source_text
+
+                try:
+                    batch_rows = await generate_qa_pairs(
+                        db,
+                        task.project_id,
+                        source_text,
+                        rows_this_batch,
+                        task.api_url,
+                        task.api_key,
+                        task.model_name,
+                    )
+                    task.rows.extend(batch_rows)
+                except Exception as exc:  # noqa: BLE001
+                    task.error = (
+                        f"batch {task.batches_done + 1}/{task.batches_total}: {exc}"
+                    )
+                finally:
+                    task.batches_done += 1
+                    remaining -= rows_this_batch
+                    task.updated_at = datetime.now(timezone.utc)
+        task.status = "completed"
+    except Exception as exc:  # noqa: BLE001
+        task.status = "failed"
+        task.error = str(exc)
+    finally:
+        task.finished_at = datetime.now(timezone.utc)
+        task.updated_at = task.finished_at
+
+
+def start_qa_generation_task(
+    *,
+    project_id: int,
+    target_rows: int,
+    api_url: str,
+    api_key: str,
+    model_name: str,
+    use_all_chunks: bool,
+    source_text: str,
+) -> SyntheticQaTask:
+    """Register + launch a batched QA-pair generation task."""
+    if target_rows < 1 or target_rows > MAX_TOTAL_ROWS:
+        raise ValueError(
+            f"target_rows must be between 1 and {MAX_TOTAL_ROWS} (got {target_rows})"
+        )
+    if not use_all_chunks and not (source_text or "").strip():
+        raise ValueError(
+            "source_text is required when use_all_chunks is false"
+        )
+
+    task = SyntheticQaTask(
+        task_id=uuid.uuid4().hex,
+        project_id=project_id,
+        target_rows=target_rows,
+        api_url=api_url,
+        api_key=api_key,
+        model_name=model_name,
+        use_all_chunks=use_all_chunks,
+        source_text=source_text,
+    )
+
+    with _SYNTHETIC_TASKS_LOCK:
+        _SYNTHETIC_TASKS[task.task_id] = task  # type: ignore[assignment]
+        _trim_finished_synthetic_tasks()
+
+    asyncio.create_task(_run_qa_generation_task(task))
+    return task
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Conversation async batched generation (USER-SUCCESS Epic 2c parity).
+# ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class SyntheticConversationTask:
+    """In-memory record of a batched multi-turn conversation
+    generation job. ``target_rows`` carries the dialogue count
+    (per the frontend's existing API field), but the runtime
+    output is a list of conversation dicts rather than QA pairs."""
+
+    task_id: str
+    project_id: int
+    target_rows: int
+    min_turns: int
+    max_turns: int
+    api_url: str
+    api_key: str
+    model_name: str
+    use_all_chunks: bool
+    source_text: str
+
+    status: str = "pending"
+    rows: list[dict] = field(default_factory=list)
+    batches_done: int = 0
+    batches_total: int = 0
+    error: str | None = None
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "task_kind": "conversation",
+            "project_id": self.project_id,
+            "status": self.status,
+            "target_rows": self.target_rows,
+            "rows_so_far": len(self.rows),
+            "batches_done": self.batches_done,
+            "batches_total": self.batches_total,
+            "rows": list(self.rows),
+            "error": self.error,
+            "started_at": self.started_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "finished_at": (
+                self.finished_at.isoformat() if self.finished_at else None
+            ),
+        }
+
+
+# Conversations are heavier than single QA pairs — keep the batch
+# size small so the LLM doesn't drown trying to emit 50 dialogues
+# in a single call.
+PER_BATCH_CONVERSATION_CAP: int = 5
+
+
+async def _run_conversation_generation_task(task: SyntheticConversationTask) -> None:
+    task.status = "running"
+    task.updated_at = datetime.now(timezone.utc)
+
+    pool: list[str] = []
+    if task.use_all_chunks:
+        try:
+            pool = await _load_project_cleaned_chunks(task.project_id)
+        except Exception as exc:  # noqa: BLE001
+            task.status = "failed"
+            task.error = f"failed to load cleaned chunks: {exc}"
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            return
+        if not pool:
+            task.status = "failed"
+            task.error = (
+                "use_all_chunks=true but no cleaned chunks were found "
+                "for this project. Run Data Cleaning first."
+            )
+            task.finished_at = datetime.now(timezone.utc)
+            task.updated_at = task.finished_at
+            return
+
+    remaining = task.target_rows
+    task.batches_total = (
+        (task.target_rows + PER_BATCH_CONVERSATION_CAP - 1) // PER_BATCH_CONVERSATION_CAP
+    )
+    rng = random.Random()
+
+    try:
+        async with async_session_factory() as db:
+            while remaining > 0:
+                rows_this_batch = min(PER_BATCH_CONVERSATION_CAP, remaining)
+                if task.use_all_chunks:
+                    target_chars = rng.randint(SAMPLE_MIN_CHARS, SAMPLE_MAX_CHARS)
+                    source_text = _sample_chunks_for_batch(
+                        pool, target_chars=target_chars, rng=rng
+                    )
+                else:
+                    source_text = task.source_text
+
+                try:
+                    batch_rows = await generate_conversation_dialogues(
+                        db,
+                        task.project_id,
+                        source_text,
+                        rows_this_batch,
+                        task.min_turns,
+                        task.max_turns,
+                        task.api_url,
+                        task.api_key,
+                        task.model_name,
+                    )
+                    task.rows.extend(batch_rows)
+                except Exception as exc:  # noqa: BLE001
+                    task.error = (
+                        f"batch {task.batches_done + 1}/{task.batches_total}: {exc}"
+                    )
+                finally:
+                    task.batches_done += 1
+                    remaining -= rows_this_batch
+                    task.updated_at = datetime.now(timezone.utc)
+        task.status = "completed"
+    except Exception as exc:  # noqa: BLE001
+        task.status = "failed"
+        task.error = str(exc)
+    finally:
+        task.finished_at = datetime.now(timezone.utc)
+        task.updated_at = task.finished_at
+
+
+def start_conversation_generation_task(
+    *,
+    project_id: int,
+    target_rows: int,
+    min_turns: int,
+    max_turns: int,
+    api_url: str,
+    api_key: str,
+    model_name: str,
+    use_all_chunks: bool,
+    source_text: str,
+) -> SyntheticConversationTask:
+    """Register + launch a batched multi-turn conversation generation task."""
+    if target_rows < 1 or target_rows > MAX_TOTAL_ROWS:
+        raise ValueError(
+            f"target_rows must be between 1 and {MAX_TOTAL_ROWS} (got {target_rows})"
+        )
+    if not use_all_chunks and not (source_text or "").strip():
+        raise ValueError("source_text is required when use_all_chunks is false")
+    if min_turns < 1 or max_turns < min_turns:
+        raise ValueError("min_turns >= 1 and max_turns >= min_turns required")
+
+    task = SyntheticConversationTask(
+        task_id=uuid.uuid4().hex,
+        project_id=project_id,
+        target_rows=target_rows,
+        min_turns=min_turns,
+        max_turns=max_turns,
+        api_url=api_url,
+        api_key=api_key,
+        model_name=model_name,
+        use_all_chunks=use_all_chunks,
+        source_text=source_text,
+    )
+
+    with _SYNTHETIC_TASKS_LOCK:
+        _SYNTHETIC_TASKS[task.task_id] = task  # type: ignore[assignment]
+        _trim_finished_synthetic_tasks()
+
+    asyncio.create_task(_run_conversation_generation_task(task))
+    return task

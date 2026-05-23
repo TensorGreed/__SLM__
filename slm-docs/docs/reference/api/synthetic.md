@@ -1,5 +1,5 @@
 ---
-sidebar_position: 34
+sidebar_position: 41
 title: Synthetic
 ---
 
@@ -7,7 +7,7 @@ title: Synthetic
 
 # Synthetic
 
-Auto-generated reference for the **Synthetic** API. 4 endpoint(s).
+Auto-generated reference for the **Synthetic** API. 14 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
@@ -45,6 +45,45 @@ Content type: `application/json` — `GenerateRequest`
 | `422` | `HTTPValidationError` | Validation Error |
 
 
+### `POST /api/projects/{project_id}/synthetic/generate-async`
+
+**Generate Qa Async**
+
+Kick off a batched QA-pair generation job. Returns immediately
+with a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}``
+for progress + accumulated pairs.
+
+Lifts the 50-pair cap that the sync ``/generate`` endpoint enforces:
+the server batches into ``PER_BATCH_ROW_CAP`` chunks and (when
+``use_all_chunks`` is set) samples fresh source text per batch.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GenerateAsyncRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `target_rows` | `integer` | yes |  |
+| `api_url` | `string` | no |  |
+| `api_key` | `string` | no |  |
+| `model_name` | `string` | no |  |
+| `use_all_chunks` | `boolean` | no | When true, source text for each batch is a fresh random sample (~4–8k tokens) of the project's cleaned chunks. When false, ``source_text`` is reused verbatim for every batch. |
+| `source_text` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `202` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
 ### `POST /api/projects/{project_id}/synthetic/generate-conversations`
 
 **Generate Conversations**
@@ -70,6 +109,197 @@ Content type: `application/json` — `GenerateConversationRequest`
 | `api_url` | `string` | no |  |
 | `api_key` | `string` | no |  |
 | `model_name` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/generate-conversations-async`
+
+**Generate Conversations Async**
+
+Kick off a batched multi-turn conversation generation job.
+Conversations are heavier than QA pairs, so the per-batch cap is
+``PER_BATCH_CONVERSATION_CAP`` rather than ``PER_BATCH_ROW_CAP``.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GenerateConversationAsyncRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `target_rows` | `integer` | yes |  |
+| `min_turns` | `integer` | no |  |
+| `max_turns` | `integer` | no |  |
+| `api_url` | `string` | no |  |
+| `api_key` | `string` | no |  |
+| `model_name` | `string` | no |  |
+| `use_all_chunks` | `boolean` | no |  |
+| `source_text` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `202` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/generate-spans`
+
+**Generate Spans**
+
+Generate `{text, entities: [...]}` rows for PII / NER /
+structured-extraction span_set training. Uses the teacher model
+when configured, falls back to a regex-based heuristic on the
+source text otherwise.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GenerateSpanRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `source_text` | `string` | yes |  |
+| `num_rows` | `integer` | no |  |
+| `entity_types` | `string[]` | no |  |
+| `api_url` | `string` | no |  |
+| `api_key` | `string` | no |  |
+| `model_name` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/generate-spans-async`
+
+**Generate Spans Async**
+
+Kick off a batched span-generation job. Returns immediately with
+a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}`` for
+progress + accumulated rows.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `GenerateSpanAsyncRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `target_rows` | `integer` | yes |  |
+| `entity_types` | `string[]` | no |  |
+| `api_url` | `string` | no |  |
+| `api_key` | `string` | no |  |
+| `model_name` | `string` | no |  |
+| `use_all_chunks` | `boolean` | no | When true, source text for each batch is a fresh random sample (~4–8k tokens) of the project's cleaned chunks. When false, ``source_text`` is reused verbatim for every batch. |
+| `source_text` | `string` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `202` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/playbooks`
+
+**List Synth Playbooks**
+
+Catalog of registered playbooks; if the project has a selected
+recipe, filter to playbooks compatible with that recipe.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/review-queue`
+
+**List Synth Review Queue**
+
+List pending synthetic rows for the project, grouped by
+`synth_source` (USER-SUCCESS Epic 2b).
+
+Pending rows are gated out of dataset prep — they don't enter
+training until the user accepts them via `/review-queue/bulk-update`
+(or rejects them, in which case they're deleted).
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/run-playbook`
+
+**Run Synth Playbook**
+
+Run a playbook against the project's gold rows, generate
+synthetic training data, and persist accepted rows into the
+project's synthetic dataset.
+
+Returns a PlaybookResult: rows + backend_used + elapsed_sec +
+prompt_snippet.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `RunPlaybookRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `mode` | `string` | yes | Synth mode, e.g. 'positives_paraphrase'. |
+| `target_count` | `integer` | no |  |
+| `target_class` | `string \\| null` | no |  |
+| `backend` | `string \\| null` | no | Optional backend pin, e.g. 'ollama:llama3.1:8b'. |
 
 **Responses**
 
@@ -128,6 +358,90 @@ Content type: `application/json` — `SaveConversationBatchRequest`
 |---|---|---|---|
 | `conversations` | `object[]` | yes |  |
 | `min_confidence` | `number` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/save-spans`
+
+**Save Spans**
+
+Save approved span-extraction rows to the synthetic dataset.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `SaveSpanBatchRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `rows` | `object[]` | yes |  |
+| `min_confidence` | `number` | no |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `POST /api/projects/{project_id}/synthetic/review-queue/bulk-update`
+
+**Bulk Update Synth Review Queue**
+
+Bulk accept or reject pending synth rows. Accepted rows flip
+to `review_status="accepted"` and become eligible for training;
+rejected rows are removed from synthetic.jsonl permanently.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Request body** (required)
+
+Content type: `application/json` — `BulkReviewQueueRequest`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `row_ids` | `integer[]` | yes | IDs of pending synth rows to update. |
+| `action` | `string` | yes | 'accept' or 'reject'. |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
+
+### `GET /api/projects/{project_id}/synthetic/tasks/{task_id}`
+
+**Get Synthetic Task**
+
+Read the live state of any batched synthetic-generation job
+(span, qa, or conversation). Returns ``rows`` once the task has
+completed (or partial rows while still running). The ``task_kind``
+field on the response disambiguates the row shape for the client.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+| `task_id` | `path` | `string` | yes |  |
 
 **Responses**
 
