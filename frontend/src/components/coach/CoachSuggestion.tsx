@@ -164,8 +164,17 @@ export default function CoachSuggestionCard({
                     targetCount,
                     targetClass: targetClass ?? null,
                 });
+                // Generated rows land in the project's synth review
+                // queue with review_status="pending" — gated out of
+                // training until the user accepts them on the
+                // Synthetic tab. The toast must say where they went,
+                // otherwise users assume the action wrote into the
+                // gold set and report the rows as "lost".
+                const n = result.rows.length;
                 toast.success(
-                    `Generated ${result.rows.length} synthetic row${result.rows.length === 1 ? '' : 's'} via ${mode}.`,
+                    n === 0
+                        ? `${mode} generation succeeded but produced 0 rows after validation. Try a different mode or check the Synthetic tab.`
+                        : `Generated ${n} row${n === 1 ? '' : 's'} via ${mode} — pending review on the Synthetic tab.`,
                 );
                 onActionCompleted?.();
             } catch (err) {
@@ -206,8 +215,13 @@ export default function CoachSuggestionCard({
                     clusterId,
                     targetCount,
                 });
+                // Cluster-augment writes into the same synth review
+                // queue as run_playbook — pending until accepted.
+                const n = result.rows.length;
                 toast.success(
-                    `Generated ${result.rows.length} synthetic row${result.rows.length === 1 ? '' : 's'} targeting cluster ${clusterId}.`,
+                    n === 0
+                        ? `Cluster-augment for ${clusterId} succeeded but produced 0 rows after validation. Try a different cluster.`
+                        : `Generated ${n} row${n === 1 ? '' : 's'} targeting cluster ${clusterId} — pending review on the Synthetic tab.`,
                 );
                 onActionCompleted?.();
             } catch (err) {
