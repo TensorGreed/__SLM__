@@ -20,12 +20,14 @@ import SynthReviewQueue from './SynthReviewQueue';
 const SAMPLE_PAYLOAD = {
     project_id: 1,
     dataset_id: 12,
+    total_rows: 3,
     total_pending: 3,
     total_accepted: 0,
     groups: [
         {
             synth_source: 'playbook:classification:positives_paraphrase',
             count: 2,
+            truncated: false,
             rows: [
                 { id: 1, synth_confidence: 0.9, preview: '{"text": "row a", "label": "billing"}', payload: { text: 'row a', label: 'billing' } },
                 { id: 2, synth_confidence: 0.85, preview: '{"text": "row b", "label": "billing"}', payload: { text: 'row b', label: 'billing' } },
@@ -34,6 +36,7 @@ const SAMPLE_PAYLOAD = {
         {
             synth_source: 'playbook:classification:hard_negatives:vs=billing',
             count: 1,
+            truncated: false,
             rows: [
                 { id: 3, synth_confidence: 0.95, preview: '{"text": "row c", "label": "technical"}', payload: { text: 'row c', label: 'technical' } },
             ],
@@ -54,6 +57,7 @@ describe('SynthReviewQueue', () => {
             data: {
                 project_id: 1,
                 dataset_id: null,
+                total_rows: 0,
                 total_pending: 0,
                 total_accepted: 0,
                 groups: [],
@@ -66,17 +70,38 @@ describe('SynthReviewQueue', () => {
         });
     });
 
+    it('renders the totals strip with all 3 numbers', async () => {
+        apiMock.get.mockResolvedValue({
+            data: { ...SAMPLE_PAYLOAD, total_rows: 8, total_accepted: 5, total_pending: 3 },
+        });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-totals')).toBeInTheDocument();
+        });
+        // Each cell shows its number prominently.
+        const totalRowsCell = screen.getByTestId('synth-review-queue-total-rows');
+        expect(totalRowsCell.textContent).toMatch(/8/);
+        expect(totalRowsCell.textContent).toMatch(/total in synthetic.jsonl/i);
+        const totalAcceptedCell = screen.getByTestId('synth-review-queue-total-accepted');
+        expect(totalAcceptedCell.textContent).toMatch(/5/);
+        expect(totalAcceptedCell.textContent).toMatch(/queued for training/i);
+        const totalPendingCell = screen.getByTestId('synth-review-queue-total-pending');
+        expect(totalPendingCell.textContent).toMatch(/3/);
+        expect(totalPendingCell.textContent).toMatch(/awaiting review/i);
+    });
+
     it('renders the "queued for training" summary when only accepted rows exist', async () => {
         apiMock.get.mockResolvedValue({
             data: {
                 project_id: 1,
                 dataset_id: 12,
+                total_rows: 5,
                 total_pending: 0,
                 total_accepted: 5,
                 groups: [],
                 accepted_groups: [
-                    { synth_source: 'playbook:qa-sft:positives_paraphrase', count: 3, rows: [] },
-                    { synth_source: 'playbook:qa-sft:cluster_targeted:cluster=cluster-2', count: 2, rows: [] },
+                    { synth_source: 'playbook:qa-sft:positives_paraphrase', count: 3, truncated: false, rows: [] },
+                    { synth_source: 'playbook:qa-sft:cluster_targeted:cluster=cluster-2', count: 2, truncated: false, rows: [] },
                 ],
             },
         });
@@ -84,11 +109,8 @@ describe('SynthReviewQueue', () => {
         await waitFor(() => {
             expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
         });
-        // Headline reports accepted count (text is split across a
-        // <strong> tag, so assert on the section's combined textContent).
         const root = screen.getByTestId('synth-review-queue');
         expect(root.textContent).toMatch(/5 rows accepted/);
-        // Accepted section appears with both source groups.
         const accepted = screen.getByTestId('synth-review-queue-accepted');
         expect(accepted).toBeInTheDocument();
         expect(
@@ -101,21 +123,54 @@ describe('SynthReviewQueue', () => {
 
     it('mentions the accepted-count alongside pending count when both exist', async () => {
         apiMock.get.mockResolvedValue({
-            data: { ...SAMPLE_PAYLOAD, total_accepted: 4, accepted_groups: [
-                { synth_source: 'playbook:classification:positives_paraphrase', count: 4, rows: [] },
+            data: { ...SAMPLE_PAYLOAD, total_rows: 7, total_accepted: 4, accepted_groups: [
+                { synth_source: 'playbook:classification:positives_paraphrase', count: 4, truncated: false, rows: [] },
             ] },
         });
         render(<SynthReviewQueue projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
         });
-        // Subtitle mentions both pending + accepted counts (text is
-        // interleaved with <strong> tags).
         const root = screen.getByTestId('synth-review-queue');
         expect(root.textContent).toMatch(/3 rows awaiting review/);
         expect(root.textContent).toMatch(/4 already accepted/);
-        // Accepted section is rendered as well.
         expect(screen.getByTestId('synth-review-queue-accepted')).toBeInTheDocument();
+    });
+
+    it('renders accepted-group rows + a truncated footer for capped groups', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 1,
+                dataset_id: 12,
+                total_rows: 1000,
+                total_pending: 0,
+                total_accepted: 1000,
+                groups: [],
+                accepted_groups: [
+                    {
+                        synth_source: 'legacy:teacher_model',
+                        count: 1000,
+                        truncated: true,
+                        rows: [
+                            { id: 1, synth_confidence: 0.9, preview: '{"question": "Q1"}', payload: { question: 'Q1' } },
+                            { id: 2, synth_confidence: 0.85, preview: '{"question": "Q2"}', payload: { question: 'Q2' } },
+                        ],
+                    },
+                ],
+            },
+        });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-accepted')).toBeInTheDocument();
+        });
+        const group = screen.getByTestId('synth-review-queue-accepted-group-legacy:teacher_model');
+        expect(group.textContent).toMatch(/legacy:teacher_model/);
+        expect(group.textContent).toMatch(/1000/);
+        // Once expanded (via the rendered <details>), the rows should be in the DOM.
+        expect(screen.getByTestId('synth-review-queue-accepted-row-1')).toBeInTheDocument();
+        expect(screen.getByTestId('synth-review-queue-accepted-row-2')).toBeInTheDocument();
+        // Truncated footer is present.
+        expect(group.textContent).toMatch(/Showing 2 of 1000/);
     });
 
     it('renders the queue grouped by synth_source with bulk action buttons disabled when nothing is selected', async () => {

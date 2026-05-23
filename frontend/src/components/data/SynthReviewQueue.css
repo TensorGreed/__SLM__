@@ -207,3 +207,96 @@
     color: var(--text-tertiary);
     font-style: italic;
 }
+
+/* ── Total-count strip (always visible) ──────────────────────────── */
+
+.synth-review-queue__totals {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+}
+
+.synth-review-queue__totals-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+
+.synth-review-queue__totals-value {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1;
+}
+
+.synth-review-queue__totals-value--ok {
+    color: var(--color-success-fg, #0c6b3a);
+}
+
+.synth-review-queue__totals-value--warn {
+    color: var(--color-warning-fg, #936203);
+}
+
+.synth-review-queue__totals-label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* ── Per-group expanded row list ─────────────────────────────────── */
+
+.synth-review-queue__accepted-group {
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--gray-50);
+    margin-bottom: var(--space-xs);
+}
+
+.synth-review-queue__accepted-group-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 4px var(--space-sm);
+    cursor: pointer;
+}
+
+.synth-review-queue__accepted-row-list {
+    list-style: none;
+    margin: 0;
+    padding: var(--space-xs) var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border-top: 1px solid var(--border-muted);
+}
+
+.synth-review-queue__accepted-row {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    align-items: start;
+    gap: var(--space-sm);
+}
+
+.synth-review-queue__accepted-row code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.synth-review-queue__accepted-truncated,
+.synth-review-queue__accepted-empty {
+    margin: var(--space-xs) var(--space-sm);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-style: italic;
+}

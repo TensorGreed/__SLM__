@@ -146,6 +146,7 @@ export default function SynthReviewQueue({ projectId }: Props) {
                         No rows pending review. <strong>{data.total_accepted}</strong> row{data.total_accepted === 1 ? '' : 's'} accepted and queued for the next training run.
                     </p>
                 </header>
+                <TotalCountStrip data={data} />
                 <AcceptedRowsSection groups={data.accepted_groups} totalAccepted={data.total_accepted} />
             </section>
         );
@@ -163,6 +164,7 @@ export default function SynthReviewQueue({ projectId }: Props) {
                     )}
                 </p>
             </header>
+            <TotalCountStrip data={data} />
 
             <div className="synth-review-queue__bulk-actions">
                 <button
@@ -246,6 +248,40 @@ export default function SynthReviewQueue({ projectId }: Props) {
 }
 
 
+interface TotalCountStripProps {
+    data: import('../../api/synthPlaybook').ReviewQueueResponse;
+}
+
+/**
+ * Always-visible strip that surfaces the three numbers the user
+ * cares about for `synthetic.jsonl`: total rows, queued for training
+ * (accepted), and awaiting review (pending). Answers "how many do
+ * I have, and how many are headed into training?" at a glance.
+ */
+function TotalCountStrip({ data }: TotalCountStripProps) {
+    return (
+        <div className="synth-review-queue__totals" data-testid="synth-review-queue-totals">
+            <div className="synth-review-queue__totals-cell" data-testid="synth-review-queue-total-rows">
+                <span className="synth-review-queue__totals-value">{data.total_rows}</span>
+                <span className="synth-review-queue__totals-label">total in synthetic.jsonl</span>
+            </div>
+            <div className="synth-review-queue__totals-cell" data-testid="synth-review-queue-total-accepted">
+                <span className="synth-review-queue__totals-value synth-review-queue__totals-value--ok">
+                    {data.total_accepted}
+                </span>
+                <span className="synth-review-queue__totals-label">queued for training</span>
+            </div>
+            <div className="synth-review-queue__totals-cell" data-testid="synth-review-queue-total-pending">
+                <span className="synth-review-queue__totals-value synth-review-queue__totals-value--warn">
+                    {data.total_pending}
+                </span>
+                <span className="synth-review-queue__totals-label">awaiting review</span>
+            </div>
+        </div>
+    );
+}
+
+
 interface AcceptedRowsSectionProps {
     groups: import('../../api/synthPlaybook').ReviewQueueGroup[];
     totalAccepted: number;
@@ -253,16 +289,16 @@ interface AcceptedRowsSectionProps {
 
 /**
  * Collapsible "Accepted — queued for training" section that surfaces
- * what's already passed review. Answers the user's "where do
- * approved synth rows show up?" question.
+ * what's already passed review. Each source-group is itself
+ * expandable: click to reveal up to 25 sample rows (the backend
+ * caps each group at 25 to avoid blowing up the payload for legacy
+ * buckets with thousands of rows). Truncated groups show a
+ * "showing N of total" footer.
  */
 function AcceptedRowsSection({ groups, totalAccepted }: AcceptedRowsSectionProps) {
-    const [expanded, setExpanded] = useState(false);
     return (
         <details
             className="synth-review-queue__accepted"
-            open={expanded}
-            onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}
             data-testid="synth-review-queue-accepted"
         >
             <summary className="synth-review-queue__accepted-summary">
@@ -270,24 +306,61 @@ function AcceptedRowsSection({ groups, totalAccepted }: AcceptedRowsSectionProps
                     <strong>{totalAccepted}</strong> accepted row{totalAccepted === 1 ? '' : 's'} queued for training
                 </span>
                 <span className="synth-review-queue__accepted-hint">
-                    ({groups.length} source{groups.length === 1 ? '' : 's'})
+                    ({groups.length} source{groups.length === 1 ? '' : 's'} — click to expand)
                 </span>
             </summary>
-            <ul className="synth-review-queue__accepted-groups">
+            <div className="synth-review-queue__accepted-groups">
                 {groups.map((group) => (
-                    <li
-                        key={group.synth_source}
-                        className="synth-review-queue__accepted-group"
-                        data-testid={`synth-review-queue-accepted-group-${group.synth_source}`}
-                    >
-                        <code>{group.synth_source || '(no source)'}</code>
-                        <span className="synth-review-queue__accepted-count">{group.count}</span>
-                    </li>
+                    <AcceptedGroupCard key={group.synth_source} group={group} />
                 ))}
-            </ul>
+            </div>
             <p className="synth-review-queue__accepted-footnote">
                 Accepted rows enter the training corpus on the next Dataset Prep + Training run.
             </p>
+        </details>
+    );
+}
+
+
+interface AcceptedGroupCardProps {
+    group: import('../../api/synthPlaybook').ReviewQueueGroup;
+}
+
+function AcceptedGroupCard({ group }: AcceptedGroupCardProps) {
+    return (
+        <details
+            className="synth-review-queue__accepted-group"
+            data-testid={`synth-review-queue-accepted-group-${group.synth_source}`}
+        >
+            <summary className="synth-review-queue__accepted-group-summary">
+                <code>{group.synth_source || '(no source)'}</code>
+                <span className="synth-review-queue__accepted-count">{group.count}</span>
+            </summary>
+            {group.rows.length > 0 ? (
+                <>
+                    <ul className="synth-review-queue__accepted-row-list">
+                        {group.rows.map((row) => (
+                            <li
+                                key={row.id}
+                                className="synth-review-queue__accepted-row"
+                                data-testid={`synth-review-queue-accepted-row-${row.id}`}
+                            >
+                                <span className="synth-review-queue__confidence">
+                                    {Math.round((row.synth_confidence ?? 0) * 100)}%
+                                </span>
+                                <code>{row.preview}</code>
+                            </li>
+                        ))}
+                    </ul>
+                    {group.truncated && (
+                        <p className="synth-review-queue__accepted-truncated">
+                            Showing {group.rows.length} of {group.count} rows in this group. The rest are in your synthetic dataset and will enter training.
+                        </p>
+                    )}
+                </>
+            ) : (
+                <p className="synth-review-queue__accepted-empty">(no preview rows)</p>
+            )}
         </details>
     );
 }

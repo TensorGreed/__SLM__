@@ -104,12 +104,17 @@ export interface ReviewQueueEntry {
 export interface ReviewQueueGroup {
     synth_source: string;
     count: number;
+    /** True when `rows` is a truncated sample of the group (legacy
+     *  buckets with thousands of rows hit the cap). */
+    truncated?: boolean;
     rows: ReviewQueueEntry[];
 }
 
 export interface ReviewQueueResponse {
     project_id: number;
     dataset_id: number | null;
+    /** Total rows in synthetic.jsonl regardless of review_status. */
+    total_rows: number;
     total_pending: number;
     total_accepted: number;
     groups: ReviewQueueGroup[];

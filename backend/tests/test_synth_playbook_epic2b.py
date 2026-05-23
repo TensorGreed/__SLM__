@@ -332,6 +332,66 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
             1,
         )
 
+    def test_review_queue_total_rows_includes_every_row_regardless_of_status(self):
+        """total_rows is the whole-file count — the user's anchor
+        when they ask 'how many synth rows do I have?'."""
+        project = self._instantiate_template("ticket-router", "Queue Total Rows Test")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "text": "p1", "label": "billing", "synth_source": "playbook:classification:positives_paraphrase", "synth_confidence": 0.9, "review_status": "pending"},
+            {"id": 2, "text": "p2", "label": "billing", "synth_source": "playbook:classification:positives_paraphrase", "synth_confidence": 0.85, "review_status": "pending"},
+            {"id": 3, "text": "a1", "label": "billing", "synth_source": "playbook:classification:positives_paraphrase", "synth_confidence": 0.95, "review_status": "accepted"},
+            # Legacy row — no review_status field, has the legacy `source` instead.
+            {"id": 4, "question": "Q1", "answer": "A1", "source": "teacher_model", "model": "llama3", "status": "accepted"},
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["total_rows"], 4)
+        self.assertEqual(payload["total_pending"], 2)
+        self.assertEqual(payload["total_accepted"], 2)  # 1 explicit + 1 legacy
+
+    def test_review_queue_labels_legacy_rows_as_legacy_source(self):
+        """Legacy rows from the pre-Epic-2a flow have no `synth_source`
+        but do have a legacy `source` field. The review queue should
+        surface them as ``legacy:<source>`` instead of the opaque
+        ``playbook:unknown`` placeholder."""
+        project = self._instantiate_template("policy-qa-style", "Legacy Source Label Test")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q1", "answer": "A1", "source": "teacher_model", "model": "llama3", "status": "accepted"},
+            {"id": 2, "question": "Q2", "answer": "A2", "source": "demo_heuristic", "status": "accepted"},
+            {"id": 3, "question": "Q3", "answer": "A3", "status": "accepted"},  # no source at all
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        payload = resp.json()
+        accepted_sources = {g["synth_source"] for g in payload["accepted_groups"]}
+        self.assertIn("legacy:teacher_model", accepted_sources)
+        self.assertIn("legacy:demo_heuristic", accepted_sources)
+        self.assertIn("legacy:manual", accepted_sources)
+        # The placeholder "playbook:unknown" must NOT leak.
+        self.assertNotIn("playbook:unknown", accepted_sources)
+
+    def test_review_queue_caps_accepted_rows_per_group(self):
+        """Legacy buckets can have thousands of rows. The list endpoint
+        truncates each accepted group's `rows` array to 25 + sets a
+        `truncated` flag, while `count` keeps the full total. Pending
+        rows are NOT capped (the queue needs every row for accept/reject)."""
+        project = self._instantiate_template("email-chat-tone", "Cap Test")
+        pid = project["id"]
+        # Seed 30 legacy accepted rows (no review_status).
+        self._seed_synth_rows(pid, [
+            {"id": i, "question": f"Q{i}", "answer": f"A{i}", "source": "teacher_model", "status": "accepted"}
+            for i in range(1, 31)
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        payload = resp.json()
+        self.assertEqual(payload["total_accepted"], 30)
+        group = payload["accepted_groups"][0]
+        self.assertEqual(group["count"], 30)
+        self.assertEqual(len(group["rows"]), 25)
+        self.assertTrue(group["truncated"])
+
     def test_review_queue_surfaces_accepted_only_when_no_pending_left(self):
         """After all pending rows are accepted, the list endpoint
         should still surface the accepted rows so the user can see

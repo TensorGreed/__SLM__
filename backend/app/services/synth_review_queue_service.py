@@ -75,18 +75,65 @@ def _row_preview(row: dict[str, Any], *, limit: int = 280) -> str:
     return raw[: limit - 1] + "…"
 
 
-def _bucket_rows_by_source(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Helper: group rows by synth_source, sort, project to the UI shape."""
+def _resolve_source_label(row: dict[str, Any]) -> str:
+    """Pick a human-meaningful source for a synth row.
+
+    Epic-2 playbook rows carry an explicit ``synth_source`` like
+    ``playbook:classification:hard_negatives:vs=billing``. Legacy
+    rows (from the pre-Epic-2 ``/synthetic/generate`` flow) don't
+    have ``synth_source`` but do have a legacy ``source`` field
+    (``teacher_model`` / ``demo_heuristic``). We surface that
+    instead so the user sees ``legacy:teacher_model`` rather than
+    ``playbook:unknown``.
+    """
+    explicit = row.get("synth_source")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit
+    legacy = row.get("source")
+    if isinstance(legacy, str) and legacy.strip():
+        return f"legacy:{legacy}"
+    return "legacy:manual"
+
+
+# Hard cap on rows-per-group included in the response. A 1000-row
+# legacy bucket would otherwise blow up the payload — and the UI
+# can't usefully render 1000 rows inline anyway. The frontend gets a
+# `truncated` flag + a `total_in_group` count so it can show
+# "showing 25 of 1000" footers.
+ACCEPTED_ROWS_PER_GROUP_CAP = 25
+
+
+def _bucket_rows_by_source(
+    rows: list[dict[str, Any]],
+    *,
+    rows_per_group_cap: int | None = None,
+) -> list[dict[str, Any]]:
+    """Group rows by synth_source, sort, project to the UI shape.
+
+    When ``rows_per_group_cap`` is set, each group's ``rows`` array
+    is truncated to that length + a ``truncated`` flag is emitted.
+    The pending queue passes None (we want every row in the UI for
+    accept/reject); the accepted view passes the cap because
+    legacy buckets may have thousands of rows.
+    """
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        source = str(row.get("synth_source") or "playbook:unknown")
+        source = _resolve_source_label(row)
         groups[source].append(row)
     grouped: list[dict[str, Any]] = []
     for source in sorted(groups):
         entries = sorted(groups[source], key=lambda r: r.get("id") or 0)
+        total_in_group = len(entries)
+        if rows_per_group_cap is not None and total_in_group > rows_per_group_cap:
+            visible_entries = entries[:rows_per_group_cap]
+            truncated = True
+        else:
+            visible_entries = entries
+            truncated = False
         grouped.append({
             "synth_source": source,
-            "count": len(entries),
+            "count": total_in_group,
+            "truncated": truncated,
             "rows": [
                 {
                     "id": row.get("id"),
@@ -97,7 +144,7 @@ def _bucket_rows_by_source(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         if k not in {"id", "synth_source", "synth_confidence", "review_status", "status"}
                     },
                 }
-                for row in entries
+                for row in visible_entries
             ],
         })
     return grouped
@@ -137,10 +184,13 @@ async def list_review_queue(
     return {
         "project_id": project_id,
         "dataset_id": dataset.id if dataset else None,
+        "total_rows": len(all_rows),
         "total_pending": len(pending),
         "total_accepted": len(accepted),
         "groups": _bucket_rows_by_source(pending),
-        "accepted_groups": _bucket_rows_by_source(accepted),
+        "accepted_groups": _bucket_rows_by_source(
+            accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP,
+        ),
     }
 
 
