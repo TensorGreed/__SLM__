@@ -449,10 +449,329 @@ async def _gold_set_stage_suggestions(
     return suggestions
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Training stage (Phase 3).
+# ─────────────────────────────────────────────────────────────────────
+
+# Pass-rate ceiling above which Coach stays silent on the eval surface
+# — the user is comfortably above target and additional suggestions
+# would be noise. Set at 0.90 since most narrow tasks aim for ≥ 0.85
+# eval pass rate; the 90% bar leaves headroom for noise.
+EVAL_PASS_RATE_HEALTHY: float = 0.90
+# Below this pass rate Coach treats the eval as a critical failure
+# worth surfacing the dominant failure cluster + click-to-augment
+# action.
+EVAL_PASS_RATE_CRITICAL: float = 0.60
+# How many synthetic rows to request when click-to-augment fires on
+# a failure cluster. Anchored to the playbook endpoint's 1-500 range;
+# 30 mirrors the playbook router's own default.
+CLUSTER_AUGMENT_DEFAULT: int = 30
+
+
+async def _training_stage_suggestions(
+    db: AsyncSession, project: Project
+) -> list[dict[str, Any]]:
+    """Suggestions surfaced on the Training Config page.
+
+    Phase 3 wires the L1 trainability forecast: when the forecast
+    verdict is ``likely_fail`` (or ``borderline``), Coach proposes
+    switching to a heavier base model from the recipe's
+    ``alt_base_models`` list. The granular signal-level surface
+    lives in ``TrainabilityForecastPanel`` (the page-level component)
+    — Coach is the "should I be worried?" overlay above it.
+    """
+    # Local import: trainability_forecast_service is a heavy module
+    # (large recipe + tokenizer transitive imports). Keeping it lazy
+    # avoids hoisting that cost into every Coach-module import.
+    from app.services.recipe_service import get_recipe
+    from app.services.trainability_forecast_service import (
+        KNOWN_BASE_MODEL_PARAMS_M,
+        forecast_training,
+    )
+
+    recipe_id = _recipe_id_for(project)
+    if not recipe_id:
+        # No recipe yet → can't forecast. Same fallback shape used by
+        # the data + gold_set stages keeps the navigate-to-picker
+        # affordance consistent across surfaces.
+        return [{
+            "id": "training:no-recipe",
+            "title": "Pick a recipe before training",
+            "body": (
+                "The trainability forecast (L1) needs a recipe selected so it "
+                "can score predicted F1 against the recipe's task difficulty + "
+                "minimum row count."
+            ),
+            "severity": "info",
+            "action": {
+                "kind": "navigate",
+                "label": "Open recipe picker",
+                "params": {"target": "recipe-picker"},
+            },
+        }]
+
+    try:
+        forecast = await forecast_training(db, project.id)
+    except ValueError:
+        # The forecast service raises for missing project/recipe;
+        # we caught the recipe case above, so this branch covers
+        # the rare "project disappeared between the project.get and
+        # the forecast call" race. Surface nothing rather than 500.
+        return []
+
+    overall = str(forecast.get("overall", ""))
+    if overall == "likely_pass":
+        # User is in the green zone — silent. The forecast panel
+        # itself still shows the signals so they can act if they want.
+        return []
+
+    severity: Severity = "critical" if overall == "likely_fail" else "warning"
+
+    # Pick a heavier alt base model if the recipe offers one. We rank
+    # by KNOWN_BASE_MODEL_PARAMS_M when known; unknown models fall to
+    # the end. Skip alts whose parameter count is <= the current
+    # model's so we never recommend a sideways or backward swap.
+    recipe = get_recipe(recipe_id)
+    current_base = (
+        project.base_model_name
+        or (getattr(recipe, "suggested_base_model", None) if recipe else None)
+        or ""
+    )
+    alts: list[str] = (
+        list(getattr(recipe, "alt_base_models", []) or []) if recipe else []
+    )
+    current_params = KNOWN_BASE_MODEL_PARAMS_M.get(current_base, 0)
+
+    def _params_for(name: str) -> int:
+        return KNOWN_BASE_MODEL_PARAMS_M.get(name, 0)
+
+    heavier_alts = sorted(
+        [a for a in alts if _params_for(a) > current_params],
+        key=_params_for,
+    )
+    recommended_base = heavier_alts[0] if heavier_alts else None
+
+    confidence_pct = int(forecast.get("confidence_pct") or 0)
+    dominant_blocker: dict[str, Any] | None = None
+    for signal in forecast.get("signals", []):
+        if signal.get("severity") == "block":
+            dominant_blocker = signal
+            break
+
+    if recommended_base:
+        action: dict[str, Any] = {
+            "kind": "navigate",
+            "label": f"Consider {recommended_base}",
+            "params": {
+                "target": "training-base-model-picker",
+                "recommended_base_model": recommended_base,
+            },
+        }
+        action_hint = (
+            f" The recipe's next-heaviest alternative is "
+            f"{recommended_base} ({_params_for(recommended_base) or '?'}M params)."
+        )
+    else:
+        action = {
+            "kind": "navigate",
+            "label": "Open trainability forecast",
+            "params": {"target": "trainability-forecast"},
+        }
+        action_hint = ""
+
+    if overall == "likely_fail":
+        title = (
+            f"Forecast says this run is likely to fail "
+            f"({confidence_pct}% confidence in passing)"
+        )
+        body = (
+            (dominant_blocker["headline"] + " " if dominant_blocker else "")
+            + "Either lift the gold set (more rows, better balance) or move "
+            "to a stronger base model — the current pairing isn't projected "
+            "to pass the auto-gate."
+            + action_hint
+        )
+    else:  # borderline
+        title = (
+            f"Forecast says this run is borderline "
+            f"({confidence_pct}% pass-rate confidence)"
+        )
+        body = (
+            (dominant_blocker["headline"] + " " if dominant_blocker else "")
+            + "You can train as-is and find out, but small data or base-model "
+            "improvements would meaningfully shift the odds before you spend "
+            "compute." + action_hint
+        )
+
+    return [{
+        "id": "training:trainability-forecast",
+        "title": title,
+        "body": body.strip(),
+        "severity": severity,
+        "action": action,
+        "context": {
+            "overall": overall,
+            "confidence_pct": confidence_pct,
+            "current_base_model": current_base,
+            "recommended_base_model": recommended_base,
+            "blocker_signal_id": (
+                dominant_blocker["id"] if dominant_blocker else None
+            ),
+        },
+    }]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Eval stage (Phase 3).
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def _read_latest_eval_result(
+    db: AsyncSession, project_id: int
+) -> Any | None:
+    """Latest ``EvalResult`` row across every Experiment of the project,
+    ordered by ``created_at`` desc. Returns ``None`` when no eval has
+    been recorded yet.
+
+    Local import on ``Experiment`` + ``EvalResult`` keeps the coach
+    service from pulling the heavy experiment + checkpoint graph at
+    module import time.
+    """
+    from app.models.experiment import EvalResult, Experiment
+
+    result = await db.execute(
+        select(EvalResult)
+        .join(Experiment, Experiment.id == EvalResult.experiment_id)
+        .where(Experiment.project_id == project_id)
+        .order_by(EvalResult.created_at.desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+async def _eval_stage_suggestions(
+    db: AsyncSession, project: Project
+) -> list[dict[str, Any]]:
+    """Suggestions surfaced on the Eval tab.
+
+    Phase 3 reads the project's latest ``EvalResult`` and — when the
+    pass rate is below the healthy threshold — clusters the failures
+    via ``cluster_eval_result_failures`` (Epic 2b primitive) and
+    surfaces a click-to-execute ``augment_from_cluster`` action
+    targeting the largest cluster.
+    """
+    from app.services.failure_cluster_service import (
+        cluster_eval_result_failures,
+    )
+
+    latest = await _read_latest_eval_result(db, project.id)
+    if latest is None:
+        # No eval run yet — nothing to coach against. The strip stays
+        # mounted (showing "looks healthy") which doubles as a hint
+        # that running an eval is the next move.
+        return []
+
+    pass_rate = latest.pass_rate
+    if pass_rate is None or pass_rate >= EVAL_PASS_RATE_HEALTHY:
+        return []
+
+    severity: Severity = (
+        "critical" if pass_rate < EVAL_PASS_RATE_CRITICAL else "warning"
+    )
+
+    try:
+        cluster_payload = await cluster_eval_result_failures(
+            db, eval_result_id=latest.id
+        )
+    except ValueError:
+        # Eval row was deleted between the read + the cluster call —
+        # treat as no-suggestion. (Race so rare it's not worth a hard
+        # error; the next poll will recover.)
+        return []
+
+    clusters = cluster_payload.get("clusters") or []
+    if not clusters:
+        # Below-threshold pass rate but no clusterable failures (e.g.
+        # all failures share no signal). Surface a softer "review
+        # eval" navigate suggestion rather than nothing.
+        return [{
+            "id": "eval:low-pass-rate-no-clusters",
+            "title": (
+                f"Eval pass rate is {pass_rate * 100:.0f}% — below the "
+                f"{EVAL_PASS_RATE_HEALTHY * 100:.0f}% healthy threshold"
+            ),
+            "body": (
+                "Failures didn't cluster cleanly, so there's no obvious "
+                "single bucket to augment. Review the predictions preview "
+                "on the Eval tab to identify what's breaking."
+            ),
+            "severity": severity,
+            "action": {
+                "kind": "navigate",
+                "label": "Open eval predictions",
+                "params": {"target": "eval-predictions"},
+            },
+            "context": {
+                "pass_rate": round(float(pass_rate), 4),
+                "eval_result_id": latest.id,
+            },
+        }]
+
+    # Largest cluster first — that's the one whose augmentation lifts
+    # the most failed rows. Tie-break on confidence to prefer the
+    # remediation classifier's higher-conviction picks.
+    top = max(
+        clusters,
+        key=lambda c: (
+            int(c.get("failure_count") or 0),
+            float(c.get("classifier_confidence") or 0.0),
+        ),
+    )
+    cluster_id = str(top.get("cluster_id") or "")
+    failure_count = int(top.get("failure_count") or 0)
+    reason_code = str(top.get("reason_code") or "unknown")
+    share = float(top.get("share_of_total") or 0.0)
+
+    return [{
+        "id": "eval:top-failure-cluster",
+        "title": (
+            f"Top failure cluster: {failure_count} {reason_code} failures "
+            f"({share * 100:.0f}% of the total)"
+        ),
+        "body": (
+            f"{top.get('classifier_reason') or ''} "
+            "Augmenting this cluster generates synthetic positives that "
+            "mirror its failure pattern — pending review before they "
+            "enter training. Pass rate today is "
+            f"{pass_rate * 100:.0f}%."
+        ).strip(),
+        "severity": severity,
+        "action": {
+            "kind": "augment_from_cluster",
+            "label": f"Augment {CLUSTER_AUGMENT_DEFAULT} rows for this cluster",
+            "params": {
+                "eval_result_id": latest.id,
+                "cluster_id": cluster_id,
+                "target_count": CLUSTER_AUGMENT_DEFAULT,
+            },
+        },
+        "context": {
+            "pass_rate": round(float(pass_rate), 4),
+            "eval_result_id": latest.id,
+            "cluster_id": cluster_id,
+            "reason_code": reason_code,
+            "failure_count": failure_count,
+            "share_of_total": round(share, 4),
+        },
+    }]
+
+
 _STAGE_HANDLERS = {
     "data": _data_stage_suggestions,
     "cleaning": _cleaning_stage_suggestions,
     "gold_set": _gold_set_stage_suggestions,
+    "training": _training_stage_suggestions,
+    "eval": _eval_stage_suggestions,
 }
 
 

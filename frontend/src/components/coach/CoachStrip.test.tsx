@@ -153,6 +153,49 @@ describe('CoachStrip', () => {
         });
     });
 
+    it('clicking the augment_from_cluster action posts to /evaluation/.../augment (Phase 3)', async () => {
+        installGetRouter({
+            data: {
+                project_id: 1,
+                stage: 'eval',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'eval:top-failure-cluster',
+                        title: 'Top failure cluster: 12 hallucination failures (45%)',
+                        body: 'Augmenting this cluster bridges the gap.',
+                        severity: 'critical',
+                        action: {
+                            kind: 'augment_from_cluster',
+                            label: 'Augment 30 rows for this cluster',
+                            params: {
+                                eval_result_id: 42,
+                                cluster_id: 'cluster-1',
+                                target_count: 30,
+                            },
+                        },
+                    },
+                ],
+            },
+        });
+        apiMock.post.mockResolvedValue({ data: { rows: [{ payload: {} }], backend_used: 'ollama', elapsed_sec: 0.5, prompt_snippet: '...' } });
+
+        render(<CoachStrip projectId={1} stage="eval" />);
+        await waitFor(() => {
+            expect(screen.getByTestId('coach-suggestion-action-eval:top-failure-cluster')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('coach-suggestion-action-eval:top-failure-cluster'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/evaluation/42/clusters/cluster-1/augment',
+                null,
+                expect.objectContaining({
+                    params: expect.objectContaining({ target_count: 30 }),
+                }),
+            );
+        });
+    });
+
     it('shows an error fallback when the coach endpoint fails', async () => {
         apiMock.get.mockImplementation(async (url: string) => {
             if (url.includes('/gamification')) {

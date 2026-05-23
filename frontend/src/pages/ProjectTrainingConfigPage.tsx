@@ -4,6 +4,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
 import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
+import CoachStrip from '../components/coach/CoachStrip';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectTrainingConfigPage.css';
 
@@ -56,6 +57,8 @@ export default function ProjectTrainingConfigPage() {
                     </div>
                 </div>
             </section>
+
+            <CoachStrip projectId={projectId} stage="training" />
 
             <TrainabilityForecastPanel
                 projectId={projectId}

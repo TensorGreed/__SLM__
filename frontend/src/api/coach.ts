@@ -3,7 +3,10 @@ import api from './client';
 export type CoachStage = 'data' | 'cleaning' | 'gold_set' | 'training' | 'eval';
 export type CoachSeverity = 'info' | 'warning' | 'critical';
 
-export type CoachActionKind = 'run_playbook' | 'navigate';
+export type CoachActionKind =
+    | 'run_playbook'
+    | 'navigate'
+    | 'augment_from_cluster';
 
 export interface CoachAction {
     kind: CoachActionKind;

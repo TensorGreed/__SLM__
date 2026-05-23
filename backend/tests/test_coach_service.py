@@ -32,17 +32,22 @@ from app.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.coach_service import (  # noqa: E402
     CLASS_BALANCE_TOPUP_DEFAULT,
+    CLUSTER_AUGMENT_DEFAULT,
     DIVERSITY_TOPUP_DEFAULT,
     DOC_ERROR_MIN_TOTAL,
     DOC_ERROR_RATE_WARN,
+    EVAL_PASS_RATE_CRITICAL,
+    EVAL_PASS_RATE_HEALTHY,
     GOLD_ROW_COMFORTABLE_MIN,
     GOLD_ROW_THIN_MAX,
     SUGGESTED_TOPUP_CEILING,
     SUGGESTED_TOPUP_FLOOR,
     _cleaning_stage_suggestions,
     _data_stage_suggestions,
+    _eval_stage_suggestions,
     _gold_set_stage_suggestions,
     _topup_count,
+    _training_stage_suggestions,
 )
 
 
@@ -474,6 +479,321 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         ids = {s["id"] for s in suggestions}
         self.assertIn("gold_set:class-imbalance", ids)
         self.assertIn("gold_set:diversity-low", ids)
+
+
+class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
+    """Phase 3: ``_training_stage_suggestions`` — exercises the
+    likely_fail / borderline / likely_pass branches + the
+    heavier-alt-base-model picker."""
+
+    async def _suggestions(
+        self,
+        *,
+        overall: str,
+        confidence_pct: int = 30,
+        signals: list[dict] | None = None,
+        with_recipe: bool = True,
+        alt_base_models: list[str] | None = None,
+        current_base: str = "HuggingFaceTB/SmolLM2-135M-Instruct",
+    ) -> list[dict]:
+        from unittest.mock import MagicMock, patch
+
+        class _StubProject:
+            id = 21
+            base_model_name = current_base
+            selected_recipe = (
+                {"recipe_id": "classification"} if with_recipe else None
+            )
+
+        recipe_stub = MagicMock()
+        recipe_stub.suggested_base_model = current_base
+        recipe_stub.alt_base_models = list(alt_base_models or [])
+
+        async def _async_forecast(*_a, **_k):
+            return {
+                "overall": overall,
+                "confidence_pct": confidence_pct,
+                "signals": signals or [],
+                "computed_at": "2026-05-23T00:00:00",
+                "cache_key": "stub",
+                "cache_hit": False,
+            }
+
+        with (
+            patch(
+                "app.services.trainability_forecast_service.forecast_training",
+                side_effect=_async_forecast,
+            ),
+            patch(
+                "app.services.recipe_service.get_recipe",
+                return_value=recipe_stub if with_recipe else None,
+            ),
+        ):
+            return await _training_stage_suggestions(
+                db=None,  # type: ignore[arg-type]
+                project=_StubProject(),
+            )
+
+    async def test_no_recipe_returns_navigate_to_recipe_picker(self):
+        suggestions = await self._suggestions(
+            overall="likely_fail", with_recipe=False
+        )
+        self.assertEqual(len(suggestions), 1)
+        s = suggestions[0]
+        self.assertEqual(s["id"], "training:no-recipe")
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(s["action"]["params"]["target"], "recipe-picker")
+
+    async def test_likely_pass_emits_no_suggestion(self):
+        suggestions = await self._suggestions(
+            overall="likely_pass", confidence_pct=85
+        )
+        self.assertEqual(suggestions, [])
+
+    async def test_likely_fail_emits_critical_with_base_model_hint(self):
+        suggestions = await self._suggestions(
+            overall="likely_fail",
+            confidence_pct=18,
+            alt_base_models=[
+                "Qwen/Qwen2.5-0.5B-Instruct",
+                "Qwen/Qwen2.5-3B-Instruct",
+            ],
+            signals=[{
+                "id": "row_count_below_minimum",
+                "severity": "block",
+                "headline": "Train corpus has 45 rows; recipe needs ≥ 100.",
+                "detail": "Add rows or move to a recipe with a lower floor.",
+                "suggested_action": None,
+            }],
+        )
+        self.assertEqual(len(suggestions), 1)
+        s = suggestions[0]
+        self.assertEqual(s["id"], "training:trainability-forecast")
+        self.assertEqual(s["severity"], "critical")
+        # Picks the lighter heavier-alt first (0.5B before 3B).
+        self.assertEqual(
+            s["context"]["recommended_base_model"],
+            "Qwen/Qwen2.5-0.5B-Instruct",
+        )
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(
+            s["action"]["params"]["target"], "training-base-model-picker"
+        )
+        # Body carries the dominant blocker's headline so the user
+        # sees the "why" without expanding the forecast panel.
+        self.assertIn("45 rows", s["body"])
+        # Confidence_pct round-trips into the context bag for the UI.
+        self.assertEqual(s["context"]["confidence_pct"], 18)
+        self.assertEqual(s["context"]["blocker_signal_id"], "row_count_below_minimum")
+
+    async def test_borderline_emits_warning_severity(self):
+        suggestions = await self._suggestions(
+            overall="borderline",
+            confidence_pct=52,
+            alt_base_models=["Qwen/Qwen2.5-0.5B-Instruct"],
+        )
+        self.assertEqual(len(suggestions), 1)
+        self.assertEqual(suggestions[0]["severity"], "warning")
+        self.assertEqual(suggestions[0]["context"]["overall"], "borderline")
+
+    async def test_no_heavier_alt_falls_back_to_forecast_navigation(self):
+        # Current base is already the heaviest alt — Coach must still
+        # surface a suggestion (the forecast is bad) but skip the
+        # base-model hint and route to the forecast panel instead.
+        suggestions = await self._suggestions(
+            overall="likely_fail",
+            current_base="Qwen/Qwen2.5-3B-Instruct",
+            alt_base_models=[
+                "HuggingFaceTB/SmolLM2-135M-Instruct",
+                "Qwen/Qwen2.5-0.5B-Instruct",
+            ],
+        )
+        self.assertEqual(len(suggestions), 1)
+        s = suggestions[0]
+        self.assertIsNone(s["context"]["recommended_base_model"])
+        self.assertEqual(s["action"]["params"]["target"], "trainability-forecast")
+
+    async def test_forecast_raises_value_error_returns_empty(self):
+        # The forecast service raises ValueError if the project
+        # disappears mid-call. Coach must swallow it cleanly so the
+        # 500 doesn't leak to the UI.
+        from unittest.mock import patch
+
+        class _StubProject:
+            id = 99
+            base_model_name = "x"
+            selected_recipe = {"recipe_id": "classification"}
+
+        async def _raise(*_a, **_k):
+            raise ValueError("project gone")
+
+        with patch(
+            "app.services.trainability_forecast_service.forecast_training",
+            side_effect=_raise,
+        ):
+            result = await _training_stage_suggestions(
+                db=None,  # type: ignore[arg-type]
+                project=_StubProject(),
+            )
+        self.assertEqual(result, [])
+
+
+class CoachServiceEvalStageTests(unittest.IsolatedAsyncioTestCase):
+    """Phase 3: ``_eval_stage_suggestions`` — exercises the no-eval /
+    healthy / critical-with-cluster / critical-without-cluster
+    branches."""
+
+    async def _suggestions(
+        self,
+        *,
+        latest_eval: Any | None,
+        clusters: list[dict] | None = None,
+        cluster_raises: bool = False,
+    ) -> list[dict]:
+        from unittest.mock import patch
+
+        class _StubProject:
+            id = 31
+            selected_recipe = {"recipe_id": "classification"}
+
+        async def _async_latest(*_a, **_k):
+            return latest_eval
+
+        async def _async_clusters(*_a, **_k):
+            if cluster_raises:
+                raise ValueError("eval_result_not_found")
+            return {
+                "eval_result_id": getattr(latest_eval, "id", 0),
+                "experiment_id": None,
+                "dataset_name": "test",
+                "eval_type": "f1",
+                "total_failures_analyzed": sum(
+                    int(c.get("failure_count") or 0)
+                    for c in (clusters or [])
+                ),
+                "reason_code_totals": {},
+                "dominant_reason_code": None,
+                "clusters": list(clusters or []),
+                "remediation_plans": [],
+            }
+
+        with (
+            patch(
+                "app.services.coach_service._read_latest_eval_result",
+                side_effect=_async_latest,
+            ),
+            patch(
+                "app.services.failure_cluster_service.cluster_eval_result_failures",
+                side_effect=_async_clusters,
+            ),
+        ):
+            return await _eval_stage_suggestions(
+                db=None,  # type: ignore[arg-type]
+                project=_StubProject(),
+            )
+
+    def _make_eval_row(self, *, eval_id: int, pass_rate: float | None):
+        # Lightweight stand-in for the EvalResult ORM row — the coach
+        # handler only touches ``id`` + ``pass_rate``. ``SimpleNamespace``
+        # gives us attribute access without the Python class-body
+        # closure trap (class bodies don't capture method locals).
+        from types import SimpleNamespace
+        return SimpleNamespace(id=eval_id, pass_rate=pass_rate)
+
+    async def test_no_eval_yet_emits_nothing(self):
+        result = await self._suggestions(latest_eval=None)
+        self.assertEqual(result, [])
+
+    async def test_healthy_pass_rate_emits_nothing(self):
+        result = await self._suggestions(
+            latest_eval=self._make_eval_row(
+                eval_id=1, pass_rate=EVAL_PASS_RATE_HEALTHY + 0.02
+            ),
+        )
+        self.assertEqual(result, [])
+
+    async def test_warning_when_below_healthy_but_above_critical(self):
+        # Mid pass rate: warning severity + cluster-targeted action.
+        clusters = [
+            {
+                "cluster_id": "cluster-1",
+                "reason_code": "hallucination",
+                "failure_count": 12,
+                "share_of_total": 0.45,
+                "classifier_confidence": 0.8,
+                "classifier_reason": "Model invents facts not in source.",
+                "output_pattern": "p1",
+                "exemplars": [],
+            },
+            {
+                "cluster_id": "cluster-2",
+                "reason_code": "coverage_gap",
+                "failure_count": 5,
+                "share_of_total": 0.20,
+                "classifier_confidence": 0.6,
+                "classifier_reason": "Model doesn't know concept.",
+                "output_pattern": "p2",
+                "exemplars": [],
+            },
+        ]
+        result = await self._suggestions(
+            latest_eval=self._make_eval_row(eval_id=42, pass_rate=0.75),
+            clusters=clusters,
+        )
+        self.assertEqual(len(result), 1)
+        s = result[0]
+        self.assertEqual(s["id"], "eval:top-failure-cluster")
+        self.assertEqual(s["severity"], "warning")
+        self.assertEqual(s["action"]["kind"], "augment_from_cluster")
+        # Largest cluster wins (cluster-1 with 12 failures).
+        self.assertEqual(s["action"]["params"]["eval_result_id"], 42)
+        self.assertEqual(s["action"]["params"]["cluster_id"], "cluster-1")
+        self.assertEqual(
+            s["action"]["params"]["target_count"], CLUSTER_AUGMENT_DEFAULT
+        )
+        self.assertEqual(s["context"]["reason_code"], "hallucination")
+        self.assertEqual(s["context"]["failure_count"], 12)
+
+    async def test_critical_when_pass_rate_below_critical_threshold(self):
+        result = await self._suggestions(
+            latest_eval=self._make_eval_row(
+                eval_id=7, pass_rate=EVAL_PASS_RATE_CRITICAL - 0.1
+            ),
+            clusters=[{
+                "cluster_id": "cluster-X",
+                "reason_code": "formatting_mismatch",
+                "failure_count": 30,
+                "share_of_total": 0.80,
+                "classifier_confidence": 0.9,
+                "classifier_reason": "Wrong output shape.",
+                "output_pattern": "p",
+                "exemplars": [],
+            }],
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["severity"], "critical")
+
+    async def test_no_clusters_falls_back_to_navigate_predictions(self):
+        # Below-threshold pass rate but clustering returned nothing —
+        # Coach softens to a navigate suggestion rather than nothing.
+        result = await self._suggestions(
+            latest_eval=self._make_eval_row(eval_id=99, pass_rate=0.55),
+            clusters=[],
+        )
+        self.assertEqual(len(result), 1)
+        s = result[0]
+        self.assertEqual(s["id"], "eval:low-pass-rate-no-clusters")
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(s["action"]["params"]["target"], "eval-predictions")
+
+    async def test_cluster_lookup_value_error_returns_empty(self):
+        # Eval row deleted between the read + the cluster call — Coach
+        # swallows the ValueError and emits nothing.
+        result = await self._suggestions(
+            latest_eval=self._make_eval_row(eval_id=5, pass_rate=0.3),
+            cluster_raises=True,
+        )
+        self.assertEqual(result, [])
 
 
 if __name__ == "__main__":

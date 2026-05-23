@@ -1,17 +1,24 @@
 /**
  * One Coach Mode suggestion card with a click-to-execute action
- * button (USER-SUCCESS Epic 4 Phase 1).
+ * button (USER-SUCCESS Epic 4).
  *
- * Phase 1 wires the ``run_playbook`` action to the existing
- * ``runPlaybook`` synth-playbook endpoint. ``navigate`` is rendered
- * as a hint (no router glue yet — the recipe-picker live in the
- * data tab already, the user is already there).
+ * Action kinds:
+ * - ``run_playbook`` (Phase 1) — wraps ``runPlaybook`` synth endpoint.
+ * - ``navigate`` (Phase 1) — surfaces a hint toast; route glue is
+ *   deferred to Phase 4.
+ * - ``augment_from_cluster`` (Phase 3) — wraps
+ *   ``augmentFromCluster`` to generate synth rows targeting the
+ *   eval's top failure cluster (Epic 2b primitive).
  */
 
 import { useState } from 'react';
 
 import type { CoachSuggestion } from '../../api/coach';
-import { runPlaybook, type SynthMode } from '../../api/synthPlaybook';
+import {
+    augmentFromCluster,
+    runPlaybook,
+    type SynthMode,
+} from '../../api/synthPlaybook';
 import { toast } from '../../stores/toastStore';
 
 interface CoachSuggestionCardProps {
@@ -84,6 +91,48 @@ export default function CoachSuggestionCard({
                         ?.data?.detail;
                 toast.error(
                     detail ?? 'Coach action failed. Check the synth panel for details.',
+                );
+            } finally {
+                setIsExecuting(false);
+            }
+            return;
+        }
+        if (suggestion.action.kind === 'augment_from_cluster') {
+            const evalResultId = Number(
+                suggestion.action.params['eval_result_id'],
+            );
+            const clusterId = String(
+                suggestion.action.params['cluster_id'] ?? '',
+            );
+            const targetCount = Number(
+                suggestion.action.params['target_count'] ?? 30,
+            );
+            if (
+                !Number.isFinite(evalResultId)
+                || !clusterId
+                || !Number.isFinite(targetCount)
+                || targetCount < 1
+            ) {
+                toast.error('Coach suggestion is missing action parameters.');
+                return;
+            }
+            setIsExecuting(true);
+            try {
+                const result = await augmentFromCluster(projectId, {
+                    evalResultId,
+                    clusterId,
+                    targetCount,
+                });
+                toast.success(
+                    `Generated ${result.rows.length} synthetic row${result.rows.length === 1 ? '' : 's'} targeting cluster ${clusterId}.`,
+                );
+                onActionCompleted?.();
+            } catch (err) {
+                const detail =
+                    (err as { response?: { data?: { detail?: string } } })?.response
+                        ?.data?.detail;
+                toast.error(
+                    detail ?? 'Coach cluster-augment failed. Check the synth panel for details.',
                 );
             } finally {
                 setIsExecuting(false);
