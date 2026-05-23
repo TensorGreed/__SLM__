@@ -78,6 +78,17 @@ class Settings(BaseSettings):
     ALLOW_SYNTHETIC_DEMO_FALLBACK: bool = False
     DOMAIN_BLUEPRINT_ENABLE_LLM_ENRICHMENT: bool = False
 
+    # ── NeMo Data Designer synth backend (USER-SUCCESS Epic 5) ──────────
+    # Power-user opt-in. When NEMO_API_URL points at a reachable NIM /
+    # NeMo-Data-Designer endpoint, the NemoBackend appears alongside
+    # Ollama + Teacher in the picker. The auto-pick order is unchanged
+    # — NeMo is only used when the user explicitly pins it (so existing
+    # local-only installs see no behavior change).
+    NEMO_API_URL: str = ""
+    NEMO_API_KEY: str = ""
+    NEMO_DEFAULT_MODEL: str = ""
+    NEMO_TIMEOUT_SECONDS: float = 600.0
+
     # ── Judge Model (for evaluation) ────────────────────────────────────
     JUDGE_MODEL_API_URL: str = ""
     JUDGE_MODEL_API_KEY: str = ""

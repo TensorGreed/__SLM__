@@ -15,9 +15,14 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
     PlaybookCatalogEntry,
     PlaybookResult,
+    SynthBackendInfo,
     SynthMode,
 } from '../../api/synthPlaybook';
-import { listPlaybooks, runPlaybook } from '../../api/synthPlaybook';
+import {
+    listPlaybooks,
+    listSynthBackends,
+    runPlaybook,
+} from '../../api/synthPlaybook';
 import './PlaybookPickerPanel.css';
 
 interface Props {
@@ -66,6 +71,32 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
     const [running, setRunning] = useState(false);
     const [runError, setRunError] = useState<string | null>(null);
     const [result, setResult] = useState<PlaybookResult | null>(null);
+    // ── Backend picker (Epic 5 Phase 5a) ──────────────────────────
+    // ``null`` selectedBackend means "auto-pick on the server" (the
+    // default for v1 + every existing call site). The dropdown only
+    // appears when 2+ backends are available; single-backend installs
+    // see no clutter.
+    const [backends, setBackends] = useState<SynthBackendInfo[]>([]);
+    const [selectedBackend, setSelectedBackend] = useState<string | null>(null);
+
+    useEffect(() => {
+        // Backend listing is best-effort — if the endpoint 5xx's,
+        // we silently keep the picker hidden and fall back to
+        // auto-pick. The catalog fetch below is the load-bearing one.
+        let cancelled = false;
+        listSynthBackends(projectId)
+            .then((data) => {
+                if (cancelled) return;
+                setBackends(data.backends || []);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setBackends([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
 
     useEffect(() => {
         let cancelled = false;
@@ -102,6 +133,7 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
             const r = await runPlaybook(projectId, {
                 mode: selectedMode,
                 targetCount,
+                backend: selectedBackend,
             });
             setResult(r);
             onRowsAccepted?.(r);
@@ -118,7 +150,13 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
         } finally {
             setRunning(false);
         }
-    }, [projectId, selectedMode, targetCount, onRowsAccepted]);
+    }, [projectId, selectedMode, targetCount, selectedBackend, onRowsAccepted]);
+
+    // Build picker option list from available backends. Hidden when
+    // fewer than 2 are available (single-backend installs see no UI
+    // clutter — they get the same auto-pick behavior as before).
+    const availableBackends = backends.filter((b) => b.available);
+    const showBackendPicker = availableBackends.length >= 2;
 
     if (catalogLoading) {
         return (
@@ -200,6 +238,27 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
                     data-testid="playbook-picker-count"
                 />
             </div>
+
+            {showBackendPicker && (
+                <div className="playbook-picker__count" data-testid="playbook-picker-backend-row">
+                    <label htmlFor="playbook-backend-picker">Backend</label>
+                    <select
+                        id="playbook-backend-picker"
+                        value={selectedBackend ?? ''}
+                        onChange={(e) =>
+                            setSelectedBackend(e.target.value || null)
+                        }
+                        data-testid="playbook-picker-backend"
+                    >
+                        <option value="">Auto (recommended)</option>
+                        {availableBackends.map((b) => (
+                            <option key={b.name} value={b.describe}>
+                                {b.describe}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             <div className="playbook-picker__actions">
                 <button

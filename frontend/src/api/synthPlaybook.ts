@@ -43,6 +43,29 @@ export async function listPlaybooks(projectId: number): Promise<PlaybookCatalogR
     return resp.data as PlaybookCatalogResponse;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────
+// USER-SUCCESS Epic 5 Phase 5a — synth backend picker.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface SynthBackendInfo {
+    name: string;
+    available: boolean;
+    describe: string;
+}
+
+export interface SynthBackendsResponse {
+    project_id: number;
+    backends: SynthBackendInfo[];
+}
+
+export async function listSynthBackends(
+    projectId: number,
+): Promise<SynthBackendsResponse> {
+    const resp = await api.get(`/projects/${projectId}/synthetic/backends`);
+    return resp.data as SynthBackendsResponse;
+}
+
 export interface RunPlaybookArgs {
     mode: SynthMode;
     targetCount: number;

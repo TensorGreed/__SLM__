@@ -155,4 +155,118 @@ describe('PlaybookPickerPanel', () => {
         fireEvent.change(countInput, { target: { value: '0' } });
         expect(countInput.value).toBe('1');
     });
+
+    // ── Backend picker (Epic 5 Phase 5a) ─────────────────────────────
+
+    /** Route-aware GET stub: distinguishes /playbooks from /backends so
+     * the panel can fetch both on mount without one overwriting the
+     * other. ``backendsResponse`` defaults to a single-backend payload
+     * so most tests get the picker-hidden behavior. */
+    function installRouter(opts: {
+        playbooks: unknown;
+        backendsResponse?: unknown;
+    }) {
+        const backendsResponse = opts.backendsResponse ?? {
+            project_id: 1,
+            backends: [
+                { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b' },
+            ],
+        };
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.includes('/synthetic/backends')) {
+                return { data: backendsResponse };
+            }
+            return { data: opts.playbooks };
+        });
+    }
+
+    it('hides the backend picker when only one backend is available', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+        });
+        render(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
+        });
+        // Picker UI not in the DOM.
+        expect(screen.queryByTestId('playbook-picker-backend')).not.toBeInTheDocument();
+    });
+
+    it('shows the backend picker when 2+ backends are available', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            backendsResponse: {
+                project_id: 1,
+                backends: [
+                    { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b' },
+                    { name: 'nemo', available: true, describe: 'nemo:meta/llama-3.1-70b-instruct' },
+                ],
+            },
+        });
+        render(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
+        });
+        const select = screen.getByTestId('playbook-picker-backend') as HTMLSelectElement;
+        // "Auto (recommended)" + one option per available backend.
+        expect(select.options.length).toBe(3);
+        expect(select.options[0].text).toMatch(/Auto/);
+        expect(select.options[1].value).toBe('ollama:llama3.1:8b');
+        expect(select.options[2].value).toBe('nemo:meta/llama-3.1-70b-instruct');
+    });
+
+    it('passes the selected backend pin through to runPlaybook', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 3,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            backendsResponse: {
+                project_id: 3,
+                backends: [
+                    { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b' },
+                    { name: 'nemo', available: true, describe: 'nemo:meta/llama-3.1-70b-instruct' },
+                ],
+            },
+        });
+        apiMock.post.mockResolvedValue({
+            data: {
+                rows: [{ payload: {}, synth_confidence: 0.9, synth_source: 'playbook:classification:positives_paraphrase' }],
+                backend_used: 'nemo:meta/llama-3.1-70b-instruct',
+                elapsed_sec: 0.5,
+                prompt_snippet: '...',
+            },
+        });
+
+        render(<PlaybookPickerPanel projectId={3} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
+        });
+
+        // Select the NeMo backend.
+        const select = screen.getByTestId('playbook-picker-backend') as HTMLSelectElement;
+        await userEvent.selectOptions(select, 'nemo:meta/llama-3.1-70b-instruct');
+        expect(select.value).toBe('nemo:meta/llama-3.1-70b-instruct');
+
+        // Click generate.
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/3/synthetic/run-playbook',
+                expect.objectContaining({
+                    mode: 'positives_paraphrase',
+                    backend: 'nemo:meta/llama-3.1-70b-instruct',
+                }),
+            );
+        });
+    });
 });

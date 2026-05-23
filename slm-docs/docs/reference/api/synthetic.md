@@ -7,11 +7,41 @@ title: Synthetic
 
 # Synthetic
 
-Auto-generated reference for the **Synthetic** API. 14 endpoint(s).
+Auto-generated reference for the **Synthetic** API. 15 endpoint(s).
 
 For curated narrative + UI / CLI walkthroughs see the corresponding section under
 [Pipeline workflows](../../workflows/pipeline-overview.md), [Deployment](../../deployment/plan.md),
 [Observability](../../observability/run-events.md), or [Extensions](../../extensions/contracts.md).
+
+### `GET /api/projects/{project_id}/synthetic/backends`
+
+**List Synth Backends**
+
+List the synth backends registered on this BrewSLM install +
+each one's reachability (USER-SUCCESS Epic 5 Phase 5a).
+
+``project_id`` isn't read — backends are install-global — but the
+route lives under the project-scoped prefix to keep the URL
+pattern consistent with the rest of the synthetic router (and to
+keep the auth middleware applied uniformly).
+
+Frontend uses this to decide whether to render the backend picker
+on the playbook panel: if only one backend is available, the
+picker is hidden to avoid clutter.
+
+**Parameters**
+
+| Name | In | Type | Required | Description |
+|---|---|---|---|---|
+| `project_id` | `path` | `integer` | yes |  |
+
+**Responses**
+
+| Status | Schema | Description |
+|---|---|---|
+| `200` | `any` | Successful Response |
+| `422` | `HTTPValidationError` | Validation Error |
+
 
 ### `POST /api/projects/{project_id}/synthetic/generate`
 

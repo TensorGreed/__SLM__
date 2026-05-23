@@ -365,6 +365,42 @@ class RunPlaybookRequest(BaseModel):
     backend: str | None = Field(default=None, description="Optional backend pin, e.g. 'ollama:llama3.1:8b'.")
 
 
+@router.get("/backends")
+async def list_synth_backends(project_id: int):
+    """List the synth backends registered on this BrewSLM install +
+    each one's reachability (USER-SUCCESS Epic 5 Phase 5a).
+
+    ``project_id`` isn't read — backends are install-global — but the
+    route lives under the project-scoped prefix to keep the URL
+    pattern consistent with the rest of the synthetic router (and to
+    keep the auth middleware applied uniformly).
+
+    Frontend uses this to decide whether to render the backend picker
+    on the playbook panel: if only one backend is available, the
+    picker is hidden to avoid clutter.
+    """
+    # Lazy import — keeps the module-level import surface narrow and
+    # avoids pulling httpx into request-routing if it's not present.
+    from app.services.synth_backends import BACKEND_REGISTRY
+
+    entries: list[dict[str, object]] = []
+    for cls in BACKEND_REGISTRY:
+        try:
+            available = bool(cls.is_available())
+        except Exception:  # noqa: BLE001 — a broken backend must never 500 the picker
+            available = False
+        entries.append({
+            "name": cls.name,
+            "available": available,
+            # ``describe()`` requires an instance — instantiate only for
+            # the available ones (so we don't trigger constructor-time
+            # validation on an unavailable backend like NeMo without a
+            # configured model).
+            "describe": (cls().describe() if available else cls.name),
+        })
+    return {"project_id": project_id, "backends": entries}
+
+
 @router.get("/playbooks")
 async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_db)):
     """Catalog of registered playbooks; if the project has a selected

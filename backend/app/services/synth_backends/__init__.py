@@ -18,19 +18,24 @@ Callers can pin a specific backend by name via
 from __future__ import annotations
 
 from .base import SynthBackend, SynthBackendError, pick_backend
+from .nemo import NemoBackend
 from .ollama import OllamaBackend
 from .teacher import TeacherModelBackend
 
 # Order matters: pick_backend() walks this list in order when no
-# explicit backend is requested.
+# explicit backend is requested. NeMo is positioned LAST so auto-pick
+# for existing local-only installs (Ollama users) is unchanged —
+# users opt into NeMo by pinning it via the picker.
 BACKEND_REGISTRY: list[type[SynthBackend]] = [
     OllamaBackend,
     TeacherModelBackend,
+    NemoBackend,
 ]
 
 
 __all__ = [
     "BACKEND_REGISTRY",
+    "NemoBackend",
     "OllamaBackend",
     "SynthBackend",
     "SynthBackendError",
