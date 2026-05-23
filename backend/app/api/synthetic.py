@@ -281,6 +281,50 @@ async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_d
     }
 
 
+class BulkReviewQueueRequest(BaseModel):
+    row_ids: list[int] = Field(..., description="IDs of pending synth rows to update.")
+    action: str = Field(..., description="'accept' or 'reject'.")
+
+
+@router.get("/review-queue")
+async def list_synth_review_queue(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List pending synthetic rows for the project, grouped by
+    `synth_source` (USER-SUCCESS Epic 2b).
+
+    Pending rows are gated out of dataset prep — they don't enter
+    training until the user accepts them via `/review-queue/bulk-update`
+    (or rejects them, in which case they're deleted).
+    """
+    from app.services.synth_review_queue_service import list_review_queue
+
+    return await list_review_queue(db, project_id)
+
+
+@router.post("/review-queue/bulk-update")
+async def bulk_update_synth_review_queue(
+    project_id: int,
+    req: BulkReviewQueueRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk accept or reject pending synth rows. Accepted rows flip
+    to `review_status="accepted"` and become eligible for training;
+    rejected rows are removed from synthetic.jsonl permanently.
+    """
+    from app.services.synth_review_queue_service import bulk_update_review_queue
+
+    if req.action not in ("accept", "reject"):
+        raise HTTPException(400, "action must be 'accept' or 'reject'")
+    return await bulk_update_review_queue(
+        db,
+        project_id,
+        row_ids=req.row_ids,
+        action=req.action,  # type: ignore[arg-type]
+    )
+
+
 @router.post("/run-playbook")
 async def run_synth_playbook(
     project_id: int,

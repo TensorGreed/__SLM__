@@ -28,6 +28,23 @@ from . import qa_sft_paraphrase  # noqa: F401
 from . import span_extraction_paraphrase  # noqa: F401
 from . import summarization_paraphrase  # noqa: F401
 
+# Epic 2b: hard-negatives (4 recipes where the concept fits)
+from . import classification_hard_negatives  # noqa: F401
+from . import code_review_hard_negatives  # noqa: F401
+from . import generic_sft_hard_negatives  # noqa: F401
+from . import span_extraction_hard_negatives  # noqa: F401
+
+# Epic 2b: class-balance fill (classification only)
+from . import classification_class_balance_fill  # noqa: F401
+
+# Epic 2b: cluster-targeted (all 6 recipes)
+from . import classification_cluster_targeted  # noqa: F401
+from . import code_review_cluster_targeted  # noqa: F401
+from . import generic_sft_cluster_targeted  # noqa: F401
+from . import qa_sft_cluster_targeted  # noqa: F401
+from . import span_extraction_cluster_targeted  # noqa: F401
+from . import summarization_cluster_targeted  # noqa: F401
+
 
 __all__ = [
     "Playbook",

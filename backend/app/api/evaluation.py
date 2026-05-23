@@ -637,6 +637,55 @@ async def explain_failure_cluster_endpoint(
     }
 
 
+@router.post("/{eval_result_id}/clusters/{cluster_id}/augment", status_code=200)
+async def augment_failure_cluster_endpoint(
+    project_id: int,
+    eval_result_id: int,
+    cluster_id: str,
+    target_count: int = 30,
+    backend: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate cluster-targeted synthetic training data for a
+    specific failure cluster (USER-SUCCESS Epic 2b).
+
+    Calls the CLUSTER_TARGETED playbook for the project's recipe with
+    the cluster's exemplars + reason code as context. Generated rows
+    land in the project's synthetic dataset with provenance
+    ``synth_source = "playbook:<recipe>:cluster_targeted:cluster=<cluster_id>"``
+    and ``review_status = "pending"`` so they pass through the synth
+    review queue before entering training.
+
+    Returns the PlaybookResult dict (rows + backend_used +
+    elapsed_sec + prompt_snippet).
+
+    503 when no synth backend is reachable. 404 when the eval /
+    cluster / project isn't found. 400 for everything else.
+    """
+    from app.services.active_learning_service import augment_from_cluster
+    from app.services.synth_backends import SynthBackendError
+
+    if target_count < 1 or target_count > 500:
+        raise HTTPException(400, "target_count must be between 1 and 500")
+
+    try:
+        return await augment_from_cluster(
+            db,
+            project_id=project_id,
+            eval_result_id=eval_result_id,
+            cluster_id=cluster_id,
+            target_count=target_count,
+            backend=backend,
+        )
+    except SynthBackendError as e:
+        raise HTTPException(503, str(e))
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(404, message)
+        raise HTTPException(400, message)
+
+
 # ── "Did SFT help?" lift summary (Theme 8 Epic 4) ───────────────────
 
 

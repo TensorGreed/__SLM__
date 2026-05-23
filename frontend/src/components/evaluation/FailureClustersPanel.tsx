@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
+import { augmentFromCluster } from '../../api/synthPlaybook';
 import './FailureClustersPanel.css';
+
+interface AugmentState {
+    status: 'idle' | 'running' | 'ok' | 'error';
+    rows?: number;
+    backend?: string;
+    elapsed?: number;
+    message?: string;
+}
 
 interface ClusterExplanation {
     state: 'loading' | 'ok' | 'judge_unavailable' | 'error' | 'cluster_not_found';
@@ -103,6 +112,9 @@ export default function FailureClustersPanel({
     const [explanations, setExplanations] = useState<
         Record<string, ClusterExplanation>
     >({});
+
+    // USER-SUCCESS Epic 2b: cluster-targeted augmentation status per cluster.
+    const [augmentStates, setAugmentStates] = useState<Record<string, AugmentState>>({});
 
     useEffect(() => {
         if (selectedResultId === '' && evalResults.length > 0) {
@@ -336,6 +348,18 @@ export default function FailureClustersPanel({
                                                 })
                                             }
                                         />
+                                        <ClusterAugmentControl
+                                            projectId={projectId}
+                                            evalResultId={selectedResultId as number}
+                                            clusterId={cluster.cluster_id}
+                                            state={augmentStates[cluster.cluster_id]}
+                                            onStateChange={(next) =>
+                                                setAugmentStates((prev) => ({
+                                                    ...prev,
+                                                    [cluster.cluster_id]: next,
+                                                }))
+                                            }
+                                        />
                                         {cluster.classifier_reason && (
                                             <p className="failure-cluster-reason">{cluster.classifier_reason}</p>
                                         )}
@@ -509,5 +533,106 @@ function ClusterExplanationChip({
                 Retry
             </button>
         </p>
+    );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// ClusterAugmentControl (USER-SUCCESS Epic 2b)
+// Renders a per-cluster "Augment from this cluster" CTA. Generated
+// rows land in the project's synthetic dataset with
+// review_status=pending — the SynthReviewQueue on the Synthetic tab
+// is where the user accepts or rejects them.
+// ─────────────────────────────────────────────────────────────────────
+
+interface ClusterAugmentControlProps {
+    projectId: number;
+    evalResultId: number;
+    clusterId: string;
+    state: AugmentState | undefined;
+    onStateChange: (next: AugmentState) => void;
+}
+
+function ClusterAugmentControl({
+    projectId,
+    evalResultId,
+    clusterId,
+    state,
+    onStateChange,
+}: ClusterAugmentControlProps) {
+    const [targetCount, setTargetCount] = useState(20);
+    const status = state?.status ?? 'idle';
+
+    const handleRun = useCallback(async () => {
+        onStateChange({ status: 'running' });
+        try {
+            const result = await augmentFromCluster(projectId, {
+                evalResultId,
+                clusterId,
+                targetCount,
+            });
+            onStateChange({
+                status: 'ok',
+                rows: result.rows.length,
+                backend: result.backend_used,
+                elapsed: result.elapsed_sec,
+            });
+        } catch (err: any) {
+            const message =
+                err?.response?.data?.detail || err?.message || 'Augment failed';
+            onStateChange({ status: 'error', message });
+        }
+    }, [projectId, evalResultId, clusterId, targetCount, onStateChange]);
+
+    return (
+        <div
+            className="failure-cluster-augment"
+            data-testid={`failure-cluster-augment-${clusterId}`}
+        >
+            <div className="failure-cluster-augment-row">
+                <label className="failure-cluster-augment-count-label">
+                    Generate
+                    <input
+                        type="number"
+                        min={1}
+                        max={500}
+                        value={targetCount}
+                        onChange={(e) =>
+                            setTargetCount(
+                                Math.max(1, Math.min(500, Number(e.target.value) || 1)),
+                            )
+                        }
+                        data-testid={`failure-cluster-augment-count-${clusterId}`}
+                    />
+                    rows from this cluster
+                </label>
+                <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleRun}
+                    disabled={status === 'running'}
+                    data-testid={`failure-cluster-augment-run-${clusterId}`}
+                >
+                    {status === 'running' ? 'Generating…' : 'Augment from this cluster →'}
+                </button>
+            </div>
+            {status === 'ok' && state && (
+                <p
+                    className="failure-cluster-augment-result"
+                    data-testid={`failure-cluster-augment-ok-${clusterId}`}
+                >
+                    ✓ Generated {state.rows} rows via <code>{state.backend}</code> in {state.elapsed?.toFixed(2)}s.
+                    Pending review on the Synthetic tab.
+                </p>
+            )}
+            {status === 'error' && state?.message && (
+                <p
+                    className="failure-cluster-augment-error"
+                    data-testid={`failure-cluster-augment-error-${clusterId}`}
+                >
+                    {state.message}
+                </p>
+            )}
+        </div>
     );
 }

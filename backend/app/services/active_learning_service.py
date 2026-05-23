@@ -480,9 +480,67 @@ async def promote_active_learning_batch(
     }
 
 
+async def augment_from_cluster(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    eval_result_id: int,
+    cluster_id: str,
+    target_count: int = 30,
+    backend: str | None = None,
+):
+    """Run the CLUSTER_TARGETED playbook against a specific failure
+    cluster (USER-SUCCESS Epic 2b).
+
+    The flow:
+      1. Look up clusters for the eval result via
+         `failure_cluster_service.cluster_eval_result_failures`.
+      2. Find the cluster matching `cluster_id` (e.g. "cluster-2").
+      3. Hand it to `run_playbook` with mode=CLUSTER_TARGETED and
+         the cluster dict as `failure_cluster` — the playbook prompt
+         embeds the cluster's reason_code, output_pattern, and
+         exemplar rows.
+
+    Returns the PlaybookResult dict (rows + backend_used +
+    elapsed_sec + prompt_snippet).
+
+    Raises ValueError when the cluster / eval / project / recipe
+    isn't found — callers translate to 4xx at the API layer.
+    """
+    # Local imports keep this module's top-level light + avoid
+    # circular imports with synth_playbook_service.
+    from app.services.failure_cluster_service import cluster_eval_result_failures
+    from app.services.synth_playbook_service import run_playbook
+    from app.services.synth_playbooks import SynthMode
+
+    cluster_payload = await cluster_eval_result_failures(
+        db,
+        eval_result_id=eval_result_id,
+        max_failures=200,
+        max_exemplars_per_cluster=5,
+    )
+    clusters = cluster_payload.get("clusters") or []
+    selected = next(
+        (c for c in clusters if c.get("cluster_id") == cluster_id),
+        None,
+    )
+    if selected is None:
+        raise ValueError(f"Cluster {cluster_id!r} not found on eval result {eval_result_id}")
+
+    return await run_playbook(
+        db,
+        project_id,
+        SynthMode.CLUSTER_TARGETED,
+        target_count=target_count,
+        failure_cluster=selected,
+        backend=backend,
+    )
+
+
 __all__ = [
     "MAX_PROPOSE_ROWS",
     "DEFAULT_PROPOSE_ROWS",
     "propose_active_learning_batch",
     "promote_active_learning_batch",
+    "augment_from_cluster",
 ]

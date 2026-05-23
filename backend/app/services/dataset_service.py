@@ -145,8 +145,21 @@ def apply_chat_template(entry: dict, template_name: str = "llama3") -> str:
     return f"User: {q}\nAssistant: {a}"
 
 
-def _load_records_from_file(file_path: Path, max_records: int | None = None) -> list[dict[str, Any]]:
-    """Load structured rows from JSON/JSONL/CSV/text into a list of dict records."""
+def _load_records_from_file(
+    file_path: Path,
+    max_records: int | None = None,
+    *,
+    include_pending_synth: bool = False,
+) -> list[dict[str, Any]]:
+    """Load structured rows from JSON/JSONL/CSV/text into a list of dict records.
+
+    USER-SUCCESS Epic 2b note: synthetic rows now carry a
+    ``review_status`` field. Rows with ``review_status == "pending"``
+    are excluded from training-bound reads by default — the review
+    queue (Synthetic tab) is the gate. Callers that *want* the
+    pending rows (the review-queue list endpoint) pass
+    ``include_pending_synth=True``.
+    """
     if not file_path.exists():
         return []
 
@@ -164,6 +177,13 @@ def _load_records_from_file(file_path: Path, max_records: int | None = None) -> 
                 except json.JSONDecodeError:
                     continue
                 if isinstance(row, dict):
+                    if (
+                        not include_pending_synth
+                        and row.get("review_status") == "pending"
+                    ):
+                        # Pending synth rows are gated by the review
+                        # queue; don't leak them into training prep.
+                        continue
                     records.append(row)
                 else:
                     records.append({"value": row})

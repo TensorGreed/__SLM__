@@ -390,4 +390,79 @@ describe('FailureClustersPanel', () => {
             await screen.findByText(/eval_result_not_found/i),
         ).toBeInTheDocument();
     });
+
+    // ── USER-SUCCESS Epic 2b: cluster-targeted augment button ─────────
+
+    it('renders the per-cluster augment control inside an expanded cluster card', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        render(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
+
+        const clusterButton = await screen.findByRole('button', {
+            name: /hallucination/i,
+        });
+        await userEvent.click(clusterButton);
+
+        expect(screen.getByTestId('failure-cluster-augment-cluster-1')).toBeInTheDocument();
+        expect(screen.getByTestId('failure-cluster-augment-run-cluster-1')).toBeInTheDocument();
+    });
+
+    it('augment button POSTs to the cluster-augment endpoint and surfaces the result', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockResolvedValue({
+            data: {
+                rows: [
+                    {
+                        payload: { question: 'Q', answer: 'A' },
+                        synth_confidence: 0.9,
+                        synth_source: 'playbook:qa-sft:cluster_targeted:cluster=cluster-1',
+                    },
+                ],
+                backend_used: 'ollama:llama3.1:8b',
+                elapsed_sec: 1.42,
+                prompt_snippet: 'You are generating…',
+            },
+        });
+
+        render(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
+        const clusterButton = await screen.findByRole('button', {
+            name: /hallucination/i,
+        });
+        await userEvent.click(clusterButton);
+        await userEvent.click(screen.getByTestId('failure-cluster-augment-run-cluster-1'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('failure-cluster-augment-ok-cluster-1')).toBeInTheDocument();
+        });
+        const okMessage = screen.getByTestId('failure-cluster-augment-ok-cluster-1');
+        expect(okMessage.textContent).toMatch(/Generated 1 rows/);
+        expect(okMessage.textContent).toMatch(/ollama:llama3.1:8b/);
+
+        // Confirm the endpoint shape: POST to /clusters/cluster-1/augment.
+        const postCall = apiMock.post.mock.calls.find((call) =>
+            String(call[0]).includes('/clusters/cluster-1/augment'),
+        );
+        expect(postCall).toBeDefined();
+        // Third arg is the axios config; target_count is in `params`.
+        const config = postCall?.[2] as { params: Record<string, unknown> } | undefined;
+        expect(config?.params?.target_count).toBe(20);
+    });
+
+    it('augment button surfaces error detail when the request fails', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockRejectedValue({
+            response: { status: 503, data: { detail: 'No synth backend reachable.' } },
+        });
+
+        render(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
+        const clusterButton = await screen.findByRole('button', {
+            name: /hallucination/i,
+        });
+        await userEvent.click(clusterButton);
+        await userEvent.click(screen.getByTestId('failure-cluster-augment-run-cluster-1'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('failure-cluster-augment-error-cluster-1')).toBeInTheDocument();
+        });
+        expect(screen.getByTestId('failure-cluster-augment-error-cluster-1').textContent).toMatch(/No synth backend/);
+    });
 });

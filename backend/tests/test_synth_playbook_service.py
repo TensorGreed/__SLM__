@@ -100,14 +100,17 @@ class PlaybookUnitTests(unittest.TestCase):
                 self.assertEqual(pb.recipe_id, recipe_id)
                 self.assertEqual(pb.mode, SynthMode.POSITIVES_PARAPHRASE)
 
-        # Catalog read should return 6 entries.
+        # Catalog read covers all registered playbooks; every recipe
+        # has at least POSITIVES_PARAPHRASE.
         catalog = list_playbooks()
-        self.assertEqual(len(catalog), 6)
-        self.assertEqual(
-            {p["mode"] for p in catalog},
-            {"positives_paraphrase"},
-            "v1 should only ship POSITIVES_PARAPHRASE",
-        )
+        self.assertGreaterEqual(len(catalog), 6)
+        modes_present = {p["mode"] for p in catalog}
+        self.assertIn("positives_paraphrase", modes_present)
+        # Every recipe must have positives_paraphrase available.
+        recipes_with_paraphrase = {
+            p["recipe_id"] for p in catalog if p["mode"] == "positives_paraphrase"
+        }
+        self.assertEqual(len(recipes_with_paraphrase), 6)
 
     def test_qa_sft_paraphrase_preserves_answer_text(self):
         # The QA paraphrase playbook must drop confidence when the
@@ -426,9 +429,15 @@ class RunPlaybookIntegrationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
         self.assertEqual(payload["recipe_id"], "classification")
-        self.assertEqual(len(payload["playbooks"]), 1)
-        self.assertEqual(payload["playbooks"][0]["mode"], "positives_paraphrase")
-        self.assertEqual(payload["playbooks"][0]["recipe_id"], "classification")
+        # Classification recipe has the full set: paraphrase + hard_neg + balance + cluster.
+        modes = {p["mode"] for p in payload["playbooks"]}
+        self.assertEqual(
+            modes,
+            {"positives_paraphrase", "hard_negatives", "class_balance_fill", "cluster_targeted"},
+        )
+        # Every entry should be scoped to the project's recipe.
+        for pb in payload["playbooks"]:
+            self.assertEqual(pb["recipe_id"], "classification")
 
 
 if __name__ == "__main__":
