@@ -126,10 +126,27 @@ export default function SynthReviewQueue({ projectId }: Props) {
         );
     }
 
-    if (!data || data.total_pending === 0) {
+    if (!data || (data.total_pending === 0 && data.total_accepted === 0)) {
         return (
             <section className="synth-review-queue synth-review-queue--empty" data-testid="synth-review-queue-empty">
                 <p>No synth rows pending review.</p>
+            </section>
+        );
+    }
+
+    // If only accepted rows exist (queue is empty), render a compact
+    // "what's queued for training" summary so approved rows are
+    // visible somewhere in the UI.
+    if (data.total_pending === 0) {
+        return (
+            <section className="synth-review-queue" data-testid="synth-review-queue">
+                <header className="synth-review-queue__head">
+                    <h3 className="synth-review-queue__title">Synth review queue</h3>
+                    <p className="synth-review-queue__subtitle">
+                        No rows pending review. <strong>{data.total_accepted}</strong> row{data.total_accepted === 1 ? '' : 's'} accepted and queued for the next training run.
+                    </p>
+                </header>
+                <AcceptedRowsSection groups={data.accepted_groups} totalAccepted={data.total_accepted} />
             </section>
         );
     }
@@ -141,6 +158,9 @@ export default function SynthReviewQueue({ projectId }: Props) {
                 <p className="synth-review-queue__subtitle">
                     {data.total_pending} row{data.total_pending === 1 ? '' : 's'} awaiting review,
                     grouped by source. Accept to add to training; reject to discard.
+                    {data.total_accepted > 0 && (
+                        <> {' · '}<strong>{data.total_accepted}</strong> already accepted (see below).</>
+                    )}
                 </p>
             </header>
 
@@ -214,6 +234,60 @@ export default function SynthReviewQueue({ projectId }: Props) {
                     </div>
                 );
             })}
+
+            {data.accepted_groups.length > 0 && (
+                <AcceptedRowsSection
+                    groups={data.accepted_groups}
+                    totalAccepted={data.total_accepted}
+                />
+            )}
         </section>
+    );
+}
+
+
+interface AcceptedRowsSectionProps {
+    groups: import('../../api/synthPlaybook').ReviewQueueGroup[];
+    totalAccepted: number;
+}
+
+/**
+ * Collapsible "Accepted — queued for training" section that surfaces
+ * what's already passed review. Answers the user's "where do
+ * approved synth rows show up?" question.
+ */
+function AcceptedRowsSection({ groups, totalAccepted }: AcceptedRowsSectionProps) {
+    const [expanded, setExpanded] = useState(false);
+    return (
+        <details
+            className="synth-review-queue__accepted"
+            open={expanded}
+            onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}
+            data-testid="synth-review-queue-accepted"
+        >
+            <summary className="synth-review-queue__accepted-summary">
+                <span className="synth-review-queue__accepted-headline">
+                    <strong>{totalAccepted}</strong> accepted row{totalAccepted === 1 ? '' : 's'} queued for training
+                </span>
+                <span className="synth-review-queue__accepted-hint">
+                    ({groups.length} source{groups.length === 1 ? '' : 's'})
+                </span>
+            </summary>
+            <ul className="synth-review-queue__accepted-groups">
+                {groups.map((group) => (
+                    <li
+                        key={group.synth_source}
+                        className="synth-review-queue__accepted-group"
+                        data-testid={`synth-review-queue-accepted-group-${group.synth_source}`}
+                    >
+                        <code>{group.synth_source || '(no source)'}</code>
+                        <span className="synth-review-queue__accepted-count">{group.count}</span>
+                    </li>
+                ))}
+            </ul>
+            <p className="synth-review-queue__accepted-footnote">
+                Accepted rows enter the training corpus on the next Dataset Prep + Training run.
+            </p>
+        </details>
     );
 }

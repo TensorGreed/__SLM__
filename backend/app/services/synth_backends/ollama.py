@@ -20,9 +20,15 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - tests guard via mocks
     httpx = None  # type: ignore[assignment]
 
+from .base import SynthBackendError
+
 
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+# 10 minutes — generations of 30-50 rows on a CPU-loaded Llama 3.1 8B
+# routinely take 3-5 minutes. The legacy `call_teacher_model` flow
+# defaults to 600s for the same reason. Matches the Vite proxy ceiling
+# (10 min) — anything longer than that is broken regardless.
+DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "600"))
 
 # Preference order — we want the strongest realistic model that
 # Ollama users typically have pulled. Tags are matched as substrings
@@ -86,14 +92,19 @@ class OllamaBackend:
         if self._model:
             return self._model
         if httpx is None:
-            raise RuntimeError("httpx is not installed; install httpx to use OllamaBackend.")
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{self._host}/api/tags")
-            resp.raise_for_status()
-            data = resp.json()
+            raise SynthBackendError("httpx is not installed; install httpx to use OllamaBackend.")
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self._host}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as e:
+            raise SynthBackendError(
+                f"Couldn't reach Ollama at {self._host}: {e}. Is `ollama serve` running?"
+            ) from e
         models = [m.get("name", "") for m in (data.get("models") or [])]
         if not models:
-            raise RuntimeError(
+            raise SynthBackendError(
                 f"Ollama is reachable at {self._host} but has no models installed. "
                 f"Run `ollama pull llama3.1:8b` (or any model) first."
             )
@@ -118,7 +129,7 @@ class OllamaBackend:
         temperature: float = 0.7,
     ) -> str:
         if httpx is None:
-            raise RuntimeError("httpx is not installed; install httpx to use OllamaBackend.")
+            raise SynthBackendError("httpx is not installed; install httpx to use OllamaBackend.")
         model = await self._resolve_model()
         messages: list[dict[str, Any]] = []
         if system_prompt:
@@ -131,16 +142,38 @@ class OllamaBackend:
             "max_tokens": max_tokens,
             "stream": False,
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(
-                f"{self._host}/v1/chat/completions",
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._host}/v1/chat/completions",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.TimeoutException as e:
+            raise SynthBackendError(
+                f"Ollama timed out after {self._timeout:.0f}s generating with {model!r}. "
+                f"Try a smaller target_count, a faster model, or increase OLLAMA_TIMEOUT_SECONDS."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise SynthBackendError(
+                f"Ollama returned HTTP {e.response.status_code} for model {model!r}: "
+                f"{(e.response.text or '')[:200]}"
+            ) from e
+        except httpx.HTTPError as e:
+            raise SynthBackendError(
+                f"Ollama request failed for model {model!r}: {e}. Is `ollama serve` still running?"
+            ) from e
+        except ValueError as e:
+            # JSON decode error.
+            raise SynthBackendError(
+                f"Ollama returned a non-JSON response for model {model!r}: {e}"
+            ) from e
         # OpenAI-compatible response shape.
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
-            raise RuntimeError(f"Ollama returned an unexpected response shape: {data!r}") from e
+            raise SynthBackendError(
+                f"Ollama returned an unexpected response shape: {str(data)[:200]!r}"
+            ) from e
         return _strip_thinking_blocks(str(content or ""))

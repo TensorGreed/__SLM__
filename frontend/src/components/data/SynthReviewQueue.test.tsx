@@ -21,6 +21,7 @@ const SAMPLE_PAYLOAD = {
     project_id: 1,
     dataset_id: 12,
     total_pending: 3,
+    total_accepted: 0,
     groups: [
         {
             synth_source: 'playbook:classification:positives_paraphrase',
@@ -38,6 +39,7 @@ const SAMPLE_PAYLOAD = {
             ],
         },
     ],
+    accepted_groups: [],
 };
 
 
@@ -47,14 +49,73 @@ describe('SynthReviewQueue', () => {
         apiMock.post.mockReset();
     });
 
-    it('renders the empty state when no rows are pending', async () => {
+    it('renders the empty state when no rows are pending or accepted', async () => {
         apiMock.get.mockResolvedValue({
-            data: { project_id: 1, dataset_id: null, total_pending: 0, groups: [] },
+            data: {
+                project_id: 1,
+                dataset_id: null,
+                total_pending: 0,
+                total_accepted: 0,
+                groups: [],
+                accepted_groups: [],
+            },
         });
         render(<SynthReviewQueue projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('synth-review-queue-empty')).toBeInTheDocument();
         });
+    });
+
+    it('renders the "queued for training" summary when only accepted rows exist', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 1,
+                dataset_id: 12,
+                total_pending: 0,
+                total_accepted: 5,
+                groups: [],
+                accepted_groups: [
+                    { synth_source: 'playbook:qa-sft:positives_paraphrase', count: 3, rows: [] },
+                    { synth_source: 'playbook:qa-sft:cluster_targeted:cluster=cluster-2', count: 2, rows: [] },
+                ],
+            },
+        });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+        // Headline reports accepted count (text is split across a
+        // <strong> tag, so assert on the section's combined textContent).
+        const root = screen.getByTestId('synth-review-queue');
+        expect(root.textContent).toMatch(/5 rows accepted/);
+        // Accepted section appears with both source groups.
+        const accepted = screen.getByTestId('synth-review-queue-accepted');
+        expect(accepted).toBeInTheDocument();
+        expect(
+            screen.getByTestId('synth-review-queue-accepted-group-playbook:qa-sft:positives_paraphrase'),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByTestId('synth-review-queue-accepted-group-playbook:qa-sft:cluster_targeted:cluster=cluster-2'),
+        ).toBeInTheDocument();
+    });
+
+    it('mentions the accepted-count alongside pending count when both exist', async () => {
+        apiMock.get.mockResolvedValue({
+            data: { ...SAMPLE_PAYLOAD, total_accepted: 4, accepted_groups: [
+                { synth_source: 'playbook:classification:positives_paraphrase', count: 4, rows: [] },
+            ] },
+        });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+        // Subtitle mentions both pending + accepted counts (text is
+        // interleaved with <strong> tags).
+        const root = screen.getByTestId('synth-review-queue');
+        expect(root.textContent).toMatch(/3 rows awaiting review/);
+        expect(root.textContent).toMatch(/4 already accepted/);
+        // Accepted section is rendered as well.
+        expect(screen.getByTestId('synth-review-queue-accepted')).toBeInTheDocument();
     });
 
     it('renders the queue grouped by synth_source with bulk action buttons disabled when nothing is selected', async () => {

@@ -111,7 +111,11 @@ export interface ReviewQueueResponse {
     project_id: number;
     dataset_id: number | null;
     total_pending: number;
+    total_accepted: number;
     groups: ReviewQueueGroup[];
+    /** Accepted rows (passed review or pre-Epic-2a legacy rows).
+     *  Surfaces what's queued for the next dataset prep. */
+    accepted_groups: ReviewQueueGroup[];
 }
 
 export interface BulkUpdateResult {

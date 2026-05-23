@@ -315,7 +315,8 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
         self.assertEqual(payload["total_pending"], 3)
-        # 2 source groups.
+        self.assertEqual(payload["total_accepted"], 1)
+        # 2 pending source groups.
         sources = {g["synth_source"] for g in payload["groups"]}
         self.assertEqual(sources, {
             "playbook:classification:positives_paraphrase",
@@ -323,6 +324,33 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         })
         paraphrase_group = next(g for g in payload["groups"] if "positives_paraphrase" in g["synth_source"])
         self.assertEqual(paraphrase_group["count"], 2)
+        # The accepted row surfaces in accepted_groups, not groups.
+        accepted_sources = {g["synth_source"] for g in payload["accepted_groups"]}
+        self.assertIn("playbook:classification:positives_paraphrase", accepted_sources)
+        self.assertEqual(
+            sum(g["count"] for g in payload["accepted_groups"]),
+            1,
+        )
+
+    def test_review_queue_surfaces_accepted_only_when_no_pending_left(self):
+        """After all pending rows are accepted, the list endpoint
+        should still surface the accepted rows so the user can see
+        what's queued for training. Closes the 'where do my approved
+        rows show up?' gap."""
+        project = self._instantiate_template("policy-qa-style", "Queue Accepted-Only Test")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q1", "answer": "A1", "synth_source": "playbook:qa-sft:positives_paraphrase", "synth_confidence": 0.9, "review_status": "accepted"},
+            {"id": 2, "question": "Q2", "answer": "A2", "synth_source": "playbook:qa-sft:positives_paraphrase", "synth_confidence": 0.85, "review_status": "accepted"},
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["total_pending"], 0)
+        self.assertEqual(payload["total_accepted"], 2)
+        self.assertEqual(payload["groups"], [])
+        self.assertEqual(len(payload["accepted_groups"]), 1)
+        self.assertEqual(payload["accepted_groups"][0]["count"], 2)
 
     def test_bulk_accept_flips_pending_to_accepted(self):
         project = self._instantiate_template("log-triage", "Queue Accept Test")
@@ -379,6 +407,44 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
             json={"row_ids": [1], "action": "delete"},
         )
         self.assertEqual(resp.status_code, 400, resp.text)
+
+    def test_run_playbook_endpoint_wraps_backend_failure_as_503(self):
+        """A flaky LLM backend that throws mid-generation must produce
+        a clean 503 + readable message, not a 500 / "network error"
+        on the frontend. Regression test for the 2026-05-23 fix."""
+        project = self._instantiate_template("ticket-router", "Run Backend-Flake Test")
+        pid = project["id"]
+
+        class _FlakyBackend:
+            name = "flaky"
+
+            @classmethod
+            def is_available(cls):  # pragma: no cover
+                return True
+
+            def describe(self):  # pragma: no cover
+                return "flaky:test"
+
+            async def complete(self, *args, **kwargs):
+                # Simulate an Ollama timeout / connection drop that
+                # bubbles up as an unwrapped exception (the bug we
+                # just fixed in OllamaBackend).
+                raise RuntimeError("simulated Ollama transport drop")
+
+        from unittest.mock import patch
+        from app.services import synth_playbook_service
+
+        with patch.object(synth_playbook_service, "pick_backend", return_value=_FlakyBackend()):
+            resp = self.client.post(
+                f"/api/projects/{pid}/synthetic/run-playbook",
+                json={"mode": "positives_paraphrase", "target_count": 3},
+            )
+        # 503 (Service Unavailable), not 500.
+        self.assertEqual(resp.status_code, 503, resp.text)
+        # The error message should include the underlying type so
+        # the user can diagnose.
+        self.assertIn("RuntimeError", resp.text)
+        self.assertIn("simulated Ollama transport drop", resp.text)
 
     def test_augment_cluster_endpoint_returns_400_for_unknown_cluster(self):
         # Need an eval result to look up — easiest path is to make

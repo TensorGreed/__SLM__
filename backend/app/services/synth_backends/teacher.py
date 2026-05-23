@@ -51,19 +51,31 @@ class TeacherModelBackend:
         # Import lazily to avoid a circular import at module load time.
         from app.services.synthetic_service import call_teacher_model  # noqa: WPS433
 
+        from .base import SynthBackendError  # noqa: WPS433
+
         # The legacy dispatcher returns a dict — content lives at
         # ['choices'][0]['message']['content'] (OpenAI-compatible) or
-        # ['raw_text'] (fallback). Normalize to a single string.
-        result = await call_teacher_model(
-            prompt=prompt,
-            system_prompt=system_prompt or "",
-            api_url=self._api_url,
-            api_key=self._api_key,
-            model_name=self._model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            force_json=False,
-        )
+        # ['raw_text'] (fallback). Normalize to a single string + wrap
+        # any transport-layer failure into a SynthBackendError so the
+        # API endpoint surfaces a clean 503 instead of a 500.
+        try:
+            result = await call_teacher_model(
+                prompt=prompt,
+                system_prompt=system_prompt or "",
+                api_url=self._api_url,
+                api_key=self._api_key,
+                model_name=self._model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                force_json=False,
+            )
+        except ValueError as e:
+            # `call_teacher_model` raises ValueError when no URL is configured.
+            raise SynthBackendError(str(e)) from e
+        except Exception as e:  # noqa: BLE001
+            raise SynthBackendError(
+                f"Teacher-model request failed against {self._api_url!r}: {e}"
+            ) from e
         if not isinstance(result, dict):
             return str(result or "")
         # OpenAI-compatible shape first.

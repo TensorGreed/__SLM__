@@ -363,5 +363,16 @@ async def run_synth_playbook(
         if "not found" in message.lower():
             raise HTTPException(404, message)
         raise HTTPException(400, message)
+    except Exception as e:  # noqa: BLE001 — last-resort wrap
+        # Anything that wasn't caught above is most likely an LLM
+        # transport failure that didn't get wrapped at the backend
+        # layer (httpx error from a custom backend, JSON-decode error,
+        # etc.). Surface as a 503 with the type + message so the
+        # frontend can render an actionable error instead of a
+        # generic "network error" 500.
+        raise HTTPException(
+            503,
+            f"Synthetic generation failed ({type(e).__name__}): {e}",
+        )
 
     return result

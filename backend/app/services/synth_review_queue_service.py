@@ -75,31 +75,13 @@ def _row_preview(row: dict[str, Any], *, limit: int = 280) -> str:
     return raw[: limit - 1] + "…"
 
 
-async def list_review_queue(
-    db: AsyncSession,
-    project_id: int,
-) -> dict[str, Any]:
-    """Return all pending synth rows for a project, grouped by
-    `synth_source` for the bulk-accept/reject UI."""
-    # Confirm the Synthetic dataset exists for the project — if it
-    # doesn't, the queue is empty, return an empty payload.
-    ds_result = await db.execute(
-        select(Dataset).where(
-            Dataset.project_id == project_id,
-            Dataset.dataset_type == DatasetType.SYNTHETIC,
-        )
-    )
-    dataset = ds_result.scalar_one_or_none()
-    path = _synthetic_jsonl_path(project_id)
-    all_rows = _read_all_rows(path)
-    pending = [r for r in all_rows if r.get("review_status") == "pending"]
-
+def _bucket_rows_by_source(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Helper: group rows by synth_source, sort, project to the UI shape."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in pending:
+    for row in rows:
         source = str(row.get("synth_source") or "playbook:unknown")
         groups[source].append(row)
-
-    grouped = []
+    grouped: list[dict[str, Any]] = []
     for source in sorted(groups):
         entries = sorted(groups[source], key=lambda r: r.get("id") or 0)
         grouped.append({
@@ -118,12 +100,47 @@ async def list_review_queue(
                 for row in entries
             ],
         })
+    return grouped
+
+
+async def list_review_queue(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return synth rows for a project, split into pending + accepted
+    groups (both keyed by ``synth_source``).
+
+    The pending list is the active review queue. The accepted list
+    shows the rows that already passed review and will enter the
+    next dataset prep — answers the user's question of *where do
+    approved synth rows show up?*"""
+    # Confirm the Synthetic dataset exists for the project — if it
+    # doesn't, the queue is empty, return an empty payload.
+    ds_result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type == DatasetType.SYNTHETIC,
+        )
+    )
+    dataset = ds_result.scalar_one_or_none()
+    path = _synthetic_jsonl_path(project_id)
+    all_rows = _read_all_rows(path)
+    pending = [r for r in all_rows if r.get("review_status") == "pending"]
+    # "Accepted" = explicitly accepted, OR no review_status field
+    # (legacy rows from the pre-Epic-2a flow). Both will enter
+    # training. Anything else (rejected etc.) is excluded.
+    accepted = [
+        r for r in all_rows
+        if r.get("review_status") in (None, "accepted")
+    ]
 
     return {
         "project_id": project_id,
         "dataset_id": dataset.id if dataset else None,
         "total_pending": len(pending),
-        "groups": grouped,
+        "total_accepted": len(accepted),
+        "groups": _bucket_rows_by_source(pending),
+        "accepted_groups": _bucket_rows_by_source(accepted),
     }
 
 
