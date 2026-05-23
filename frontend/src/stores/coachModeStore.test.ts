@@ -16,11 +16,22 @@ describe('coachModeStore', () => {
         expect(computeCoachDefaultOn(undefined)).toBe(true);
     });
 
-    it('computeCoachDefaultOn returns true for level < 3 (onboarding) and false for >= 3', () => {
+    it('computeCoachDefaultOn returns true for level < 5 (ramping up) and false for >= 5', () => {
+        // Phase 4 raised the threshold from 3 to 5 so mid-tier users
+        // (L3 "ML Engineer", L4 "Senior-in-training") keep Coach Mode
+        // on by default until they cross into L5 Senior territory.
         expect(computeCoachDefaultOn(1)).toBe(true);
         expect(computeCoachDefaultOn(2)).toBe(true);
-        expect(computeCoachDefaultOn(3)).toBe(false);
+        expect(computeCoachDefaultOn(4)).toBe(true);
         expect(computeCoachDefaultOn(5)).toBe(false);
+        expect(computeCoachDefaultOn(8)).toBe(false);
+    });
+
+    it('computeCoachDefaultOn keeps mid-tier (L3, L4) defaulting on', () => {
+        // Per the roadmap's "Power users default off at L5" semantic,
+        // L3 + L4 are explicitly still in the coached zone.
+        expect(computeCoachDefaultOn(3)).toBe(true);
+        expect(computeCoachDefaultOn(4)).toBe(true);
     });
 
     it('isOn returns the default when no override is set', () => {

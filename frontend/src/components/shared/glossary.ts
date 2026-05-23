@@ -121,6 +121,66 @@ export const TERM_DEFINITIONS: Record<string, TermDefinition> = {
         category: 'operations',
         fallback: 'A validation step that checks compatibility before training or deployment.',
     },
+    // ── Coach Mode terms (USER-SUCCESS Epic 4 Phase 4) ─────────────
+    // These get auto-wrapped in CoachSuggestion bodies via a regex
+    // dictionary scan; ``glossaryKey`` is kept lower-case + space-
+    // separated so the backend glossary endpoint can resolve them.
+    f1: {
+        id: 'f1',
+        advancedLabel: 'F1',
+        beginnerLabel: 'F1',
+        glossaryKey: 'f1',
+        category: 'evaluation',
+        fallback: 'A single score that combines precision (how often you\'re right when you say yes) and recall (how many real yeses you catch). 0.70 is good for narrow tasks, 0.90+ is excellent. Below 0.50 usually means structural data issues.',
+    },
+    pass_rate: {
+        id: 'pass_rate',
+        advancedLabel: 'Pass Rate',
+        beginnerLabel: 'Pass Rate',
+        glossaryKey: 'pass rate',
+        category: 'evaluation',
+        fallback: 'The share of eval rows the model got right. 0.90 is the healthy zone for most narrow tasks; below 0.60 means the model is struggling enough that more data or a stronger base model is needed.',
+    },
+    shannon_entropy: {
+        id: 'shannon_entropy',
+        advancedLabel: 'Shannon Entropy',
+        beginnerLabel: 'Shannon Entropy',
+        glossaryKey: 'shannon entropy',
+        category: 'evaluation',
+        fallback: 'A number from 0 upward that measures how evenly classes are spread. 0 means everything is one class; higher numbers mean more even spread. Below 1.0 is "skewed enough to worry about"; below 0.5 is severe class imbalance.',
+    },
+    jaccard_similarity: {
+        id: 'jaccard_similarity',
+        advancedLabel: 'Jaccard Similarity',
+        beginnerLabel: 'Jaccard Similarity',
+        glossaryKey: 'jaccard similarity',
+        category: 'evaluation',
+        fallback: 'A 0-1 score for how much two texts share. 0 = no overlap, 1 = identical. Coach uses the *average* across your gold set\'s rows: high means your examples all look the same, which leaves the model nothing to learn from.',
+    },
+    class_imbalance: {
+        id: 'class_imbalance',
+        advancedLabel: 'Class Imbalance',
+        beginnerLabel: 'Class Imbalance',
+        glossaryKey: 'class imbalance',
+        category: 'evaluation',
+        fallback: 'When one label dominates your data, the model learns to over-predict it. Coach flags this when any class falls below 15% of the total. Fix by generating more examples for the rare classes.',
+    },
+    failure_cluster: {
+        id: 'failure_cluster',
+        advancedLabel: 'Failure Cluster',
+        beginnerLabel: 'Failure Cluster',
+        glossaryKey: 'failure cluster',
+        category: 'evaluation',
+        fallback: 'A group of eval failures that share a pattern (e.g. "the model hallucinates dates" or "wrong output shape"). Targeting the biggest cluster with synthetic data lifts the most failed rows for the same generation budget.',
+    },
+    predicted_f1_confidence: {
+        id: 'predicted_f1_confidence',
+        advancedLabel: 'Predicted Pass Probability',
+        beginnerLabel: 'Predicted Pass Probability',
+        glossaryKey: 'predicted pass probability',
+        category: 'evaluation',
+        fallback: 'BrewSLM\'s forecast of how likely your run is to pass the eval gate, computed from row count, class balance, gold-set diversity, and base-model size. Below 40% = likely fail; above 65% = likely pass; in between = borderline.',
+    },
 };
 
 export function getTermDefinition(id: string): TermDefinition | null {

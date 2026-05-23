@@ -11,7 +11,7 @@
  *   eval's top failure cluster (Epic 2b primitive).
  */
 
-import { useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 
 import type { CoachSuggestion } from '../../api/coach';
 import {
@@ -19,7 +19,84 @@ import {
     runPlaybook,
     type SynthMode,
 } from '../../api/synthPlaybook';
+import { Term } from '../shared/Term';
 import { toast } from '../../stores/toastStore';
+
+// Dictionary of plain-text phrases → glossary term IDs that
+// ``wrapTermsInBody`` scans for. Multi-word phrases come before
+// single-word ones so the regex prefers the longest match. Patterns
+// are case-insensitive but only match on word boundaries so substrings
+// like "f1234" don't collide with "F1".
+//
+// Keep this list aligned with the entries in
+// ``components/shared/glossary.ts`` — adding a phrase here without a
+// matching glossary entry would render an unbordered span (Term
+// gracefully degrades to plain text in that case).
+const COACH_TERM_PHRASES: Array<[RegExp, string]> = [
+    [/\bpredicted[- ]pass[- ]probability\b/i, 'predicted_f1_confidence'],
+    [/\bjaccard[- ]similarity\b/i, 'jaccard_similarity'],
+    [/\bshannon[- ]entropy\b/i, 'shannon_entropy'],
+    [/\bfailure[- ]cluster(s)?\b/i, 'failure_cluster'],
+    [/\bclass[- ]imbalance\b/i, 'class_imbalance'],
+    [/\bpass[- ]rate\b/i, 'pass_rate'],
+    [/\bentropy\b/i, 'shannon_entropy'],
+    [/\bf1\b/i, 'f1'],
+];
+
+/**
+ * Scan a Coach suggestion body for known metric/jargon phrases and
+ * wrap each occurrence in a ``<Term>`` popover. Returns an array of
+ * mixed strings + Term nodes suitable for a ``{nodes.map(...)}``
+ * render. Pure function — no React state, safe to memoize.
+ *
+ * The scan is single-pass left-to-right over the longest-match-first
+ * pattern list, so overlapping phrases are resolved deterministically
+ * (e.g. "predicted pass probability" wins over the bare "pass rate"
+ * inside it).
+ */
+export function wrapTermsInBody(text: string): ReactNode[] {
+    if (!text) return [text];
+    const nodes: ReactNode[] = [];
+    let cursor = 0;
+    while (cursor < text.length) {
+        let bestMatch: { start: number; end: number; termId: string } | null = null;
+        for (const [pattern, termId] of COACH_TERM_PHRASES) {
+            // Use a fresh regex per scan so the global lastIndex
+            // state never leaks across iterations.
+            const re = new RegExp(pattern.source, pattern.flags);
+            const segment = text.slice(cursor);
+            const m = re.exec(segment);
+            if (m && m.index >= 0) {
+                const start = cursor + m.index;
+                const end = start + m[0].length;
+                if (
+                    !bestMatch
+                    || start < bestMatch.start
+                    || (start === bestMatch.start && end - start > bestMatch.end - bestMatch.start)
+                ) {
+                    bestMatch = { start, end, termId };
+                }
+            }
+        }
+        if (!bestMatch) {
+            nodes.push(text.slice(cursor));
+            break;
+        }
+        if (bestMatch.start > cursor) {
+            nodes.push(text.slice(cursor, bestMatch.start));
+        }
+        const matchedText = text.slice(bestMatch.start, bestMatch.end);
+        nodes.push(
+            <Term
+                key={`${bestMatch.termId}-${bestMatch.start}`}
+                id={bestMatch.termId}
+                label={matchedText}
+            />,
+        );
+        cursor = bestMatch.end;
+    }
+    return nodes;
+}
 
 interface CoachSuggestionCardProps {
     projectId: number;
@@ -61,6 +138,12 @@ export default function CoachSuggestionCard({
 }: CoachSuggestionCardProps) {
     const [isExecuting, setIsExecuting] = useState(false);
     const colors = SEVERITY_COLORS[suggestion.severity];
+    // Cache the term-wrap parse so the regex scan doesn't re-run on
+    // every state flip (e.g. while the action button is "Working…").
+    const bodyNodes = useMemo(
+        () => wrapTermsInBody(suggestion.body || ''),
+        [suggestion.body],
+    );
 
     const handleClick = async () => {
         if (suggestion.action.kind === 'run_playbook') {
@@ -200,7 +283,9 @@ export default function CoachSuggestionCard({
                         lineHeight: 1.5,
                     }}
                 >
-                    {suggestion.body}
+                    {bodyNodes.map((node, idx) => (
+                        <Fragment key={idx}>{node}</Fragment>
+                    ))}
                 </div>
             </div>
             <button

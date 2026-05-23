@@ -9,9 +9,11 @@ import { create } from 'zustand';
 // ``zustand/middleware`` to stay consistent with the codebase's
 // existing stores (toastStore, projectStore — none use persist()).
 //
-// Threshold for the XP-gated default:
-// - Level < 3 → default ON (the user is still onboarding)
-// - Level >= 3 → default OFF (the user has graduated to power-user mode)
+// Threshold for the XP-gated default (Phase 4 — flipped from 3 to 5):
+// - Level < 5 → default ON (the user is still ramping up; Intern
+//   through ML Engineer per the gamification level titles).
+// - Level >= 5 → default OFF (Senior ML Engineer and above —
+//   "power-user" zone).
 // Users can always flip the default via the per-project toggle.
 
 const STORAGE_KEY = 'brewslm:coach-mode-overrides';
@@ -83,15 +85,15 @@ export const useCoachModeStore = create<CoachModeState>((set, get) => ({
 }));
 
 /**
- * Coach Mode is default-on while the user is still learning the
- * platform (gamification level < 3) and default-off once they've
- * graduated. ``null`` (no progression data yet) is treated as
+ * Coach Mode is default-on while the user is still ramping up
+ * (gamification level < 5) and default-off once they've crossed into
+ * the "Senior" tier. ``null`` (no progression data yet) is treated as
  * "early-stage user, default on" — better to over-coach a brand-new
  * project than to silently leave a beginner without guidance.
  */
 export function computeCoachDefaultOn(level: number | null | undefined): boolean {
     if (level == null) return true;
-    return level < 3;
+    return level < 5;
 }
 
 /**
