@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 TEST_DB_PATH = Path(tempfile.gettempdir()) / f"brewslm-data-studio-{uuid.uuid4().hex[:8]}.db"
 TEST_DATA_DIR = Path(tempfile.gettempdir()) / f"brewslm-data-studio-{uuid.uuid4().hex[:8]}"
@@ -349,6 +350,90 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("domain_needs_source_evidence", issue_ids)
         self.assertIn("low_domain_confidence", issue_ids)
+
+    def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
+        project_id = self._create_project("data-studio-assist")
+        assistant_payload = {
+            "summary": "Category appears to be the label column.",
+            "suggestions": [
+                {
+                    "id": "map-label-category",
+                    "type": "mapping",
+                    "title": "Map label to category",
+                    "confidence": 0.91,
+                    "rationale": "The values are short repeated classes.",
+                    "evidence": ["category has label-like values"],
+                    "suggested_field_mapping": {"label": "category"},
+                    "target_tab": "dataprep",
+                    "requires_user_confirmation": True,
+                }
+            ],
+        }
+
+        with patch(
+            "app.services.data_studio_service.call_teacher_model",
+            new_callable=AsyncMock,
+        ) as teacher_mock:
+            teacher_mock.return_value = {
+                "content": json.dumps(assistant_payload),
+                "model": "llama3",
+                "tokens_used": 42,
+            }
+            resp = self.client.post(
+                f"/api/projects/{project_id}/data-studio/assist",
+                json={
+                    "focus": "mapping",
+                    "provider": "ollama",
+                    "model_name": "llama3",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["focus"], "mapping")
+        self.assertEqual(payload["provider"]["provider"], "ollama")
+        self.assertEqual(payload["provider"]["api_url"], "http://localhost:11434/v1/chat/completions")
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        self.assertEqual(payload["suggestions"][0]["suggested_field_mapping"], {"label": "category"})
+        self.assertTrue(payload["suggestions"][0]["requires_user_confirmation"])
+        teacher_mock.assert_awaited_once()
+        self.assertEqual(
+            teacher_mock.await_args.kwargs["api_url"],
+            "http://localhost:11434/v1/chat/completions",
+        )
+
+    def test_llm_assist_invalid_response_is_non_mutating(self):
+        project_id = self._create_project("data-studio-assist-invalid")
+
+        with patch(
+            "app.services.data_studio_service.call_teacher_model",
+            new_callable=AsyncMock,
+        ) as teacher_mock:
+            teacher_mock.return_value = {
+                "content": "not json",
+                "model": "local-model",
+                "tokens_used": 7,
+            }
+            resp = self.client.post(
+                f"/api/projects/{project_id}/data-studio/assist",
+                json={
+                    "focus": "domain",
+                    "provider": "ollama",
+                    "model_name": "local-model",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["status"], "invalid_response")
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["suggestions"], [])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        teacher_mock.assert_awaited_once()
 
 
 if __name__ == "__main__":

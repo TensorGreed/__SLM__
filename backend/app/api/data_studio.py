@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.services.data_studio_service import (
     build_data_studio_domain_detection,
+    build_data_studio_llm_assist,
     build_data_studio_mapping_preview,
     build_data_studio_overview,
     build_data_studio_sources,
@@ -15,6 +19,14 @@ from app.services.data_studio_service import (
 
 
 router = APIRouter(prefix="/projects/{project_id}/data-studio", tags=["Data Studio"])
+
+
+class DataStudioAssistRequest(BaseModel):
+    focus: Literal["mapping", "domain"] = "mapping"
+    provider: Literal["ollama", "openai_compatible"] = "ollama"
+    api_url: str = Field(default="", max_length=2048)
+    api_key: str = Field(default="", max_length=4096)
+    model_name: str = Field(default="llama3", min_length=1, max_length=256)
 
 
 @router.get("/overview")
@@ -74,6 +86,31 @@ async def get_data_studio_domain_detection(
 
     try:
         return await build_data_studio_domain_detection(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/assist")
+async def run_data_studio_assist(
+    project_id: int,
+    req: DataStudioAssistRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run optional LLM assist over deterministic Data Studio checks."""
+
+    try:
+        return await build_data_studio_llm_assist(
+            db,
+            project_id,
+            focus=req.focus,
+            provider=req.provider,
+            api_url=req.api_url,
+            api_key=req.api_key,
+            model_name=req.model_name,
+        )
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

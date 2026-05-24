@@ -7,6 +7,7 @@ import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel'
 import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
 import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
 import DataStudioDomainDetectionPanel from '../components/data/DataStudioDomainDetectionPanel';
+import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -180,6 +181,7 @@ export default function ProjectPipelinePage() {
                         <DataStudioSourcesSummaryPanel projectId={projectId} />
                         <DataStudioMappingPreviewPanel projectId={projectId} />
                         <DataStudioDomainDetectionPanel projectId={projectId} />
+                        <DataStudioAssistPanel projectId={projectId} />
                         <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />
                     </>
                 );

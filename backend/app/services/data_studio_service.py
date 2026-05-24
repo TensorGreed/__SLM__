@@ -8,12 +8,15 @@ returns action targets the frontend can route to existing panels.
 
 from __future__ import annotations
 
+import json
+import re
 from collections import Counter
 from typing import Any, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
 from app.models.project import Project
 from app.services.dataset_service import (
@@ -24,6 +27,7 @@ from app.services.domain_pack_service import get_domain_pack
 from app.services.domain_profile_service import get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.recipe_service import get_recipe
+from app.services.synthetic_service import call_teacher_model
 from app.services.synth_review_queue_service import list_review_queue
 
 
@@ -32,6 +36,8 @@ OverviewVerdict = Literal["blocked", "needs_work", "ready"]
 SourcesVerdict = Literal["empty", "attention", "healthy"]
 MappingVerdict = Literal["empty", "attention", "ready"]
 DomainVerdict = Literal["unknown", "attention", "confirmed"]
+AssistFocus = Literal["mapping", "domain"]
+AssistProvider = Literal["ollama", "openai_compatible"]
 
 _MAPPING_SOURCE_PRIORITY: tuple[DatasetType, ...] = (
     DatasetType.RAW,
@@ -775,6 +781,318 @@ async def build_data_studio_domain_detection(
             "raw_fields": fields,
             "inferred_task_profiles": inferred_profiles,
         },
+    }
+
+
+def _assist_default_endpoint(provider: str, api_url: str | None) -> str:
+    explicit = str(api_url or "").strip()
+    if explicit:
+        return explicit
+    if provider == "ollama":
+        return "http://localhost:11434/v1/chat/completions"
+    return str(settings.TEACHER_MODEL_API_URL or "").strip()
+
+
+def _redact_endpoint(endpoint: str) -> str:
+    token = str(endpoint or "").strip()
+    if not token:
+        return ""
+    return token.split("?", 1)[0]
+
+
+def _jsonable_compact(value: Any, *, max_chars: int = 16000) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=True, indent=2)
+    except TypeError:
+        text = json.dumps(str(value), ensure_ascii=True)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n...<truncated>"
+
+
+def _assist_context_for_prompt(focus: AssistFocus, context: dict[str, Any]) -> dict[str, Any]:
+    if focus == "mapping":
+        return {
+            "recipe": context.get("recipe"),
+            "source": context.get("source"),
+            "effective_mapping": context.get("effective_mapping"),
+            "mapping_summary": context.get("summary"),
+            "issues": context.get("issues"),
+            "preview_rows": context.get("preview_rows"),
+            "deterministic_suggestions": (
+                context.get("diagnostics", {}).get("auto_fix_suggestions", [])
+                if isinstance(context.get("diagnostics"), dict)
+                else []
+            ),
+        }
+    return {
+        "recipe": context.get("recipe"),
+        "source": context.get("source"),
+        "detected_domain": context.get("detected_domain"),
+        "applied_domain": context.get("applied"),
+        "evidence": context.get("evidence"),
+        "issues": context.get("issues"),
+        "suggested_actions": context.get("suggested_actions"),
+        "risks": context.get("risks"),
+        "power_details": context.get("power_details"),
+    }
+
+
+def _build_assist_prompt(focus: AssistFocus, context: dict[str, Any]) -> str:
+    focus_label = "schema mapping" if focus == "mapping" else "domain detection"
+    return (
+        "You are BrewSLM Data Studio LLM assist. Deterministic checks are the "
+        "source of truth. Do not claim that you changed data, saved mappings, "
+        "assigned a domain, generated rows, or applied any setting. Produce "
+        "reviewable suggestions only.\n\n"
+        f"Focus: {focus_label}\n\n"
+        "Return JSON only with this shape:\n"
+        "{\n"
+        '  "summary": "short beginner-friendly explanation",\n'
+        '  "suggestions": [\n'
+        "    {\n"
+        '      "id": "stable-id",\n'
+        '      "type": "mapping|domain|coverage|risk|synthetic|review",\n'
+        '      "title": "short title",\n'
+        '      "confidence": 0.0,\n'
+        '      "rationale": "why this suggestion follows from the evidence",\n'
+        '      "evidence": ["specific signal from the context"],\n'
+        '      "suggested_field_mapping": {"canonical_field": "raw_field"},\n'
+        '      "target_tab": "data|dataprep|goldset|synthetic",\n'
+        '      "requires_user_confirmation": true\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- Keep confidence between 0 and 1.\n"
+        "- Omit suggested_field_mapping unless the focus is mapping and the mapping is explicit.\n"
+        "- Include concrete evidence; avoid generic advice.\n"
+        "- Never auto-apply anything.\n\n"
+        "Deterministic Data Studio context:\n"
+        f"{_jsonable_compact(_assist_context_for_prompt(focus, context))}"
+    )
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    candidates = [match.group(1).strip() for match in _JSON_FENCE_RE.finditer(raw)]
+    candidates.append(raw)
+    first = raw.find("{")
+    last = raw.rfind("}")
+    if first >= 0 and last > first:
+        candidates.append(raw[first:last + 1])
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _safe_confidence(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(max(0.0, min(1.0, parsed)), 4)
+
+
+def _normalize_assist_suggestions(raw: Any, *, focus: AssistFocus) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    suggestions: list[dict[str, Any]] = []
+    for index, item in enumerate(raw[:6]):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        rationale = str(item.get("rationale") or item.get("reason") or "").strip()
+        if not title and not rationale:
+            continue
+        evidence_raw = item.get("evidence")
+        evidence = [
+            str(part).strip()
+            for part in (evidence_raw if isinstance(evidence_raw, list) else [])
+            if str(part).strip()
+        ]
+        suggestion: dict[str, Any] = {
+            "id": str(item.get("id") or f"{focus}_assist_{index + 1}").strip(),
+            "type": str(item.get("type") or focus).strip() or focus,
+            "title": title or f"{focus.title()} suggestion",
+            "confidence": _safe_confidence(item.get("confidence")),
+            "rationale": rationale,
+            "evidence": evidence[:6],
+            "target_tab": str(item.get("target_tab") or ("dataprep" if focus == "mapping" else "data")).strip(),
+            "requires_user_confirmation": True,
+        }
+        mapping = item.get("suggested_field_mapping")
+        if focus == "mapping" and isinstance(mapping, dict):
+            cleaned_mapping = {
+                str(key).strip(): str(value).strip()
+                for key, value in mapping.items()
+                if str(key).strip() and str(value).strip()
+            }
+            if cleaned_mapping:
+                suggestion["suggested_field_mapping"] = cleaned_mapping
+        suggestions.append(suggestion)
+    return suggestions
+
+
+def _assist_unavailable_payload(
+    *,
+    project_id: int,
+    focus: AssistFocus,
+    provider: AssistProvider,
+    endpoint: str,
+    model_name: str,
+    message: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "project_id": project_id,
+        "focus": focus,
+        "status": "unavailable",
+        "provider": {
+            "provider": provider,
+            "api_url": _redact_endpoint(endpoint),
+            "model_name": model_name,
+            "api_key_configured": False,
+        },
+        "source_of_truth": "deterministic_data_studio_checks",
+        "auto_apply": False,
+        "summary": message,
+        "suggestions": [],
+        "deterministic_context": {
+            "verdict": context.get("verdict"),
+            "issues": context.get("issues", []),
+        },
+        "warnings": [
+            "LLM assist is optional. Deterministic Data Studio checks remain available.",
+        ],
+    }
+
+
+async def build_data_studio_llm_assist(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    focus: AssistFocus,
+    provider: AssistProvider = "ollama",
+    api_url: str | None = None,
+    api_key: str | None = None,
+    model_name: str | None = None,
+) -> dict[str, Any]:
+    """Run optional LLM assist over deterministic Data Studio context."""
+
+    if focus == "mapping":
+        context = await build_data_studio_mapping_preview(db, project_id)
+    elif focus == "domain":
+        context = await build_data_studio_domain_detection(db, project_id)
+    else:
+        raise ValueError(f"Unsupported assist focus '{focus}'")
+
+    normalized_provider = "ollama" if provider == "ollama" else "openai_compatible"
+    endpoint = _assist_default_endpoint(normalized_provider, api_url)
+    resolved_model = str(model_name or "").strip() or "llama3"
+    if not endpoint:
+        return _assist_unavailable_payload(
+            project_id=project_id,
+            focus=focus,
+            provider=normalized_provider,
+            endpoint=endpoint,
+            model_name=resolved_model,
+            message="No LLM endpoint is configured for Data Studio assist.",
+            context=context,
+        )
+
+    prompt = _build_assist_prompt(focus, context)
+    system_prompt = (
+        "You are a careful data-preparation assistant for BrewSLM. "
+        "Return compact JSON only. Do not mutate data or imply that "
+        "changes were applied."
+    )
+    try:
+        result = await call_teacher_model(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            api_url=endpoint,
+            api_key=str(api_key or ""),
+            model_name=resolved_model,
+            temperature=0.2,
+            max_tokens=1800,
+            force_json=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _assist_unavailable_payload(
+            project_id=project_id,
+            focus=focus,
+            provider=normalized_provider,
+            endpoint=endpoint,
+            model_name=resolved_model,
+            message=f"LLM assist is unavailable: {str(exc)[:240]}",
+            context=context,
+        )
+
+    content = str(result.get("content") or "")
+    parsed = _extract_json_object(content)
+    if not parsed:
+        return {
+            "project_id": project_id,
+            "focus": focus,
+            "status": "invalid_response",
+            "provider": {
+                "provider": normalized_provider,
+                "api_url": _redact_endpoint(endpoint),
+                "model_name": str(result.get("model") or resolved_model),
+                "api_key_configured": bool(str(api_key or "").strip()),
+            },
+            "source_of_truth": "deterministic_data_studio_checks",
+            "auto_apply": False,
+            "summary": "The assistant responded, but not in the expected JSON format.",
+            "suggestions": [],
+            "deterministic_context": {
+                "verdict": context.get("verdict"),
+                "issues": context.get("issues", []),
+            },
+            "warnings": [
+                "No changes were applied. Rerun assist or inspect deterministic checks.",
+            ],
+        }
+
+    suggestions = _normalize_assist_suggestions(parsed.get("suggestions"), focus=focus)
+    summary = str(parsed.get("summary") or "").strip()
+    if not summary:
+        summary = "The assistant produced reviewable suggestions from the deterministic Data Studio context."
+
+    return {
+        "project_id": project_id,
+        "focus": focus,
+        "status": "ok",
+        "provider": {
+            "provider": normalized_provider,
+            "api_url": _redact_endpoint(endpoint),
+            "model_name": str(result.get("model") or resolved_model),
+            "api_key_configured": bool(str(api_key or "").strip()),
+            "tokens_used": int(result.get("tokens_used") or 0),
+        },
+        "source_of_truth": "deterministic_data_studio_checks",
+        "auto_apply": False,
+        "summary": summary,
+        "suggestions": suggestions,
+        "deterministic_context": {
+            "verdict": context.get("verdict"),
+            "issues": context.get("issues", []),
+        },
+        "warnings": [
+            "LLM suggestions are advisory and require user confirmation.",
+            "Deterministic Data Studio checks remain the source of truth.",
+        ],
     }
 
 

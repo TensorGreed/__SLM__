@@ -4,6 +4,9 @@ export type DataStudioVerdict = 'blocked' | 'needs_work' | 'ready';
 export type DataStudioSourcesVerdict = 'empty' | 'attention' | 'healthy';
 export type DataStudioMappingVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
+export type DataStudioAssistFocus = 'mapping' | 'domain';
+export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
+export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
 export type DataStudioIssueSeverity = 'blocker' | 'warning' | 'info';
 
 export interface DataStudioRecipeSummary {
@@ -279,4 +282,53 @@ export interface DataStudioDomainDetection {
 export async function getDataStudioDomainDetection(projectId: number): Promise<DataStudioDomainDetection> {
     const resp = await api.get(`/projects/${projectId}/data-studio/domain-detection`);
     return resp.data as DataStudioDomainDetection;
+}
+
+export interface DataStudioAssistRequest {
+    focus: DataStudioAssistFocus;
+    provider: DataStudioAssistProvider;
+    api_url?: string;
+    api_key?: string;
+    model_name: string;
+}
+
+export interface DataStudioAssistProviderSummary {
+    provider: DataStudioAssistProvider;
+    api_url?: string;
+    model_name: string;
+    api_key_configured: boolean;
+    tokens_used?: number;
+}
+
+export interface DataStudioAssistSuggestion {
+    id: string;
+    type: string;
+    title: string;
+    confidence: number;
+    rationale: string;
+    evidence: string[];
+    target_tab: string;
+    requires_user_confirmation: boolean;
+    suggested_field_mapping?: Record<string, string>;
+}
+
+export interface DataStudioAssistResponse {
+    project_id: number;
+    focus: DataStudioAssistFocus;
+    status: DataStudioAssistStatus;
+    provider: DataStudioAssistProviderSummary;
+    source_of_truth: string;
+    auto_apply: boolean;
+    summary: string;
+    suggestions: DataStudioAssistSuggestion[];
+    deterministic_context: Record<string, unknown>;
+    warnings: string[];
+}
+
+export async function runDataStudioAssist(
+    projectId: number,
+    payload: DataStudioAssistRequest,
+): Promise<DataStudioAssistResponse> {
+    const resp = await api.post(`/projects/${projectId}/data-studio/assist`, payload);
+    return resp.data as DataStudioAssistResponse;
 }
