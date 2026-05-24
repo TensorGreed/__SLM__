@@ -4,6 +4,7 @@ export type DataStudioVerdict = 'blocked' | 'needs_work' | 'ready';
 export type DataStudioSourcesVerdict = 'empty' | 'attention' | 'healthy';
 export type DataStudioMappingVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
+export type DataStudioGoldSetVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -282,6 +283,111 @@ export interface DataStudioDomainDetection {
 export async function getDataStudioDomainDetection(projectId: number): Promise<DataStudioDomainDetection> {
     const resp = await api.get(`/projects/${projectId}/data-studio/domain-detection`);
     return resp.data as DataStudioDomainDetection;
+}
+
+export interface DataStudioGoldSetValidation {
+    status: string;
+    trusted_examples: number;
+    review_needed: number;
+    locked_gold_sets: number;
+    locked_versions: number;
+}
+
+export interface DataStudioGoldSetTotals {
+    gold_set_count: number;
+    example_count: number;
+    trusted_examples: number;
+    review_needed: number;
+    approved_rows: number;
+    pending_rows: number;
+    in_review_rows: number;
+    changes_requested_rows: number;
+    rejected_rows: number;
+    queue_pending: number;
+    queue_in_progress: number;
+    locked_gold_sets: number;
+    draft_versions: number;
+    locked_versions: number;
+}
+
+export interface DataStudioGoldSetFieldCoverage {
+    field: string;
+    present: number;
+    missing: number;
+    ratio: number;
+}
+
+export interface DataStudioGoldSetCoverage {
+    source_rows: number;
+    input_fields: DataStudioGoldSetFieldCoverage[];
+    expected_fields: DataStudioGoldSetFieldCoverage[];
+    label_fields: DataStudioGoldSetFieldCoverage[];
+    field_counts: {
+        input: number;
+        expected: number;
+        labels: number;
+    };
+}
+
+export interface DataStudioGoldSetVersionSummary {
+    count: number;
+    draft_count: number;
+    locked_count: number;
+    latest?: Record<string, unknown> | null;
+    active_draft?: Record<string, unknown> | null;
+    latest_locked?: Record<string, unknown> | null;
+}
+
+export interface DataStudioGoldSetDataset {
+    id: number;
+    name: string;
+    dataset_type: string;
+    record_count: number;
+    example_count: number;
+    trusted_examples: number;
+    review_needed: number;
+    is_locked: boolean;
+    validation_status: string;
+    coverage_source: string;
+    row_status_counts: Record<string, number>;
+    queue_status_counts: Record<string, number>;
+    versions: DataStudioGoldSetVersionSummary;
+    coverage: DataStudioGoldSetCoverage;
+    updated_at?: string | null;
+}
+
+export interface DataStudioGoldSetSample {
+    dataset_id: number;
+    dataset_name: string;
+    source: string;
+    status: string;
+    input_preview: string;
+    expected_preview: string;
+}
+
+export interface DataStudioGoldSetEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+}
+
+export interface DataStudioGoldSetWorkbench {
+    project_id: number;
+    verdict: DataStudioGoldSetVerdict;
+    read_only: boolean;
+    minimum_recommended_examples: number;
+    validation: DataStudioGoldSetValidation;
+    totals: DataStudioGoldSetTotals;
+    datasets: DataStudioGoldSetDataset[];
+    trusted_examples: DataStudioGoldSetSample[];
+    coverage: DataStudioGoldSetCoverage;
+    issues: DataStudioIssue[];
+    entry_point: DataStudioGoldSetEntryPoint;
+}
+
+export async function getDataStudioGoldSetWorkbench(projectId: number): Promise<DataStudioGoldSetWorkbench> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/gold-set`);
+    return resp.data as DataStudioGoldSetWorkbench;
 }
 
 export interface DataStudioAssistRequest {

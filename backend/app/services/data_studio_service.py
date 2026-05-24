@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Any, Literal
 
 from sqlalchemy import func, select
@@ -18,6 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+from app.models.gold_set_annotation import (
+    GoldSetReviewerQueue,
+    GoldSetReviewerQueueStatus,
+    GoldSetRow,
+    GoldSetRowStatus,
+    GoldSetVersion,
+    GoldSetVersionStatus,
+)
 from app.models.project import Project
 from app.services.dataset_service import (
     preview_project_data_adapter,
@@ -36,6 +45,7 @@ OverviewVerdict = Literal["blocked", "needs_work", "ready"]
 SourcesVerdict = Literal["empty", "attention", "healthy"]
 MappingVerdict = Literal["empty", "attention", "ready"]
 DomainVerdict = Literal["unknown", "attention", "confirmed"]
+GoldSetVerdict = Literal["empty", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -780,6 +790,527 @@ async def build_data_studio_domain_detection(
             },
             "raw_fields": fields,
             "inferred_task_profiles": inferred_profiles,
+        },
+    }
+
+
+_GOLD_SET_DATASET_TYPES = {DatasetType.GOLD_DEV, DatasetType.GOLD_TEST}
+_GOLD_SET_MIN_STARTER_ROWS = 5
+
+
+def _enum_value(value: Any) -> str:
+    token = getattr(value, "value", value)
+    return str(token or "").strip().lower()
+
+
+def _load_jsonl_dicts(path: str | None, *, limit: int = 5000) -> list[dict[str, Any]]:
+    token = str(path or "").strip()
+    if not token:
+        return []
+    file_path = Path(token)
+    if not file_path.exists() or not file_path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    with file_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if len(records) >= limit:
+                break
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                records.append(parsed)
+    return records
+
+
+def _field_has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (dict, list, tuple, set)):
+        return len(value) > 0
+    return True
+
+
+def _field_counter(payloads: list[dict[str, Any]]) -> Counter[str]:
+    counter: Counter[str] = Counter()
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        for key, value in payload.items():
+            field = str(key or "").strip()
+            if field and _field_has_value(value):
+                counter[field] += 1
+    return counter
+
+
+def _coverage_from_counter(
+    counter: Counter[str],
+    *,
+    total: int,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    if total <= 0:
+        return []
+    rows = [
+        {
+            "field": field,
+            "present": int(count),
+            "missing": max(0, int(total) - int(count)),
+            "ratio": round(min(1.0, max(0.0, float(count) / float(total))), 4),
+        }
+        for field, count in counter.items()
+    ]
+    rows.sort(key=lambda item: (-float(item["ratio"]), str(item["field"])))
+    return rows[:limit]
+
+
+def _gold_coverage_payload(
+    *,
+    inputs: list[dict[str, Any]],
+    expected: list[dict[str, Any]],
+    labels: list[dict[str, Any]],
+) -> dict[str, Any]:
+    total = max(len(inputs), len(expected), len(labels))
+    input_counter = _field_counter(inputs)
+    expected_counter = _field_counter(expected)
+    label_counter = _field_counter(labels)
+    return {
+        "source_rows": total,
+        "input_fields": _coverage_from_counter(input_counter, total=total),
+        "expected_fields": _coverage_from_counter(expected_counter, total=total),
+        "label_fields": _coverage_from_counter(label_counter, total=total),
+        "field_counts": {
+            "input": len(input_counter),
+            "expected": len(expected_counter),
+            "labels": len(label_counter),
+        },
+    }
+
+
+def _legacy_gold_payloads(
+    entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    inputs: list[dict[str, Any]] = []
+    expected: list[dict[str, Any]] = []
+    labels: list[dict[str, Any]] = []
+    for entry in entries:
+        inputs.append({"question": entry.get("question")})
+        expected.append({"answer": entry.get("answer")})
+        labels.append({
+            "difficulty": entry.get("difficulty"),
+            "criticality": entry.get("criticality"),
+            "is_hallucination_trap": entry.get("is_hallucination_trap"),
+        })
+    return inputs, expected, labels
+
+
+def _snippet(value: Any, *, limit: int = 180) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=True, default=str)
+        except (TypeError, ValueError):
+            text = str(value)
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1]}..."
+
+
+def _gold_row_status_counts(rows: list[GoldSetRow]) -> dict[str, int]:
+    counts = {status.value: 0 for status in GoldSetRowStatus}
+    for row in rows:
+        key = _enum_value(row.status) or GoldSetRowStatus.PENDING.value
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _gold_queue_status_counts(entries: list[GoldSetReviewerQueue]) -> dict[str, int]:
+    counts = {status.value: 0 for status in GoldSetReviewerQueueStatus}
+    for entry in entries:
+        key = _enum_value(entry.status) or GoldSetReviewerQueueStatus.PENDING.value
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _gold_version_payload(version: GoldSetVersion | None) -> dict[str, Any] | None:
+    if version is None:
+        return None
+    return {
+        "id": int(version.id),
+        "version": int(version.version),
+        "status": _enum_value(version.status),
+        "locked_at": version.locked_at.isoformat() if version.locked_at else None,
+        "created_at": version.created_at.isoformat() if version.created_at else None,
+    }
+
+
+def _gold_versions_summary(versions: list[GoldSetVersion]) -> dict[str, Any]:
+    if not versions:
+        return {
+            "count": 0,
+            "draft_count": 0,
+            "locked_count": 0,
+            "latest": None,
+            "active_draft": None,
+            "latest_locked": None,
+        }
+    ordered = sorted(versions, key=lambda item: (int(item.version), int(item.id)))
+    drafts = [
+        version for version in ordered
+        if _enum_value(version.status) == GoldSetVersionStatus.DRAFT.value
+    ]
+    locked = [
+        version for version in ordered
+        if _enum_value(version.status) == GoldSetVersionStatus.LOCKED.value
+    ]
+    return {
+        "count": len(ordered),
+        "draft_count": len(drafts),
+        "locked_count": len(locked),
+        "latest": _gold_version_payload(ordered[-1]),
+        "active_draft": _gold_version_payload(drafts[-1] if drafts else None),
+        "latest_locked": _gold_version_payload(locked[-1] if locked else None),
+    }
+
+
+def _gold_validation_status(
+    *,
+    example_count: int,
+    trusted_examples: int,
+    review_needed: int,
+    has_locked_state: bool,
+) -> str:
+    if example_count <= 0:
+        return "empty"
+    if review_needed > 0:
+        return "needs_review"
+    if trusted_examples < _GOLD_SET_MIN_STARTER_ROWS:
+        return "thin"
+    if has_locked_state:
+        return "locked"
+    return "ready"
+
+
+def _trusted_gold_samples(
+    *,
+    dataset: Dataset,
+    rows: list[GoldSetRow],
+    legacy_entries: list[dict[str, Any]],
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    approved_rows = [
+        row for row in rows
+        if _enum_value(row.status) == GoldSetRowStatus.APPROVED.value
+    ]
+    for row in approved_rows[:limit]:
+        samples.append({
+            "dataset_id": int(dataset.id),
+            "dataset_name": dataset.name,
+            "source": "workbench_row",
+            "status": _enum_value(row.status),
+            "input_preview": _snippet(row.input),
+            "expected_preview": _snippet(row.expected),
+        })
+    if samples:
+        return samples
+    for entry in legacy_entries[:limit]:
+        samples.append({
+            "dataset_id": int(dataset.id),
+            "dataset_name": dataset.name,
+            "source": "gold_dataset_entry",
+            "status": "trusted",
+            "input_preview": _snippet(entry.get("question")),
+            "expected_preview": _snippet(entry.get("answer")),
+        })
+    return samples
+
+
+async def build_data_studio_gold_set_workbench(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return a read-only Gold Set workbench summary for Data Studio."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    datasets_result = await db.execute(
+        select(Dataset)
+        .where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(_GOLD_SET_DATASET_TYPES),
+        )
+        .order_by(Dataset.dataset_type.asc(), Dataset.id.asc())
+    )
+    gold_datasets = list(datasets_result.scalars().all())
+    gold_ids = [int(dataset.id) for dataset in gold_datasets]
+
+    rows_by_gold: dict[int, list[GoldSetRow]] = {gold_id: [] for gold_id in gold_ids}
+    versions_by_gold: dict[int, list[GoldSetVersion]] = {gold_id: [] for gold_id in gold_ids}
+    queue_by_gold: dict[int, list[GoldSetReviewerQueue]] = {gold_id: [] for gold_id in gold_ids}
+
+    if gold_ids:
+        rows_result = await db.execute(
+            select(GoldSetRow)
+            .where(GoldSetRow.gold_set_id.in_(gold_ids))
+            .order_by(GoldSetRow.gold_set_id.asc(), GoldSetRow.id.asc())
+        )
+        for row in rows_result.scalars().all():
+            rows_by_gold.setdefault(int(row.gold_set_id), []).append(row)
+
+        versions_result = await db.execute(
+            select(GoldSetVersion)
+            .where(GoldSetVersion.gold_set_id.in_(gold_ids))
+            .order_by(GoldSetVersion.gold_set_id.asc(), GoldSetVersion.version.asc())
+        )
+        for version in versions_result.scalars().all():
+            versions_by_gold.setdefault(int(version.gold_set_id), []).append(version)
+
+        queue_result = await db.execute(
+            select(GoldSetReviewerQueue)
+            .where(GoldSetReviewerQueue.gold_set_id.in_(gold_ids))
+            .order_by(GoldSetReviewerQueue.gold_set_id.asc(), GoldSetReviewerQueue.id.asc())
+        )
+        for entry in queue_result.scalars().all():
+            queue_by_gold.setdefault(int(entry.gold_set_id), []).append(entry)
+
+    dataset_payloads: list[dict[str, Any]] = []
+    trusted_samples: list[dict[str, Any]] = []
+    aggregate_inputs: list[dict[str, Any]] = []
+    aggregate_expected: list[dict[str, Any]] = []
+    aggregate_labels: list[dict[str, Any]] = []
+    totals = {
+        "gold_set_count": len(gold_datasets),
+        "example_count": 0,
+        "trusted_examples": 0,
+        "review_needed": 0,
+        "approved_rows": 0,
+        "pending_rows": 0,
+        "in_review_rows": 0,
+        "changes_requested_rows": 0,
+        "rejected_rows": 0,
+        "queue_pending": 0,
+        "queue_in_progress": 0,
+        "locked_gold_sets": 0,
+        "draft_versions": 0,
+        "locked_versions": 0,
+    }
+
+    for dataset in gold_datasets:
+        gold_id = int(dataset.id)
+        rows = rows_by_gold.get(gold_id, [])
+        versions = versions_by_gold.get(gold_id, [])
+        queue_entries = queue_by_gold.get(gold_id, [])
+        row_counts = _gold_row_status_counts(rows)
+        queue_counts = _gold_queue_status_counts(queue_entries)
+        version_summary = _gold_versions_summary(versions)
+        legacy_entries = _load_jsonl_dicts(dataset.file_path)
+
+        if rows:
+            inputs = [row.input or {} for row in rows]
+            expected = [row.expected or {} for row in rows]
+            labels = [row.labels or {} for row in rows]
+            coverage_source = "workbench_rows"
+            example_count = len(rows)
+        else:
+            inputs, expected, labels = _legacy_gold_payloads(legacy_entries)
+            coverage_source = "gold_dataset_entries" if legacy_entries else "dataset_record_count"
+            example_count = len(legacy_entries) or int(dataset.record_count or 0)
+
+        aggregate_inputs.extend(inputs)
+        aggregate_expected.extend(expected)
+        aggregate_labels.extend(labels)
+
+        approved = int(row_counts.get(GoldSetRowStatus.APPROVED.value, 0))
+        pending = int(row_counts.get(GoldSetRowStatus.PENDING.value, 0))
+        in_review = int(row_counts.get(GoldSetRowStatus.IN_REVIEW.value, 0))
+        changes_requested = int(row_counts.get(GoldSetRowStatus.CHANGES_REQUESTED.value, 0))
+        rejected = int(row_counts.get(GoldSetRowStatus.REJECTED.value, 0))
+        row_review_need = pending + in_review + changes_requested
+        queue_review_need = int(queue_counts.get(GoldSetReviewerQueueStatus.PENDING.value, 0)) + int(
+            queue_counts.get(GoldSetReviewerQueueStatus.IN_PROGRESS.value, 0)
+        )
+        review_needed = max(row_review_need, queue_review_need)
+        trusted_examples = approved if rows else example_count
+        has_locked_state = bool(dataset.is_locked) or int(version_summary["locked_count"]) > 0
+        validation_status = _gold_validation_status(
+            example_count=example_count,
+            trusted_examples=trusted_examples,
+            review_needed=review_needed,
+            has_locked_state=has_locked_state,
+        )
+
+        totals["example_count"] += example_count
+        totals["trusted_examples"] += trusted_examples
+        totals["review_needed"] += review_needed
+        totals["approved_rows"] += approved
+        totals["pending_rows"] += pending
+        totals["in_review_rows"] += in_review
+        totals["changes_requested_rows"] += changes_requested
+        totals["rejected_rows"] += rejected
+        totals["queue_pending"] += int(queue_counts.get(GoldSetReviewerQueueStatus.PENDING.value, 0))
+        totals["queue_in_progress"] += int(queue_counts.get(GoldSetReviewerQueueStatus.IN_PROGRESS.value, 0))
+        totals["locked_gold_sets"] += 1 if bool(dataset.is_locked) else 0
+        totals["draft_versions"] += int(version_summary["draft_count"])
+        totals["locked_versions"] += int(version_summary["locked_count"])
+
+        trusted_samples.extend(
+            _trusted_gold_samples(
+                dataset=dataset,
+                rows=rows,
+                legacy_entries=legacy_entries,
+                limit=max(0, 4 - len(trusted_samples)),
+            )
+        )
+
+        dataset_payloads.append({
+            "id": gold_id,
+            "name": dataset.name,
+            "dataset_type": dataset.dataset_type.value,
+            "record_count": int(dataset.record_count or 0),
+            "example_count": example_count,
+            "trusted_examples": trusted_examples,
+            "review_needed": review_needed,
+            "is_locked": bool(dataset.is_locked),
+            "validation_status": validation_status,
+            "coverage_source": coverage_source,
+            "row_status_counts": row_counts,
+            "queue_status_counts": queue_counts,
+            "versions": version_summary,
+            "coverage": _gold_coverage_payload(
+                inputs=inputs,
+                expected=expected,
+                labels=labels,
+            ),
+            "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None,
+        })
+
+    issues: list[dict[str, str]] = []
+    if not gold_datasets:
+        issues.append(
+            _issue(
+                "no_gold_sets",
+                "blocker",
+                "No gold set yet",
+                "Create a small trusted gold set before relying on evaluations or regression checks.",
+                action_label="Open Gold Set",
+                target_tab="goldset",
+            )
+        )
+    elif totals["example_count"] <= 0:
+        issues.append(
+            _issue(
+                "no_gold_examples",
+                "blocker",
+                "Gold set has no examples",
+                "Add trusted Q&A pairs or sample rows into the Gold Set workbench.",
+                action_label="Add gold examples",
+                target_tab="goldset",
+            )
+        )
+    elif totals["trusted_examples"] < _GOLD_SET_MIN_STARTER_ROWS:
+        issues.append(
+            _issue(
+                "thin_gold_set",
+                "warning",
+                "Gold set is thin",
+                f"{totals['trusted_examples']} trusted example(s) are available; add at least {_GOLD_SET_MIN_STARTER_ROWS} to start evaluating reliably.",
+                action_label="Grow Gold Set",
+                target_tab="goldset",
+            )
+        )
+
+    if totals["review_needed"] > 0:
+        issues.append(
+            _issue(
+                "gold_rows_need_review",
+                "warning",
+                "Gold rows need review",
+                f"{totals['review_needed']} gold row(s) are pending, in review, or waiting on changes.",
+                action_label="Review Gold Set",
+                target_tab="goldset",
+            )
+        )
+
+    aggregate_coverage = _gold_coverage_payload(
+        inputs=aggregate_inputs,
+        expected=aggregate_expected,
+        labels=aggregate_labels,
+    )
+    if totals["example_count"] > 0 and not aggregate_coverage["expected_fields"]:
+        issues.append(
+            _issue(
+                "gold_expected_fields_missing",
+                "warning",
+                "Expected-answer fields are not visible",
+                "Gold examples should include expected outputs so evaluations can score model responses.",
+                action_label="Review fields",
+                target_tab="goldset",
+            )
+        )
+
+    if totals["example_count"] > 0 and not aggregate_coverage["label_fields"]:
+        issues.append(
+            _issue(
+                "gold_label_metadata_missing",
+                "info",
+                "Label metadata is light",
+                "Difficulty, category, reviewer, or risk labels make gold-set coverage easier to audit.",
+                action_label="Add labels",
+                target_tab="goldset",
+            )
+        )
+
+    if not gold_datasets or totals["example_count"] <= 0:
+        verdict: GoldSetVerdict = "empty"
+    elif any(item["severity"] in {"blocker", "warning"} for item in issues):
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    validation_status = (
+        "empty"
+        if verdict == "empty"
+        else (
+            "needs_review"
+            if totals["review_needed"] > 0
+            else ("ready" if totals["trusted_examples"] >= _GOLD_SET_MIN_STARTER_ROWS else "thin")
+        )
+    )
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "minimum_recommended_examples": _GOLD_SET_MIN_STARTER_ROWS,
+        "validation": {
+            "status": validation_status,
+            "trusted_examples": totals["trusted_examples"],
+            "review_needed": totals["review_needed"],
+            "locked_gold_sets": totals["locked_gold_sets"],
+            "locked_versions": totals["locked_versions"],
+        },
+        "totals": totals,
+        "datasets": dataset_payloads,
+        "trusted_examples": trusted_samples[:4],
+        "coverage": aggregate_coverage,
+        "issues": issues,
+        "entry_point": {
+            "label": "Open Gold Set workflow",
+            "target_tab": "goldset",
+            "reason": "Use the existing Gold Set panel to add, review, sample, or lock trusted examples.",
         },
     }
 

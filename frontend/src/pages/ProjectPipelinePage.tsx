@@ -8,6 +8,7 @@ import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesS
 import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
 import DataStudioDomainDetectionPanel from '../components/data/DataStudioDomainDetectionPanel';
 import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
+import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -182,6 +183,13 @@ export default function ProjectPipelinePage() {
                         <DataStudioMappingPreviewPanel projectId={projectId} />
                         <DataStudioDomainDetectionPanel projectId={projectId} />
                         <DataStudioAssistPanel projectId={projectId} />
+                        <DataStudioGoldSetWorkbenchPanel
+                            projectId={projectId}
+                            onOpenGoldSet={() => {
+                                setActiveTab('goldset');
+                                navigate(`/project/${projectId}/pipeline/goldset`);
+                            }}
+                        />
                         <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />
                     </>
                 );

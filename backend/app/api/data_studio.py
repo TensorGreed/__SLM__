@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.services.data_studio_service import (
     build_data_studio_domain_detection,
+    build_data_studio_gold_set_workbench,
     build_data_studio_llm_assist,
     build_data_studio_mapping_preview,
     build_data_studio_overview,
@@ -86,6 +87,22 @@ async def get_data_studio_domain_detection(
 
     try:
         return await build_data_studio_domain_detection(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/gold-set")
+async def get_data_studio_gold_set_workbench(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a read-only Gold Set workbench summary for Data Studio."""
+
+    try:
+        return await build_data_studio_gold_set_workbench(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

@@ -27,6 +27,14 @@ from app.config import settings  # noqa: E402
 from app.database import async_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument  # noqa: E402
+from app.models.gold_set_annotation import (  # noqa: E402
+    GoldSetReviewerQueue,
+    GoldSetReviewerQueueStatus,
+    GoldSetRow,
+    GoldSetRowStatus,
+    GoldSetVersion,
+    GoldSetVersionStatus,
+)
 
 
 class DataStudioOverviewEndpointTests(unittest.TestCase):
@@ -350,6 +358,118 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("domain_needs_source_evidence", issue_ids)
         self.assertIn("low_domain_confidence", issue_ids)
+
+    def test_gold_set_workbench_summarizes_rows_versions_and_queue(self):
+        project_id = self._create_project("data-studio-gold")
+
+        async def _seed_gold_workbench():
+            async with async_session_factory() as db:
+                gold = Dataset(
+                    project_id=project_id,
+                    name="Support Gold Dev",
+                    dataset_type=DatasetType.GOLD_DEV,
+                    record_count=3,
+                )
+                db.add(gold)
+                await db.flush()
+                version = GoldSetVersion(
+                    gold_set_id=gold.id,
+                    version=1,
+                    status=GoldSetVersionStatus.DRAFT,
+                    notes="review batch",
+                )
+                db.add(version)
+                await db.flush()
+                approved = GoldSetRow(
+                    gold_set_id=gold.id,
+                    version_id=version.id,
+                    source_row_key="approved-1",
+                    input={"question": "How do I reset my password?"},
+                    expected={"answer": "Use the password reset flow."},
+                    labels={"category": "account", "difficulty": "easy"},
+                    status=GoldSetRowStatus.APPROVED,
+                    rationale="Known support answer.",
+                )
+                pending = GoldSetRow(
+                    gold_set_id=gold.id,
+                    version_id=version.id,
+                    source_row_key="pending-1",
+                    input={"question": "Can I get a refund?"},
+                    expected={"answer": "Open a billing ticket."},
+                    labels={"category": "billing", "difficulty": "medium"},
+                    status=GoldSetRowStatus.PENDING,
+                    reviewer_id=7,
+                )
+                changes = GoldSetRow(
+                    gold_set_id=gold.id,
+                    version_id=version.id,
+                    source_row_key="changes-1",
+                    input={"question": "Where is my invoice?"},
+                    expected={"answer": "Go to billing history."},
+                    labels={"category": "billing"},
+                    status=GoldSetRowStatus.CHANGES_REQUESTED,
+                    reviewer_id=7,
+                )
+                db.add_all([approved, pending, changes])
+                await db.flush()
+                db.add_all([
+                    GoldSetReviewerQueue(
+                        gold_set_id=gold.id,
+                        row_id=pending.id,
+                        reviewer_id=7,
+                        priority=2,
+                        status=GoldSetReviewerQueueStatus.PENDING,
+                    ),
+                    GoldSetReviewerQueue(
+                        gold_set_id=gold.id,
+                        row_id=changes.id,
+                        reviewer_id=7,
+                        priority=1,
+                        status=GoldSetReviewerQueueStatus.IN_PROGRESS,
+                    ),
+                ])
+                await db.commit()
+
+        asyncio.run(_seed_gold_workbench())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/gold-set")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertTrue(payload["read_only"])
+        self.assertEqual(payload["entry_point"]["target_tab"], "goldset")
+        self.assertEqual(payload["totals"]["gold_set_count"], 1)
+        self.assertEqual(payload["totals"]["example_count"], 3)
+        self.assertEqual(payload["totals"]["trusted_examples"], 1)
+        self.assertEqual(payload["totals"]["review_needed"], 2)
+        dataset = payload["datasets"][0]
+        self.assertEqual(dataset["validation_status"], "needs_review")
+        self.assertEqual(dataset["row_status_counts"]["approved"], 1)
+        self.assertEqual(dataset["queue_status_counts"]["pending"], 1)
+        self.assertEqual(dataset["versions"]["draft_count"], 1)
+        input_fields = {item["field"]: item["ratio"] for item in dataset["coverage"]["input_fields"]}
+        expected_fields = {item["field"]: item["ratio"] for item in payload["coverage"]["expected_fields"]}
+        label_fields = {item["field"]: item["ratio"] for item in payload["coverage"]["label_fields"]}
+        self.assertEqual(input_fields["question"], 1.0)
+        self.assertEqual(expected_fields["answer"], 1.0)
+        self.assertIn("category", label_fields)
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("gold_rows_need_review", issue_ids)
+
+    def test_gold_set_workbench_empty_routes_to_gold_set_panel(self):
+        project_id = self._create_project("data-studio-gold-empty")
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/gold-set")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "empty")
+        self.assertEqual(payload["datasets"], [])
+        self.assertEqual(payload["validation"]["status"], "empty")
+        self.assertEqual(payload["entry_point"]["target_tab"], "goldset")
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("no_gold_sets", issue_ids)
 
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")
