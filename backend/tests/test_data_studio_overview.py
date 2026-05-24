@@ -471,6 +471,154 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("no_gold_sets", issue_ids)
 
+    def test_synthetic_playbook_center_summarizes_local_backend_and_review_queue(self):
+        project_id = self._create_project("data-studio-synth-playbooks")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_synth_state():
+            async with async_session_factory() as db:
+                gold_dir = settings.DATA_DIR / "projects" / str(project_id) / "gold"
+                gold_dir.mkdir(parents=True, exist_ok=True)
+                gold_path = gold_dir / "gold_dev.jsonl"
+                gold_rows = [
+                    {"text": "Refund request", "label": "billing"},
+                    {"text": "Password reset failed", "label": "account"},
+                ]
+                with gold_path.open("w", encoding="utf-8") as handle:
+                    for row in gold_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+                synth_dir.mkdir(parents=True, exist_ok=True)
+                synth_path = synth_dir / "synthetic.jsonl"
+                synth_rows = [
+                    {
+                        "id": 1,
+                        "text": "I need a renewal refund",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "synth_confidence": 0.91,
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 2,
+                        "text": "My login code expired",
+                        "label": "account",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "synth_confidence": 0.88,
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 3,
+                        "text": "Billing portal is unavailable",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:hard_negatives",
+                        "synth_confidence": 0.82,
+                        "review_status": "accepted",
+                    },
+                ]
+                with synth_path.open("w", encoding="utf-8") as handle:
+                    for row in synth_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                db.add_all([
+                    Dataset(
+                        project_id=project_id,
+                        name="Gold Dev",
+                        dataset_type=DatasetType.GOLD_DEV,
+                        record_count=len(gold_rows),
+                        file_path=str(gold_path),
+                    ),
+                    Dataset(
+                        project_id=project_id,
+                        name="Synthetic",
+                        dataset_type=DatasetType.SYNTHETIC,
+                        record_count=len(synth_rows),
+                        file_path=str(synth_path),
+                    ),
+                ])
+                await db.commit()
+
+        class FakeOllamaBackend:
+            name = "ollama"
+
+            @classmethod
+            def is_available(cls):
+                return True
+
+            def describe(self):
+                return "ollama:llama3"
+
+        class FakeTeacherBackend:
+            name = "teacher"
+
+            @classmethod
+            def is_available(cls):
+                return False
+
+        asyncio.run(_seed_synth_state())
+
+        with patch(
+            "app.services.data_studio_service.BACKEND_REGISTRY",
+            [FakeOllamaBackend, FakeTeacherBackend],
+        ):
+            resp = self.client.get(f"/api/projects/{project_id}/data-studio/synthetic-playbooks")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertTrue(payload["read_only"])
+        self.assertEqual(payload["recipe"]["id"], "classification")
+        self.assertTrue(payload["recommended_backend"]["available"])
+        self.assertFalse(payload["recommended_backend"]["paid_required"])
+        self.assertGreaterEqual(payload["catalog"]["compatible_playbooks"], 1)
+        self.assertIn("classification", payload["catalog"]["supported_recipes"])
+        self.assertEqual(payload["review_queue"]["total_pending"], 2)
+        self.assertEqual(payload["review_queue"]["total_accepted"], 1)
+        prereq_status = {item["id"]: item["status"] for item in payload["prerequisites"]}
+        self.assertEqual(prereq_status["recipe"], "met")
+        self.assertEqual(prereq_status["compatible_playbooks"], "met")
+        self.assertEqual(prereq_status["gold_examples"], "met")
+        self.assertEqual(prereq_status["local_ollama"], "met")
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("synthetic_rows_pending_review", issue_ids)
+        self.assertEqual(payload["entry_point"]["target_tab"], "synthetic")
+
+    def test_synthetic_playbook_center_no_recipe_keeps_free_local_default(self):
+        project_id = self._create_project("data-studio-synth-empty")
+
+        class OfflineOllamaBackend:
+            name = "ollama"
+
+            @classmethod
+            def is_available(cls):
+                return False
+
+        with patch(
+            "app.services.data_studio_service.BACKEND_REGISTRY",
+            [OfflineOllamaBackend],
+        ):
+            resp = self.client.get(f"/api/projects/{project_id}/data-studio/synthetic-playbooks")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertIsNone(payload["recipe"])
+        self.assertFalse(payload["recommended_backend"]["available"])
+        self.assertTrue(payload["recommended_backend"]["local_default"])
+        self.assertFalse(payload["recommended_backend"]["paid_required"])
+        self.assertGreaterEqual(payload["catalog"]["total_playbooks"], 1)
+        prereq_status = {item["id"]: item["status"] for item in payload["prerequisites"]}
+        self.assertEqual(prereq_status["recipe"], "missing")
+        self.assertEqual(prereq_status["local_ollama"], "attention")
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("synthetic_recipe_missing", issue_ids)
+        self.assertIn("synthetic_ollama_unavailable", issue_ids)
+
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")
         assistant_payload = {

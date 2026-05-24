@@ -5,6 +5,7 @@ export type DataStudioSourcesVerdict = 'empty' | 'attention' | 'healthy';
 export type DataStudioMappingVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
 export type DataStudioGoldSetVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioSyntheticPlaybookVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -388,6 +389,89 @@ export interface DataStudioGoldSetWorkbench {
 export async function getDataStudioGoldSetWorkbench(projectId: number): Promise<DataStudioGoldSetWorkbench> {
     const resp = await api.get(`/projects/${projectId}/data-studio/gold-set`);
     return resp.data as DataStudioGoldSetWorkbench;
+}
+
+export interface DataStudioSyntheticPlaybook {
+    recipe_id: string;
+    mode: string;
+    label: string;
+}
+
+export interface DataStudioSyntheticCatalog {
+    total_playbooks: number;
+    compatible_playbooks: number;
+    preview_playbooks: DataStudioSyntheticPlaybook[];
+    supported_recipes: string[];
+    compatible_modes: string[];
+}
+
+export interface DataStudioSyntheticBackend {
+    name: string;
+    available: boolean;
+    describe: string;
+    is_default: boolean;
+    is_local: boolean;
+    paid_required: boolean;
+}
+
+export interface DataStudioSyntheticRecommendedBackend {
+    name: string;
+    available: boolean;
+    describe: string;
+    local_default: boolean;
+    paid_required: boolean;
+}
+
+export interface DataStudioSyntheticPrerequisite {
+    id: string;
+    label: string;
+    status: 'met' | 'attention' | 'missing' | string;
+    message: string;
+    target_tab: string;
+}
+
+export interface DataStudioSyntheticReviewGroup {
+    synth_source: string;
+    count: number;
+    truncated: boolean;
+}
+
+export interface DataStudioSyntheticReviewQueue {
+    dataset_id?: number | null;
+    total_rows: number;
+    total_pending: number;
+    total_accepted: number;
+    pending_group_count: number;
+    accepted_group_count: number;
+    top_pending_groups: DataStudioSyntheticReviewGroup[];
+    top_accepted_groups: DataStudioSyntheticReviewGroup[];
+}
+
+export interface DataStudioSyntheticEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+}
+
+export interface DataStudioSyntheticPlaybookCenter {
+    project_id: number;
+    verdict: DataStudioSyntheticPlaybookVerdict;
+    read_only: boolean;
+    recipe: DataStudioRecipeSummary | null;
+    catalog: DataStudioSyntheticCatalog;
+    backends: DataStudioSyntheticBackend[];
+    recommended_backend: DataStudioSyntheticRecommendedBackend;
+    prerequisites: DataStudioSyntheticPrerequisite[];
+    review_queue: DataStudioSyntheticReviewQueue;
+    issues: DataStudioIssue[];
+    entry_point: DataStudioSyntheticEntryPoint;
+}
+
+export async function getDataStudioSyntheticPlaybookCenter(
+    projectId: number,
+): Promise<DataStudioSyntheticPlaybookCenter> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/synthetic-playbooks`);
+    return resp.data as DataStudioSyntheticPlaybookCenter;
 }
 
 export interface DataStudioAssistRequest {

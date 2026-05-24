@@ -9,6 +9,7 @@ import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingP
 import DataStudioDomainDetectionPanel from '../components/data/DataStudioDomainDetectionPanel';
 import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
+import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudioSyntheticPlaybookCenterPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -188,6 +189,13 @@ export default function ProjectPipelinePage() {
                             onOpenGoldSet={() => {
                                 setActiveTab('goldset');
                                 navigate(`/project/${projectId}/pipeline/goldset`);
+                            }}
+                        />
+                        <DataStudioSyntheticPlaybookCenterPanel
+                            projectId={projectId}
+                            onOpenSynthetic={() => {
+                                setActiveTab('synthetic');
+                                navigate(`/project/${projectId}/pipeline/synthetic`);
                             }}
                         />
                         <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />

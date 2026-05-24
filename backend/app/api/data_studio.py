@@ -16,6 +16,7 @@ from app.services.data_studio_service import (
     build_data_studio_mapping_preview,
     build_data_studio_overview,
     build_data_studio_sources,
+    build_data_studio_synthetic_playbook_center,
 )
 
 
@@ -103,6 +104,22 @@ async def get_data_studio_gold_set_workbench(
 
     try:
         return await build_data_studio_gold_set_workbench(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/synthetic-playbooks")
+async def get_data_studio_synthetic_playbook_center(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a read-only Synthetic Playbook Center summary."""
+
+    try:
+        return await build_data_studio_synthetic_playbook_center(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

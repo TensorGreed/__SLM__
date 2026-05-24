@@ -36,6 +36,9 @@ from app.services.domain_pack_service import get_domain_pack
 from app.services.domain_profile_service import get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.recipe_service import get_recipe
+from app.services.synth_backends import BACKEND_REGISTRY
+from app.services.synth_playbook_service import available_playbooks_for_recipe
+from app.services.synth_playbooks import list_playbooks
 from app.services.synthetic_service import call_teacher_model
 from app.services.synth_review_queue_service import list_review_queue
 
@@ -46,6 +49,7 @@ SourcesVerdict = Literal["empty", "attention", "healthy"]
 MappingVerdict = Literal["empty", "attention", "ready"]
 DomainVerdict = Literal["unknown", "attention", "confirmed"]
 GoldSetVerdict = Literal["empty", "attention", "ready"]
+SyntheticPlaybookVerdict = Literal["empty", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -1311,6 +1315,373 @@ async def build_data_studio_gold_set_workbench(
             "label": "Open Gold Set workflow",
             "target_tab": "goldset",
             "reason": "Use the existing Gold Set panel to add, review, sample, or lock trusted examples.",
+        },
+    }
+
+
+def _playbook_mode_label(mode: str) -> str:
+    labels = {
+        "positives_paraphrase": "Paraphrase positives",
+        "hard_negatives": "Hard negatives",
+        "class_balance_fill": "Balance class distribution",
+        "edge_cases": "Edge cases",
+        "refusals": "Refusals",
+        "format_robustness": "Format robustness",
+        "cluster_targeted": "Target a failure cluster",
+    }
+    return labels.get(mode, mode.replace("_", " ").title())
+
+
+def _playbook_payloads(playbooks: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in playbooks:
+        recipe_id = str(item.get("recipe_id") or "").strip()
+        mode = str(item.get("mode") or "").strip()
+        if not recipe_id or not mode:
+            continue
+        rows.append({
+            "recipe_id": recipe_id,
+            "mode": mode,
+            "label": _playbook_mode_label(mode),
+        })
+    rows.sort(key=lambda row: (row["recipe_id"], row["mode"]))
+    return rows
+
+
+def _backend_payloads() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for index, cls in enumerate(BACKEND_REGISTRY):
+        name = str(getattr(cls, "name", cls.__name__)).strip() or cls.__name__
+        try:
+            available = bool(cls.is_available())
+        except Exception:  # noqa: BLE001
+            available = False
+        description = name
+        if available:
+            try:
+                description = str(cls().describe())
+            except Exception:  # noqa: BLE001
+                description = name
+        entries.append({
+            "name": name,
+            "available": available,
+            "describe": description,
+            "is_default": index == 0 and name == "ollama",
+            "is_local": name == "ollama",
+            "paid_required": name == "nemo",
+        })
+    return entries
+
+
+def _backend_named(backends: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    for backend in backends:
+        if str(backend.get("name") or "") == name:
+            return backend
+    return None
+
+
+def _gold_file_backed_rows(datasets: list[Dataset]) -> int:
+    total = 0
+    for dataset in datasets:
+        if dataset.dataset_type not in _GOLD_SET_DATASET_TYPES:
+            continue
+        rows = _load_jsonl_dicts(dataset.file_path)
+        total += len(rows)
+    return total
+
+
+def _review_queue_summary(queue: dict[str, Any]) -> dict[str, Any]:
+    groups = queue.get("groups") if isinstance(queue.get("groups"), list) else []
+    accepted_groups = (
+        queue.get("accepted_groups")
+        if isinstance(queue.get("accepted_groups"), list)
+        else []
+    )
+    top_pending = sorted(
+        [
+            {
+                "synth_source": str(group.get("synth_source") or ""),
+                "count": int(group.get("count") or 0),
+                "truncated": bool(group.get("truncated")),
+            }
+            for group in groups
+            if isinstance(group, dict)
+        ],
+        key=lambda item: (-int(item["count"]), item["synth_source"]),
+    )[:4]
+    top_accepted = sorted(
+        [
+            {
+                "synth_source": str(group.get("synth_source") or ""),
+                "count": int(group.get("count") or 0),
+                "truncated": bool(group.get("truncated")),
+            }
+            for group in accepted_groups
+            if isinstance(group, dict)
+        ],
+        key=lambda item: (-int(item["count"]), item["synth_source"]),
+    )[:4]
+    return {
+        "dataset_id": queue.get("dataset_id"),
+        "total_rows": int(queue.get("total_rows") or 0),
+        "total_pending": int(queue.get("total_pending") or 0),
+        "total_accepted": int(queue.get("total_accepted") or 0),
+        "pending_group_count": len(groups),
+        "accepted_group_count": len(accepted_groups),
+        "top_pending_groups": top_pending,
+        "top_accepted_groups": top_accepted,
+    }
+
+
+def _prerequisite(
+    prereq_id: str,
+    label: str,
+    status: str,
+    message: str,
+    *,
+    target_tab: str,
+) -> dict[str, str]:
+    return {
+        "id": prereq_id,
+        "label": label,
+        "status": status,
+        "message": message,
+        "target_tab": target_tab,
+    }
+
+
+async def build_data_studio_synthetic_playbook_center(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return a read-only Synthetic Playbook Center summary."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    recipe_payload = _recipe_payload(project)
+    recipe_id = str((recipe_payload or {}).get("id") or "").strip()
+    full_catalog = _playbook_payloads(list_playbooks())
+    compatible_catalog = (
+        _playbook_payloads(available_playbooks_for_recipe(recipe_id))
+        if recipe_id
+        else []
+    )
+    preview_catalog = compatible_catalog if recipe_id else full_catalog
+
+    datasets_result = await db.execute(
+        select(Dataset).where(Dataset.project_id == project_id)
+    )
+    datasets = list(datasets_result.scalars().all())
+    gold_rows = sum(
+        int(dataset.record_count or 0)
+        for dataset in datasets
+        if dataset.dataset_type in _GOLD_SET_DATASET_TYPES
+    )
+    file_backed_gold_rows = _gold_file_backed_rows(datasets)
+
+    backends = _backend_payloads()
+    ollama_backend = _backend_named(backends, "ollama")
+    available_backends = [backend for backend in backends if bool(backend.get("available"))]
+    queue = _review_queue_summary(await list_review_queue(db, project_id))
+
+    prerequisites: list[dict[str, str]] = []
+    issues: list[dict[str, str]] = []
+
+    if recipe_payload is None:
+        prerequisites.append(
+            _prerequisite(
+                "recipe",
+                "Recipe selected",
+                "missing",
+                "Pick a recipe so BrewSLM can show compatible synthetic playbooks.",
+                target_tab="data",
+            )
+        )
+        issues.append(
+            _issue(
+                "synthetic_recipe_missing",
+                "blocker",
+                "Recipe not selected",
+                "Synthetic playbooks are recipe-aware; choose a recipe before generating rows.",
+                action_label="Choose recipe",
+                target_tab="data",
+            )
+        )
+    else:
+        prerequisites.append(
+            _prerequisite(
+                "recipe",
+                "Recipe selected",
+                "met",
+                f"{recipe_payload.get('name') or recipe_id} is active.",
+                target_tab="data",
+            )
+        )
+
+    if recipe_id and not compatible_catalog:
+        prerequisites.append(
+            _prerequisite(
+                "compatible_playbooks",
+                "Compatible playbooks",
+                "missing",
+                f"No synthetic playbooks are registered for {recipe_id}.",
+                target_tab="synthetic",
+            )
+        )
+        issues.append(
+            _issue(
+                "synthetic_no_compatible_playbooks",
+                "blocker",
+                "No compatible playbooks",
+                f"The active recipe '{recipe_id}' does not have a registered synthetic playbook.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+            )
+        )
+    else:
+        prerequisites.append(
+            _prerequisite(
+                "compatible_playbooks",
+                "Compatible playbooks",
+                "met" if recipe_id else "attention",
+                (
+                    f"{len(compatible_catalog)} playbook mode(s) match the active recipe."
+                    if recipe_id
+                    else f"{len(full_catalog)} playbook mode(s) are available after a recipe is selected."
+                ),
+                target_tab="synthetic",
+            )
+        )
+
+    if file_backed_gold_rows <= 0:
+        prerequisites.append(
+            _prerequisite(
+                "gold_examples",
+                "Gold examples",
+                "missing" if gold_rows <= 0 else "attention",
+                (
+                    "Add file-backed Gold Set rows before running current playbooks."
+                    if gold_rows <= 0
+                    else "Gold examples exist, but current playbooks read from Gold Set JSONL files."
+                ),
+                target_tab="goldset",
+            )
+        )
+        issues.append(
+            _issue(
+                "synthetic_gold_rows_missing",
+                "warning",
+                "Gold rows are not ready for playbooks",
+                "Current playbooks generate from Gold Set rows; add or import trusted gold examples first.",
+                action_label="Open Gold Set",
+                target_tab="goldset",
+            )
+        )
+    else:
+        prerequisites.append(
+            _prerequisite(
+                "gold_examples",
+                "Gold examples",
+                "met",
+                f"{file_backed_gold_rows} file-backed gold row(s) can seed playbook generation.",
+                target_tab="goldset",
+            )
+        )
+
+    if bool((ollama_backend or {}).get("available")):
+        prerequisites.append(
+            _prerequisite(
+                "local_ollama",
+                "Local Ollama",
+                "met",
+                f"Local default backend is ready: {ollama_backend.get('describe')}.",
+                target_tab="synthetic",
+            )
+        )
+    else:
+        prerequisites.append(
+            _prerequisite(
+                "local_ollama",
+                "Local Ollama",
+                "attention",
+                "Ollama is the free local default; start Ollama or pull a local model before generating.",
+                target_tab="synthetic",
+            )
+        )
+        issues.append(
+            _issue(
+                "synthetic_ollama_unavailable",
+                "warning",
+                "Local Ollama is not ready",
+                "BrewSLM can still show playbooks, but local free generation needs a reachable Ollama model.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+            )
+        )
+
+    if not available_backends:
+        issues.append(
+            _issue(
+                "synthetic_no_backend_available",
+                "warning",
+                "No synthetic backend is available",
+                "Install or start Ollama for the default free local path, or configure an OpenAI-compatible endpoint.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+            )
+        )
+
+    if queue["total_pending"] > 0:
+        issues.append(
+            _issue(
+                "synthetic_rows_pending_review",
+                "warning",
+                "Synthetic rows pending review",
+                f"{queue['total_pending']} synthetic row(s) must be accepted before they enter dataset prep.",
+                action_label="Review synthetic rows",
+                target_tab="synthetic",
+            )
+        )
+
+    if recipe_payload is None and not full_catalog:
+        verdict: SyntheticPlaybookVerdict = "empty"
+    elif any(item["severity"] in {"blocker", "warning"} for item in issues):
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    supported_recipes = sorted({item["recipe_id"] for item in full_catalog})
+    compatible_modes = sorted({item["mode"] for item in compatible_catalog})
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "recipe": recipe_payload,
+        "catalog": {
+            "total_playbooks": len(full_catalog),
+            "compatible_playbooks": len(compatible_catalog),
+            "preview_playbooks": preview_catalog[:8],
+            "supported_recipes": supported_recipes,
+            "compatible_modes": compatible_modes,
+        },
+        "backends": backends,
+        "recommended_backend": {
+            "name": "ollama",
+            "available": bool((ollama_backend or {}).get("available")),
+            "describe": str((ollama_backend or {}).get("describe") or "ollama"),
+            "local_default": True,
+            "paid_required": False,
+        },
+        "prerequisites": prerequisites,
+        "review_queue": queue,
+        "issues": issues,
+        "entry_point": {
+            "label": "Open Synthetic workflow",
+            "target_tab": "synthetic",
+            "reason": "Use the existing Synthetic tab and PlaybookPickerPanel to generate, review, and accept rows.",
         },
     }
 
