@@ -4,6 +4,8 @@ import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router
 import PipelineProgress from '../components/dashboard/PipelineProgress';
 import IngestionPanel from '../components/data/IngestionPanel';
 import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
+import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
+import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -174,6 +176,8 @@ export default function ProjectPipelinePage() {
                                 navigate(`/project/${projectId}/pipeline/${targetTab}`);
                             }}
                         />
+                        <DataStudioSourcesSummaryPanel projectId={projectId} />
+                        <DataStudioMappingPreviewPanel projectId={projectId} />
                         <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />
                     </>
                 );
