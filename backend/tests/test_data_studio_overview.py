@@ -619,6 +619,176 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertIn("synthetic_recipe_missing", issue_ids)
         self.assertIn("synthetic_ollama_unavailable", issue_ids)
 
+    def test_synthetic_recommendations_use_domain_mapping_gold_and_queue(self):
+        project_id = self._create_project("data-studio-synth-recs")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_recommendation_state():
+            async with async_session_factory() as db:
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "support_faq.jsonl"
+                raw_rows = [
+                    {
+                        "question": "How do I reset my password when the login code fails?",
+                        "answer": "Open account security and request a new reset code.",
+                    },
+                    {
+                        "question": "Can I get a refund after subscription renewal?",
+                        "answer": "Open a billing ticket and include the renewal invoice.",
+                    },
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in raw_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                gold_dir = settings.DATA_DIR / "projects" / str(project_id) / "gold"
+                gold_dir.mkdir(parents=True, exist_ok=True)
+                gold_path = gold_dir / "gold_dev.jsonl"
+                with gold_path.open("w", encoding="utf-8") as handle:
+                    for row in raw_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+                synth_dir.mkdir(parents=True, exist_ok=True)
+                synth_path = synth_dir / "synthetic.jsonl"
+                synth_rows = [
+                    {
+                        "id": 1,
+                        "text": "Need a refund for renewal",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "synth_confidence": 0.91,
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 2,
+                        "text": "Reset code did not arrive",
+                        "label": "account",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "synth_confidence": 0.9,
+                        "review_status": "pending",
+                    },
+                ]
+                with synth_path.open("w", encoding="utf-8") as handle:
+                    for row in synth_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Support FAQ",
+                    dataset_type=DatasetType.RAW,
+                    record_count=len(raw_rows),
+                    file_path=str(raw_path),
+                )
+                db.add(raw_ds)
+                await db.flush()
+                db.add_all([
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="support_faq.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=2,
+                    ),
+                    Dataset(
+                        project_id=project_id,
+                        name="Gold Dev",
+                        dataset_type=DatasetType.GOLD_DEV,
+                        record_count=len(raw_rows),
+                        file_path=str(gold_path),
+                    ),
+                    Dataset(
+                        project_id=project_id,
+                        name="Synthetic",
+                        dataset_type=DatasetType.SYNTHETIC,
+                        record_count=len(synth_rows),
+                        file_path=str(synth_path),
+                    ),
+                ])
+                await db.commit()
+
+        class FakeOllamaBackend:
+            name = "ollama"
+
+            @classmethod
+            def is_available(cls):
+                return True
+
+            def describe(self):
+                return "ollama:llama3"
+
+        asyncio.run(_seed_recommendation_state())
+
+        with patch(
+            "app.services.data_studio_service.BACKEND_REGISTRY",
+            [FakeOllamaBackend],
+        ):
+            resp = self.client.get(
+                f"/api/projects/{project_id}/data-studio/synthetic-recommendations"
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        self.assertEqual(payload["domain"]["id"], "support_faq")
+        self.assertEqual(payload["signals"]["synthetic_pending"], 2)
+        self.assertTrue(payload["signals"]["ollama_available"])
+        recommendation_ids = {item["id"] for item in payload["recommendations"]}
+        self.assertIn("domain_support_faq_customer_phrasing", recommendation_ids)
+        self.assertIn("review_pending_synthetic_before_more_generation", recommendation_ids)
+        self.assertIn("strengthen_gold_set_before_synthetic_generation", recommendation_ids)
+        domain_rec = next(
+            item for item in payload["recommendations"]
+            if item["id"] == "domain_support_faq_customer_phrasing"
+        )
+        self.assertEqual(domain_rec["target_tab"], "synthetic")
+        self.assertEqual(domain_rec["playbook_mode"], "positives_paraphrase")
+        self.assertTrue(domain_rec["requires_user_confirmation"])
+        self.assertFalse(domain_rec["generation_path"]["paid_required"])
+        self.assertIn("Support", domain_rec["domain_reason"])
+
+    def test_synthetic_recommendations_no_recipe_are_non_mutating_setup_guidance(self):
+        project_id = self._create_project("data-studio-synth-recs-empty")
+
+        class OfflineOllamaBackend:
+            name = "ollama"
+
+            @classmethod
+            def is_available(cls):
+                return False
+
+        with patch(
+            "app.services.data_studio_service.BACKEND_REGISTRY",
+            [OfflineOllamaBackend],
+        ):
+            resp = self.client.get(
+                f"/api/projects/{project_id}/data-studio/synthetic-recommendations"
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertIsNone(payload["recipe"])
+        recommendation_ids = {item["id"] for item in payload["recommendations"]}
+        self.assertIn("setup_recipe_for_synthetic_recommendations", recommendation_ids)
+        self.assertIn("start_local_ollama_for_synthetic_generation", recommendation_ids)
+        self.assertFalse(payload["signals"]["ollama_available"])
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("synthetic_recommendation_recipe_missing", issue_ids)
+
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")
         assistant_payload = {

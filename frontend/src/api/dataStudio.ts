@@ -6,6 +6,7 @@ export type DataStudioMappingVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
 export type DataStudioGoldSetVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticPlaybookVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioSyntheticRecommendationVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -472,6 +473,78 @@ export async function getDataStudioSyntheticPlaybookCenter(
 ): Promise<DataStudioSyntheticPlaybookCenter> {
     const resp = await api.get(`/projects/${projectId}/data-studio/synthetic-playbooks`);
     return resp.data as DataStudioSyntheticPlaybookCenter;
+}
+
+export interface DataStudioSyntheticRecommendationDomain {
+    id: string;
+    label: string;
+    confidence: number;
+    source?: string | null;
+}
+
+export interface DataStudioSyntheticRecommendationSignals {
+    mapping_verdict?: string;
+    mapping_required_gaps: string[];
+    gold_trusted_examples: number;
+    gold_review_needed: number;
+    gold_label_field_count: number;
+    synthetic_pending: number;
+    synthetic_accepted: number;
+    compatible_playbook_modes: string[];
+    ollama_available: boolean;
+}
+
+export interface DataStudioSyntheticRecommendationPath {
+    backend: string;
+    available: boolean;
+    describe: string;
+    local_default: boolean;
+    paid_required: boolean;
+}
+
+export interface DataStudioSyntheticRecommendationItem {
+    id: string;
+    title: string;
+    strategy: string;
+    priority: 'high' | 'medium' | 'low' | string;
+    target_tab: string;
+    action_label: string;
+    rationale: string;
+    domain_reason: string;
+    evidence: string[];
+    confidence: number;
+    playbook_mode?: string | null;
+    playbook_available: boolean;
+    requires_user_confirmation: boolean;
+    generation_path: DataStudioSyntheticRecommendationPath;
+}
+
+export interface DataStudioSyntheticRecommendationEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+}
+
+export interface DataStudioSyntheticRecommendations {
+    project_id: number;
+    verdict: DataStudioSyntheticRecommendationVerdict;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    domain: DataStudioSyntheticRecommendationDomain;
+    recipe: DataStudioRecipeSummary | null;
+    signals: DataStudioSyntheticRecommendationSignals;
+    recommendations: DataStudioSyntheticRecommendationItem[];
+    issues: DataStudioIssue[];
+    entry_points: DataStudioSyntheticRecommendationEntryPoint[];
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioSyntheticRecommendations(
+    projectId: number,
+): Promise<DataStudioSyntheticRecommendations> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/synthetic-recommendations`);
+    return resp.data as DataStudioSyntheticRecommendations;
 }
 
 export interface DataStudioAssistRequest {

@@ -17,6 +17,7 @@ from app.services.data_studio_service import (
     build_data_studio_overview,
     build_data_studio_sources,
     build_data_studio_synthetic_playbook_center,
+    build_data_studio_synthetic_recommendations,
 )
 
 
@@ -120,6 +121,22 @@ async def get_data_studio_synthetic_playbook_center(
 
     try:
         return await build_data_studio_synthetic_playbook_center(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/synthetic-recommendations")
+async def get_data_studio_synthetic_recommendations(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return deterministic domain-aware synthetic recommendations."""
+
+    try:
+        return await build_data_studio_synthetic_recommendations(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

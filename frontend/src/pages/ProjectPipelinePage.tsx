@@ -10,6 +10,7 @@ import DataStudioDomainDetectionPanel from '../components/data/DataStudioDomainD
 import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
 import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudioSyntheticPlaybookCenterPanel';
+import DataStudioSyntheticRecommendationsPanel from '../components/data/DataStudioSyntheticRecommendationsPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -196,6 +197,16 @@ export default function ProjectPipelinePage() {
                             onOpenSynthetic={() => {
                                 setActiveTab('synthetic');
                                 navigate(`/project/${projectId}/pipeline/synthetic`);
+                            }}
+                        />
+                        <DataStudioSyntheticRecommendationsPanel
+                            projectId={projectId}
+                            onOpenTab={(targetTab) => {
+                                if (!isTabKey(targetTab)) {
+                                    return;
+                                }
+                                setActiveTab(targetTab);
+                                navigate(`/project/${projectId}/pipeline/${targetTab}`);
                             }}
                         />
                         <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />

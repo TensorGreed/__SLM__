@@ -50,6 +50,7 @@ MappingVerdict = Literal["empty", "attention", "ready"]
 DomainVerdict = Literal["unknown", "attention", "confirmed"]
 GoldSetVerdict = Literal["empty", "attention", "ready"]
 SyntheticPlaybookVerdict = Literal["empty", "attention", "ready"]
+SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -1682,6 +1683,525 @@ async def build_data_studio_synthetic_playbook_center(
             "label": "Open Synthetic workflow",
             "target_tab": "synthetic",
             "reason": "Use the existing Synthetic tab and PlaybookPickerPanel to generate, review, and accept rows.",
+        },
+    }
+
+
+_DOMAIN_SYNTHETIC_STRATEGIES: dict[str, list[dict[str, Any]]] = {
+    "support_faq": [
+        {
+            "id": "customer_phrasing",
+            "title": "Generate customer phrasing variants",
+            "strategy": "positive paraphrase",
+            "desired_modes": ("positives_paraphrase",),
+            "domain_reason": "Support assistants need to recognize the same intent across messy customer wording.",
+        },
+        {
+            "id": "escalation_boundaries",
+            "title": "Add escalation and boundary examples",
+            "strategy": "hard negatives",
+            "desired_modes": ("hard_negatives", "cluster_targeted"),
+            "domain_reason": "Account, billing, and cancellation answers need clear handoff boundaries.",
+        },
+    ],
+    "policy_qa": [
+        {
+            "id": "exceptions",
+            "title": "Cover policy exceptions and edge cases",
+            "strategy": "edge cases",
+            "desired_modes": ("cluster_targeted", "positives_paraphrase"),
+            "domain_reason": "Policy Q&A quality depends on edge cases, exceptions, and insufficient-information behavior.",
+        },
+    ],
+    "pii_pci_detection": [
+        {
+            "id": "hard_negatives",
+            "title": "Generate privacy hard negatives",
+            "strategy": "hard negatives",
+            "desired_modes": ("hard_negatives", "class_balance_fill"),
+            "domain_reason": "PII/PCI detectors need examples that look sensitive but should not be redacted.",
+        },
+        {
+            "id": "class_balance",
+            "title": "Balance sensitive entity classes",
+            "strategy": "class balance",
+            "desired_modes": ("class_balance_fill", "hard_negatives"),
+            "domain_reason": "False negatives matter for sensitive data; minority entity classes need explicit coverage.",
+        },
+    ],
+    "security_alert_triage": [
+        {
+            "id": "severity_balance",
+            "title": "Balance alert severity examples",
+            "strategy": "class balance",
+            "desired_modes": ("class_balance_fill", "hard_negatives"),
+            "domain_reason": "Security triage models need enough coverage for rare but high-impact severities.",
+        },
+    ],
+    "legal_contracts": [
+        {
+            "id": "unknowns_and_handoff",
+            "title": "Add legal unknown and handoff cases",
+            "strategy": "edge cases",
+            "desired_modes": ("cluster_targeted", "positives_paraphrase"),
+            "domain_reason": "Legal clause assistants should avoid overconfident answers when source text is ambiguous.",
+        },
+    ],
+    "finance_support": [
+        {
+            "id": "numeric_edges",
+            "title": "Generate finance numeric edge cases",
+            "strategy": "hard negatives",
+            "desired_modes": ("hard_negatives", "cluster_targeted"),
+            "domain_reason": "Finance support data needs numeric and money-moving boundaries covered before training.",
+        },
+    ],
+    "code_review": [
+        {
+            "id": "defect_hard_negatives",
+            "title": "Generate code-review hard negatives",
+            "strategy": "hard negatives",
+            "desired_modes": ("hard_negatives", "cluster_targeted"),
+            "domain_reason": "Code-review SLMs need examples that distinguish real defects from style-only comments.",
+        },
+    ],
+    "customer_sentiment": [
+        {
+            "id": "label_balance",
+            "title": "Balance sentiment classes",
+            "strategy": "class balance",
+            "desired_modes": ("class_balance_fill", "hard_negatives"),
+            "domain_reason": "Sentiment datasets often overrepresent common labels and miss ambiguous neutral examples.",
+        },
+    ],
+}
+
+
+def _pick_playbook_mode(
+    desired_modes: tuple[str, ...],
+    compatible_modes: set[str],
+) -> tuple[str | None, bool]:
+    for mode in desired_modes:
+        if mode in compatible_modes:
+            return mode, True
+    if compatible_modes:
+        return sorted(compatible_modes)[0], False
+    return None, False
+
+
+def _synthetic_recommendation(
+    *,
+    rec_id: str,
+    title: str,
+    strategy: str,
+    priority: str,
+    target_tab: str,
+    action_label: str,
+    rationale: str,
+    domain_reason: str,
+    evidence: list[str],
+    confidence: float,
+    playbook_mode: str | None,
+    playbook_available: bool,
+    local_ollama: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "id": rec_id,
+        "title": title,
+        "strategy": strategy,
+        "priority": priority,
+        "target_tab": target_tab,
+        "action_label": action_label,
+        "rationale": rationale,
+        "domain_reason": domain_reason,
+        "evidence": [item for item in evidence if item][:6],
+        "confidence": round(max(0.0, min(1.0, float(confidence))), 4),
+        "playbook_mode": playbook_mode,
+        "playbook_available": playbook_available,
+        "requires_user_confirmation": True,
+        "generation_path": {
+            "backend": "ollama",
+            "available": bool(local_ollama.get("available")),
+            "describe": str(local_ollama.get("describe") or "ollama"),
+            "local_default": True,
+            "paid_required": False,
+        },
+    }
+
+
+def _domain_signal_evidence(domain: dict[str, Any]) -> list[str]:
+    detected = domain.get("detected_domain") if isinstance(domain.get("detected_domain"), dict) else {}
+    evidence = []
+    label = str(detected.get("label") or "Unknown domain")
+    confidence = float(detected.get("confidence") or 0.0)
+    evidence.append(f"Detected domain: {label} ({round(confidence * 100)}% confidence).")
+    keywords = list(detected.get("matched_keywords") or [])
+    fields = list(detected.get("matched_fields") or [])
+    if keywords:
+        evidence.append(f"Domain keywords: {', '.join(str(item) for item in keywords[:6])}.")
+    if fields:
+        evidence.append(f"Domain fields: {', '.join(str(item) for item in fields[:6])}.")
+    for item in list(domain.get("evidence") or [])[:2]:
+        if isinstance(item, dict) and item.get("message"):
+            evidence.append(str(item["message"]))
+    return evidence
+
+
+def _mapping_gap_evidence(mapping: dict[str, Any]) -> tuple[list[str], list[str]]:
+    summary = mapping.get("summary") if isinstance(mapping.get("summary"), dict) else {}
+    gaps = [
+        str(item)
+        for item in list(summary.get("required_fields_below_100") or [])
+        if str(item).strip()
+    ]
+    evidence = []
+    if gaps:
+        evidence.append(f"Mapping coverage is incomplete for: {', '.join(gaps)}.")
+    sampled = int(summary.get("sampled_records") or 0)
+    mapped = int(summary.get("mapped_records") or 0)
+    if sampled > 0:
+        evidence.append(f"Mapping preview mapped {mapped}/{sampled} sampled row(s).")
+    return gaps, evidence
+
+
+async def build_data_studio_synthetic_recommendations(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return deterministic, domain-aware synthetic data recommendations."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    domain = await build_data_studio_domain_detection(db, project_id)
+    mapping = await build_data_studio_mapping_preview(db, project_id)
+    gold = await build_data_studio_gold_set_workbench(db, project_id)
+    playbooks = await build_data_studio_synthetic_playbook_center(db, project_id)
+
+    detected = domain.get("detected_domain") if isinstance(domain.get("detected_domain"), dict) else {}
+    domain_id = str(detected.get("id") or "generic_domain")
+    domain_label = str(detected.get("label") or "Generic Domain")
+    domain_confidence = float(detected.get("confidence") or 0.0)
+    recipe = playbooks.get("recipe") if isinstance(playbooks.get("recipe"), dict) else None
+    compatible_modes = {
+        str(mode)
+        for mode in list((playbooks.get("catalog") or {}).get("compatible_modes") or [])
+        if str(mode).strip()
+    }
+    local_ollama = (
+        playbooks.get("recommended_backend")
+        if isinstance(playbooks.get("recommended_backend"), dict)
+        else {"name": "ollama", "available": False, "describe": "ollama"}
+    )
+    queue = playbooks.get("review_queue") if isinstance(playbooks.get("review_queue"), dict) else {}
+    gold_validation = gold.get("validation") if isinstance(gold.get("validation"), dict) else {}
+    gold_coverage = gold.get("coverage") if isinstance(gold.get("coverage"), dict) else {}
+    mapping_gaps, mapping_evidence = _mapping_gap_evidence(mapping)
+    domain_evidence = _domain_signal_evidence(domain)
+
+    recommendations: list[dict[str, Any]] = []
+    issues: list[dict[str, str]] = []
+
+    if recipe is None:
+        issues.append(
+            _issue(
+                "synthetic_recommendation_recipe_missing",
+                "blocker",
+                "Recipe needed before recommending playbooks",
+                "Pick a recipe so recommendations can target compatible synthetic strategies.",
+                action_label="Choose recipe",
+                target_tab="data",
+            )
+        )
+        recommendations.append(
+            _synthetic_recommendation(
+                rec_id="setup_recipe_for_synthetic_recommendations",
+                title="Choose a recipe before generating synthetic data",
+                strategy="setup",
+                priority="high",
+                target_tab="data",
+                action_label="Choose recipe",
+                rationale="Synthetic playbooks are recipe-aware and should match the training contract.",
+                domain_reason=f"{domain_label} recommendations become more precise after the training recipe is known.",
+                evidence=domain_evidence,
+                confidence=0.82,
+                playbook_mode=None,
+                playbook_available=False,
+                local_ollama=local_ollama,
+            )
+        )
+
+    if mapping_gaps:
+        issues.append(
+            _issue(
+                "synthetic_recommendation_mapping_gaps",
+                "warning",
+                "Mapping gaps can pollute synthetic prompts",
+                "Fix required-field coverage before generating synthetic rows from this dataset shape.",
+                action_label="Review mapping",
+                target_tab="dataprep",
+            )
+        )
+        recommendations.append(
+            _synthetic_recommendation(
+                rec_id="fix_mapping_before_synthetic_generation",
+                title="Fix mapping coverage before generating rows",
+                strategy="data prep",
+                priority="high",
+                target_tab="dataprep",
+                action_label="Review mapping",
+                rationale="Synthetic examples should mirror the canonical row shape that training will consume.",
+                domain_reason=f"{domain_label} examples are only useful if required inputs and outputs are mapped consistently.",
+                evidence=mapping_evidence + domain_evidence,
+                confidence=0.86,
+                playbook_mode=None,
+                playbook_available=False,
+                local_ollama=local_ollama,
+            )
+        )
+
+    trusted_examples = int(gold_validation.get("trusted_examples") or 0)
+    review_needed = int(gold_validation.get("review_needed") or 0)
+    min_examples = int(gold.get("minimum_recommended_examples") or _GOLD_SET_MIN_STARTER_ROWS)
+    label_field_count = int((gold_coverage.get("field_counts") or {}).get("labels") or 0)
+    if trusted_examples < min_examples or review_needed > 0:
+        issues.append(
+            _issue(
+                "synthetic_recommendation_gold_set_needs_work",
+                "warning",
+                "Gold Set should be strengthened first",
+                "Current playbooks use trusted Gold Set examples as anchors for generation.",
+                action_label="Review Gold Set",
+                target_tab="goldset",
+            )
+        )
+        evidence = [
+            f"{trusted_examples}/{min_examples} recommended trusted Gold Set example(s) are ready.",
+            f"{review_needed} Gold Set row(s) still need review.",
+        ]
+        if label_field_count <= 0:
+            evidence.append("Gold Set label metadata is not visible yet.")
+        recommendations.append(
+            _synthetic_recommendation(
+                rec_id="strengthen_gold_set_before_synthetic_generation",
+                title="Strengthen Gold Set anchors before generation",
+                strategy="gold coverage",
+                priority="medium",
+                target_tab="goldset",
+                action_label="Review Gold Set",
+                rationale="Better trusted anchors reduce synthetic drift and make generated rows easier to review.",
+                domain_reason=f"{domain_label} synthetic data should preserve domain-specific labels, boundaries, and expected answers.",
+                evidence=evidence + domain_evidence,
+                confidence=0.78,
+                playbook_mode=None,
+                playbook_available=False,
+                local_ollama=local_ollama,
+            )
+        )
+
+    pending_synth = int(queue.get("total_pending") or 0)
+    if pending_synth > 0:
+        issues.append(
+            _issue(
+                "synthetic_recommendation_pending_review_queue",
+                "warning",
+                "Review pending synthetic rows",
+                "Pending synthetic rows are gated out of training until accepted.",
+                action_label="Review synthetic rows",
+                target_tab="synthetic",
+            )
+        )
+        groups = [
+            f"{group.get('synth_source')} ({group.get('count')})"
+            for group in list(queue.get("top_pending_groups") or [])[:3]
+            if isinstance(group, dict)
+        ]
+        recommendations.append(
+            _synthetic_recommendation(
+                rec_id="review_pending_synthetic_before_more_generation",
+                title="Review pending synthetic rows before generating more",
+                strategy="review queue",
+                priority="high",
+                target_tab="synthetic",
+                action_label="Review queue",
+                rationale="Reviewing existing synthetic rows prevents low-quality or duplicate rows from piling up.",
+                domain_reason=f"{domain_label} quality depends on accepted examples matching the domain policy and labels.",
+                evidence=[f"{pending_synth} synthetic row(s) are pending review."] + groups,
+                confidence=0.9,
+                playbook_mode=None,
+                playbook_available=False,
+                local_ollama=local_ollama,
+            )
+        )
+
+    if not bool(local_ollama.get("available")):
+        issues.append(
+            _issue(
+                "synthetic_recommendation_ollama_unavailable",
+                "warning",
+                "Local Ollama is not ready",
+                "Start Ollama or pull a local model before using the default free generation path.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+            )
+        )
+        recommendations.append(
+            _synthetic_recommendation(
+                rec_id="start_local_ollama_for_synthetic_generation",
+                title="Start local Ollama for free generation",
+                strategy="backend setup",
+                priority="medium",
+                target_tab="synthetic",
+                action_label="Open Synthetic",
+                rationale="BrewSLM defaults synthetic generation to a local Ollama-compatible backend.",
+                domain_reason=f"{domain_label} recommendations can be executed locally once an Ollama model is reachable.",
+                evidence=["Recommended backend is local Ollama.", "No paid backend is required by Data Studio."],
+                confidence=0.8,
+                playbook_mode=None,
+                playbook_available=False,
+                local_ollama=local_ollama,
+            )
+        )
+
+    if domain_confidence < 0.45:
+        issues.append(
+            _issue(
+                "synthetic_recommendation_domain_confidence_low",
+                "info",
+                "Domain signal is weak",
+                "Add representative source or Gold Set rows before relying on domain-specific synthetic recommendations.",
+                action_label="Add representative rows",
+                target_tab="data",
+            )
+        )
+
+    strategies = _DOMAIN_SYNTHETIC_STRATEGIES.get(domain_id) or [
+        {
+            "id": "baseline_variants",
+            "title": "Generate baseline variants after domain confirmation",
+            "strategy": "positive paraphrase",
+            "desired_modes": ("positives_paraphrase",),
+            "domain_reason": "Synthetic rows are safer when the domain and recipe are confirmed first.",
+        }
+    ]
+    if recipe is not None and domain_confidence >= 0.3:
+        for strategy in strategies[:3]:
+            desired_modes = tuple(str(mode) for mode in strategy.get("desired_modes") or ())
+            mode, mode_available = _pick_playbook_mode(desired_modes, compatible_modes)
+            evidence = domain_evidence + [
+                f"Compatible playbook modes: {', '.join(sorted(compatible_modes)) or 'none'}.",
+                f"Gold Set trusted examples: {trusted_examples}.",
+            ]
+            recommendations.append(
+                _synthetic_recommendation(
+                    rec_id=f"domain_{domain_id}_{strategy['id']}",
+                    title=str(strategy["title"]),
+                    strategy=str(strategy["strategy"]),
+                    priority="medium" if mode_available else "low",
+                    target_tab="synthetic",
+                    action_label="Open Synthetic",
+                    rationale="This strategy follows from deterministic domain signals and current dataset readiness.",
+                    domain_reason=str(strategy["domain_reason"]),
+                    evidence=evidence,
+                    confidence=max(0.45, min(0.95, domain_confidence)),
+                    playbook_mode=mode,
+                    playbook_available=mode_available,
+                    local_ollama=local_ollama,
+                )
+            )
+
+    seen: set[str] = set()
+    unique_recommendations = []
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    for item in sorted(
+        recommendations,
+        key=lambda rec: (
+            priority_order.get(str(rec.get("priority")), 9),
+            -float(rec.get("confidence") or 0.0),
+            str(rec.get("id")),
+        ),
+    ):
+        rec_id = str(item.get("id") or "")
+        if rec_id in seen:
+            continue
+        seen.add(rec_id)
+        unique_recommendations.append(item)
+        if len(unique_recommendations) >= 8:
+            break
+
+    if not unique_recommendations:
+        verdict: SyntheticRecommendationVerdict = "empty"
+    elif any(item["severity"] in {"blocker", "warning"} for item in issues):
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_data_studio_checks",
+        "domain": {
+            "id": domain_id,
+            "label": domain_label,
+            "confidence": round(domain_confidence, 4),
+            "source": detected.get("source"),
+        },
+        "recipe": recipe,
+        "signals": {
+            "mapping_verdict": mapping.get("verdict"),
+            "mapping_required_gaps": mapping_gaps,
+            "gold_trusted_examples": trusted_examples,
+            "gold_review_needed": review_needed,
+            "gold_label_field_count": label_field_count,
+            "synthetic_pending": pending_synth,
+            "synthetic_accepted": int(queue.get("total_accepted") or 0),
+            "compatible_playbook_modes": sorted(compatible_modes),
+            "ollama_available": bool(local_ollama.get("available")),
+        },
+        "recommendations": unique_recommendations,
+        "issues": issues,
+        "entry_points": [
+            {
+                "label": "Open Synthetic workflow",
+                "target_tab": "synthetic",
+                "reason": "Run playbooks, generate rows, and review synthetic output in the existing Synthetic tab.",
+            },
+            {
+                "label": "Open Gold Set workflow",
+                "target_tab": "goldset",
+                "reason": "Improve trusted anchors before generating more rows.",
+            },
+            {
+                "label": "Open Data Prep",
+                "target_tab": "dataprep",
+                "reason": "Fix schema mapping before synthetic data mirrors the wrong shape.",
+            },
+        ],
+        "power_details": {
+            "domain_detection": {
+                "verdict": domain.get("verdict"),
+                "evidence": domain.get("evidence", []),
+                "issues": domain.get("issues", []),
+            },
+            "mapping": {
+                "verdict": mapping.get("verdict"),
+                "summary": mapping.get("summary"),
+                "issues": mapping.get("issues", []),
+            },
+            "gold_set": {
+                "verdict": gold.get("verdict"),
+                "validation": gold.get("validation"),
+                "coverage": gold.get("coverage"),
+            },
+            "synthetic_playbooks": {
+                "verdict": playbooks.get("verdict"),
+                "catalog": playbooks.get("catalog"),
+                "review_queue": playbooks.get("review_queue"),
+                "issues": playbooks.get("issues", []),
+            },
         },
     }
 
