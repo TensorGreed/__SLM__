@@ -8,6 +8,7 @@ import os
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -35,6 +36,7 @@ from app.models.gold_set_annotation import (  # noqa: E402
     GoldSetVersion,
     GoldSetVersionStatus,
 )
+from app.models.label_job import LabelJob, LabelRow  # noqa: E402
 
 
 class DataStudioOverviewEndpointTests(unittest.TestCase):
@@ -788,6 +790,232 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertFalse(payload["signals"]["ollama_available"])
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("synthetic_recommendation_recipe_missing", issue_ids)
+
+    def test_review_queue_summarizes_synthetic_gold_and_annotation_work(self):
+        project_id = self._create_project("data-studio-review-queue")
+
+        async def _seed_review_state():
+            async with async_session_factory() as db:
+                now = datetime.now(timezone.utc)
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "support_faq.jsonl"
+                raw_rows = [
+                    {
+                        "question": "How do I reset my password?",
+                        "answer": "Use the account password reset flow.",
+                    },
+                    {
+                        "question": "Can I get a refund for renewal?",
+                        "answer": "Open a billing ticket with the invoice.",
+                    },
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in raw_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+                synth_dir.mkdir(parents=True, exist_ok=True)
+                synth_path = synth_dir / "synthetic.jsonl"
+                synth_rows = [
+                    {
+                        "id": 1,
+                        "text": "Reset code never arrived",
+                        "label": "account",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 2,
+                        "text": "Need a subscription refund",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 3,
+                        "text": "Billing portal unavailable",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:hard_negatives",
+                        "review_status": "accepted",
+                    },
+                ]
+                with synth_path.open("w", encoding="utf-8") as handle:
+                    for row in synth_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Support FAQ",
+                    dataset_type=DatasetType.RAW,
+                    record_count=len(raw_rows),
+                    file_path=str(raw_path),
+                )
+                gold = Dataset(
+                    project_id=project_id,
+                    name="Support Gold Dev",
+                    dataset_type=DatasetType.GOLD_DEV,
+                    record_count=2,
+                )
+                synthetic = Dataset(
+                    project_id=project_id,
+                    name="Synthetic",
+                    dataset_type=DatasetType.SYNTHETIC,
+                    record_count=len(synth_rows),
+                    file_path=str(synth_path),
+                )
+                db.add_all([raw_ds, gold, synthetic])
+                await db.flush()
+                db.add(
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="support_faq.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=2,
+                    )
+                )
+                version = GoldSetVersion(
+                    gold_set_id=gold.id,
+                    version=1,
+                    status=GoldSetVersionStatus.DRAFT,
+                )
+                db.add(version)
+                await db.flush()
+                approved = GoldSetRow(
+                    gold_set_id=gold.id,
+                    version_id=version.id,
+                    input={"question": "How do I reset my password?"},
+                    expected={"answer": "Use account reset."},
+                    labels={"category": "account"},
+                    status=GoldSetRowStatus.APPROVED,
+                )
+                pending = GoldSetRow(
+                    gold_set_id=gold.id,
+                    version_id=version.id,
+                    input={"question": "Refund?"},
+                    expected={"answer": "Open billing ticket."},
+                    labels={"category": "billing"},
+                    status=GoldSetRowStatus.PENDING,
+                    reviewer_id=11,
+                )
+                db.add_all([approved, pending])
+                await db.flush()
+                db.add(
+                    GoldSetReviewerQueue(
+                        gold_set_id=gold.id,
+                        row_id=pending.id,
+                        reviewer_id=11,
+                        priority=2,
+                        status=GoldSetReviewerQueueStatus.PENDING,
+                    )
+                )
+
+                job = LabelJob(
+                    project_id=project_id,
+                    name="Support annotation pass",
+                    label_type="classification",
+                    label_schema={"allowed_labels": ["account", "billing"]},
+                    status="active",
+                    target_rows=5,
+                )
+                db.add(job)
+                await db.flush()
+                db.add_all([
+                    LabelRow(
+                        job_id=job.id,
+                        source_row_id="assigned",
+                        raw_payload={"text": "Please reset login"},
+                        assigned_to=7,
+                        assigned_at=now,
+                    ),
+                    LabelRow(
+                        job_id=job.id,
+                        source_row_id="unlabeled",
+                        raw_payload={"text": "Invoice missing"},
+                    ),
+                    LabelRow(
+                        job_id=job.id,
+                        source_row_id="labeled-unpromoted",
+                        raw_payload={"text": "Refund renewal"},
+                        label_payload={"label": "billing"},
+                        labeled_at=now,
+                    ),
+                    LabelRow(
+                        job_id=job.id,
+                        source_row_id="promoted",
+                        raw_payload={"text": "Password reset"},
+                        label_payload={"label": "account"},
+                        labeled_at=now,
+                        promoted_at=now,
+                        promoted_to_dataset_id=synthetic.id,
+                    ),
+                ])
+                await db.commit()
+
+        asyncio.run(_seed_review_state())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        self.assertEqual(payload["domain"]["id"], "support_faq")
+        self.assertEqual(payload["totals"]["synthetic_pending"], 2)
+        self.assertEqual(payload["totals"]["synthetic_accepted"], 1)
+        self.assertEqual(payload["totals"]["gold_review_needed"], 1)
+        self.assertEqual(payload["totals"]["gold_trusted_examples"], 1)
+        self.assertEqual(payload["totals"]["annotation_jobs"], 1)
+        self.assertEqual(payload["totals"]["annotation_review_needed"], 2)
+        self.assertEqual(payload["totals"]["annotation_labeled_unpromoted"], 1)
+        self.assertEqual(payload["totals"]["annotation_promoted"], 1)
+        triage_ids = {item["id"] for item in payload["triage"]}
+        self.assertIn("review_pending_synthetic_rows", triage_ids)
+        self.assertIn("review_gold_set_rows", triage_ids)
+        self.assertIn("promote_labeled_annotation_rows", triage_ids)
+        self.assertIn("continue_annotation_review", triage_ids)
+        source_kinds = {item["kind"] for item in payload["groupings"]["by_source"]}
+        self.assertIn("synthetic", source_kinds)
+        self.assertIn("gold_set", source_kinds)
+        self.assertIn("annotation", source_kinds)
+        status_counts = {
+            item["status"]: item["count"]
+            for item in payload["groupings"]["by_status"]
+        }
+        self.assertEqual(status_counts["synthetic_pending"], 2)
+        self.assertEqual(status_counts["annotation_needs_promotion"], 1)
+        entry_targets = {item["target_tab"] for item in payload["entry_points"]}
+        self.assertIn("synthetic", entry_targets)
+        self.assertIn("goldset", entry_targets)
+        self.assertIn("annotate", entry_targets)
+        self.assertIn("eval", entry_targets)
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("review_queue_synthetic_pending", issue_ids)
+        self.assertIn("review_queue_gold_needs_review", issue_ids)
+        self.assertIn("review_queue_annotation_labeled_unpromoted", issue_ids)
+
+    def test_review_queue_empty_state_is_read_only(self):
+        project_id = self._create_project("data-studio-review-empty")
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "empty")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["totals"]["open_review_items"], 0)
+        self.assertEqual(payload["totals"]["accepted_or_promoted"], 0)
+        self.assertEqual(payload["triage"][0]["id"], "create_review_source")
+        self.assertEqual(payload["triage"][0]["target_tab"], "synthetic")
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("review_queue_no_review_sources", issue_ids)
 
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")

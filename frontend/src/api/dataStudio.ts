@@ -7,6 +7,7 @@ export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
 export type DataStudioGoldSetVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticPlaybookVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticRecommendationVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioReviewQueueVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -545,6 +546,123 @@ export async function getDataStudioSyntheticRecommendations(
 ): Promise<DataStudioSyntheticRecommendations> {
     const resp = await api.get(`/projects/${projectId}/data-studio/synthetic-recommendations`);
     return resp.data as DataStudioSyntheticRecommendations;
+}
+
+export interface DataStudioReviewQueueDomain {
+    id: string;
+    label: string;
+    confidence: number;
+    source?: string | null;
+}
+
+export interface DataStudioReviewQueueTotals {
+    open_review_items: number;
+    accepted_or_promoted: number;
+    synthetic_pending: number;
+    synthetic_accepted: number;
+    gold_review_needed: number;
+    gold_trusted_examples: number;
+    annotation_jobs: number;
+    annotation_review_needed: number;
+    annotation_labeled: number;
+    annotation_labeled_unpromoted: number;
+    annotation_promoted: number;
+}
+
+export interface DataStudioReviewQueueTriageItem {
+    id: string;
+    title: string;
+    priority: 'high' | 'medium' | 'low' | string;
+    count: number;
+    message: string;
+    action_label: string;
+    target_tab: string;
+    requires_user_confirmation: boolean;
+    evidence: string[];
+}
+
+export interface DataStudioReviewQueueGroup {
+    key: string;
+    label: string;
+    kind: string;
+    status: string;
+    count: number;
+    target_tab: string;
+}
+
+export interface DataStudioReviewQueueStatusGroup {
+    status: string;
+    label: string;
+    count: number;
+    target_tab: string;
+    kind: string;
+}
+
+export interface DataStudioReviewQueueDomainGroup {
+    domain_id: string;
+    domain_label: string;
+    confidence: number;
+    open_review_items: number;
+    accepted_or_promoted: number;
+    source?: string | null;
+}
+
+export interface DataStudioReviewQueueAnnotationJob {
+    id: number;
+    name: string;
+    label_type: string;
+    status: string;
+    target_rows?: number | null;
+    total: number;
+    assigned: number;
+    unlabeled: number;
+    labeled: number;
+    labeled_unpromoted: number;
+    promoted: number;
+    review_needed: number;
+    updated_at?: string | null;
+}
+
+export interface DataStudioReviewQueueEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+}
+
+export interface DataStudioReviewQueue {
+    project_id: number;
+    verdict: DataStudioReviewQueueVerdict;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    domain: DataStudioReviewQueueDomain;
+    totals: DataStudioReviewQueueTotals;
+    synthetic: DataStudioSyntheticReviewQueue;
+    gold_set: {
+        validation?: DataStudioGoldSetValidation;
+        totals?: Partial<DataStudioGoldSetTotals>;
+        datasets: DataStudioGoldSetDataset[];
+    };
+    annotation: {
+        totals: Record<string, number>;
+        jobs: DataStudioReviewQueueAnnotationJob[];
+    };
+    triage: DataStudioReviewQueueTriageItem[];
+    groupings: {
+        by_source: DataStudioReviewQueueGroup[];
+        by_status: DataStudioReviewQueueStatusGroup[];
+        by_domain: DataStudioReviewQueueDomainGroup[];
+    };
+    issues: DataStudioIssue[];
+    entry_points: DataStudioReviewQueueEntryPoint[];
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioReviewQueue(
+    projectId: number,
+): Promise<DataStudioReviewQueue> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/review-queue`);
+    return resp.data as DataStudioReviewQueue;
 }
 
 export interface DataStudioAssistRequest {

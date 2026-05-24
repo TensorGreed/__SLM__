@@ -27,6 +27,7 @@ from app.models.gold_set_annotation import (
     GoldSetVersion,
     GoldSetVersionStatus,
 )
+from app.models.label_job import LabelJob, LabelRow
 from app.models.project import Project
 from app.services.dataset_service import (
     preview_project_data_adapter,
@@ -51,6 +52,7 @@ DomainVerdict = Literal["unknown", "attention", "confirmed"]
 GoldSetVerdict = Literal["empty", "attention", "ready"]
 SyntheticPlaybookVerdict = Literal["empty", "attention", "ready"]
 SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
+ReviewQueueVerdict = Literal["empty", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -2202,6 +2204,598 @@ async def build_data_studio_synthetic_recommendations(
                 "review_queue": playbooks.get("review_queue"),
                 "issues": playbooks.get("issues", []),
             },
+        },
+    }
+
+
+def _review_triage_item(
+    *,
+    item_id: str,
+    title: str,
+    priority: str,
+    count: int,
+    message: str,
+    action_label: str,
+    target_tab: str,
+    evidence: list[str],
+) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "title": title,
+        "priority": priority,
+        "count": int(count),
+        "message": message,
+        "action_label": action_label,
+        "target_tab": target_tab,
+        "requires_user_confirmation": True,
+        "evidence": [item for item in evidence if item][:5],
+    }
+
+
+def _review_group(
+    *,
+    key: str,
+    label: str,
+    kind: str,
+    status: str,
+    count: int,
+    target_tab: str,
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "label": label,
+        "kind": kind,
+        "status": status,
+        "count": int(count),
+        "target_tab": target_tab,
+    }
+
+
+async def _annotation_review_summary(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    jobs_result = await db.execute(
+        select(LabelJob)
+        .where(LabelJob.project_id == project_id)
+        .order_by(LabelJob.updated_at.desc(), LabelJob.id.desc())
+    )
+    jobs = list(jobs_result.scalars().all())
+    job_ids = [int(job.id) for job in jobs]
+    rows_by_job: dict[int, list[LabelRow]] = {job_id: [] for job_id in job_ids}
+
+    if job_ids:
+        rows_result = await db.execute(
+            select(LabelRow)
+            .where(LabelRow.job_id.in_(job_ids))
+            .order_by(LabelRow.job_id.asc(), LabelRow.id.asc())
+        )
+        for row in rows_result.scalars().all():
+            rows_by_job.setdefault(int(row.job_id), []).append(row)
+
+    totals = {
+        "job_count": len(jobs),
+        "active_jobs": 0,
+        "paused_jobs": 0,
+        "completed_jobs": 0,
+        "total_rows": 0,
+        "assigned": 0,
+        "unlabeled": 0,
+        "review_needed": 0,
+        "labeled": 0,
+        "labeled_unpromoted": 0,
+        "promoted": 0,
+    }
+    job_payloads: list[dict[str, Any]] = []
+
+    for job in jobs:
+        rows = rows_by_job.get(int(job.id), [])
+        total = len(rows)
+        labeled = sum(1 for row in rows if row.labeled_at is not None)
+        assigned = sum(
+            1
+            for row in rows
+            if row.assigned_to is not None and row.labeled_at is None
+        )
+        promoted = sum(1 for row in rows if row.promoted_at is not None)
+        unlabeled = max(0, total - labeled - assigned)
+        labeled_unpromoted = max(0, labeled - promoted)
+        status = str(job.status or "active").strip().lower()
+        review_needed = assigned + (unlabeled if status == "active" else 0)
+
+        if status == "active":
+            totals["active_jobs"] += 1
+        elif status == "paused":
+            totals["paused_jobs"] += 1
+        elif status == "completed":
+            totals["completed_jobs"] += 1
+
+        totals["total_rows"] += total
+        totals["assigned"] += assigned
+        totals["unlabeled"] += unlabeled
+        totals["review_needed"] += review_needed
+        totals["labeled"] += labeled
+        totals["labeled_unpromoted"] += labeled_unpromoted
+        totals["promoted"] += promoted
+
+        job_payloads.append({
+            "id": int(job.id),
+            "name": job.name,
+            "label_type": job.label_type,
+            "status": status,
+            "target_rows": job.target_rows,
+            "total": total,
+            "assigned": assigned,
+            "unlabeled": unlabeled,
+            "labeled": labeled,
+            "labeled_unpromoted": labeled_unpromoted,
+            "promoted": promoted,
+            "review_needed": review_needed,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+        })
+
+    job_payloads.sort(
+        key=lambda item: (
+            -int(item.get("labeled_unpromoted") or 0),
+            -int(item.get("review_needed") or 0),
+            str(item.get("name") or ""),
+        )
+    )
+    return {
+        "totals": totals,
+        "jobs": job_payloads[:8],
+    }
+
+
+def _status_group(
+    *,
+    status: str,
+    label: str,
+    count: int,
+    target_tab: str,
+    kind: str,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "label": label,
+        "count": int(count),
+        "target_tab": target_tab,
+        "kind": kind,
+    }
+
+
+async def build_data_studio_review_queue(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return a read-only cross-workflow review queue summary."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    domain = await build_data_studio_domain_detection(db, project_id)
+    detected = domain.get("detected_domain") if isinstance(domain.get("detected_domain"), dict) else {}
+    gold = await build_data_studio_gold_set_workbench(db, project_id)
+    synthetic_queue_raw = await list_review_queue(db, project_id)
+    synthetic = _review_queue_summary(synthetic_queue_raw)
+    annotation = await _annotation_review_summary(db, project_id)
+
+    gold_totals = gold.get("totals") if isinstance(gold.get("totals"), dict) else {}
+    annotation_totals = (
+        annotation.get("totals") if isinstance(annotation.get("totals"), dict) else {}
+    )
+    synthetic_pending = int(synthetic.get("total_pending") or 0)
+    synthetic_accepted = int(synthetic.get("total_accepted") or 0)
+    gold_review_needed = int(gold_totals.get("review_needed") or 0)
+    gold_trusted = int(gold_totals.get("trusted_examples") or 0)
+    annotation_assigned = int(annotation_totals.get("assigned") or 0)
+    annotation_unlabeled = int(annotation_totals.get("unlabeled") or 0)
+    annotation_review_needed = int(annotation_totals.get("review_needed") or 0)
+    annotation_labeled_unpromoted = int(annotation_totals.get("labeled_unpromoted") or 0)
+    annotation_promoted = int(annotation_totals.get("promoted") or 0)
+    open_review_items = (
+        synthetic_pending
+        + gold_review_needed
+        + annotation_review_needed
+        + annotation_labeled_unpromoted
+    )
+    accepted_or_promoted = synthetic_accepted + gold_trusted + annotation_promoted
+
+    issues: list[dict[str, str]] = []
+    triage: list[dict[str, Any]] = []
+
+    if synthetic_pending > 0:
+        issues.append(
+            _issue(
+                "review_queue_synthetic_pending",
+                "warning",
+                "Synthetic rows need review",
+                f"{synthetic_pending} synthetic row(s) are pending accept/reject before dataset prep can use them.",
+                action_label="Review synthetic rows",
+                target_tab="synthetic",
+            )
+        )
+        top_sources = [
+            f"{group.get('synth_source')} ({group.get('count')})"
+            for group in list(synthetic.get("top_pending_groups") or [])[:3]
+            if isinstance(group, dict)
+        ]
+        triage.append(
+            _review_triage_item(
+                item_id="review_pending_synthetic_rows",
+                title="Review pending synthetic rows",
+                priority="high",
+                count=synthetic_pending,
+                message="Accept good rows or reject weak rows before they enter the next prepared dataset.",
+                action_label="Open Synthetic review",
+                target_tab="synthetic",
+                evidence=top_sources,
+            )
+        )
+
+    if gold_review_needed > 0:
+        issues.append(
+            _issue(
+                "review_queue_gold_needs_review",
+                "warning",
+                "Gold Set rows need review",
+                f"{gold_review_needed} Gold Set row(s) are pending, in review, or waiting on changes.",
+                action_label="Review Gold Set",
+                target_tab="goldset",
+            )
+        )
+        triage.append(
+            _review_triage_item(
+                item_id="review_gold_set_rows",
+                title="Review Gold Set rows",
+                priority="high",
+                count=gold_review_needed,
+                message="Trusted evaluation examples should be reviewed before training and eval decisions depend on them.",
+                action_label="Open Gold Set",
+                target_tab="goldset",
+                evidence=[
+                    f"{gold_trusted} trusted Gold Set example(s) are ready.",
+                    f"{int(gold_totals.get('queue_pending') or 0)} assigned queue item(s) are pending.",
+                ],
+            )
+        )
+
+    if annotation_labeled_unpromoted > 0:
+        issues.append(
+            _issue(
+                "review_queue_annotation_labeled_unpromoted",
+                "warning",
+                "Labeled annotation rows are not promoted",
+                f"{annotation_labeled_unpromoted} labeled annotation row(s) are waiting to be promoted into a training dataset.",
+                action_label="Open Annotation",
+                target_tab="annotate",
+            )
+        )
+        triage.append(
+            _review_triage_item(
+                item_id="promote_labeled_annotation_rows",
+                title="Promote labeled annotation rows",
+                priority="medium",
+                count=annotation_labeled_unpromoted,
+                message="Labels remain advisory until the annotation workflow promotes them into synthetic or gold data.",
+                action_label="Open Annotation",
+                target_tab="annotate",
+                evidence=[
+                    f"{int(annotation_totals.get('labeled') or 0)} labeled row(s).",
+                    f"{annotation_promoted} promoted row(s).",
+                ],
+            )
+        )
+
+    if annotation_review_needed > 0:
+        issues.append(
+            _issue(
+                "review_queue_annotation_work_open",
+                "warning",
+                "Annotation jobs have open review work",
+                f"{annotation_review_needed} annotation row(s) are assigned or waiting for labels.",
+                action_label="Continue annotation",
+                target_tab="annotate",
+            )
+        )
+        triage.append(
+            _review_triage_item(
+                item_id="continue_annotation_review",
+                title="Continue annotation review",
+                priority="medium",
+                count=annotation_review_needed,
+                message="Finish assigned and unlabeled rows so the labels can be reviewed and promoted.",
+                action_label="Open Annotation",
+                target_tab="annotate",
+                evidence=[
+                    f"{annotation_assigned} assigned row(s).",
+                    f"{annotation_unlabeled} unassigned row(s).",
+                ],
+            )
+        )
+
+    if open_review_items <= 0 and accepted_or_promoted > 0:
+        triage.append(
+            _review_triage_item(
+                item_id="review_gates_clear",
+                title="Review gates are clear",
+                priority="low",
+                count=accepted_or_promoted,
+                message="No open review queues are blocking the next dataset prep step.",
+                action_label="Open Data Prep",
+                target_tab="dataprep",
+                evidence=[
+                    f"{synthetic_accepted} accepted synthetic row(s).",
+                    f"{gold_trusted} trusted Gold Set example(s).",
+                    f"{annotation_promoted} promoted annotation row(s).",
+                ],
+            )
+        )
+
+    if open_review_items <= 0 and accepted_or_promoted <= 0:
+        issues.append(
+            _issue(
+                "review_queue_no_review_sources",
+                "info",
+                "No review queue yet",
+                "Generate synthetic rows, add Gold Set examples, or create annotation jobs to start review flow.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+            )
+        )
+        triage.append(
+            _review_triage_item(
+                item_id="create_review_source",
+                title="Create a review source",
+                priority="low",
+                count=0,
+                message="Review queues appear after synthetic generation, Gold Set sampling, or annotation seeding.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+                evidence=[],
+            )
+        )
+
+    by_source: list[dict[str, Any]] = []
+    for group in list(synthetic_queue_raw.get("groups") or []):
+        if not isinstance(group, dict):
+            continue
+        by_source.append(
+            _review_group(
+                key=f"synthetic:pending:{group.get('synth_source')}",
+                label=str(group.get("synth_source") or "Synthetic"),
+                kind="synthetic",
+                status="pending",
+                count=int(group.get("count") or 0),
+                target_tab="synthetic",
+            )
+        )
+    for group in list(synthetic_queue_raw.get("accepted_groups") or []):
+        if not isinstance(group, dict):
+            continue
+        by_source.append(
+            _review_group(
+                key=f"synthetic:accepted:{group.get('synth_source')}",
+                label=str(group.get("synth_source") or "Synthetic"),
+                kind="synthetic",
+                status="accepted",
+                count=int(group.get("count") or 0),
+                target_tab="synthetic",
+            )
+        )
+    for dataset in list(gold.get("datasets") or []):
+        if not isinstance(dataset, dict):
+            continue
+        review_needed = int(dataset.get("review_needed") or 0)
+        trusted = int(dataset.get("trusted_examples") or 0)
+        if review_needed > 0:
+            by_source.append(
+                _review_group(
+                    key=f"gold:{dataset.get('id')}:review",
+                    label=str(dataset.get("name") or "Gold Set"),
+                    kind="gold_set",
+                    status="needs_review",
+                    count=review_needed,
+                    target_tab="goldset",
+                )
+            )
+        if trusted > 0:
+            by_source.append(
+                _review_group(
+                    key=f"gold:{dataset.get('id')}:trusted",
+                    label=str(dataset.get("name") or "Gold Set"),
+                    kind="gold_set",
+                    status="trusted",
+                    count=trusted,
+                    target_tab="goldset",
+                )
+            )
+    for job in list(annotation.get("jobs") or []):
+        if not isinstance(job, dict):
+            continue
+        review_needed = int(job.get("review_needed") or 0)
+        labeled_unpromoted = int(job.get("labeled_unpromoted") or 0)
+        promoted = int(job.get("promoted") or 0)
+        if review_needed > 0:
+            by_source.append(
+                _review_group(
+                    key=f"annotation:{job.get('id')}:review",
+                    label=str(job.get("name") or "Annotation job"),
+                    kind="annotation",
+                    status="needs_labeling",
+                    count=review_needed,
+                    target_tab="annotate",
+                )
+            )
+        if labeled_unpromoted > 0:
+            by_source.append(
+                _review_group(
+                    key=f"annotation:{job.get('id')}:promotion",
+                    label=str(job.get("name") or "Annotation job"),
+                    kind="annotation",
+                    status="needs_promotion",
+                    count=labeled_unpromoted,
+                    target_tab="annotate",
+                )
+            )
+        if promoted > 0:
+            by_source.append(
+                _review_group(
+                    key=f"annotation:{job.get('id')}:promoted",
+                    label=str(job.get("name") or "Annotation job"),
+                    kind="annotation",
+                    status="promoted",
+                    count=promoted,
+                    target_tab="annotate",
+                )
+            )
+
+    by_source.sort(key=lambda item: (-int(item["count"]), item["kind"], item["label"]))
+    by_status = [
+        _status_group(
+            status="synthetic_pending",
+            label="Synthetic pending review",
+            count=synthetic_pending,
+            target_tab="synthetic",
+            kind="synthetic",
+        ),
+        _status_group(
+            status="synthetic_accepted",
+            label="Synthetic accepted",
+            count=synthetic_accepted,
+            target_tab="synthetic",
+            kind="synthetic",
+        ),
+        _status_group(
+            status="gold_review_needed",
+            label="Gold Set review needed",
+            count=gold_review_needed,
+            target_tab="goldset",
+            kind="gold_set",
+        ),
+        _status_group(
+            status="gold_trusted",
+            label="Gold Set trusted",
+            count=gold_trusted,
+            target_tab="goldset",
+            kind="gold_set",
+        ),
+        _status_group(
+            status="annotation_review_needed",
+            label="Annotation review needed",
+            count=annotation_review_needed,
+            target_tab="annotate",
+            kind="annotation",
+        ),
+        _status_group(
+            status="annotation_needs_promotion",
+            label="Annotation needs promotion",
+            count=annotation_labeled_unpromoted,
+            target_tab="annotate",
+            kind="annotation",
+        ),
+        _status_group(
+            status="annotation_promoted",
+            label="Annotation promoted",
+            count=annotation_promoted,
+            target_tab="annotate",
+            kind="annotation",
+        ),
+    ]
+
+    if open_review_items <= 0 and accepted_or_promoted <= 0:
+        verdict: ReviewQueueVerdict = "empty"
+    elif any(item["severity"] in {"blocker", "warning"} for item in issues):
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_data_studio_checks",
+        "domain": {
+            "id": str(detected.get("id") or "generic_domain"),
+            "label": str(detected.get("label") or "Generic Domain"),
+            "confidence": round(float(detected.get("confidence") or 0.0), 4),
+            "source": detected.get("source"),
+        },
+        "totals": {
+            "open_review_items": open_review_items,
+            "accepted_or_promoted": accepted_or_promoted,
+            "synthetic_pending": synthetic_pending,
+            "synthetic_accepted": synthetic_accepted,
+            "gold_review_needed": gold_review_needed,
+            "gold_trusted_examples": gold_trusted,
+            "annotation_jobs": int(annotation_totals.get("job_count") or 0),
+            "annotation_review_needed": annotation_review_needed,
+            "annotation_labeled": int(annotation_totals.get("labeled") or 0),
+            "annotation_labeled_unpromoted": annotation_labeled_unpromoted,
+            "annotation_promoted": annotation_promoted,
+        },
+        "synthetic": synthetic,
+        "gold_set": {
+            "validation": gold.get("validation"),
+            "totals": gold_totals,
+            "datasets": list(gold.get("datasets") or [])[:4],
+        },
+        "annotation": annotation,
+        "triage": sorted(
+            triage,
+            key=lambda item: (
+                {"high": 0, "medium": 1, "low": 2}.get(str(item.get("priority")), 9),
+                -int(item.get("count") or 0),
+                str(item.get("id") or ""),
+            ),
+        )[:6],
+        "groupings": {
+            "by_source": by_source[:12],
+            "by_status": by_status,
+            "by_domain": [
+                {
+                    "domain_id": str(detected.get("id") or "generic_domain"),
+                    "domain_label": str(detected.get("label") or "Generic Domain"),
+                    "confidence": round(float(detected.get("confidence") or 0.0), 4),
+                    "open_review_items": open_review_items,
+                    "accepted_or_promoted": accepted_or_promoted,
+                    "source": detected.get("source"),
+                }
+            ],
+        },
+        "issues": issues,
+        "entry_points": [
+            {
+                "label": "Open Synthetic review",
+                "target_tab": "synthetic",
+                "reason": "Accept or reject pending synthetic rows in the existing Synthetic tab.",
+            },
+            {
+                "label": "Open Gold Set review",
+                "target_tab": "goldset",
+                "reason": "Review trusted examples and Gold Set workbench rows in the existing Gold Set workflow.",
+            },
+            {
+                "label": "Open Annotation workspace",
+                "target_tab": "annotate",
+                "reason": "Label, skip, or promote annotation rows in the existing Annotation workspace.",
+            },
+            {
+                "label": "Open Eval active learning",
+                "target_tab": "eval",
+                "reason": "Review failed eval rows that can be promoted into training data.",
+            },
+        ],
+        "power_details": {
+            "domain_detection": {
+                "verdict": domain.get("verdict"),
+                "evidence": domain.get("evidence", []),
+            },
+            "synthetic_review_queue": synthetic,
+            "gold_set_validation": gold.get("validation"),
+            "annotation_totals": annotation_totals,
         },
     }
 

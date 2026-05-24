@@ -11,6 +11,7 @@ import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
 import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudioSyntheticPlaybookCenterPanel';
 import DataStudioSyntheticRecommendationsPanel from '../components/data/DataStudioSyntheticRecommendationsPanel';
+import DataStudioReviewQueuePanel from '../components/data/DataStudioReviewQueuePanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -166,6 +167,17 @@ export default function ProjectPipelinePage() {
         navigate(`/project/${projectId}/pipeline/${nextTab}`);
     };
 
+    const openDataStudioTarget = (target: string) => {
+        if (isTabKey(target)) {
+            setActiveTab(target);
+            navigate(`/project/${projectId}/pipeline/${target}`);
+            return;
+        }
+        if (target === 'annotate') {
+            navigate(`/project/${projectId}/annotate`);
+        }
+    };
+
     const renderTabContent = () => {
         switch (resolvedTab) {
             case 'data':
@@ -208,6 +220,10 @@ export default function ProjectPipelinePage() {
                                 setActiveTab(targetTab);
                                 navigate(`/project/${projectId}/pipeline/${targetTab}`);
                             }}
+                        />
+                        <DataStudioReviewQueuePanel
+                            projectId={projectId}
+                            onOpenTarget={openDataStudioTarget}
                         />
                         <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />
                     </>
