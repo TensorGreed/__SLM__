@@ -58,6 +58,7 @@ ROADMAP22APR.md
 # Demo recording artifacts
 test-results/
 playwright-report/
+docs-demo/
 docs-demo/recordings/raw/*
 docs-demo/recordings/final/*
 docs-demo/audio/*
@@ -77,3 +78,4 @@ tts/Orpheus-FastAPI/
 tts/.venv/
 tts/audio/
 tts/__pycache__/
+CODEX_PROMPT_data_studio_prd.md

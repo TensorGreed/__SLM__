@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router
 
 import PipelineProgress from '../components/dashboard/PipelineProgress';
 import IngestionPanel from '../components/data/IngestionPanel';
+import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -160,7 +161,22 @@ export default function ProjectPipelinePage() {
 
     const renderTabContent = () => {
         switch (resolvedTab) {
-            case 'data': return <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />;
+            case 'data':
+                return (
+                    <>
+                        <DataStudioOverviewPanel
+                            projectId={projectId}
+                            onOpenTab={(targetTab) => {
+                                if (!isTabKey(targetTab)) {
+                                    return;
+                                }
+                                setActiveTab(targetTab);
+                                navigate(`/project/${projectId}/pipeline/${targetTab}`);
+                            }}
+                        />
+                        <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />
+                    </>
+                );
             case 'cleaning': return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'goldset': return <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'synthetic': return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;

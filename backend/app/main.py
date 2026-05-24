@@ -23,6 +23,7 @@ from app.api.ingestion import router as ingestion_router
 from app.api.cleaning import router as cleaning_router
 from app.api.hardware import router as hardware_router
 from app.api.dataset import router as dataset_router
+from app.api.data_studio import router as data_studio_router
 from app.api.gold import router as gold_router
 from app.api.synthetic import router as synthetic_router
 from app.api.gamification import router as gamification_router
@@ -244,6 +245,7 @@ app.include_router(ingestion_router, prefix="/api", dependencies=API_DEPENDENCIE
 app.include_router(hardware_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(cleaning_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(data_studio_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gold_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(gamification_router, prefix="/api", dependencies=API_DEPENDENCIES)
