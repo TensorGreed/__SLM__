@@ -20,6 +20,8 @@ from app.services.dataset_service import (
     preview_project_data_adapter,
     resolve_project_dataset_adapter_preference,
 )
+from app.services.domain_pack_service import get_domain_pack
+from app.services.domain_profile_service import get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.recipe_service import get_recipe
 from app.services.synth_review_queue_service import list_review_queue
@@ -29,6 +31,7 @@ IssueSeverity = Literal["blocker", "warning", "info"]
 OverviewVerdict = Literal["blocked", "needs_work", "ready"]
 SourcesVerdict = Literal["empty", "attention", "healthy"]
 MappingVerdict = Literal["empty", "attention", "ready"]
+DomainVerdict = Literal["unknown", "attention", "confirmed"]
 
 _MAPPING_SOURCE_PRIORITY: tuple[DatasetType, ...] = (
     DatasetType.RAW,
@@ -39,6 +42,231 @@ _MAPPING_SOURCE_PRIORITY: tuple[DatasetType, ...] = (
     DatasetType.TRAIN,
     DatasetType.VALIDATION,
     DatasetType.TEST,
+)
+
+_DOMAIN_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "support_faq",
+        "label": "Support FAQ",
+        "aliases": ("support", "customer_support", "faq", "ticket"),
+        "keywords": (
+            "refund",
+            "password reset",
+            "ticket",
+            "support",
+            "account",
+            "login",
+            "subscription",
+            "cancel",
+            "agent",
+            "escalate",
+            "customer",
+        ),
+        "field_markers": ("question", "answer", "faq", "ticket", "intent"),
+        "recipes": ("qa-sft", "classification"),
+        "actions": (
+            "Add customer phrasing variants for the top support topics.",
+            "Add escalation and refusal examples for account-access requests.",
+            "Review answers that sound vague or omit exact next steps.",
+        ),
+        "risks": (
+            "Support data often contains personal account details; run PII checks before training.",
+            "Account, billing, and cancellation answers should include escalation boundaries.",
+        ),
+    },
+    {
+        "id": "policy_qa",
+        "label": "Policy Q&A",
+        "aliases": ("policy", "handbook", "procedure"),
+        "keywords": (
+            "policy",
+            "procedure",
+            "eligibility",
+            "exception",
+            "guideline",
+            "handbook",
+            "benefit",
+            "leave",
+            "compliance",
+            "covered",
+        ),
+        "field_markers": ("policy", "question", "answer", "section", "context"),
+        "recipes": ("qa-sft", "summarization"),
+        "actions": (
+            "Add edge cases and exceptions from the policy source.",
+            "Add insufficient-information examples for questions not covered by policy.",
+            "Keep source sections available if the policy changes often.",
+        ),
+        "risks": (
+            "Policy answers can become stale; consider RAG if the source changes frequently.",
+            "Overconfident answers should be reviewed when policy text is ambiguous.",
+        ),
+    },
+    {
+        "id": "pii_pci_detection",
+        "label": "PII/PCI Detection",
+        "aliases": ("pii", "pci", "redaction", "privacy"),
+        "keywords": (
+            "pii",
+            "pci",
+            "ssn",
+            "social security",
+            "credit card",
+            "card number",
+            "cvv",
+            "email address",
+            "phone number",
+            "redact",
+            "personal data",
+        ),
+        "field_markers": ("label", "entity", "pii", "pci", "redaction", "category"),
+        "recipes": ("classification", "span-extraction"),
+        "actions": (
+            "Balance entity classes and add hard negatives that only look sensitive.",
+            "Add examples for safe strings such as order IDs or public phone numbers.",
+            "Review redaction policy before using raw production data.",
+        ),
+        "risks": (
+            "Sensitive values should be masked or synthesized before training.",
+            "False positives and false negatives both matter; keep a gold test set.",
+        ),
+    },
+    {
+        "id": "security_alert_triage",
+        "label": "Security Alert Triage",
+        "aliases": ("security", "alert", "soc", "incident"),
+        "keywords": (
+            "alert",
+            "incident",
+            "severity",
+            "phishing",
+            "malware",
+            "firewall",
+            "cve",
+            "vulnerability",
+            "soc",
+            "anomaly",
+            "login attempt",
+        ),
+        "field_markers": ("severity", "alert", "incident", "label", "risk"),
+        "recipes": ("classification", "generic-sft"),
+        "actions": (
+            "Add label-balanced examples for each alert severity.",
+            "Include benign false-positive examples and escalation rules.",
+            "Keep incident-response language consistent across labels.",
+        ),
+        "risks": (
+            "Security triage needs strong false-negative review.",
+            "Operational actions should be gated by human approval.",
+        ),
+    },
+    {
+        "id": "legal_contracts",
+        "label": "Legal Clauses",
+        "aliases": ("legal", "contract", "clause"),
+        "keywords": (
+            "contract",
+            "clause",
+            "agreement",
+            "liability",
+            "indemnity",
+            "termination",
+            "governing law",
+            "party",
+            "warranty",
+        ),
+        "field_markers": ("clause", "contract", "section", "question", "answer"),
+        "recipes": ("qa-sft", "span-extraction", "summarization"),
+        "actions": (
+            "Add source-backed examples with clause references.",
+            "Add examples for exceptions, unknowns, and human-review handoff.",
+            "Keep jurisdiction and document-type metadata visible.",
+        ),
+        "risks": (
+            "Do not present generated output as legal advice.",
+            "Citation and provenance checks should be required for high-risk answers.",
+        ),
+    },
+    {
+        "id": "finance_support",
+        "label": "Finance Support",
+        "aliases": ("finance", "billing", "invoice", "payment"),
+        "keywords": (
+            "invoice",
+            "billing",
+            "payment",
+            "charge",
+            "refund",
+            "transaction",
+            "tax",
+            "statement",
+            "account balance",
+        ),
+        "field_markers": ("invoice", "amount", "currency", "payment", "label"),
+        "recipes": ("qa-sft", "classification"),
+        "actions": (
+            "Add numeric edge cases and refund/cancellation variants.",
+            "Review examples that mention transactions or account balances.",
+            "Keep human approval for money-moving actions.",
+        ),
+        "risks": (
+            "Financial outputs should not be framed as investment or tax advice.",
+            "Numeric accuracy needs explicit evaluation coverage.",
+        ),
+    },
+    {
+        "id": "code_review",
+        "label": "Code Review",
+        "aliases": ("code", "review", "diff"),
+        "keywords": (
+            "code",
+            "diff",
+            "pull request",
+            "function",
+            "bug",
+            "typescript",
+            "python",
+            "stack trace",
+            "test failure",
+        ),
+        "field_markers": ("code", "diff", "patch", "review", "file"),
+        "recipes": ("code-review", "generic-sft"),
+        "actions": (
+            "Add examples with both defects and acceptable code.",
+            "Include concise rationale for each review finding.",
+            "Balance style feedback against correctness and security issues.",
+        ),
+        "risks": (
+            "Review data can overfit to style-only comments without defect examples.",
+            "Security-sensitive code suggestions should be evaluated separately.",
+        ),
+    },
+    {
+        "id": "customer_sentiment",
+        "label": "Customer Sentiment",
+        "aliases": ("sentiment", "review", "rating"),
+        "keywords": (
+            "sentiment",
+            "positive",
+            "negative",
+            "neutral",
+            "complaint",
+            "review",
+            "rating",
+            "angry",
+            "happy",
+        ),
+        "field_markers": ("sentiment", "rating", "label", "review"),
+        "recipes": ("classification",),
+        "actions": (
+            "Balance sentiment labels and add ambiguous neutral examples.",
+            "Include short and long customer text examples.",
+            "Review sarcasm, mixed sentiment, and low-context rows.",
+        ),
+        "risks": (
+            "Class imbalance can make sentiment models look good while missing minority labels.",
+        ),
+    },
 )
 
 
@@ -62,6 +290,491 @@ def _issue(
         "message": message,
         "action_label": action_label,
         "target_tab": target_tab,
+    }
+
+
+def _flatten_text_values(value: Any, out: list[str], *, limit: int = 80) -> None:
+    if len(out) >= limit:
+        return
+    if value is None:
+        return
+    if isinstance(value, str):
+        token = value.strip()
+        if token:
+            out.append(token[:500])
+        return
+    if isinstance(value, (int, float, bool)):
+        out.append(str(value))
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            _flatten_text_values(item, out, limit=limit)
+            if len(out) >= limit:
+                break
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in list(value):
+            _flatten_text_values(item, out, limit=limit)
+            if len(out) >= limit:
+                break
+
+
+def _preview_texts_and_fields(preview: dict[str, Any]) -> tuple[list[str], list[str]]:
+    texts: list[str] = []
+    preview_rows = preview.get("preview_rows")
+    if isinstance(preview_rows, list):
+        for row in preview_rows:
+            if not isinstance(row, dict):
+                continue
+            _flatten_text_values(row.get("raw"), texts)
+            _flatten_text_values(row.get("mapped"), texts)
+            if len(texts) >= 80:
+                break
+
+    raw_field_frequency = preview.get("raw_field_frequency")
+    fields = []
+    if isinstance(raw_field_frequency, dict):
+        fields = [
+            str(key).strip()
+            for key in raw_field_frequency.keys()
+            if str(key).strip()
+        ]
+    return texts, fields
+
+
+def _has_any_field(fields: list[str], markers: tuple[str, ...]) -> bool:
+    normalized = [field.lower() for field in fields]
+    return any(marker in field for field in normalized for marker in markers)
+
+
+def _has_field_pair(
+    fields: list[str],
+    left_markers: tuple[str, ...],
+    right_markers: tuple[str, ...],
+) -> bool:
+    return _has_any_field(fields, left_markers) and _has_any_field(fields, right_markers)
+
+
+def _confidence_label(score: float) -> str:
+    if score >= 0.75:
+        return "high"
+    if score >= 0.45:
+        return "medium"
+    return "low"
+
+
+def _runtime_text(
+    runtime: dict[str, Any],
+    applied: dict[str, Any],
+) -> str:
+    parts = [
+        runtime.get("domain_profile_applied"),
+        runtime.get("domain_pack_applied"),
+        applied.get("profile_display_name"),
+        applied.get("pack_display_name"),
+    ]
+    return " ".join(str(part or "").lower() for part in parts)
+
+
+def _is_generic_runtime(runtime: dict[str, Any], applied: dict[str, Any]) -> bool:
+    text = _runtime_text(runtime, applied)
+    if not text.strip():
+        return True
+    return any(token in text for token in ("generic", "general", "default", "fallback"))
+
+
+def _runtime_matches_domain(
+    domain_id: str,
+    runtime: dict[str, Any],
+    applied: dict[str, Any],
+) -> bool:
+    runtime_blob = _runtime_text(runtime, applied)
+    for definition in _DOMAIN_DEFINITIONS:
+        if definition["id"] != domain_id:
+            continue
+        return any(str(alias).lower() in runtime_blob for alias in definition["aliases"])
+    return False
+
+
+def _score_domain_candidates(
+    *,
+    texts: list[str],
+    fields: list[str],
+    inferred_task_profiles: list[str],
+) -> list[dict[str, Any]]:
+    text_blob = "\n".join(texts).lower()
+    normalized_profiles = {
+        str(profile or "").strip().lower().replace("-", "_")
+        for profile in inferred_task_profiles
+        if str(profile or "").strip()
+    }
+    scored: list[dict[str, Any]] = []
+    for definition in _DOMAIN_DEFINITIONS:
+        keywords = tuple(str(item).lower() for item in definition["keywords"])
+        field_markers = tuple(str(item).lower() for item in definition["field_markers"])
+        matched_terms = [term for term in keywords if term in text_blob]
+        matched_fields = [
+            field for field in fields
+            if any(marker in field.lower() for marker in field_markers)
+        ]
+
+        score = 0.0
+        score += min(0.62, 0.12 * len(matched_terms))
+        score += min(0.18, 0.06 * len(set(matched_fields)))
+
+        if _has_field_pair(fields, ("question", "prompt", "query"), ("answer", "response", "output")):
+            if definition["id"] in {"support_faq", "policy_qa", "legal_contracts"}:
+                score += 0.14
+        if _has_any_field(fields, ("label", "class", "category")):
+            if definition["id"] in {"pii_pci_detection", "security_alert_triage", "customer_sentiment"}:
+                score += 0.12
+        if "classification" in normalized_profiles:
+            if definition["id"] in {"pii_pci_detection", "security_alert_triage", "customer_sentiment", "support_faq"}:
+                score += 0.06
+        if "qa" in normalized_profiles or "rag_qa" in normalized_profiles:
+            if definition["id"] in {"support_faq", "policy_qa", "legal_contracts", "finance_support"}:
+                score += 0.06
+
+        score = round(min(1.0, score), 4)
+        evidence: list[dict[str, Any]] = []
+        signals: list[str] = []
+        if matched_fields:
+            top_fields = sorted(set(matched_fields))[:6]
+            evidence.append({
+                "id": "field_signals",
+                "title": "Column signals",
+                "message": f"Fields match this domain: {', '.join(top_fields)}.",
+                "score": round(min(1.0, 0.25 + (0.08 * len(top_fields))), 4),
+            })
+            signals.append(f"columns:{','.join(top_fields)}")
+        if matched_terms:
+            top_terms = matched_terms[:8]
+            evidence.append({
+                "id": "term_signals",
+                "title": "Content signals",
+                "message": f"Sampled rows mention: {', '.join(top_terms)}.",
+                "score": round(min(1.0, 0.25 + (0.08 * len(top_terms))), 4),
+            })
+            signals.append(f"terms:{','.join(top_terms)}")
+        if _has_field_pair(fields, ("question", "prompt", "query"), ("answer", "response", "output")):
+            evidence.append({
+                "id": "qa_shape",
+                "title": "Q&A row shape",
+                "message": "Fields look like question/answer or prompt/response pairs.",
+                "score": 0.74,
+            })
+            signals.append("row_shape:qa_pair")
+        if _has_any_field(fields, ("label", "class", "category")):
+            signals.append("row_shape:labeled_examples")
+
+        scored.append({
+            "id": definition["id"],
+            "label": definition["label"],
+            "confidence": score,
+            "matched_keywords": matched_terms[:12],
+            "matched_fields": sorted(set(matched_fields))[:12],
+            "evidence": evidence,
+            "signals": signals,
+            "actions": list(definition["actions"]),
+            "risks": list(definition["risks"]),
+            "recommended_recipes": list(definition["recipes"]),
+        })
+
+    scored.sort(key=lambda item: (-float(item["confidence"]), str(item["id"])))
+    return scored
+
+
+def _runtime_detection_fallback(
+    *,
+    runtime: dict[str, Any],
+    applied: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_blob = _runtime_text(runtime, applied)
+    for definition in _DOMAIN_DEFINITIONS:
+        if any(str(alias).lower() in runtime_blob for alias in definition["aliases"]):
+            source = str(runtime.get("domain_profile_source") or runtime.get("domain_pack_source") or "runtime")
+            confidence = 0.84 if source == "project" else 0.68
+            return {
+                "id": definition["id"],
+                "label": definition["label"],
+                "confidence": confidence,
+                "confidence_label": _confidence_label(confidence),
+                "source": "applied_runtime",
+                "summary": "Using the applied domain runtime because no stronger source sample was available.",
+                "matched_keywords": [],
+                "matched_fields": [],
+                "evidence": [
+                    {
+                        "id": "runtime_applied",
+                        "title": "Applied domain runtime",
+                        "message": f"Project runtime is using {applied.get('profile_display_name') or runtime.get('domain_profile_applied') or 'a domain profile'}.",
+                        "score": confidence,
+                    }
+                ],
+                "signals": [f"runtime:{runtime.get('domain_profile_applied') or runtime.get('domain_pack_applied') or 'domain'}"],
+                "actions": list(definition["actions"]),
+                "risks": list(definition["risks"]),
+                "recommended_recipes": list(definition["recipes"]),
+            }
+
+    confidence = 0.25
+    return {
+        "id": "generic_domain",
+        "label": "Generic Domain",
+        "confidence": confidence,
+        "confidence_label": _confidence_label(confidence),
+        "source": "runtime_default",
+        "summary": "No specific domain has been detected yet.",
+        "matched_keywords": [],
+        "matched_fields": [],
+        "evidence": [
+            {
+                "id": "generic_runtime",
+                "title": "Generic runtime",
+                "message": "The project is using the generic domain defaults.",
+                "score": confidence,
+            }
+        ],
+        "signals": ["runtime:generic"],
+        "actions": [
+            "Add representative source rows so BrewSLM can infer the domain.",
+            "Assign a domain profile or pack if you already know the use case.",
+        ],
+        "risks": [
+            "Generic defaults may miss domain-specific quality, safety, and coverage checks.",
+        ],
+        "recommended_recipes": [],
+    }
+
+
+async def _domain_applied_summary(
+    db: AsyncSession,
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    profile_id = str(runtime.get("domain_profile_applied") or "").strip()
+    pack_id = str(runtime.get("domain_pack_applied") or "").strip()
+    profile = await get_domain_profile(db, profile_id) if profile_id else None
+    pack = await get_domain_pack(db, pack_id) if pack_id else None
+    effective_contract = runtime.get("effective_contract")
+    profile_display_name = (
+        profile.display_name
+        if profile is not None
+        else (
+            effective_contract.get("display_name")
+            if isinstance(effective_contract, dict)
+            else None
+        )
+    )
+    return {
+        "profile_id": profile_id or None,
+        "profile_source": runtime.get("domain_profile_source"),
+        "profile_display_name": profile_display_name,
+        "profile_version": profile.version if profile is not None else None,
+        "pack_id": pack_id or None,
+        "pack_source": runtime.get("domain_pack_source"),
+        "pack_display_name": pack.display_name if pack is not None else None,
+        "pack_version": pack.version if pack is not None else None,
+        "pack_default_profile_id": runtime.get("pack_default_profile_id"),
+    }
+
+
+def _domain_actions(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    actions = []
+    targets = ("synthetic", "goldset", "dataprep")
+    for index, action in enumerate(list(candidate.get("actions") or [])[:4]):
+        actions.append({
+            "id": f"domain_action_{index + 1}",
+            "label": str(action),
+            "target_tab": targets[index % len(targets)],
+        })
+    return actions
+
+
+def _domain_risks(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    risks = []
+    for index, risk in enumerate(list(candidate.get("risks") or [])[:4]):
+        risks.append({
+            "id": f"domain_risk_{index + 1}",
+            "severity": "warning" if index == 0 else "info",
+            "title": "Domain risk" if index == 0 else "Domain note",
+            "message": str(risk),
+        })
+    return risks
+
+
+async def build_data_studio_domain_detection(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return deterministic domain detection and applied runtime evidence."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    runtime = await resolve_project_domain_runtime(db, project_id)
+    applied = await _domain_applied_summary(db, runtime)
+    recipe_payload = _recipe_payload(project)
+
+    issues: list[dict[str, str]] = []
+    source = await _select_mapping_source(db, project_id)
+    preview: dict[str, Any] = {}
+    source_payload: dict[str, Any] | None = None
+    if source is not None:
+        dataset_type = source["dataset_type"]
+        try:
+            preview = await preview_project_data_adapter(
+                db=db,
+                project_id=project_id,
+                dataset_type=dataset_type,
+                sample_size=120,
+                adapter_id="auto",
+                document_id=source.get("document_id"),
+                preview_limit=12,
+            )
+            source_payload = {
+                **source,
+                "dataset_type": dataset_type.value,
+                "sampled_records": int(preview.get("sampled_records") or 0),
+            }
+        except Exception as exc:  # noqa: BLE001
+            issues.append(
+                _issue(
+                    "domain_sample_failed",
+                    "warning",
+                    "Could not inspect source sample",
+                    str(exc)[:240],
+                    action_label="Inspect sources",
+                    target_tab="data",
+                )
+            )
+
+    texts, fields = _preview_texts_and_fields(preview)
+    inferred_profiles = [
+        str(item)
+        for item in list(preview.get("inferred_task_profiles") or [])
+        if str(item).strip()
+    ]
+    candidates = _score_domain_candidates(
+        texts=texts,
+        fields=fields,
+        inferred_task_profiles=inferred_profiles,
+    )
+    top_candidate = candidates[0] if candidates else {}
+    if float(top_candidate.get("confidence") or 0.0) >= 0.3:
+        confidence = float(top_candidate["confidence"])
+        detected = {
+            **top_candidate,
+            "confidence_label": _confidence_label(confidence),
+            "source": "sampled_data",
+            "summary": f"Detected from {len(fields)} field(s) and {len(texts)} sampled text signal(s).",
+        }
+    else:
+        detected = _runtime_detection_fallback(runtime=runtime, applied=applied)
+
+    no_source = source is None or int((source_payload or {}).get("sampled_records") or 0) <= 0
+    runtime_is_generic = _is_generic_runtime(runtime, applied)
+    runtime_matches = _runtime_matches_domain(str(detected.get("id") or ""), runtime, applied)
+    confidence = float(detected.get("confidence") or 0.0)
+
+    if no_source:
+        issues.append(
+            _issue(
+                "domain_needs_source_evidence",
+                "warning" if runtime_is_generic else "info",
+                "Domain evidence is limited",
+                "Add source rows so BrewSLM can confirm the training domain from real examples.",
+                action_label="Add sources",
+                target_tab="data",
+            )
+        )
+
+    if confidence < 0.45:
+        issues.append(
+            _issue(
+                "low_domain_confidence",
+                "info",
+                "Low domain confidence",
+                "The current sample does not contain enough domain-specific evidence yet.",
+                action_label="Add representative rows",
+                target_tab="data",
+            )
+        )
+
+    if (
+        str(detected.get("id") or "") != "generic_domain"
+        and confidence >= 0.45
+        and runtime_is_generic
+    ):
+        issues.append(
+            _issue(
+                "domain_candidate_not_applied",
+                "warning",
+                "Specific domain not applied",
+                f"Sampled rows look like {detected.get('label')}, but the project is still using generic domain defaults.",
+                action_label="Review domain settings",
+                target_tab="data",
+            )
+        )
+
+    if (
+        str(detected.get("id") or "") != "generic_domain"
+        and confidence >= 0.65
+        and not runtime_is_generic
+        and not runtime_matches
+    ):
+        issues.append(
+            _issue(
+                "domain_runtime_mismatch",
+                "warning",
+                "Applied domain may not match data",
+                f"Sampled rows look like {detected.get('label')}, but the applied profile/pack points elsewhere.",
+                action_label="Review domain settings",
+                target_tab="data",
+            )
+        )
+
+    if confidence >= 0.65 and (runtime_matches or not runtime_is_generic):
+        verdict: DomainVerdict = "confirmed"
+    elif issues:
+        verdict = "attention"
+    else:
+        verdict = "unknown"
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "detected_domain": {
+            "id": detected.get("id"),
+            "label": detected.get("label"),
+            "confidence": round(confidence, 4),
+            "confidence_label": detected.get("confidence_label") or _confidence_label(confidence),
+            "source": detected.get("source"),
+            "summary": detected.get("summary"),
+            "matched_keywords": list(detected.get("matched_keywords") or []),
+            "matched_fields": list(detected.get("matched_fields") or []),
+            "recommended_recipes": list(detected.get("recommended_recipes") or []),
+        },
+        "applied": applied,
+        "recipe": recipe_payload,
+        "source": source_payload,
+        "evidence": list(detected.get("evidence") or []),
+        "suggested_actions": _domain_actions(detected),
+        "risks": _domain_risks(detected),
+        "issues": issues,
+        "power_details": {
+            "signals": list(detected.get("signals") or []),
+            "candidate_domains": candidates[:5],
+            "runtime": {
+                "domain_profile_applied": runtime.get("domain_profile_applied"),
+                "domain_profile_source": runtime.get("domain_profile_source"),
+                "domain_pack_applied": runtime.get("domain_pack_applied"),
+                "domain_pack_source": runtime.get("domain_pack_source"),
+                "pack_default_profile_id": runtime.get("pack_default_profile_id"),
+            },
+            "raw_fields": fields,
+            "inferred_task_profiles": inferred_profiles,
+        },
     }
 
 

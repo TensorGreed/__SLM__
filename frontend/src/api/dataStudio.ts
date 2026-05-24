@@ -3,6 +3,7 @@ import api from './client';
 export type DataStudioVerdict = 'blocked' | 'needs_work' | 'ready';
 export type DataStudioSourcesVerdict = 'empty' | 'attention' | 'healthy';
 export type DataStudioMappingVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
 export type DataStudioIssueSeverity = 'blocker' | 'warning' | 'info';
 
 export interface DataStudioRecipeSummary {
@@ -204,4 +205,78 @@ export interface DataStudioMappingPreview {
 export async function getDataStudioMappingPreview(projectId: number): Promise<DataStudioMappingPreview> {
     const resp = await api.get(`/projects/${projectId}/data-studio/mapping-preview`);
     return resp.data as DataStudioMappingPreview;
+}
+
+export interface DataStudioDetectedDomain {
+    id: string;
+    label: string;
+    confidence: number;
+    confidence_label: string;
+    source: string;
+    summary?: string | null;
+    matched_keywords: string[];
+    matched_fields: string[];
+    recommended_recipes: string[];
+}
+
+export interface DataStudioAppliedDomain {
+    profile_id?: string | null;
+    profile_source?: string | null;
+    profile_display_name?: string | null;
+    profile_version?: string | null;
+    pack_id?: string | null;
+    pack_source?: string | null;
+    pack_display_name?: string | null;
+    pack_version?: string | null;
+    pack_default_profile_id?: string | null;
+}
+
+export interface DataStudioDomainSource {
+    dataset_type: string;
+    dataset_id?: number | null;
+    dataset_name?: string | null;
+    document_id?: number | null;
+    document_name?: string | null;
+    document_count?: number;
+    row_count?: number;
+    sampled_records?: number;
+}
+
+export interface DataStudioDomainEvidence {
+    id: string;
+    title: string;
+    message: string;
+    score: number;
+}
+
+export interface DataStudioDomainAction {
+    id: string;
+    label: string;
+    target_tab: string;
+}
+
+export interface DataStudioDomainRisk {
+    id: string;
+    severity: DataStudioIssueSeverity;
+    title: string;
+    message: string;
+}
+
+export interface DataStudioDomainDetection {
+    project_id: number;
+    verdict: DataStudioDomainVerdict;
+    detected_domain: DataStudioDetectedDomain;
+    applied: DataStudioAppliedDomain;
+    recipe: DataStudioRecipeSummary | null;
+    source: DataStudioDomainSource | null;
+    evidence: DataStudioDomainEvidence[];
+    suggested_actions: DataStudioDomainAction[];
+    risks: DataStudioDomainRisk[];
+    issues: DataStudioIssue[];
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioDomainDetection(projectId: number): Promise<DataStudioDomainDetection> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/domain-detection`);
+    return resp.data as DataStudioDomainDetection;
 }

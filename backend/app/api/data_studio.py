@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.services.data_studio_service import (
+    build_data_studio_domain_detection,
     build_data_studio_mapping_preview,
     build_data_studio_overview,
     build_data_studio_sources,
@@ -57,6 +58,22 @@ async def get_data_studio_mapping_preview(
 
     try:
         return await build_data_studio_mapping_preview(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/domain-detection")
+async def get_data_studio_domain_detection(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return domain detection evidence and applied runtime summary."""
+
+    try:
+        return await build_data_studio_domain_detection(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

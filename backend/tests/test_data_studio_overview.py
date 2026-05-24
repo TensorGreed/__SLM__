@@ -275,6 +275,81 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertIn("missing_recipe", issue_ids)
         self.assertIn("no_mapping_source", issue_ids)
 
+    def test_domain_detection_uses_source_evidence_and_runtime(self):
+        project_id = self._create_project("data-studio-domain")
+
+        async def _seed_support_source():
+            async with async_session_factory() as db:
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "support_faq.jsonl"
+                rows = [
+                    {
+                        "question": "How do I reset my password when the login code never arrives?",
+                        "answer": "Open account security, request a new password reset email, and contact support if the code expires.",
+                    },
+                    {
+                        "question": "Can I get a refund after my subscription renewed?",
+                        "answer": "Submit a billing ticket with the renewal invoice and an agent will review the refund request.",
+                    },
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Support FAQ",
+                    dataset_type=DatasetType.RAW,
+                    record_count=2,
+                    file_path=str(raw_path),
+                )
+                db.add(raw_ds)
+                await db.flush()
+                db.add(
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="support_faq.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=2,
+                    )
+                )
+                await db.commit()
+
+        asyncio.run(_seed_support_source())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/domain-detection")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["detected_domain"]["id"], "support_faq")
+        self.assertGreaterEqual(payload["detected_domain"]["confidence"], 0.65)
+        self.assertEqual(payload["source"]["dataset_type"], "raw")
+        self.assertEqual(payload["source"]["sampled_records"], 2)
+        self.assertEqual(payload["applied"]["profile_id"], "generic-domain-v1")
+        self.assertIn(payload["applied"]["profile_source"], {"project", "platform_default"})
+        self.assertGreaterEqual(len(payload["evidence"]), 2)
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("domain_candidate_not_applied", issue_ids)
+
+    def test_domain_detection_empty_project_uses_generic_runtime(self):
+        project_id = self._create_project("data-studio-domain-empty")
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/domain-detection")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertEqual(payload["detected_domain"]["id"], "generic_domain")
+        self.assertIsNone(payload["source"])
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("domain_needs_source_evidence", issue_ids)
+        self.assertIn("low_domain_confidence", issue_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
