@@ -7,6 +7,7 @@ import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel'
 import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
 import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
 import DataStudioDomainDetectionPanel from '../components/data/DataStudioDomainDetectionPanel';
+import DataStudioQualitySafetyPanel from '../components/data/DataStudioQualitySafetyPanel';
 import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
 import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudioSyntheticPlaybookCenterPanel';
@@ -38,6 +39,7 @@ const DATA_STUDIO_SECTION_IDS = [
     'sources',
     'mapping',
     'domain',
+    'quality-safety',
     'assist',
     'gold-set',
     'synthetic-playbooks',
@@ -109,6 +111,10 @@ const SECTION_TOKEN_ALIASES: Record<string, DataStudioSectionId> = {
     'mapping-preview': 'mapping',
     domain: 'domain',
     'domain-detection': 'domain',
+    quality: 'quality-safety',
+    safety: 'quality-safety',
+    'quality-safety': 'quality-safety',
+    'quality-scan': 'quality-safety',
     assist: 'assist',
     'llm-assist': 'assist',
     gold: 'gold-set',
@@ -578,6 +584,26 @@ export default function ProjectDataStudioPage() {
                 ],
                 content: (
                     <DataStudioDomainDetectionPanel
+                        projectId={projectId}
+                        onOpenTarget={openDataStudioTarget}
+                    />
+                ),
+            },
+            {
+                id: 'quality-safety' as const,
+                title: 'Quality & Safety',
+                summary: 'Deterministic scans for PII/PCI, duplicates, missing fields, leakage, low-quality rows, and review contamination.',
+                group: 'shape' as const,
+                keywords: ['quality', 'safety', 'pii', 'pci', 'duplicates', 'leakage', 'review'],
+                handoffs: [
+                    { label: 'Source Ingestion', target: 'data', signalSectionId: 'sources' },
+                    { label: 'Domain Managers', target: 'domain', signalSectionId: 'domain' },
+                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'prepare-dataset' },
+                ],
+                content: (
+                    <DataStudioQualitySafetyPanel
                         projectId={projectId}
                         onOpenTarget={openDataStudioTarget}
                     />

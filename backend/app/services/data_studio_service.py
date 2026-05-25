@@ -57,6 +57,7 @@ SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
 ReviewQueueVerdict = Literal["empty", "attention", "ready"]
 PrepareDatasetVerdict = Literal["blocked", "attention", "ready"]
 DatasetVersionVerdict = Literal["empty", "attention", "ready"]
+QualitySafetyVerdict = Literal["blocked", "attention", "ready"]
 CoachVerdict = Literal["blocked", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
@@ -1496,6 +1497,209 @@ def _field_counter(payloads: list[dict[str, Any]]) -> Counter[str]:
             if field and _field_has_value(value):
                 counter[field] += 1
     return counter
+
+
+_QUALITY_SCAN_SOURCE_TYPES: tuple[DatasetType, ...] = (
+    DatasetType.RAW,
+    DatasetType.CLEANED,
+    DatasetType.GOLD_DEV,
+    DatasetType.GOLD_TEST,
+    DatasetType.SYNTHETIC,
+    DatasetType.TRAIN,
+    DatasetType.VALIDATION,
+    DatasetType.TEST,
+)
+
+_PII_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_PII_PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
+_PII_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_PCI_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+_PCI_CVV_RE = re.compile(r"\b(?:cvv|cvc|security code)\s*[:#-]?\s*\d{3,4}\b", re.IGNORECASE)
+_LOW_QUALITY_PLACEHOLDERS = {
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "todo",
+    "tbd",
+    "test",
+    "lorem ipsum",
+}
+
+
+def _quality_scan_text(row: dict[str, Any]) -> str:
+    values: list[str] = []
+    _flatten_text_values(row, values, limit=120)
+    return " ".join(values).strip()
+
+
+def _quality_text_fingerprint(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())[:4000]
+
+
+def _quality_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]{3,}", text.lower())
+        if token
+    }
+
+
+def _luhn_valid(digits: str) -> bool:
+    if len(digits) < 13 or len(digits) > 19:
+        return False
+    total = 0
+    reverse_digits = list(map(int, reversed(digits)))
+    for index, digit in enumerate(reverse_digits):
+        if index % 2 == 1:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _pii_pci_signal_counts(text: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    if _PII_EMAIL_RE.search(text):
+        counts["email"] += 1
+    if _PII_PHONE_RE.search(text):
+        counts["phone"] += 1
+    if _PII_SSN_RE.search(text):
+        counts["ssn"] += 1
+    if _PCI_CVV_RE.search(text):
+        counts["cvv"] += 1
+    for match in _PCI_CARD_RE.finditer(text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if _luhn_valid(digits):
+            counts["credit_card"] += 1
+            break
+    return counts
+
+
+def _low_quality_reason(text: str) -> str | None:
+    normalized = _quality_text_fingerprint(text)
+    if not normalized:
+        return "empty"
+    if normalized in _LOW_QUALITY_PLACEHOLDERS:
+        return "placeholder"
+    if len(normalized) < 12:
+        return "too_short"
+    words = re.findall(r"[A-Za-z0-9]+", normalized)
+    if len(words) < 3:
+        return "too_few_words"
+    if re.search(r"([!?.,])\1{5,}", normalized):
+        return "repeated_punctuation"
+    if len(set(normalized.replace(" ", ""))) <= 3 and len(normalized) > 10:
+        return "repeated_characters"
+    return None
+
+
+def _quality_required_missing_count(
+    row: dict[str, Any],
+    required_fields: list[str],
+) -> int:
+    missing = 0
+    for field in required_fields:
+        value = row.get(field)
+        if not _field_has_value(value):
+            missing += 1
+    return missing
+
+
+async def _quality_source_rows(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    datasets_result = await db.execute(
+        select(Dataset)
+        .where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(list(_QUALITY_SCAN_SOURCE_TYPES)),
+        )
+        .order_by(Dataset.updated_at.desc(), Dataset.id.asc())
+    )
+    datasets = list(datasets_result.scalars().all())
+    datasets_by_id = {int(dataset.id): dataset for dataset in datasets}
+
+    raw_docs_result = await db.execute(
+        select(RawDocument)
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(
+            Dataset.project_id == project_id,
+            RawDocument.status == DocumentStatus.ACCEPTED,
+        )
+        .order_by(RawDocument.ingested_at.desc(), RawDocument.id.asc())
+    )
+    raw_docs = list(raw_docs_result.scalars().all())
+
+    scan_rows: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+
+    def add_rows(
+        rows: list[dict[str, Any]],
+        *,
+        source: str,
+        source_type: str,
+        target_tab: str,
+        file_path: str,
+    ) -> None:
+        for row_index, row in enumerate(rows):
+            if len(scan_rows) >= limit:
+                return
+            scan_rows.append({
+                "row": row,
+                "source": source,
+                "source_type": source_type,
+                "target_tab": target_tab,
+                "file_path": file_path,
+                "row_index": row_index,
+            })
+
+    for doc in raw_docs:
+        token = str(doc.file_path or "").strip()
+        if not token or token in seen_paths:
+            continue
+        seen_paths.add(token)
+        dataset = datasets_by_id.get(int(doc.dataset_id))
+        dataset_type = dataset.dataset_type.value if dataset is not None else DatasetType.RAW.value
+        add_rows(
+            _load_jsonl_dicts(token, limit=max(1, limit - len(scan_rows))),
+            source=doc.filename or "Raw document",
+            source_type=dataset_type,
+            target_tab="data",
+            file_path=token,
+        )
+        if len(scan_rows) >= limit:
+            return scan_rows
+
+    target_by_type = {
+        DatasetType.RAW: "data",
+        DatasetType.CLEANED: "data",
+        DatasetType.GOLD_DEV: "goldset",
+        DatasetType.GOLD_TEST: "goldset",
+        DatasetType.SYNTHETIC: "synthetic",
+        DatasetType.TRAIN: "dataprep",
+        DatasetType.VALIDATION: "dataprep",
+        DatasetType.TEST: "dataprep",
+    }
+    for dataset in datasets:
+        token = str(dataset.file_path or "").strip()
+        if not token or token in seen_paths:
+            continue
+        seen_paths.add(token)
+        add_rows(
+            _load_jsonl_dicts(token, limit=max(1, limit - len(scan_rows))),
+            source=dataset.name or dataset.dataset_type.value,
+            source_type=dataset.dataset_type.value,
+            target_tab=target_by_type.get(dataset.dataset_type, "data"),
+            file_path=token,
+        )
+        if len(scan_rows) >= limit:
+            return scan_rows
+    return scan_rows
 
 
 def _coverage_from_counter(
@@ -5207,6 +5411,872 @@ async def build_data_studio_prepare_dataset(
     }
 
 
+def _quality_check(
+    check_id: str,
+    label: str,
+    category: str,
+    status: str,
+    severity: IssueSeverity,
+    message: str,
+    *,
+    count: int,
+    target_tab: str,
+    workflow_owner: str,
+    source: str,
+    domain_id: str,
+    domain_label: str,
+    evidence: list[str] | None = None,
+    action_label: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "label": label,
+        "category": category,
+        "status": status,
+        "severity": severity,
+        "message": message,
+        "count": int(count),
+        "target_tab": target_tab,
+        "workflow_owner": workflow_owner,
+        "source": source,
+        "domain_id": domain_id,
+        "domain_label": domain_label,
+        "evidence": list(evidence or []),
+        "action_label": action_label or "Open workflow",
+    }
+
+
+def _quality_issue_from_check(check: dict[str, Any]) -> dict[str, str]:
+    return _issue(
+        str(check.get("id") or "quality_safety_check"),
+        check.get("severity") if check.get("severity") in {"blocker", "warning", "info"} else "info",
+        str(check.get("label") or "Quality and safety check"),
+        str(check.get("message") or ""),
+        action_label=str(check.get("action_label") or "Open workflow"),
+        target_tab=str(check.get("target_tab") or "data"),
+    )
+
+
+def _quality_group_rows(
+    groups: dict[str, Counter[str]],
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for label, counts in groups.items():
+        blocker_count = int(counts.get("blocker", 0))
+        warning_count = int(counts.get("warning", 0))
+        info_count = int(counts.get("info", 0))
+        total = blocker_count + warning_count + info_count
+        rows.append({
+            "key": _domain_setup_slug(label),
+            "label": label,
+            "blocker_count": blocker_count,
+            "warning_count": warning_count,
+            "info_count": info_count,
+            "total": total,
+            "target_tab": targets.get(label, "data"),
+        })
+    rows.sort(key=lambda item: (-int(item["blocker_count"]), -int(item["warning_count"]), -int(item["total"]), str(item["label"])))
+    return rows
+
+
+def _quality_top_source(counter: Counter[str], fallback: str = "Project sample") -> str:
+    if not counter:
+        return fallback
+    return counter.most_common(1)[0][0]
+
+
+def _quality_split_fingerprints(rows: list[dict[str, Any]]) -> set[str]:
+    fingerprints: set[str] = set()
+    for row in rows:
+        text = _quality_scan_text(row)
+        fingerprint = _quality_text_fingerprint(text)
+        if fingerprint:
+            fingerprints.add(fingerprint)
+    return fingerprints
+
+
+async def build_data_studio_quality_safety(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return deterministic read-only data quality and safety scans."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    mapping = await build_data_studio_mapping_preview(db, project_id)
+    domain = await build_data_studio_domain_detection(db, project_id)
+    review_queue = await build_data_studio_review_queue(db, project_id)
+    prepare_dataset = await build_data_studio_prepare_dataset(db, project_id)
+
+    detected_domain = domain.get("detected_domain") if isinstance(domain.get("detected_domain"), dict) else {}
+    domain_id = str(detected_domain.get("id") or "generic_domain")
+    domain_label = str(detected_domain.get("label") or "Generic Domain")
+    domain_confidence = float(detected_domain.get("confidence") or 0.0)
+
+    scan_rows = await _quality_source_rows(db, project_id, limit=500)
+    if not scan_rows:
+        for preview_row in list(mapping.get("preview_rows") or []):
+            if not isinstance(preview_row, dict):
+                continue
+            raw = preview_row.get("raw") if isinstance(preview_row.get("raw"), dict) else {}
+            mapped = preview_row.get("mapped") if isinstance(preview_row.get("mapped"), dict) else {}
+            scan_rows.append({
+                "row": {**raw, **mapped},
+                "source": "Mapping preview",
+                "source_type": "preview",
+                "target_tab": "dataprep",
+                "file_path": "",
+                "row_index": int(preview_row.get("index") or len(scan_rows)),
+            })
+
+    row_texts: list[str] = []
+    row_fingerprints: list[str] = []
+    row_sources: list[str] = []
+    row_targets: list[str] = []
+    row_token_sets: list[set[str]] = []
+    field_counter: Counter[str] = Counter()
+    pii_counts: Counter[str] = Counter()
+    pii_by_source: Counter[str] = Counter()
+    low_quality_reasons: Counter[str] = Counter()
+    low_quality_by_source: Counter[str] = Counter()
+    prepared_pending_synthetic = 0
+
+    for item in scan_rows:
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        source = str(item.get("source") or "Project sample")
+        source_type = str(item.get("source_type") or "")
+        target_tab = str(item.get("target_tab") or "data")
+        text = _quality_scan_text(row)
+        fingerprint = _quality_text_fingerprint(text)
+        if text:
+            row_texts.append(text)
+            row_fingerprints.append(fingerprint)
+            row_sources.append(source)
+            row_targets.append(target_tab)
+            row_token_sets.append(_quality_tokens(text))
+        for field in row.keys():
+            field_counter[str(field)] += 1
+
+        row_pii_counts = _pii_pci_signal_counts(text)
+        if row_pii_counts:
+            pii_counts.update(row_pii_counts)
+            pii_by_source[source] += sum(row_pii_counts.values())
+
+        low_quality_reason = _low_quality_reason(text)
+        if low_quality_reason is not None:
+            low_quality_reasons[low_quality_reason] += 1
+            low_quality_by_source[source] += 1
+
+        status = str(row.get("review_status") or row.get("status") or "").strip().lower()
+        if (
+            source_type in {DatasetType.TRAIN.value, DatasetType.VALIDATION.value, DatasetType.TEST.value}
+            and str(row.get("synth_source") or "").strip()
+            and status == "pending"
+        ):
+            prepared_pending_synthetic += 1
+
+    low_quality_docs_result = await db.execute(
+        select(func.count(RawDocument.id))
+        .join(Dataset, Dataset.id == RawDocument.dataset_id)
+        .where(
+            Dataset.project_id == project_id,
+            RawDocument.quality_score.is_not(None),
+            RawDocument.quality_score < 0.45,
+        )
+    )
+    low_quality_document_count = int(low_quality_docs_result.scalar_one() or 0)
+
+    exact_counter: Counter[str] = Counter(
+        fingerprint for fingerprint in row_fingerprints if fingerprint
+    )
+    duplicate_count = sum(count - 1 for count in exact_counter.values() if count > 1)
+    duplicate_by_source: Counter[str] = Counter()
+    seen_exact: set[str] = set()
+    for fingerprint, source in zip(row_fingerprints, row_sources, strict=False):
+        if not fingerprint:
+            continue
+        if exact_counter[fingerprint] > 1:
+            if fingerprint in seen_exact:
+                duplicate_by_source[source] += 1
+            else:
+                seen_exact.add(fingerprint)
+
+    near_duplicate_pairs = 0
+    near_duplicate_by_source: Counter[str] = Counter()
+    compare_limit = min(len(row_token_sets), 160)
+    for left in range(compare_limit):
+        left_tokens = row_token_sets[left]
+        if len(left_tokens) < 5:
+            continue
+        for right in range(left + 1, compare_limit):
+            if row_fingerprints[left] == row_fingerprints[right]:
+                continue
+            right_tokens = row_token_sets[right]
+            if len(right_tokens) < 5:
+                continue
+            union = left_tokens | right_tokens
+            if not union:
+                continue
+            similarity = len(left_tokens & right_tokens) / len(union)
+            if similarity >= 0.88:
+                near_duplicate_pairs += 1
+                near_duplicate_by_source[row_sources[right]] += 1
+
+    mapping_summary = mapping.get("summary") if isinstance(mapping.get("summary"), dict) else {}
+    mapping_preview_rows = mapping.get("preview_rows") if isinstance(mapping.get("preview_rows"), list) else []
+    required_fields = [
+        str(item)
+        for item in list(mapping_summary.get("required_fields") or [])
+        if str(item).strip()
+    ]
+    effective_mapping = (
+        mapping.get("effective_mapping") if isinstance(mapping.get("effective_mapping"), dict) else {}
+    )
+    field_mapping = (
+        effective_mapping.get("field_mapping")
+        if isinstance(effective_mapping.get("field_mapping"), dict)
+        else {}
+    )
+    required_gaps = [
+        str(item)
+        for item in list(mapping_summary.get("required_fields_below_100") or [])
+        if str(item).strip()
+    ]
+    required_missing_count = 0
+    for preview_row in mapping_preview_rows:
+        if not isinstance(preview_row, dict):
+            continue
+        mapped = preview_row.get("mapped") if isinstance(preview_row.get("mapped"), dict) else {}
+        required_missing_count += _quality_required_missing_count(mapped, required_fields)
+    for coverage in list(mapping_summary.get("required_field_coverage") or []):
+        if isinstance(coverage, dict):
+            required_missing_count += int(coverage.get("missing") or 0)
+    for item in scan_rows:
+        if str(item.get("source_type") or "") not in {DatasetType.RAW.value, "preview"}:
+            continue
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        for field in required_fields:
+            source_field = str(field_mapping.get(field) or field)
+            if not _field_has_value(row.get(source_field)):
+                required_missing_count += 1
+
+    prepare_splits = prepare_dataset.get("splits") if isinstance(prepare_dataset.get("splits"), dict) else {}
+    split_items = prepare_splits.get("items") if isinstance(prepare_splits.get("items"), list) else []
+    split_fingerprints: dict[str, set[str]] = {}
+    split_row_counts: dict[str, int] = {}
+    for split in split_items:
+        if not isinstance(split, dict):
+            continue
+        split_key = str(split.get("key") or "")
+        rows = _load_jsonl_dicts(str(split.get("file_path") or ""), limit=2000)
+        split_fingerprints[split_key] = _quality_split_fingerprints(rows)
+        split_row_counts[split_key] = len(rows)
+
+    leakage_pairs: list[str] = []
+    leakage_overlap_count = 0
+    for left_key, right_key in (("train", "validation"), ("train", "test"), ("validation", "test")):
+        overlap = split_fingerprints.get(left_key, set()) & split_fingerprints.get(right_key, set())
+        if overlap:
+            leakage_overlap_count += len(overlap)
+            leakage_pairs.append(f"{left_key}/{right_key}: {len(overlap)} overlapping row(s)")
+
+    review_totals = review_queue.get("totals") if isinstance(review_queue.get("totals"), dict) else {}
+    synthetic_pending = int(review_totals.get("synthetic_pending") or 0)
+    gold_review_needed = int(review_totals.get("gold_review_needed") or 0)
+    annotation_review_needed = int(review_totals.get("annotation_review_needed") or 0)
+    annotation_unpromoted = int(review_totals.get("annotation_labeled_unpromoted") or 0)
+
+    checks: list[dict[str, Any]] = []
+    source_groups: dict[str, Counter[str]] = {}
+    owner_groups: dict[str, Counter[str]] = {}
+    domain_groups: dict[str, Counter[str]] = {}
+    source_targets: dict[str, str] = {}
+    owner_targets: dict[str, str] = {}
+    domain_targets: dict[str, str] = {}
+
+    def add_check(check: dict[str, Any], source_counts: Counter[str] | None = None) -> None:
+        checks.append(check)
+        severity = str(check.get("severity") or "info")
+        severity_count = int(check.get("count") or 0)
+        if severity_count <= 0:
+            severity_count = 1
+        owner = str(check.get("workflow_owner") or "Data Studio")
+        domain_key = str(check.get("domain_label") or domain_label)
+        owner_groups.setdefault(owner, Counter())[severity] += severity_count
+        owner_targets.setdefault(owner, str(check.get("target_tab") or "data"))
+        domain_groups.setdefault(domain_key, Counter())[severity] += severity_count
+        domain_targets.setdefault(domain_key, str(check.get("target_tab") or "domain"))
+        if source_counts:
+            for source, count in source_counts.items():
+                source_groups.setdefault(source, Counter())[severity] += int(count or 1)
+                source_targets.setdefault(source, str(check.get("target_tab") or "data"))
+        else:
+            source = str(check.get("source") or "Project sample")
+            source_groups.setdefault(source, Counter())[severity] += severity_count
+            source_targets.setdefault(source, str(check.get("target_tab") or "data"))
+
+    sensitive_strong_count = int(pii_counts.get("ssn", 0) + pii_counts.get("credit_card", 0) + pii_counts.get("cvv", 0))
+    pii_total = sum(pii_counts.values())
+    if pii_total:
+        severity: IssueSeverity = "blocker" if sensitive_strong_count else "warning"
+        status = "blocked" if severity == "blocker" else "attention"
+        detected_types = ", ".join(sorted(pii_counts.keys()))
+        add_check(
+            _quality_check(
+                "pii_pci_sensitive_values",
+                "PII/PCI patterns detected",
+                "safety",
+                status,
+                severity,
+                f"Found {pii_total} deterministic sensitive-data signal(s): {detected_types}. Values are not shown in Data Studio.",
+                count=pii_total,
+                target_tab="data",
+                workflow_owner="Source Ingestion",
+                source=_quality_top_source(pii_by_source),
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[
+                    "Regex checks cover email, phone, SSN-like, Luhn-valid payment card, and CVV-like patterns.",
+                    "Mask, remove, or synthesize sensitive values before preparing training data.",
+                ],
+                action_label="Inspect sources",
+            ),
+            pii_by_source,
+        )
+    else:
+        add_check(
+            _quality_check(
+                "pii_pci_no_patterns",
+                "No PII/PCI regex hits",
+                "safety",
+                "ready",
+                "info",
+                "Deterministic regex checks did not find common PII/PCI patterns in the scanned sample.",
+                count=0,
+                target_tab="data",
+                workflow_owner="Source Ingestion",
+                source="Project sample",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=["This does not replace human review for regulated data."],
+                action_label="Open sources",
+            )
+        )
+
+    duplicate_signal_count = duplicate_count + near_duplicate_pairs
+    duplicate_sources = duplicate_by_source + near_duplicate_by_source
+    if duplicate_signal_count:
+        add_check(
+            _quality_check(
+                "duplicate_or_near_duplicate_rows",
+                "Duplicate or near-duplicate rows",
+                "quality",
+                "attention",
+                "warning",
+                f"Found {duplicate_count} exact duplicate row(s) and {near_duplicate_pairs} near-duplicate pair(s) in the scanned sample.",
+                count=duplicate_signal_count,
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source=_quality_top_source(duplicate_sources),
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=["Deduplicate before splitting so repeated examples do not inflate evaluation confidence."],
+                action_label="Open Data Prep",
+            ),
+            duplicate_sources,
+        )
+    else:
+        add_check(
+            _quality_check(
+                "duplicate_rows_clear",
+                "Duplicate scan clear",
+                "quality",
+                "ready",
+                "info",
+                "No exact or high-overlap near duplicates were found in the scanned sample.",
+                count=0,
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source="Project sample",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Open Data Prep",
+            )
+        )
+
+    if required_gaps or required_missing_count:
+        gap_text = ", ".join(required_gaps) if required_gaps else "required fields"
+        add_check(
+            _quality_check(
+                "required_fields_missing",
+                "Missing required fields",
+                "quality",
+                "attention",
+                "warning",
+                f"Mapping coverage is incomplete for {gap_text}.",
+                count=max(required_missing_count, len(required_gaps)),
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source="Mapping preview",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[
+                    f"{int(mapping_summary.get('sampled_records') or 0)} row(s) sampled for mapping.",
+                    f"{int(mapping_summary.get('mapped_records') or 0)} row(s) mapped.",
+                ],
+                action_label="Review mapping",
+            )
+        )
+    else:
+        add_check(
+            _quality_check(
+                "required_fields_present",
+                "Required fields covered",
+                "quality",
+                "ready",
+                "info",
+                "Required recipe fields are present in the mapping preview.",
+                count=0,
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source="Mapping preview",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Review mapping",
+            )
+        )
+
+    if leakage_overlap_count:
+        add_check(
+            _quality_check(
+                "train_validation_test_leakage",
+                "Train/validation/test leakage risk",
+                "leakage",
+                "blocked",
+                "blocker",
+                f"Found {leakage_overlap_count} overlapping row fingerprint(s) across prepared splits.",
+                count=leakage_overlap_count,
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source="Prepared splits",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=leakage_pairs[:4],
+                action_label="Refresh splits",
+            )
+        )
+    elif any(split_row_counts.values()):
+        add_check(
+            _quality_check(
+                "split_leakage_clear",
+                "Split leakage scan clear",
+                "leakage",
+                "ready",
+                "info",
+                "No identical row fingerprints were found across prepared train/validation/test files.",
+                count=0,
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source="Prepared splits",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Open Data Prep",
+            )
+        )
+    else:
+        add_check(
+            _quality_check(
+                "split_leakage_waiting_for_splits",
+                "Split leakage scan waiting",
+                "leakage",
+                "ready",
+                "info",
+                "Leakage checks will run after Dataset Prep creates train, validation, and test files.",
+                count=0,
+                target_tab="dataprep",
+                workflow_owner="Data Prep",
+                source="Prepared splits",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Open Data Prep",
+            )
+        )
+
+    low_quality_total = sum(low_quality_reasons.values()) + low_quality_document_count
+    if low_quality_total:
+        reason_text = ", ".join(f"{reason.replace('_', ' ')}: {count}" for reason, count in low_quality_reasons.most_common(3))
+        evidence = [reason_text] if reason_text else []
+        if low_quality_document_count:
+            evidence.append(f"{low_quality_document_count} source document(s) have quality_score below 0.45.")
+        add_check(
+            _quality_check(
+                "low_quality_rows",
+                "Low-quality rows",
+                "quality",
+                "attention",
+                "warning",
+                f"Found {low_quality_total} low-quality row or document signal(s).",
+                count=low_quality_total,
+                target_tab="data",
+                workflow_owner="Source Ingestion",
+                source=_quality_top_source(low_quality_by_source),
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=evidence,
+                action_label="Inspect sources",
+            ),
+            low_quality_by_source,
+        )
+    else:
+        add_check(
+            _quality_check(
+                "low_quality_rows_clear",
+                "Low-quality row scan clear",
+                "quality",
+                "ready",
+                "info",
+                "No empty, placeholder, very short, or repeated-character rows were found in the scanned sample.",
+                count=0,
+                target_tab="data",
+                workflow_owner="Source Ingestion",
+                source="Project sample",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Open sources",
+            )
+        )
+
+    synthetic_contamination_count = synthetic_pending + prepared_pending_synthetic
+    if synthetic_contamination_count:
+        severity = "blocker" if prepared_pending_synthetic else "warning"
+        add_check(
+            _quality_check(
+                "synthetic_review_contamination",
+                "Synthetic review contamination",
+                "review",
+                "blocked" if severity == "blocker" else "attention",
+                severity,
+                (
+                    f"{synthetic_pending} synthetic row(s) are pending review"
+                    f" and {prepared_pending_synthetic} pending synthetic row(s) appear in prepared splits."
+                ),
+                count=synthetic_contamination_count,
+                target_tab="synthetic",
+                workflow_owner="Review",
+                source="Synthetic review queue",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=["Accepted synthetic rows can be used downstream; pending rows should stay gated."],
+                action_label="Review synthetic rows",
+            )
+        )
+    else:
+        add_check(
+            _quality_check(
+                "synthetic_review_clear",
+                "Synthetic review gate clear",
+                "review",
+                "ready",
+                "info",
+                "No pending synthetic rows were found in the review queue or prepared split sample.",
+                count=0,
+                target_tab="synthetic",
+                workflow_owner="Review",
+                source="Synthetic review queue",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Open Synthetic",
+            )
+        )
+
+    if gold_review_needed or annotation_review_needed or annotation_unpromoted:
+        review_count = gold_review_needed + annotation_review_needed + annotation_unpromoted
+        add_check(
+            _quality_check(
+                "human_review_items_open",
+                "Human review items open",
+                "review",
+                "attention",
+                "warning",
+                f"{review_count} Gold Set or annotation review item(s) still need attention.",
+                count=review_count,
+                target_tab="annotate" if annotation_review_needed or annotation_unpromoted else "goldset",
+                workflow_owner="Review",
+                source="Review Queue",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[
+                    f"Gold Set review needed: {gold_review_needed}.",
+                    f"Annotation review needed: {annotation_review_needed}.",
+                    f"Annotation labels not promoted: {annotation_unpromoted}.",
+                ],
+                action_label="Open Review",
+            )
+        )
+
+    domain_field_names = {
+        field.lower()
+        for field in field_counter.keys()
+        if field.lower() not in {"synth_source", "review_status", "generated_at", "model"}
+    }
+    if domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "policy_qa":
+        has_policy_context = any(
+            marker in field
+            for field in domain_field_names
+            for marker in ("context", "source", "section", "policy", "citation", "reference")
+        )
+        if not has_policy_context:
+            add_check(
+                _quality_check(
+                    "domain_policy_context_missing",
+                    "Policy context missing",
+                    "domain",
+                    "attention",
+                    "warning",
+                    "Policy Q&A was detected, but scanned fields do not expose source section, context, or citation signals.",
+                    count=1,
+                    target_tab="domain",
+                    workflow_owner="Domain Managers",
+                    source="Domain detection",
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=["Policy answers are safer when training rows preserve the governing policy context."],
+                    action_label="Open Domain Managers",
+                )
+            )
+        else:
+            add_check(
+                _quality_check(
+                    "domain_policy_context_present",
+                    "Policy context present",
+                    "domain",
+                    "ready",
+                    "info",
+                    "Policy-specific fields include context, source, section, or citation signals.",
+                    count=0,
+                    target_tab="domain",
+                    workflow_owner="Domain Managers",
+                    source="Domain detection",
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=[],
+                    action_label="Open Domain Managers",
+                )
+            )
+    elif domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "support_faq" and pii_total:
+        add_check(
+            _quality_check(
+                "domain_support_privacy_review",
+                "Support privacy review",
+                "domain",
+                "attention",
+                "warning",
+                "Support FAQ data often contains account details; review detected PII/PCI signals before training.",
+                count=pii_total,
+                target_tab="domain",
+                workflow_owner="Domain Managers",
+                source="Domain detection",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=["Consider redaction, synthetic placeholders, and escalation examples."],
+                action_label="Open Domain Managers",
+            )
+        )
+    elif domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE and domain_id == "pii_pci_detection":
+        has_label_field = any(
+            marker in field
+            for field in domain_field_names
+            for marker in ("label", "entity", "redaction", "pii", "pci", "category")
+        )
+        if not has_label_field:
+            add_check(
+                _quality_check(
+                    "domain_pii_labels_missing",
+                    "PII/PCI label fields missing",
+                    "domain",
+                    "attention",
+                    "warning",
+                    "PII/PCI Detection was detected, but scanned fields do not expose entity, label, or redaction targets.",
+                    count=1,
+                    target_tab="domain",
+                    workflow_owner="Domain Managers",
+                    source="Domain detection",
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=["Detection models need explicit labels or spans, not just raw sensitive text."],
+                    action_label="Open Domain Managers",
+                )
+            )
+    elif domain_confidence < _DOMAIN_SETUP_MIN_CONFIDENCE:
+        add_check(
+            _quality_check(
+                "domain_specific_checks_waiting",
+                "Domain-specific checks waiting",
+                "domain",
+                "ready",
+                "info",
+                "Domain-specific checks become more precise after BrewSLM sees stronger domain evidence or an applied domain pack.",
+                count=0,
+                target_tab="domain",
+                workflow_owner="Domain Managers",
+                source="Domain detection",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Open Domain Managers",
+            )
+        )
+
+    if not scan_rows:
+        add_check(
+            _quality_check(
+                "quality_scan_no_rows",
+                "No rows available for scanning",
+                "quality",
+                "blocked",
+                "blocker",
+                "Add source rows before BrewSLM can run deterministic quality and safety scans.",
+                count=1,
+                target_tab="data",
+                workflow_owner="Source Ingestion",
+                source="Project sample",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[],
+                action_label="Add sources",
+            )
+        )
+
+    issues = [
+        _quality_issue_from_check(check)
+        for check in checks
+        if check.get("severity") in {"blocker", "warning"}
+    ]
+    blocker_count = sum(1 for item in issues if item["severity"] == "blocker")
+    warning_count = sum(1 for item in issues if item["severity"] == "warning")
+    info_count = sum(1 for check in checks if check.get("severity") == "info")
+    if blocker_count:
+        verdict: QualitySafetyVerdict = "blocked"
+    elif warning_count:
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    status_groups = [
+        {
+            "status": "blocked",
+            "label": "Blockers",
+            "count": blocker_count,
+            "target_tab": "dataprep" if leakage_overlap_count else "data",
+        },
+        {
+            "status": "attention",
+            "label": "Warnings",
+            "count": warning_count,
+            "target_tab": "synthetic" if synthetic_pending else "dataprep",
+        },
+        {
+            "status": "ready",
+            "label": "Ready checks",
+            "count": info_count,
+            "target_tab": "data",
+        },
+    ]
+
+    entry_points = [
+        {
+            "label": "Open Source Ingestion",
+            "target_tab": "data",
+            "reason": "Inspect source rows and ingestion quality signals.",
+            "requires_confirmation": True,
+        },
+        {
+            "label": "Open Data Prep",
+            "target_tab": "dataprep",
+            "reason": "Review mapping, dedupe, split, and leakage checks.",
+            "requires_confirmation": True,
+        },
+        {
+            "label": "Open Gold Set",
+            "target_tab": "goldset",
+            "reason": "Review trusted examples and field coverage before training decisions depend on them.",
+            "requires_confirmation": True,
+        },
+        {
+            "label": "Open Review",
+            "target_tab": "synthetic" if synthetic_pending else "annotate",
+            "reason": "Clear synthetic, Gold Set, or annotation review items before preparation.",
+            "requires_confirmation": True,
+        },
+        {
+            "label": "Open Domain Managers",
+            "target_tab": "domain",
+            "reason": "Tune domain-specific safety and policy checks.",
+            "requires_confirmation": True,
+        },
+    ]
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_data_studio_checks",
+        "summary": {
+            "scanned_rows": len(scan_rows),
+            "sampled_rows": len(row_texts),
+            "blocker_count": blocker_count,
+            "warning_count": warning_count,
+            "info_count": info_count,
+            "pii_pci_signal_count": pii_total,
+            "duplicate_signal_count": duplicate_signal_count,
+            "leakage_overlap_count": leakage_overlap_count,
+            "low_quality_signal_count": low_quality_total,
+            "pending_review_count": synthetic_pending + gold_review_needed + annotation_review_needed + annotation_unpromoted,
+            "domain_signal_count": 1 if domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE else 0,
+        },
+        "domain": {
+            "id": domain_id,
+            "label": domain_label,
+            "confidence": round(domain_confidence, 4),
+            "source": detected_domain.get("source"),
+        },
+        "checks": checks,
+        "findings_by_source": _quality_group_rows(source_groups, source_targets),
+        "findings_by_status": status_groups,
+        "findings_by_domain": _quality_group_rows(domain_groups, domain_targets),
+        "findings_by_owner": _quality_group_rows(owner_groups, owner_targets),
+        "issues": issues,
+        "entry_points": entry_points,
+        "assist": {
+            "available": True,
+            "default_provider": "ollama",
+            "openai_compatible_supported": True,
+            "purpose": "explanations_only",
+            "auto_apply": False,
+            "target_tab": "assist",
+        },
+        "power_details": {
+            "pii_pci_counts": dict(pii_counts),
+            "low_quality_reasons": dict(low_quality_reasons),
+            "required_fields": required_fields,
+            "required_fields_below_100": required_gaps,
+            "split_row_counts": split_row_counts,
+            "domain_evidence": domain.get("evidence") if isinstance(domain.get("evidence"), list) else [],
+            "review_totals": review_totals,
+        },
+    }
+
+
 def _prepared_dataset_type_order(dataset_type: DatasetType) -> int:
     order = {
         DatasetType.TRAIN: 0,
@@ -5757,12 +6827,13 @@ _COACH_SECTION_ORDER: dict[str, int] = {
     "sources": 1,
     "mapping": 2,
     "domain": 3,
-    "gold_set": 4,
-    "synthetic_playbooks": 5,
-    "synthetic_recommendations": 6,
-    "review_queue": 7,
-    "prepare_dataset": 8,
-    "dataset_versions": 9,
+    "quality_safety": 4,
+    "gold_set": 5,
+    "synthetic_playbooks": 6,
+    "synthetic_recommendations": 7,
+    "review_queue": 8,
+    "prepare_dataset": 9,
+    "dataset_versions": 10,
 }
 
 _COACH_CONFIRMATION_TARGETS = {
@@ -5925,6 +6996,7 @@ async def build_data_studio_coach_rail(
     sources = await build_data_studio_sources(db, project_id)
     mapping = await build_data_studio_mapping_preview(db, project_id)
     domain = await build_data_studio_domain_detection(db, project_id)
+    quality_safety = await build_data_studio_quality_safety(db, project_id)
     gold = await build_data_studio_gold_set_workbench(db, project_id)
     synthetic_playbooks = await build_data_studio_synthetic_playbook_center(db, project_id)
     synthetic_recommendations = await build_data_studio_synthetic_recommendations(db, project_id)
@@ -5968,6 +7040,15 @@ async def build_data_studio_coach_rail(
             "action_label": "Review Domain",
             "ready_message": "Domain signals are confirmed or low risk.",
             "empty_message": "Domain evidence is still limited.",
+        },
+        {
+            "id": "quality_safety",
+            "label": "Quality & Safety",
+            "payload": quality_safety,
+            "target_tab": "dataprep",
+            "action_label": "Review Quality",
+            "ready_message": "Quality and safety scans are clear.",
+            "empty_message": None,
         },
         {
             "id": "gold_set",

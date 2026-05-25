@@ -11,6 +11,7 @@ export type DataStudioSyntheticRecommendationVerdict = 'empty' | 'attention' | '
 export type DataStudioReviewQueueVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioPrepareDatasetVerdict = 'blocked' | 'attention' | 'ready';
 export type DataStudioDatasetVersionVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioQualitySafetyVerdict = 'blocked' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -800,6 +801,103 @@ export async function getDataStudioReviewQueue(
 ): Promise<DataStudioReviewQueue> {
     const resp = await api.get(`/projects/${projectId}/data-studio/review-queue`);
     return resp.data as DataStudioReviewQueue;
+}
+
+export interface DataStudioQualitySafetySummary {
+    scanned_rows: number;
+    sampled_rows: number;
+    blocker_count: number;
+    warning_count: number;
+    info_count: number;
+    pii_pci_signal_count: number;
+    duplicate_signal_count: number;
+    leakage_overlap_count: number;
+    low_quality_signal_count: number;
+    pending_review_count: number;
+    domain_signal_count: number;
+}
+
+export interface DataStudioQualitySafetyDomain {
+    id: string;
+    label: string;
+    confidence: number;
+    source?: string | null;
+}
+
+export interface DataStudioQualitySafetyCheck {
+    id: string;
+    label: string;
+    category: string;
+    status: 'blocked' | 'attention' | 'ready' | string;
+    severity: DataStudioIssueSeverity;
+    message: string;
+    count: number;
+    target_tab: string;
+    workflow_owner: string;
+    source: string;
+    domain_id: string;
+    domain_label: string;
+    evidence: string[];
+    action_label: string;
+}
+
+export interface DataStudioQualitySafetyGroup {
+    key: string;
+    label: string;
+    blocker_count: number;
+    warning_count: number;
+    info_count: number;
+    total: number;
+    target_tab: string;
+}
+
+export interface DataStudioQualitySafetyStatusGroup {
+    status: 'blocked' | 'attention' | 'ready' | string;
+    label: string;
+    count: number;
+    target_tab: string;
+}
+
+export interface DataStudioQualitySafetyEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+    requires_confirmation: boolean;
+}
+
+export interface DataStudioQualitySafetyAssist {
+    available: boolean;
+    default_provider: DataStudioAssistProvider;
+    openai_compatible_supported: boolean;
+    purpose: string;
+    auto_apply: boolean;
+    target_tab: string;
+}
+
+export interface DataStudioQualitySafety {
+    project_id: number;
+    verdict: DataStudioQualitySafetyVerdict;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    summary: DataStudioQualitySafetySummary;
+    domain: DataStudioQualitySafetyDomain;
+    checks: DataStudioQualitySafetyCheck[];
+    findings_by_source: DataStudioQualitySafetyGroup[];
+    findings_by_status: DataStudioQualitySafetyStatusGroup[];
+    findings_by_domain: DataStudioQualitySafetyGroup[];
+    findings_by_owner: DataStudioQualitySafetyGroup[];
+    issues: DataStudioIssue[];
+    entry_points: DataStudioQualitySafetyEntryPoint[];
+    assist: DataStudioQualitySafetyAssist;
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioQualitySafety(
+    projectId: number,
+): Promise<DataStudioQualitySafety> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/quality-safety`);
+    return resp.data as DataStudioQualitySafety;
 }
 
 export interface DataStudioPrepareRecipe {

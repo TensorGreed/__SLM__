@@ -21,6 +21,7 @@ from app.services.data_studio_service import (
     build_data_studio_mapping_preview,
     build_data_studio_overview,
     build_data_studio_prepare_dataset,
+    build_data_studio_quality_safety,
     build_data_studio_review_queue,
     build_data_studio_sources,
     build_data_studio_synthetic_playbook_center,
@@ -212,6 +213,22 @@ async def get_data_studio_review_queue(
 
     try:
         return await build_data_studio_review_queue(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/quality-safety")
+async def get_data_studio_quality_safety(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return deterministic read-only quality and safety scan signals."""
+
+    try:
+        return await build_data_studio_quality_safety(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

@@ -21,7 +21,7 @@ const { navigateMock, setActiveTabMock, routeState, contextState, coachRailPaylo
             blocker_count: 2,
             warning_count: 3,
             info_count: 0,
-            section_count: 11,
+            section_count: 12,
             ready_section_count: 4,
             empty_section_count: 1,
             next_action_target: 'annotate',
@@ -43,6 +43,7 @@ const { navigateMock, setActiveTabMock, routeState, contextState, coachRailPaylo
             { id: 'sources', status: 'blocked', label: 'Sources', target_tab: 'data', message: 'Sources need attention.', blocker_count: 1, warning_count: 0, info_count: 0 },
             { id: 'mapping', status: 'ready', label: 'Mapping', target_tab: 'dataprep', message: 'Mapping is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
             { id: 'domain', status: 'attention', label: 'Domain', target_tab: 'domain', message: 'Domain needs confirmation.', blocker_count: 0, warning_count: 1, info_count: 0 },
+            { id: 'quality_safety', status: 'attention', label: 'Quality & Safety', target_tab: 'dataprep', message: 'Quality warnings need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'gold_set', status: 'ready', label: 'Gold Set', target_tab: 'goldset', message: 'Gold Set is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
             { id: 'synthetic_playbooks', status: 'attention', label: 'Synthetic Playbooks', target_tab: 'synthetic', message: 'Synthetic prerequisites need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'synthetic_recommendations', status: 'ready', label: 'Synthetic Recommendations', target_tab: 'synthetic', message: 'Recommendations are ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
@@ -122,6 +123,10 @@ vi.mock('../components/data/DataStudioMappingPreviewPanel', () => ({
 
 vi.mock('../components/data/DataStudioDomainDetectionPanel', () => ({
     default: () => <section data-testid="panel-domain">Domain</section>,
+}));
+
+vi.mock('../components/data/DataStudioQualitySafetyPanel', () => ({
+    default: () => <section data-testid="panel-quality-safety">Quality & Safety</section>,
 }));
 
 vi.mock('../components/data/DataStudioAssistPanel', () => ({
@@ -276,7 +281,7 @@ describe('ProjectDataStudioPage', () => {
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        const blockerFilter = await within(filters).findByRole('button', { name: /^Blockers\s+5$/i });
+        const blockerFilter = await within(filters).findByRole('button', { name: /^Blockers\s+6$/i });
 
         await user.click(screen.getByRole('button', { name: /Collapse all/i }));
         await user.click(blockerFilter);
@@ -307,13 +312,13 @@ describe('ProjectDataStudioPage', () => {
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+5$/i }));
+        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+6$/i }));
 
         const explanation = within(index).getByRole('status');
         expect(within(explanation).getByText('Blocker view')).toBeInTheDocument();
-        expect(within(explanation).getByText(/5 sections match current search and filter/i)).toBeInTheDocument();
+        expect(within(explanation).getByText(/6 sections match current search and filter/i)).toBeInTheDocument();
         expect(within(explanation).getByText('Overview readiness')).toBeInTheDocument();
-        expect(within(explanation).getByText(/Source Ingestion: Sources need attention/i)).toBeInTheDocument();
+        expect(within(explanation).getAllByText(/Source Ingestion: Sources need attention/i).length).toBeGreaterThan(0);
         expect(within(explanation).getByText(/Additional matching sections are listed below/i)).toBeInTheDocument();
 
         await user.type(
@@ -338,22 +343,22 @@ describe('ProjectDataStudioPage', () => {
         expect(within(legend).getByText('Ready')).toBeInTheDocument();
 
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        const readyFilter = await within(filters).findByRole('button', { name: /^Ready\s+7$/i });
+        const readyFilter = await within(filters).findByRole('button', { name: /^Ready\s+8$/i });
         await user.click(readyFilter);
         expect(readyFilter).toHaveAttribute('aria-pressed', 'true');
 
         await user.click(readyFilter);
         expect(readyFilter).toHaveAttribute('aria-pressed', 'false');
-        expect(within(filters).getByRole('button', { name: /^All\s+11$/i })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(filters).getByRole('button', { name: /^All\s+12$/i })).toHaveAttribute('aria-pressed', 'true');
 
-        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+5$/i }));
+        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+6$/i }));
         const search = within(index).getByRole('searchbox', { name: /Search Data Studio sections/i });
         await user.type(search, 'no-match');
         expect(within(index).getByText('No matching sections.')).toBeInTheDocument();
 
         await user.keyboard('{Escape}');
         expect(search).toHaveValue('');
-        expect(within(filters).getByRole('button', { name: /^All\s+11$/i })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(filters).getByRole('button', { name: /^All\s+12$/i })).toHaveAttribute('aria-pressed', 'true');
         expect(within(index).queryByText('No matching sections.')).not.toBeInTheDocument();
         expect(within(index).queryByRole('status')).not.toBeInTheDocument();
     });
@@ -364,7 +369,7 @@ describe('ProjectDataStudioPage', () => {
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        await user.click(await within(filters).findByRole('button', { name: /^Ready\s+7$/i }));
+        await user.click(await within(filters).findByRole('button', { name: /^Ready\s+8$/i }));
 
         const review = screen.getByTestId('data-studio-section-review-queue');
         const readyGoldChip = await within(review).findByRole('button', { name: /^Gold Set\s+Ready$/i });

@@ -370,6 +370,148 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertIn("low_domain_confidence", issue_ids)
         self.assertIsNone(payload["domain_setup"])
 
+    def test_quality_safety_scan_flags_sensitive_duplicates_leakage_and_reviews(self):
+        project_id = self._create_project("data-studio-quality-safety")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_quality_source():
+            async with async_session_factory() as db:
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "policy_rows.jsonl"
+                duplicate_text = (
+                    "Which leave policy covers caregiver emergency eligibility? "
+                    "The employee handbook policy mentions compliance exceptions. "
+                    "Contact jane@example.com and use card 4111 1111 1111 1111."
+                )
+                rows = [
+                    {"text": duplicate_text, "label": "covered"},
+                    {"text": duplicate_text, "label": "covered"},
+                    {
+                        "text": "Policy exception question with SSN 123-45-6789 and cvv: 123.",
+                    },
+                    {"text": "N/A", "label": "unknown"},
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Policy Rows",
+                    dataset_type=DatasetType.RAW,
+                    record_count=len(rows),
+                    file_path=str(raw_path),
+                )
+                db.add(raw_ds)
+                await db.flush()
+                db.add(
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="policy_rows.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=len(rows),
+                        quality_score=0.4,
+                    )
+                )
+
+                synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+                synth_dir.mkdir(parents=True, exist_ok=True)
+                synth_path = synth_dir / "synthetic.jsonl"
+                with synth_path.open("w", encoding="utf-8") as handle:
+                    handle.write(json.dumps({
+                        "id": 1,
+                        "text": "Pending synthetic policy answer",
+                        "label": "covered",
+                        "synth_source": "playbook:policy:test",
+                        "review_status": "pending",
+                    }) + "\n")
+                db.add(
+                    Dataset(
+                        project_id=project_id,
+                        name="Synthetic",
+                        dataset_type=DatasetType.SYNTHETIC,
+                        record_count=1,
+                        file_path=str(synth_path),
+                    )
+                )
+
+                prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+                prepared_dir.mkdir(parents=True, exist_ok=True)
+                train_path = prepared_dir / "train.jsonl"
+                val_path = prepared_dir / "validation.jsonl"
+                test_path = prepared_dir / "test.jsonl"
+                leaked_row = {"text": "Policy leakage row", "label": "covered"}
+                train_path.write_text(json.dumps(leaked_row) + "\n", encoding="utf-8")
+                val_path.write_text(json.dumps(leaked_row) + "\n", encoding="utf-8")
+                test_path.write_text(json.dumps({"text": "Unique test row", "label": "covered"}) + "\n", encoding="utf-8")
+                db.add_all([
+                    Dataset(
+                        project_id=project_id,
+                        name="Train",
+                        dataset_type=DatasetType.TRAIN,
+                        record_count=1,
+                        file_path=str(train_path),
+                    ),
+                    Dataset(
+                        project_id=project_id,
+                        name="Validation",
+                        dataset_type=DatasetType.VALIDATION,
+                        record_count=1,
+                        file_path=str(val_path),
+                    ),
+                    Dataset(
+                        project_id=project_id,
+                        name="Test",
+                        dataset_type=DatasetType.TEST,
+                        record_count=1,
+                        file_path=str(test_path),
+                    ),
+                ])
+                await db.commit()
+
+        asyncio.run(_seed_quality_source())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/quality-safety")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "blocked")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["assist"]["default_provider"], "ollama")
+        self.assertEqual(payload["assist"]["purpose"], "explanations_only")
+        self.assertEqual(payload["domain"]["id"], "policy_qa")
+        self.assertGreaterEqual(payload["summary"]["scanned_rows"], 4)
+        self.assertGreaterEqual(payload["summary"]["pii_pci_signal_count"], 3)
+        self.assertGreaterEqual(payload["summary"]["duplicate_signal_count"], 1)
+        self.assertGreaterEqual(payload["summary"]["leakage_overlap_count"], 1)
+        self.assertGreaterEqual(payload["summary"]["pending_review_count"], 1)
+
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("pii_pci_sensitive_values", issue_ids)
+        self.assertIn("duplicate_or_near_duplicate_rows", issue_ids)
+        self.assertIn("train_validation_test_leakage", issue_ids)
+        self.assertIn("required_fields_missing", issue_ids)
+        self.assertIn("synthetic_review_contamination", issue_ids)
+        self.assertIn("domain_policy_context_missing", issue_ids)
+
+        owner_labels = {item["label"] for item in payload["findings_by_owner"]}
+        self.assertIn("Source Ingestion", owner_labels)
+        self.assertIn("Data Prep", owner_labels)
+        status_counts = {item["status"]: item["count"] for item in payload["findings_by_status"]}
+        self.assertGreaterEqual(status_counts["blocked"], 2)
+        source_labels = {item["label"] for item in payload["findings_by_source"]}
+        self.assertIn("policy_rows.jsonl", source_labels)
+
     def test_domain_detection_policy_setup_creates_missing_drafts_after_confirmation(self):
         project_id = self._create_project("data-studio-policy-domain")
 
