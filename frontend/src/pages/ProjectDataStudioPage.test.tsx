@@ -257,12 +257,17 @@ describe('ProjectDataStudioPage', () => {
         render(<ProjectDataStudioPage />);
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
+        const search = within(index).getByRole('searchbox', { name: /Search Data Studio sections/i });
         await user.type(
-            within(index).getByRole('searchbox', { name: /Search Data Studio sections/i }),
+            search,
             'nope-no-match',
         );
 
         expect(within(index).getByText('No matching sections.')).toBeInTheDocument();
+        const resetButtons = within(index).getAllByRole('button', { name: /Reset/i });
+        await user.click(resetButtons[resetButtons.length - 1]);
+        expect(search).toHaveValue('');
+        expect(within(index).getByRole('button', { name: /Overview readiness/i })).toBeInTheDocument();
     });
 
     it('filters the section index by Coach triage signals while preserving hash navigation', async () => {
@@ -294,6 +299,63 @@ describe('ProjectDataStudioPage', () => {
         await user.click(sourcesJump);
         expect(screen.getByTestId('panel-sources')).toBeInTheDocument();
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/data-studio#sources', { replace: false });
+    });
+
+    it('explains why active triage filters match visible sections from Coach messages', async () => {
+        const user = userEvent.setup();
+        render(<ProjectDataStudioPage />);
+
+        const index = screen.getByRole('region', { name: /Data Studio section index/i });
+        const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
+        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+5$/i }));
+
+        const explanation = within(index).getByRole('status');
+        expect(within(explanation).getByText('Blocker view')).toBeInTheDocument();
+        expect(within(explanation).getByText(/5 sections match current search and filter/i)).toBeInTheDocument();
+        expect(within(explanation).getByText('Overview readiness')).toBeInTheDocument();
+        expect(within(explanation).getByText(/Source Ingestion: Sources need attention/i)).toBeInTheDocument();
+        expect(within(explanation).getByText(/Additional matching sections are listed below/i)).toBeInTheDocument();
+
+        await user.type(
+            within(index).getByRole('searchbox', { name: /Search Data Studio sections/i }),
+            'ingestion',
+        );
+
+        expect(within(explanation).getByText(/1 section matches current search and filter/i)).toBeInTheDocument();
+        expect(within(explanation).queryByText('Overview readiness')).not.toBeInTheDocument();
+        expect(within(explanation).getByText('Sources summary')).toBeInTheDocument();
+        expect(within(explanation).getByText(/Sources: Sources need attention/i)).toBeInTheDocument();
+    });
+
+    it('shows a compact status legend and supports keyboard-friendly index reset', async () => {
+        const user = userEvent.setup();
+        render(<ProjectDataStudioPage />);
+
+        const index = screen.getByRole('region', { name: /Data Studio section index/i });
+        const legend = within(index).getByRole('list', { name: /Status legend/i });
+        expect(within(legend).getByText('Blocker')).toBeInTheDocument();
+        expect(within(legend).getByText('Attention')).toBeInTheDocument();
+        expect(within(legend).getByText('Ready')).toBeInTheDocument();
+
+        const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
+        const readyFilter = await within(filters).findByRole('button', { name: /^Ready\s+7$/i });
+        await user.click(readyFilter);
+        expect(readyFilter).toHaveAttribute('aria-pressed', 'true');
+
+        await user.click(readyFilter);
+        expect(readyFilter).toHaveAttribute('aria-pressed', 'false');
+        expect(within(filters).getByRole('button', { name: /^All\s+11$/i })).toHaveAttribute('aria-pressed', 'true');
+
+        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+5$/i }));
+        const search = within(index).getByRole('searchbox', { name: /Search Data Studio sections/i });
+        await user.type(search, 'no-match');
+        expect(within(index).getByText('No matching sections.')).toBeInTheDocument();
+
+        await user.keyboard('{Escape}');
+        expect(search).toHaveValue('');
+        expect(within(filters).getByRole('button', { name: /^All\s+11$/i })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(index).queryByText('No matching sections.')).not.toBeInTheDocument();
+        expect(within(index).queryByRole('status')).not.toBeInTheDocument();
     });
 
     it('highlights matching handoff chips for active triage filters without disabling navigation', async () => {

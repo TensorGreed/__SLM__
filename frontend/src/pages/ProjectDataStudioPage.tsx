@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
-import { ChevronDown, ChevronRight, ExternalLink, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Search, X } from 'lucide-react';
 
 import DataStudioCoachRailPanel from '../components/data/DataStudioCoachRailPanel';
 import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
@@ -64,11 +64,20 @@ type DataStudioTriageFilter = 'all' | DataStudioHandoffSignalStatus;
 interface DataStudioHandoffSignal {
     status: DataStudioHandoffSignalStatus;
     label: string;
+    checkLabel: string;
+    message: string;
 }
 
 interface DataStudioSectionSignalSummary {
     directSignal: DataStudioHandoffSignal | null;
     statuses: Set<DataStudioHandoffSignalStatus>;
+}
+
+interface DataStudioTriageExplanation {
+    sectionId: DataStudioSectionId;
+    sectionTitle: string;
+    sourceLabel: string;
+    message: string;
 }
 
 interface DataStudioSectionConfig {
@@ -146,6 +155,12 @@ const TRIAGE_FILTERS: Array<{ id: DataStudioTriageFilter; label: string }> = [
     { id: 'ready', label: 'Ready' },
 ];
 
+const TRIAGE_LEGEND_ITEMS: Array<{ id: DataStudioHandoffSignalStatus; label: string }> = [
+    { id: 'blocker', label: 'Blocker' },
+    { id: 'attention', label: 'Attention' },
+    { id: 'ready', label: 'Ready' },
+];
+
 function isTabKey(value: string | undefined): value is TabKey {
     return !!value && PIPELINE_TAB_KEYS.includes(value as TabKey);
 }
@@ -189,7 +204,21 @@ function handoffSignalFromCheck(check: DataStudioCoachCheck): DataStudioHandoffS
     return {
         status: signalStatus,
         label: HANDOFF_SIGNAL_LABELS[signalStatus],
+        checkLabel: check.label,
+        message: check.message,
     };
+}
+
+function formatVisibleSectionCount(count: number): string {
+    return `${count} ${count === 1 ? 'section' : 'sections'}`;
+}
+
+function explanationMessage(sourceLabel: string, signal: DataStudioHandoffSignal): string {
+    const message = signal.message.trim();
+    if (!message) {
+        return `${sourceLabel} is marked ${signal.label.toLowerCase()}.`;
+    }
+    return `${sourceLabel}: ${message}`;
 }
 
 function sectionIndexStatusLabel(
@@ -335,6 +364,7 @@ export default function ProjectDataStudioPage() {
     const [sectionSearch, setSectionSearch] = useState('');
     const [triageFilter, setTriageFilter] = useState<DataStudioTriageFilter>('all');
     const [coachSignals, setCoachSignals] = useState<DataStudioCoachRail | null>(null);
+    const hasActiveIndexControls = sectionSearch.trim().length > 0 || triageFilter !== 'all';
 
     useEffect(() => {
         setExpandedSections(readExpandedSections(projectId));
@@ -456,6 +486,21 @@ export default function ProjectDataStudioPage() {
     const collapseAll = useCallback(() => {
         updateExpandedSections(() => new Set());
     }, [updateExpandedSections]);
+
+    const resetIndexControls = useCallback(() => {
+        setSectionSearch('');
+        setTriageFilter('all');
+    }, []);
+
+    const handleIndexKeyDown = useCallback(
+        (event: KeyboardEvent<HTMLElement>) => {
+            if (event.key === 'Escape' && hasActiveIndexControls) {
+                event.preventDefault();
+                resetIndexControls();
+            }
+        },
+        [hasActiveIndexControls, resetIndexControls],
+    );
 
     const handoffSignalsBySection = useMemo(() => {
         const signals = new Map<DataStudioSectionId, DataStudioHandoffSignal>();
@@ -723,6 +768,47 @@ export default function ProjectDataStudioPage() {
         })).filter((group) => group.sections.length > 0);
     }, [sectionConfigs, sectionSearch, sectionSignalSummaries, triageFilter]);
 
+    const visibleSections = useMemo(
+        () => visibleSectionGroups.flatMap(({ sections }) => sections),
+        [visibleSectionGroups],
+    );
+
+    const triageExplanations = useMemo(() => {
+        if (triageFilter === 'all') {
+            return [];
+        }
+        const explanations: DataStudioTriageExplanation[] = [];
+        visibleSections.forEach((section) => {
+            const summary = sectionSignalSummaries.get(section.id);
+            const directSignal = summary?.directSignal;
+            if (directSignal?.status === triageFilter) {
+                explanations.push({
+                    sectionId: section.id,
+                    sectionTitle: section.title,
+                    sourceLabel: directSignal.checkLabel,
+                    message: explanationMessage(directSignal.checkLabel, directSignal),
+                });
+                return;
+            }
+
+            const matchedHandoff = section.handoffs
+                .map((handoff) => ({
+                    handoff,
+                    signal: getHandoffSignal(handoff, section.id),
+                }))
+                .find(({ signal }) => signal?.status === triageFilter);
+            if (matchedHandoff?.signal) {
+                explanations.push({
+                    sectionId: section.id,
+                    sectionTitle: section.title,
+                    sourceLabel: matchedHandoff.handoff.label,
+                    message: explanationMessage(matchedHandoff.handoff.label, matchedHandoff.signal),
+                });
+            }
+        });
+        return explanations.slice(0, 3);
+    }, [getHandoffSignal, sectionSignalSummaries, triageFilter, visibleSections]);
+
     const openSectionCount = expandedSections.size;
     const activeSectionId = normalizeSectionToken(location.hash);
 
@@ -753,26 +839,48 @@ export default function ProjectDataStudioPage() {
                     onCoachLoaded={setCoachSignals}
                 />
 
-                <section className="data-studio-page-index" aria-label="Data Studio section index">
+                <section
+                    className="data-studio-page-index"
+                    aria-label="Data Studio section index"
+                    onKeyDown={handleIndexKeyDown}
+                >
                     <div className="data-studio-page-index__head">
                         <div>
                             <h3>Jump to workbench</h3>
                             <p>
-                                {sectionConfigs.length} sections
+                                Showing
+                                {' '}
+                                {visibleSections.length}
+                                {' '}
+                                of
+                                {' '}
+                                {sectionConfigs.length}
                                 {' · '}
                                 {openSectionCount} open
                             </p>
                         </div>
-                        <label className="data-studio-page-index__search">
-                            <Search size={15} aria-hidden="true" />
-                            <input
-                                type="search"
-                                value={sectionSearch}
-                                onChange={(event) => setSectionSearch(event.target.value)}
-                                placeholder="Search sections"
-                                aria-label="Search Data Studio sections"
-                            />
-                        </label>
+                        <div className="data-studio-page-index__tools">
+                            <label className="data-studio-page-index__search">
+                                <Search size={15} aria-hidden="true" />
+                                <input
+                                    type="search"
+                                    value={sectionSearch}
+                                    onChange={(event) => setSectionSearch(event.target.value)}
+                                    placeholder="Search sections"
+                                    aria-label="Search Data Studio sections"
+                                />
+                            </label>
+                            {hasActiveIndexControls ? (
+                                <button
+                                    type="button"
+                                    className="data-studio-page-index__reset"
+                                    onClick={resetIndexControls}
+                                >
+                                    <X size={14} aria-hidden="true" />
+                                    <span>Reset</span>
+                                </button>
+                            ) : null}
+                        </div>
                     </div>
 
                     <div className="data-studio-page-index__filters" role="group" aria-label="Data Studio triage filters">
@@ -789,7 +897,7 @@ export default function ProjectDataStudioPage() {
                                         isActive ? 'is-active' : '',
                                     ].filter(Boolean).join(' ')}
                                     aria-pressed={isActive}
-                                    onClick={() => setTriageFilter(filter.id)}
+                                    onClick={() => setTriageFilter(isActive && filter.id !== 'all' ? 'all' : filter.id)}
                                 >
                                     <span>{filter.label}</span>
                                     <small>{count}</small>
@@ -797,6 +905,61 @@ export default function ProjectDataStudioPage() {
                             );
                         })}
                     </div>
+
+                    <div className="data-studio-page-index__legend" role="list" aria-label="Status legend">
+                        {TRIAGE_LEGEND_ITEMS.map((item) => (
+                            <span
+                                role="listitem"
+                                key={item.id}
+                                className={`data-studio-page-index__legend-item data-studio-page-index__legend-item--${item.id}`}
+                            >
+                                <b aria-hidden="true" />
+                                {item.label}
+                            </span>
+                        ))}
+                    </div>
+
+                    {triageFilter !== 'all' ? (
+                        <div
+                            className={`data-studio-page-index__explanation data-studio-page-index__explanation--${triageFilter}`}
+                            role="status"
+                            aria-live="polite"
+                        >
+                            <div className="data-studio-page-index__explanation-summary">
+                                <strong>{HANDOFF_SIGNAL_LABELS[triageFilter]} view</strong>
+                                <span>
+                                    {formatVisibleSectionCount(visibleSections.length)}
+                                    {' '}
+                                    {visibleSections.length === 1 ? 'matches' : 'match'}
+                                    {' '}
+                                    current search and filter.
+                                </span>
+                            </div>
+                            {triageExplanations.length > 0 ? (
+                                <ul>
+                                    {triageExplanations.map((explanation) => (
+                                        <li key={`${explanation.sectionId}:${explanation.sourceLabel}`}>
+                                            <strong>{explanation.sectionTitle}</strong>
+                                            <span>{explanation.message}</span>
+                                        </li>
+                                    ))}
+                                    {visibleSections.length > triageExplanations.length ? (
+                                        <li className="data-studio-page-index__explanation-more">
+                                            <strong>
+                                                +
+                                                {visibleSections.length - triageExplanations.length}
+                                                {' '}
+                                                more
+                                            </strong>
+                                            <span>Additional matching sections are listed below.</span>
+                                        </li>
+                                    ) : null}
+                                </ul>
+                            ) : (
+                                <p>No visible sections match this triage state.</p>
+                            )}
+                        </div>
+                    ) : null}
 
                     {visibleSectionGroups.length > 0 ? (
                         <div className="data-studio-page-index__groups">
@@ -833,7 +996,19 @@ export default function ProjectDataStudioPage() {
                             ))}
                         </div>
                     ) : (
-                        <p className="data-studio-page-index__empty">No matching sections.</p>
+                        <div className="data-studio-page-index__empty">
+                            <p>No matching sections.</p>
+                            {hasActiveIndexControls ? (
+                                <button
+                                    type="button"
+                                    className="data-studio-page-index__reset data-studio-page-index__reset--inline"
+                                    onClick={resetIndexControls}
+                                >
+                                    <X size={14} aria-hidden="true" />
+                                    <span>Reset</span>
+                                </button>
+                            ) : null}
+                        </div>
                     )}
                 </section>
 
