@@ -2629,8 +2629,14 @@ def _run_training_attempt(
         try:
             from torch.utils.data import SequentialSampler
 
-            def _curriculum_sequential_sampler(self):
-                return SequentialSampler(self.train_dataset)
+            def _curriculum_sequential_sampler(self, dataset=None):
+                # Transformers 4.x called this as ``self._get_train_sampler()``
+                # (no positional args after ``self``); 5.x added an optional
+                # ``dataset`` positional so a caller can pass an externally
+                # constructed dataset. Accept both so this monkey-patch
+                # works across the trainer versions BrewSLM supports.
+                target = dataset if dataset is not None else self.train_dataset
+                return SequentialSampler(target)
 
             trainer._get_train_sampler = (
                 _curriculum_sequential_sampler.__get__(trainer, type(trainer))
