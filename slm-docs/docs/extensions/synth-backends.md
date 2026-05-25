@@ -66,6 +66,8 @@ Should return something like:
 
 In the UI, the **Synthetic** tab's playbook panel will now show a **Backend** dropdown next to "Target rows". The dropdown is hidden when fewer than two backends are available (single-backend installs don't see clutter).
 
+Each option that actually honors the playbook's `response_schema` (`nemo`, `vllm`) is suffixed with **· schema-aware** in the dropdown text. When the active selection is schema-aware, a green **✓ schema-aware** chip appears next to the picker. The `/backends` endpoint returns a `schema_aware: bool` per entry so the frontend can render the badge without hard-coding backend names.
+
 ## vLLM setup
 
 `VllmBackend` talks to a local vLLM server over the standard OpenAI-compatible `/v1/chat/completions` API. vLLM is the recommended backend when you want Phase 5b's schema-constrained generation to actually constrain decoding — it implements `response_format=json_schema` via xgrammar / outlines, which Ollama does not.

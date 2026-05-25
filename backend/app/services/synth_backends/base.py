@@ -27,9 +27,17 @@ class SynthBackend(Protocol):
     `is_available()` classmethod for cheap reachability checks, and an
     async `complete()` instance method that returns the model's raw
     text output for a given prompt.
+
+    ``schema_aware`` is True for backends that actually honor the
+    ``response_schema`` kwarg on ``complete()`` (NeMo / vLLM forward
+    it as OpenAI ``response_format=json_schema``). False for backends
+    that accept-and-ignore the kwarg (Ollama, the legacy teacher
+    dispatcher). The picker surfaces this so users can tell which
+    picks let the playbook's schema actually constrain decoding.
     """
 
     name: str
+    schema_aware: bool = False
 
     @classmethod
     def is_available(cls) -> bool:  # pragma: no cover - default no-op

@@ -47,6 +47,10 @@ class VllmBackend:
     """vLLM OpenAI-compatible chat backend with schema-constrained decoding."""
 
     name: str = "vllm"
+    # vLLM enforces response_format=json_schema during decoding via
+    # xgrammar / outlines — the model literally cannot emit a token
+    # sequence that wouldn't validate.
+    schema_aware: bool = True
 
     def __init__(
         self,

@@ -24,6 +24,9 @@ class TeacherModelBackend:
     """Wrapper around `synthetic_service.call_teacher_model`."""
 
     name: str = "teacher"
+    # The legacy dispatcher has no structured-output hook — the kwarg
+    # is accepted for protocol compatibility but never threaded through.
+    schema_aware: bool = False
 
     def __init__(self, *, model: str | None = None, api_url: str | None = None):
         self._api_url = api_url or settings.TEACHER_MODEL_API_URL

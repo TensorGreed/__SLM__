@@ -45,6 +45,10 @@ class NemoBackend:
     """NeMo Data Designer / NIM OpenAI-compatible chat backend."""
 
     name: str = "nemo"
+    # NIM honors response_format=json_schema natively (OpenAI
+    # Structured-Outputs shape). Phase 5b forwards it on every
+    # complete() that carries a response_schema.
+    schema_aware: bool = True
 
     def __init__(
         self,

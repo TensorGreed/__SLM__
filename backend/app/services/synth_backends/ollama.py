@@ -57,6 +57,9 @@ class OllamaBackend:
     """Ollama OpenAI-compatible chat completion backend."""
 
     name: str = "ollama"
+    # Ollama's /v1 shim ignores OpenAI's response_format=json_schema —
+    # the playbook parser does all structure enforcement.
+    schema_aware: bool = False
 
     def __init__(
         self,

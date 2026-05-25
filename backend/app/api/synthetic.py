@@ -397,6 +397,11 @@ async def list_synth_backends(project_id: int):
             # validation on an unavailable backend like NeMo without a
             # configured model).
             "describe": (cls().describe() if available else cls.name),
+            # Phase 5c: True for backends that forward the playbook's
+            # response_schema as response_format=json_schema (NeMo, vLLM).
+            # False for backends that accept-and-ignore (Ollama, Teacher).
+            # The picker uses this to badge schema-honoring options.
+            "schema_aware": bool(getattr(cls, "schema_aware", False)),
         })
     return {"project_id": project_id, "backends": entries}
 

@@ -223,6 +223,106 @@ describe('PlaybookPickerPanel', () => {
         expect(select.options[2].value).toBe('nemo:meta/llama-3.1-70b-instruct');
     });
 
+    // ── Schema-aware badge (Epic 5 Phase 5c) ─────────────────────────
+
+    it('renders the schema-aware badge when the active backend honors response_schema', async () => {
+        // Two backends; vLLM is schema_aware. Default selection is
+        // "Auto" → first available backend → ollama (NOT schema-aware),
+        // so the badge should NOT render at first.
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            backendsResponse: {
+                project_id: 1,
+                backends: [
+                    { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b', schema_aware: false },
+                    { name: 'vllm', available: true, describe: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct', schema_aware: true },
+                ],
+            },
+        });
+        render(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
+        });
+
+        // Auto picks ollama → no badge.
+        expect(screen.queryByTestId('playbook-picker-schema-badge')).not.toBeInTheDocument();
+
+        // Switch to vLLM → badge appears.
+        await userEvent.selectOptions(
+            screen.getByTestId('playbook-picker-backend'),
+            'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-schema-badge')).toBeInTheDocument();
+        });
+        // Switch back to Ollama → badge disappears.
+        await userEvent.selectOptions(
+            screen.getByTestId('playbook-picker-backend'),
+            'ollama:llama3.1:8b',
+        );
+        await waitFor(() => {
+            expect(screen.queryByTestId('playbook-picker-schema-badge')).not.toBeInTheDocument();
+        });
+    });
+
+    it('suffixes schema-aware options in the dropdown text', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            backendsResponse: {
+                project_id: 1,
+                backends: [
+                    { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b', schema_aware: false },
+                    { name: 'nemo', available: true, describe: 'nemo:meta/llama-3.1-70b-instruct', schema_aware: true },
+                    { name: 'vllm', available: true, describe: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct', schema_aware: true },
+                ],
+            },
+        });
+        render(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
+        });
+        const select = screen.getByTestId('playbook-picker-backend') as HTMLSelectElement;
+        // Auto + 3 backends.
+        expect(select.options.length).toBe(4);
+        expect(select.options[1].text).toBe('ollama:llama3.1:8b');           // no suffix
+        expect(select.options[2].text).toMatch(/nemo:.*· schema-aware$/);
+        expect(select.options[3].text).toMatch(/vllm:.*· schema-aware$/);
+        // The "what does schema-aware mean?" hint appears when at least
+        // one schema-aware option is in the picker.
+        expect(screen.getByTestId('playbook-picker-schema-hint')).toBeInTheDocument();
+    });
+
+    it('omits the schema hint and badge when no available backend is schema-aware', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            backendsResponse: {
+                project_id: 1,
+                backends: [
+                    { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b', schema_aware: false },
+                    { name: 'teacher', available: true, describe: 'teacher:llama3', schema_aware: false },
+                ],
+            },
+        });
+        render(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('playbook-picker-schema-hint')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('playbook-picker-schema-badge')).not.toBeInTheDocument();
+    });
+
     it('passes the selected backend pin through to runPlaybook', async () => {
         installRouter({
             playbooks: {

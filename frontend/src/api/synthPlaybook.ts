@@ -52,6 +52,10 @@ export interface SynthBackendInfo {
     name: string;
     available: boolean;
     describe: string;
+    /** Phase 5c — True for backends that forward the playbook's
+     *  response_schema as response_format=json_schema (NeMo, vLLM).
+     *  False for backends that silently ignore it (Ollama, Teacher). */
+    schema_aware?: boolean;
 }
 
 export interface SynthBackendsResponse {

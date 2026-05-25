@@ -157,6 +157,14 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
     // clutter — they get the same auto-pick behavior as before).
     const availableBackends = backends.filter((b) => b.available);
     const showBackendPicker = availableBackends.length >= 2;
+    // Phase 5c — surface which picks actually honor the playbook's
+    // response_schema. Auto-pick mirrors the registry order, so resolve
+    // schema-awareness for the *first available* backend when in auto.
+    const anySchemaAware = availableBackends.some((b) => b.schema_aware);
+    const activeBackend = selectedBackend
+        ? availableBackends.find((b) => b.describe === selectedBackend)
+        : availableBackends[0];
+    const activeIsSchemaAware = Boolean(activeBackend?.schema_aware);
 
     if (catalogLoading) {
         return (
@@ -240,24 +248,47 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
             </div>
 
             {showBackendPicker && (
-                <div className="playbook-picker__count" data-testid="playbook-picker-backend-row">
-                    <label htmlFor="playbook-backend-picker">Backend</label>
-                    <select
-                        id="playbook-backend-picker"
-                        value={selectedBackend ?? ''}
-                        onChange={(e) =>
-                            setSelectedBackend(e.target.value || null)
-                        }
-                        data-testid="playbook-picker-backend"
-                    >
-                        <option value="">Auto (recommended)</option>
-                        {availableBackends.map((b) => (
-                            <option key={b.name} value={b.describe}>
-                                {b.describe}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <>
+                    <div className="playbook-picker__count" data-testid="playbook-picker-backend-row">
+                        <label htmlFor="playbook-backend-picker">Backend</label>
+                        <select
+                            id="playbook-backend-picker"
+                            value={selectedBackend ?? ''}
+                            onChange={(e) =>
+                                setSelectedBackend(e.target.value || null)
+                            }
+                            data-testid="playbook-picker-backend"
+                        >
+                            <option value="">Auto (recommended)</option>
+                            {availableBackends.map((b) => (
+                                <option key={b.name} value={b.describe}>
+                                    {b.describe}
+                                    {b.schema_aware ? ' · schema-aware' : ''}
+                                </option>
+                            ))}
+                        </select>
+                        {activeIsSchemaAware && (
+                            <span
+                                className="playbook-picker__schema-badge"
+                                title="This backend forwards the playbook's JSON Schema as response_format=json_schema and enforces it during decoding."
+                                data-testid="playbook-picker-schema-badge"
+                            >
+                                ✓ schema-aware
+                            </span>
+                        )}
+                    </div>
+                    {anySchemaAware && (
+                        <p
+                            className="playbook-picker__schema-hint"
+                            data-testid="playbook-picker-schema-hint"
+                        >
+                            Schema-aware backends (NeMo, vLLM) constrain the
+                            decoder to the playbook's <code>response_schema</code>.
+                            Others run free-form — the playbook's parser still
+                            validates after the fact.
+                        </p>
+                    )}
+                </>
             )}
 
             <div className="playbook-picker__actions">
