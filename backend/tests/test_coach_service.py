@@ -365,6 +365,7 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         gold_rows: list[dict],
         task_profile: str | None = "classification",
         with_recipe: bool = True,
+        review_queue: dict | None = None,
     ) -> list[dict]:
         from unittest.mock import MagicMock, patch
 
@@ -380,6 +381,20 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         async def _async_rows(*_a, **_k):
             return gold_rows
 
+        # Default to an empty queue — most existing tests don't care
+        # about the synth-review-pending suggestion, so they should
+        # not see it.
+        queue_payload = review_queue if review_queue is not None else {
+            "project_id": 11,
+            "total_pending": 0,
+            "total_accepted": 0,
+            "groups": [],
+            "accepted_groups": [],
+        }
+
+        async def _async_queue(*_a, **_k):
+            return queue_payload
+
         with (
             patch(
                 "app.services.trainability_forecast_service._load_gold_rows",
@@ -388,6 +403,10 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.recipe_service.get_recipe",
                 return_value=recipe_stub if with_recipe else None,
+            ),
+            patch(
+                "app.services.synth_review_queue_service.list_review_queue",
+                side_effect=_async_queue,
             ),
         ):
             return await _gold_set_stage_suggestions(
@@ -491,6 +510,139 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("backend", s["action"]["params"])
         # Context still carries the field for UI consistency, just null.
         self.assertIsNone(s["context"].get("schema_aware_backend"))
+
+    async def test_synth_review_pending_emits_navigate_action(self):
+        """When the synth review queue has pending rows, gold_set
+        Coach surfaces a one-click ``navigate`` action so the user
+        doesn't lose work to the dataset-prep gate."""
+        # Balanced gold so no imbalance/diversity suggestions fire +
+        # we can isolate the pending-review-queue case.
+        gold_rows = (
+            [{"question": f"q{i}", "answer": "a", "label": "billing"} for i in range(15)]
+            + [{"question": f"q{i + 15}", "answer": "a", "label": "technical"} for i in range(15)]
+            + [{"question": f"q{i + 30}", "answer": "a", "label": "shipping"} for i in range(15)]
+        )
+        # Add unique tokens so diversity warn doesn't trip.
+        for i, row in enumerate(gold_rows):
+            row["question"] = f"unique{i} " + row["question"]
+        queue = {
+            "project_id": 11,
+            "total_pending": 12,
+            "total_accepted": 0,
+            "groups": [
+                {
+                    "synth_source": "playbook:classification:class_balance_fill:class=technical",
+                    "count": 12,
+                    "rows": [],
+                }
+            ],
+            "accepted_groups": [],
+        }
+        suggestions = await self._suggestions(
+            gold_rows=gold_rows, review_queue=queue
+        )
+        s = next(
+            (s for s in suggestions if s["id"] == "gold_set:synth-review-pending"),
+            None,
+        )
+        self.assertIsNotNone(s, "expected synth-review-pending suggestion")
+        self.assertEqual(s["action"]["kind"], "navigate")
+        self.assertEqual(
+            s["action"]["params"]["target"], "synthetic-review-queue"
+        )
+        # 12 pending → severity escalates to "warning" (threshold ≥ 5).
+        self.assertEqual(s["severity"], "warning")
+        # Title surfaces the count so the user knows the scale.
+        self.assertIn("12", s["title"])
+        # Body mentions the class_balance_fill source so the user
+        # connects this back to the suggestion they ran.
+        self.assertIn("class-imbalance", s["body"].lower())
+        # Context carries the raw fields for the UI / future signals.
+        self.assertEqual(s["context"]["total_pending"], 12)
+
+    async def test_synth_review_low_count_emits_info_severity(self):
+        """1-4 pending rows is just a nudge, not a warning."""
+        gold_rows = (
+            [{"question": f"unique{i} q{i}", "answer": "a", "label": "billing"} for i in range(15)]
+            + [{"question": f"unique{i + 15} q{i + 15}", "answer": "a", "label": "technical"} for i in range(15)]
+            + [{"question": f"unique{i + 30} q{i + 30}", "answer": "a", "label": "shipping"} for i in range(15)]
+        )
+        queue = {
+            "project_id": 11,
+            "total_pending": 3,
+            "total_accepted": 0,
+            "groups": [
+                {"synth_source": "playbook:qa-sft:positives_paraphrase", "count": 3, "rows": []}
+            ],
+            "accepted_groups": [],
+        }
+        suggestions = await self._suggestions(
+            gold_rows=gold_rows, review_queue=queue
+        )
+        s = next(
+            s for s in suggestions if s["id"] == "gold_set:synth-review-pending"
+        )
+        self.assertEqual(s["severity"], "info")
+        # Body should reference the actual source bucket since it's
+        # not a class_balance_fill run.
+        self.assertIn("positives_paraphrase", s["body"])
+
+    async def test_synth_review_empty_queue_emits_no_suggestion(self):
+        """Empty queue → no suggestion (the default queue mock in
+        ``_suggestions`` exercises this case)."""
+        gold_rows = (
+            [{"question": f"unique{i} q{i}", "answer": "a", "label": "billing"} for i in range(15)]
+            + [{"question": f"unique{i + 15} q{i + 15}", "answer": "a", "label": "technical"} for i in range(15)]
+            + [{"question": f"unique{i + 30} q{i + 30}", "answer": "a", "label": "shipping"} for i in range(15)]
+        )
+        suggestions = await self._suggestions(gold_rows=gold_rows)
+        ids = {s["id"] for s in suggestions}
+        self.assertNotIn("gold_set:synth-review-pending", ids)
+
+    async def test_synth_review_queue_read_failure_does_not_block_other_suggestions(self):
+        """A queue read that throws must not crash the gold_set strip.
+        Other suggestions (imbalance, diversity) still emit."""
+        from unittest.mock import MagicMock, patch
+
+        class _StubProject:
+            id = 11
+            selected_recipe = {"recipe_id": "classification"}
+
+        recipe_stub = MagicMock()
+        recipe_stub.task_profile = "classification"
+        gold_rows = (
+            [{"question": f"q{i}", "answer": "a", "label": "billing"} for i in range(90)]
+            + [{"question": f"q{i + 90}", "answer": "a", "label": "technical"} for i in range(10)]
+        )
+
+        async def _async_rows(*_a, **_k):
+            return gold_rows
+
+        async def _boom(*_a, **_k):
+            raise RuntimeError("disk error")
+
+        with (
+            patch(
+                "app.services.trainability_forecast_service._load_gold_rows",
+                side_effect=_async_rows,
+            ),
+            patch(
+                "app.services.recipe_service.get_recipe",
+                return_value=recipe_stub,
+            ),
+            patch(
+                "app.services.synth_review_queue_service.list_review_queue",
+                side_effect=_boom,
+            ),
+        ):
+            suggestions = await _gold_set_stage_suggestions(
+                db=None, project=_StubProject()  # type: ignore[arg-type]
+            )
+        # The imbalance suggestion still fires; the pending-review
+        # suggestion is silently skipped.
+        ids = {s["id"] for s in suggestions}
+        self.assertIn("gold_set:class-imbalance", ids)
+        self.assertNotIn("gold_set:synth-review-pending", ids)
 
     async def test_balanced_classes_emit_no_imbalance_suggestion(self):
         # 3 balanced classes → Shannon entropy ≈ ln(3) ≈ 1.10, above

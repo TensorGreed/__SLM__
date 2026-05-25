@@ -460,6 +460,68 @@ async def _gold_set_stage_suggestions(
             },
         })
 
+    # ── Pending synth review queue ─────────────────────────────
+    # Click-to-execute actions (class_balance_fill etc.) write rows
+    # to the project's synth review queue with review_status="pending".
+    # ``dataset_service._load_records_from_file`` excludes pending rows
+    # by default, so unreviewed synth rows are silently gated out of
+    # training. This suggestion is the reminder + the one-click jump
+    # to the queue UI so users don't lose the work they just generated.
+    from app.services.synth_review_queue_service import list_review_queue
+
+    try:
+        queue = await list_review_queue(db, project.id)
+    except Exception:  # noqa: BLE001 — never block the gold_set strip on a queue read
+        queue = None
+    pending_count = int((queue or {}).get("total_pending") or 0)
+    if pending_count > 0:
+        # Severity scales with the pile-up. Up to 4 rows is just a
+        # "don't forget" nudge; 5+ means a meaningful chunk of data
+        # the user generated is silently missing from training, so
+        # warn. Never critical — pending rows aren't a failure mode,
+        # just an unfinished todo.
+        severity: Severity = "warning" if pending_count >= 5 else "info"
+        # Pull the top source bucket(s) so the body can name what's
+        # waiting (e.g. "from class_balance_fill") — more useful than
+        # an abstract count.
+        groups = (queue or {}).get("groups") or []
+        top_source = groups[0].get("synth_source") if groups else None
+        body_detail = ""
+        if top_source and "class_balance_fill" in str(top_source):
+            body_detail = (
+                " The class-imbalance suggestion you ran wrote into this "
+                "queue — accepting these rows is what actually lifts the "
+                "minority-class signal in training."
+            )
+        elif top_source:
+            body_detail = (
+                f" The largest pending source is `{top_source}`. Accept "
+                "to add to the training set; reject to drop."
+            )
+        suggestions.append({
+            "id": "gold_set:synth-review-pending",
+            "title": (
+                f"{pending_count} synthetic row"
+                f"{'' if pending_count == 1 else 's'} pending review"
+            ),
+            "body": (
+                "Generated synthetic rows land in the review queue with "
+                "`review_status=\"pending\"` and are excluded from "
+                "training until you accept them."
+                + body_detail
+            ).strip(),
+            "severity": severity,
+            "action": {
+                "kind": "navigate",
+                "label": "Open review queue",
+                "params": {"target": "synthetic-review-queue"},
+            },
+            "context": {
+                "total_pending": pending_count,
+                "top_source": top_source,
+            },
+        })
+
     return suggestions
 
 

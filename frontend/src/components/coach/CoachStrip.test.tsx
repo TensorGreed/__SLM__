@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, navigateMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
         post: vi.fn(),
@@ -10,9 +10,18 @@ const { apiMock } = vi.hoisted(() => ({
         put: vi.fn(),
         delete: vi.fn(),
     },
+    navigateMock: vi.fn(),
 }));
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
+
+// CoachSuggestion uses `useNavigate` for Phase 5c navigate actions
+// that route to a concrete URL (e.g. synthetic-review-queue). The
+// strip is rendered without a Router in these tests, so we mock the
+// hook directly.
+vi.mock('react-router-dom', () => ({
+    useNavigate: () => navigateMock,
+}));
 
 import CoachStrip from './CoachStrip';
 import { _resetCoachModeStoreForTests, useCoachModeStore } from '../../stores/coachModeStore';
@@ -56,6 +65,7 @@ describe('CoachStrip', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        navigateMock.mockReset();
         _resetCoachModeStoreForTests();
     });
 
@@ -294,6 +304,88 @@ describe('CoachStrip', () => {
         expect(
             screen.queryByTestId('coach-suggestion-schema-badge-gold_set:class-imbalance'),
         ).not.toBeInTheDocument();
+    });
+
+    it('navigates to the Data Studio review-queue section for synthetic-review-queue target (Phase 5c)', async () => {
+        // Phase 5c — known navigate targets route to a concrete URL
+        // instead of falling through to the toast-hint fallback. The
+        // gold_set:synth-review-pending suggestion uses this so the
+        // user lands directly on the review queue.
+        installGetRouter({
+            data: {
+                project_id: 42,
+                stage: 'gold_set',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'gold_set:synth-review-pending',
+                        title: '7 synthetic rows pending review',
+                        body: 'Generated rows are excluded from training until accepted.',
+                        severity: 'warning',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Open review queue',
+                            params: { target: 'synthetic-review-queue' },
+                        },
+                        context: { total_pending: 7 },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={42} stage="gold_set" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-gold_set:synth-review-pending'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-gold_set:synth-review-pending'),
+        );
+        // Routes to the Data Studio page with the #review-queue hash
+        // so ProjectDataStudioPage's mount effect expands + scrolls to
+        // the section.
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith(
+                '/project/42/data-studio#review-queue',
+            );
+        });
+    });
+
+    it('unknown navigate targets fall back to the toast hint (Phase 1 backwards-compat)', async () => {
+        // Targets without an entry in NAVIGATE_TARGET_URLS keep the
+        // Phase 1 toast-hint behavior — we don't break the recipe-
+        // picker navigate or any other in-page targets.
+        installGetRouter({
+            data: {
+                project_id: 1,
+                stage: 'data',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'data:no-recipe',
+                        title: 'Pick a recipe',
+                        body: 'Coach needs the recipe to score.',
+                        severity: 'warning',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Open recipe picker',
+                            params: { target: 'recipe-picker' },  // not in the URL map
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={1} stage="data" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-data:no-recipe'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-data:no-recipe'),
+        );
+        // Did NOT navigate — the toast-hint path ran instead.
+        expect(navigateMock).not.toHaveBeenCalled();
     });
 
     it('forwards a schema-aware backend pin on run_playbook actions (Phase 5c)', async () => {

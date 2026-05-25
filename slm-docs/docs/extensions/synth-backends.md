@@ -74,6 +74,10 @@ Coach Mode's class-imbalance suggestion (`gold_set:class-imbalance`) — the cli
 
 The Coach suggestion card surfaces the auto-pinned backend under the action button as a caption — e.g. **will run on `vllm:meta-llama/Meta-Llama-3.1-8B-Instruct`  ✓ schema-aware** — so users see the upgrade happening instead of it being silently applied. The schema-aware chip renders only when the pinned backend matches `context.schema_aware_backend` (also stamped by `coach_service`), so the UI never has to maintain its own backend-name allowlist.
 
+### Coach Mode reminds you to review pending synth rows
+
+After Coach runs the click-to-execute class-imbalance action, the generated rows land in the synth review queue with `review_status="pending"` and are **silently gated out of training** by the dataset-prep loader. To close that loop, the gold_set Coach surface emits a `gold_set:synth-review-pending` suggestion whenever the queue has pending rows. Severity scales with the pile-up — `info` for 1–4 rows (just a nudge), `warning` for 5+ (meaningful chunk of generated data not yet in training). The action is a `navigate` with target `synthetic-review-queue`; clicking it routes directly to `/project/{id}/data-studio#review-queue`, where the Data Studio page expands + scrolls to the queue panel on mount.
+
 ## vLLM setup
 
 `VllmBackend` talks to a local vLLM server over the standard OpenAI-compatible `/v1/chat/completions` API. vLLM is the recommended backend when you want Phase 5b's schema-constrained generation to actually constrain decoding — it implements `response_format=json_schema` via xgrammar / outlines, which Ollama does not.

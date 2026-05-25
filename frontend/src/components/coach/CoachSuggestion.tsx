@@ -12,6 +12,7 @@
  */
 
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import type { CoachSuggestion } from '../../api/coach';
 import {
@@ -131,12 +132,22 @@ const SEVERITY_COLORS: Record<
     },
 };
 
+// Phase 5c — known navigate targets that route to a concrete URL
+// (vs. fall through to the toast-hint fallback). Keep this map small
+// and explicit so adding a new target is one obvious place to touch.
+// The hash anchors match the section ids in ProjectDataStudioPage.
+const NAVIGATE_TARGET_URLS: Record<string, (projectId: number) => string> = {
+    'synthetic-review-queue': (projectId) =>
+        `/project/${projectId}/data-studio#review-queue`,
+};
+
 export default function CoachSuggestionCard({
     projectId,
     suggestion,
     onActionCompleted,
 }: CoachSuggestionCardProps) {
     const [isExecuting, setIsExecuting] = useState(false);
+    const navigate = useNavigate();
     const colors = SEVERITY_COLORS[suggestion.severity];
     // Cache the term-wrap parse so the regex scan doesn't re-run on
     // every state flip (e.g. while the action button is "Working…").
@@ -247,9 +258,19 @@ export default function CoachSuggestionCard({
             return;
         }
         if (suggestion.action.kind === 'navigate') {
-            // Phase 1: surface a hint. The recipe-picker for the data
-            // stage already lives on the same tab, so the user can
-            // act without a route change.
+            // Phase 5c — known targets route to a concrete URL so the
+            // action is genuinely one-click. Unknown targets fall back
+            // to the Phase 1 toast-hint behavior (the recipe-picker on
+            // the data stage, for instance, lives on the same tab so a
+            // hint is appropriate). React-Router's `navigate` preserves
+            // the hash, which the Data Studio page reads on mount to
+            // scroll + expand the matching section.
+            const target = suggestion.action.params['target'];
+            if (typeof target === 'string' && target in NAVIGATE_TARGET_URLS) {
+                navigate(NAVIGATE_TARGET_URLS[target](projectId));
+                onActionCompleted?.();
+                return;
+            }
             toast.info(
                 `Tip: ${suggestion.action.label.toLowerCase()} before retrying this Coach action.`,
             );
