@@ -29,6 +29,7 @@ from app.api.synthetic import router as synthetic_router
 from app.api.gamification import router as gamification_router
 from app.api.coach import router as coach_router
 from app.api.curriculum import router as curriculum_router
+from app.api.auto_rag import router as auto_rag_router
 from app.api.annotation import router as annotation_router
 from app.api.dataset_import import (
     catalog_router as dataset_import_catalog_router,
@@ -252,6 +253,7 @@ app.include_router(synthetic_router, prefix="/api", dependencies=API_DEPENDENCIE
 app.include_router(gamification_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(coach_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(curriculum_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(auto_rag_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(annotation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)
