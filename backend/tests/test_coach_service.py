@@ -427,6 +427,71 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
             CLASS_BALANCE_TOPUP_DEFAULT,
         )
 
+    async def test_class_imbalance_auto_pins_schema_aware_backend_when_available(self):
+        """Phase 5c: when a schema-aware backend (vllm or nemo) is
+        configured + reachable, Coach's class_balance_fill suggestion
+        stamps a ``backend`` pin on the action so the click-to-execute
+        flow gets constrained decoding for free. Without that pin, the
+        orchestrator would auto-pick Ollama (the registry's first
+        available) and silently lose the schema constraint."""
+        from unittest.mock import patch
+
+        from app.services.synth_backends import (
+            NemoBackend,
+            OllamaBackend,
+            TeacherModelBackend,
+            VllmBackend,
+        )
+
+        gold_rows = (
+            [{"question": f"q{i}", "answer": "a", "label": "billing"} for i in range(90)]
+            + [{"question": f"q{i + 90}", "answer": "a", "label": "technical"} for i in range(10)]
+        )
+        # Both vllm + nemo are reachable; vllm wins by preference.
+        with (
+            patch.object(VllmBackend, "is_available", return_value=True),
+            patch.object(VllmBackend, "describe", return_value="vllm:llama-3.1-8b"),
+            patch.object(NemoBackend, "is_available", return_value=True),
+            patch.object(OllamaBackend, "is_available", return_value=True),
+            patch.object(TeacherModelBackend, "is_available", return_value=False),
+        ):
+            suggestions = await self._suggestions(gold_rows=gold_rows)
+        s = next(s for s in suggestions if s["id"] == "gold_set:class-imbalance")
+        # The pin is on the action params (so CoachSuggestion.tsx
+        # forwards it to runPlaybook) AND surfaced on context (so the
+        # UI can explain the auto-upgrade if it ever wants to).
+        self.assertEqual(s["action"]["params"]["backend"], "vllm:llama-3.1-8b")
+        self.assertEqual(
+            s["context"]["schema_aware_backend"], "vllm:llama-3.1-8b"
+        )
+
+    async def test_class_imbalance_omits_backend_pin_when_no_schema_aware_available(self):
+        """Backwards-compat: existing installs with only Ollama keep
+        the same suggestion shape — no backend pin → orchestrator
+        auto-pick (Ollama) runs the playbook unchanged."""
+        from unittest.mock import patch
+
+        from app.services.synth_backends import (
+            NemoBackend,
+            OllamaBackend,
+            VllmBackend,
+        )
+
+        gold_rows = (
+            [{"question": f"q{i}", "answer": "a", "label": "billing"} for i in range(90)]
+            + [{"question": f"q{i + 90}", "answer": "a", "label": "technical"} for i in range(10)]
+        )
+        with (
+            patch.object(OllamaBackend, "is_available", return_value=True),
+            patch.object(NemoBackend, "is_available", return_value=False),
+            patch.object(VllmBackend, "is_available", return_value=False),
+        ):
+            suggestions = await self._suggestions(gold_rows=gold_rows)
+        s = next(s for s in suggestions if s["id"] == "gold_set:class-imbalance")
+        self.assertNotIn("backend", s["action"]["params"])
+        # Context still carries the field for UI consistency, just null.
+        self.assertIsNone(s["context"].get("schema_aware_backend"))
+
     async def test_balanced_classes_emit_no_imbalance_suggestion(self):
         # 3 balanced classes → Shannon entropy ≈ ln(3) ≈ 1.10, above
         # the trainability service's CLASS_ENTROPY_WARN (1.0) → "ok"

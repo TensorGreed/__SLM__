@@ -70,6 +70,57 @@ class SynthBackend(Protocol):
         return self.name
 
 
+def pick_schema_aware_backend_describe(
+    *,
+    registry: list[type[SynthBackend]] | None = None,
+) -> str | None:
+    """Return the best schema-honoring backend's ``describe()`` token,
+    or None when none of the registered schema-aware backends are
+    reachable.
+
+    Preference: **vLLM > NeMo**. vLLM enforces ``response_format=json_schema``
+    during decoding via xgrammar / outlines (decoder-side guarantee);
+    NeMo / NIM passes the same shape upstream but enforcement quality
+    depends on the model + NIM version, so it's the fallback.
+
+    Used by Coach Mode's click-to-execute actions to opt schema-aware
+    playbooks (Phase 5b — currently just ``class_balance_fill``) into
+    constrained decoding when the install has vLLM or NeMo configured,
+    without forcing the user through the backend picker.
+
+    Returns ``None`` (not a SynthBackendError) when nothing schema-
+    aware is reachable — the caller should simply omit the backend
+    pin so ``pick_backend(None)`` continues to auto-pick Ollama (or
+    whatever else is first in the registry).
+    """
+    if registry is None:
+        from . import BACKEND_REGISTRY  # noqa: WPS433
+
+        registry = BACKEND_REGISTRY
+
+    # Hard-coded preference order so the Coach behavior is independent
+    # of registry order (registry order encodes auto-pick fallback;
+    # this encodes "best constrained-decoder available").
+    PREFERENCE_ORDER = ("vllm", "nemo")
+    by_name = {cls.name: cls for cls in registry if getattr(cls, "schema_aware", False)}
+    for name in PREFERENCE_ORDER:
+        cls = by_name.get(name)
+        if cls is None:
+            continue
+        try:
+            if not cls.is_available():
+                continue
+        except Exception:  # noqa: BLE001 — broken backend ≠ block Coach
+            continue
+        # ``describe()`` is the canonical pin token (matches the
+        # backend picker's `value` attribute on its <option>).
+        try:
+            return cls().describe()
+        except Exception:  # noqa: BLE001 — constructor blew up, skip
+            continue
+    return None
+
+
 def pick_backend(
     requested: str | None = None,
     *,

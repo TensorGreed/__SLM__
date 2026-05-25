@@ -27,12 +27,15 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.config import settings  # noqa: E402
 from app.main import app  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
 from app.services.synth_backends import (  # noqa: E402
     BACKEND_REGISTRY,
     NemoBackend,
     OllamaBackend,
     TeacherModelBackend,
     VllmBackend,
+    pick_schema_aware_backend_describe,
 )
 
 
@@ -130,6 +133,78 @@ class BackendsApiSurfaceSchemaAwareTests(unittest.TestCase):
         self.assertTrue(by_name["vllm"]["schema_aware"])
         self.assertFalse(by_name["ollama"]["schema_aware"])
         self.assertFalse(by_name["teacher"]["schema_aware"])
+
+
+class PickSchemaAwareBackendHelperTests(unittest.TestCase):
+    """The helper Coach Mode uses to auto-pin schema-honoring backends
+    on click-to-execute actions. Preference: vllm > nemo."""
+
+    def test_returns_none_when_no_schema_aware_backend_reachable(self):
+        # All backends report not-available → no pin, Coach lets the
+        # orchestrator auto-pick (typically Ollama).
+        with (
+            patch.object(NemoBackend, "is_available", return_value=False),
+            patch.object(VllmBackend, "is_available", return_value=False),
+        ):
+            self.assertIsNone(pick_schema_aware_backend_describe())
+
+    def test_prefers_vllm_over_nemo_when_both_reachable(self):
+        """vLLM enforces the schema at decode time (xgrammar / outlines)
+        — preferred over NeMo where enforcement quality depends on the
+        model + NIM version."""
+        with (
+            patch.object(NemoBackend, "is_available", return_value=True),
+            patch.object(VllmBackend, "is_available", return_value=True),
+            patch.object(
+                VllmBackend,
+                "describe",
+                return_value="vllm:meta-llama/Meta-Llama-3.1-8B-Instruct",
+            ),
+        ):
+            pin = pick_schema_aware_backend_describe()
+        self.assertEqual(pin, "vllm:meta-llama/Meta-Llama-3.1-8B-Instruct")
+
+    def test_falls_back_to_nemo_when_vllm_unavailable(self):
+        with (
+            patch.object(NemoBackend, "is_available", return_value=True),
+            patch.object(VllmBackend, "is_available", return_value=False),
+            patch.object(
+                NemoBackend,
+                "describe",
+                return_value="nemo:meta/llama-3.1-70b-instruct",
+            ),
+        ):
+            pin = pick_schema_aware_backend_describe()
+        self.assertEqual(pin, "nemo:meta/llama-3.1-70b-instruct")
+
+    def test_ignores_ollama_and_teacher_even_if_reachable(self):
+        # Non-schema-aware backends must never be returned by this
+        # helper, even if they're the only thing reachable.
+        with (
+            patch.object(OllamaBackend, "is_available", return_value=True),
+            patch.object(TeacherModelBackend, "is_available", return_value=True),
+            patch.object(NemoBackend, "is_available", return_value=False),
+            patch.object(VllmBackend, "is_available", return_value=False),
+        ):
+            self.assertIsNone(pick_schema_aware_backend_describe())
+
+    def test_broken_is_available_does_not_block_pick(self):
+        """A backend whose is_available raises must not break Coach;
+        the helper should skip it and try the next."""
+        def boom(*_a, **_k):
+            raise RuntimeError("backend init failed")
+
+        with (
+            patch.object(VllmBackend, "is_available", side_effect=boom),
+            patch.object(NemoBackend, "is_available", return_value=True),
+            patch.object(
+                NemoBackend,
+                "describe",
+                return_value="nemo:meta/llama-3.1-70b-instruct",
+            ),
+        ):
+            pin = pick_schema_aware_backend_describe()
+        self.assertEqual(pin, "nemo:meta/llama-3.1-70b-instruct")
 
 
 if __name__ == "__main__":

@@ -347,6 +347,7 @@ async def _gold_set_stage_suggestions(
     # trainability service ever depends on coach (currently it
     # doesn't, but we don't want to fragile-import-order this).
     from app.services.recipe_service import get_recipe
+    from app.services.synth_backends import pick_schema_aware_backend_describe
     from app.services.trainability_forecast_service import (
         _load_gold_rows,
         _signal_class_imbalance,
@@ -392,6 +393,22 @@ async def _gold_set_stage_suggestions(
         )
         target_class = under[0] if under else None
         severity: Severity = "critical" if class_signal["severity"] == "block" else "warning"
+        # Phase 5c — opt the click-to-execute action into constrained
+        # decoding when a schema-aware backend (vllm > nemo) is
+        # configured + reachable. class_balance_fill is the only
+        # playbook today that defines response_schema(), so this is
+        # the one Coach suggestion that benefits. When nothing schema-
+        # aware is available, leave the pin off → orchestrator
+        # auto-picks (typically Ollama) and falls back to parser-only
+        # validation.
+        schema_aware_pin = pick_schema_aware_backend_describe()
+        action_params: dict[str, Any] = {
+            "mode": "class_balance_fill",
+            "target_count": CLASS_BALANCE_TOPUP_DEFAULT,
+            "target_class": target_class,
+        }
+        if schema_aware_pin:
+            action_params["backend"] = schema_aware_pin
         suggestions.append({
             "id": "gold_set:class-imbalance",
             "title": str(class_signal.get("headline", "Class distribution is skewed")),
@@ -407,15 +424,12 @@ async def _gold_set_stage_suggestions(
                     f"Generate {CLASS_BALANCE_TOPUP_DEFAULT} examples"
                     + (f" for '{target_class}'" if target_class else "")
                 ),
-                "params": {
-                    "mode": "class_balance_fill",
-                    "target_count": CLASS_BALANCE_TOPUP_DEFAULT,
-                    "target_class": target_class,
-                },
+                "params": action_params,
             },
             "context": {
                 "underrepresented_classes": under,
                 "headline": class_signal.get("headline"),
+                "schema_aware_backend": schema_aware_pin,
             },
         })
 

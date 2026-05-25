@@ -153,6 +153,15 @@ export default function CoachSuggestionCard({
                 | string
                 | null
                 | undefined;
+            // Phase 5c — coach_service stamps a schema-aware backend
+            // pin on suggestions whose playbook defines response_schema
+            // (today: class_balance_fill only). Forward it so the
+            // orchestrator routes the run through vLLM / NeMo instead
+            // of auto-picking Ollama and losing constrained decoding.
+            const backend = suggestion.action.params['backend'] as
+                | string
+                | null
+                | undefined;
             if (!mode || !Number.isFinite(targetCount) || targetCount < 1) {
                 toast.error('Coach suggestion is missing action parameters.');
                 return;
@@ -163,6 +172,7 @@ export default function CoachSuggestionCard({
                     mode,
                     targetCount,
                     targetClass: targetClass ?? null,
+                    backend: backend ?? null,
                 });
                 // Generated rows land in the project's synth review
                 // queue with review_status="pending" — gated out of

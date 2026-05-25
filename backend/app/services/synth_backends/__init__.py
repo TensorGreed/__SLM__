@@ -17,7 +17,12 @@ Callers can pin a specific backend by name via
 
 from __future__ import annotations
 
-from .base import SynthBackend, SynthBackendError, pick_backend
+from .base import (
+    SynthBackend,
+    SynthBackendError,
+    pick_backend,
+    pick_schema_aware_backend_describe,
+)
 from .nemo import NemoBackend
 from .ollama import OllamaBackend
 from .teacher import TeacherModelBackend
@@ -46,4 +51,5 @@ __all__ = [
     "TeacherModelBackend",
     "VllmBackend",
     "pick_backend",
+    "pick_schema_aware_backend_describe",
 ]

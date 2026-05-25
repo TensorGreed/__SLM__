@@ -153,6 +153,68 @@ describe('CoachStrip', () => {
         });
     });
 
+    it('forwards a schema-aware backend pin on run_playbook actions (Phase 5c)', async () => {
+        // Coach Mode stamps params.backend on class_balance_fill
+        // suggestions when a schema-aware backend (vllm > nemo) is
+        // reachable. The click-to-execute flow must forward that pin
+        // to runPlaybook so the orchestrator routes to the schema-
+        // honoring backend instead of auto-picking Ollama.
+        installGetRouter({
+            data: {
+                project_id: 1,
+                stage: 'gold_set',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'gold_set:class-imbalance',
+                        title: 'Class distribution is skewed',
+                        body: 'Generate examples for the minority class.',
+                        severity: 'critical',
+                        action: {
+                            kind: 'run_playbook',
+                            label: "Generate 50 examples for 'technical'",
+                            params: {
+                                mode: 'class_balance_fill',
+                                target_count: 50,
+                                target_class: 'technical',
+                                backend: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
+                            },
+                        },
+                    },
+                ],
+            },
+        });
+        apiMock.post.mockResolvedValue({
+            data: {
+                rows: [{ payload: {} }],
+                backend_used: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
+                elapsed_sec: 1.2,
+                prompt_snippet: '...',
+            },
+        });
+
+        render(<CoachStrip projectId={1} stage="gold_set" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-gold_set:class-imbalance'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-gold_set:class-imbalance'),
+        );
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/run-playbook',
+                expect.objectContaining({
+                    mode: 'class_balance_fill',
+                    target_count: 50,
+                    target_class: 'technical',
+                    backend: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
+                }),
+            );
+        });
+    });
+
     it('clicking the augment_from_cluster action posts to /evaluation/.../augment (Phase 3)', async () => {
         installGetRouter({
             data: {
