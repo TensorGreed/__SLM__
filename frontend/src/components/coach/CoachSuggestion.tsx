@@ -133,12 +133,30 @@ const SEVERITY_COLORS: Record<
 };
 
 // Phase 5c — known navigate targets that route to a concrete URL
-// (vs. fall through to the toast-hint fallback). Keep this map small
-// and explicit so adding a new target is one obvious place to touch.
-// The hash anchors match the section ids in ProjectDataStudioPage.
-const NAVIGATE_TARGET_URLS: Record<string, (projectId: number) => string> = {
-    'synthetic-review-queue': (projectId) =>
-        `/project/${projectId}/data-studio#review-queue`,
+// (vs. fall through to the toast-hint fallback). Builders receive
+// the project id + the action's params bag so they can append
+// focus / scroll hints (e.g. ``?focus_synth_source=...`` for the
+// review-queue surface). Keep this map small and explicit so adding
+// a new target is one obvious place to touch.
+const NAVIGATE_TARGET_URLS: Record<
+    string,
+    (projectId: number, params: Record<string, unknown>) => string
+> = {
+    // Lands on the Synthetic pipeline tab where SynthReviewQueue is
+    // mounted (the row-level accept/reject UI). When ``synth_source``
+    // is set on the action (Coach stamps the top pending bucket), we
+    // pass it as ?focus_synth_source=... so SynthReviewQueue can
+    // render its one-click "Accept all N <source> rows" banner. The
+    // #synth-review-queue hash is what SyntheticPanel scrolls to on
+    // mount.
+    'synthetic-review-queue': (projectId, params) => {
+        const source = params['synth_source'];
+        const query =
+            typeof source === 'string' && source.length > 0
+                ? `?focus_synth_source=${encodeURIComponent(source)}`
+                : '';
+        return `/project/${projectId}/pipeline/synthetic${query}#synth-review-queue`;
+    },
 };
 
 export default function CoachSuggestionCard({
@@ -267,7 +285,12 @@ export default function CoachSuggestionCard({
             // scroll + expand the matching section.
             const target = suggestion.action.params['target'];
             if (typeof target === 'string' && target in NAVIGATE_TARGET_URLS) {
-                navigate(NAVIGATE_TARGET_URLS[target](projectId));
+                navigate(
+                    NAVIGATE_TARGET_URLS[target](
+                        projectId,
+                        suggestion.action.params,
+                    ),
+                );
                 onActionCompleted?.();
                 return;
             }

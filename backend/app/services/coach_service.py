@@ -498,6 +498,16 @@ async def _gold_set_stage_suggestions(
                 f" The largest pending source is `{top_source}`. Accept "
                 "to add to the training set; reject to drop."
             )
+        # The top source bucket also flows into action.params.synth_source
+        # so the Coach navigate handler can build a focused URL —
+        # ``?focus_synth_source=<source>`` lets SynthReviewQueue render
+        # a one-click "Accept all N <source> rows" banner instead of
+        # making the user multi-select. When the queue has more than
+        # one source (mixed playbook runs), we still pin the largest
+        # bucket — usually the most recent / most-actioned one.
+        action_params: dict[str, Any] = {"target": "synthetic-review-queue"}
+        if top_source:
+            action_params["synth_source"] = top_source
         suggestions.append({
             "id": "gold_set:synth-review-pending",
             "title": (
@@ -514,7 +524,7 @@ async def _gold_set_stage_suggestions(
             "action": {
                 "kind": "navigate",
                 "label": "Open review queue",
-                "params": {"target": "synthetic-review-queue"},
+                "params": action_params,
             },
             "context": {
                 "total_pending": pending_count,

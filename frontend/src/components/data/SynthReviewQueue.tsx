@@ -24,17 +24,30 @@ import './SynthReviewQueue.css';
 
 interface Props {
     projectId: number;
+    /** Phase 5c — when set, render a banner at the top of the panel
+     *  with a one-click "Accept all N <source> rows" button. Coach
+     *  Mode passes this via the URL (?focus_synth_source=...) so the
+     *  click-to-execute loop closes in two clicks instead of N. */
+    focusSource?: string | null;
 }
 
 type SelectedSet = Set<number>;
 
-export default function SynthReviewQueue({ projectId }: Props) {
+export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     const [data, setData] = useState<ReviewQueueResponse | null>(null);
     const [selected, setSelected] = useState<SelectedSet>(new Set());
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [flash, setFlash] = useState<string | null>(null);
+    // ``focusActive`` lets the user dismiss the focus banner without
+    // losing the navigation context (URL hash + query stay). Set when
+    // the focusSource prop arrives; cleared on dismiss + on successful
+    // bulk-accept (no point keeping a banner for an empty bucket).
+    const [focusActive, setFocusActive] = useState<boolean>(!!focusSource);
+    useEffect(() => {
+        setFocusActive(!!focusSource);
+    }, [focusSource]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -82,6 +95,49 @@ export default function SynthReviewQueue({ projectId }: Props) {
         },
         [projectId, selected, load],
     );
+
+    // Phase 5c — gather the pending row ids that belong to the
+    // focused source (exact match on synth_source). The one-click
+    // banner uses this to bulk-accept without forcing the user to
+    // multi-select. We match on equality (not substring) so the
+    // banner can't accidentally include rows from a sibling source
+    // like ``...class=billing`` when the focus is on
+    // ``...class=technical``.
+    const focusedRowIds: number[] = (() => {
+        if (!focusActive || !focusSource || !data) return [];
+        const out: number[] = [];
+        for (const group of data.groups) {
+            if (group.synth_source === focusSource) {
+                for (const row of group.rows) {
+                    out.push(row.id);
+                }
+            }
+        }
+        return out;
+    })();
+
+    const handleAcceptFocused = useCallback(async () => {
+        if (focusedRowIds.length === 0) return;
+        setBusy(true);
+        setFlash(null);
+        try {
+            const result = await bulkUpdateSynthReviewQueue(projectId, {
+                rowIds: focusedRowIds,
+                action: 'accept',
+            });
+            setFlash(
+                `Accepted ${result.accepted} row${result.accepted === 1 ? '' : 's'} from ${focusSource}. ${result.total_remaining_pending} still pending.`,
+            );
+            // Clear the focus banner once the source is drained —
+            // keeping it visible would imply more rows are coming.
+            setFocusActive(false);
+            await load();
+        } catch (err: any) {
+            setError(err?.response?.data?.detail || err?.message || 'Bulk accept failed');
+        } finally {
+            setBusy(false);
+        }
+    }, [focusedRowIds, focusSource, projectId, load]);
 
     const toggleRow = (id: number) => {
         setSelected((prev) => {
@@ -165,6 +221,54 @@ export default function SynthReviewQueue({ projectId }: Props) {
                 </p>
             </header>
             <TotalCountStrip data={data} />
+
+            {focusActive && focusSource && (
+                <div
+                    className={
+                        'synth-review-queue__focus-banner'
+                        + (focusedRowIds.length === 0 ? ' is-empty' : '')
+                    }
+                    data-testid="synth-review-queue-focus-banner"
+                >
+                    <div className="synth-review-queue__focus-text">
+                        <span className="synth-review-queue__focus-label">
+                            Focused on
+                        </span>
+                        <code
+                            className="synth-review-queue__focus-source"
+                            data-testid="synth-review-queue-focus-source"
+                        >
+                            {focusSource}
+                        </code>
+                        <span className="synth-review-queue__focus-count">
+                            {focusedRowIds.length} pending row
+                            {focusedRowIds.length === 1 ? '' : 's'}
+                        </span>
+                    </div>
+                    <div className="synth-review-queue__focus-actions">
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={handleAcceptFocused}
+                            disabled={focusedRowIds.length === 0 || busy}
+                            data-testid="synth-review-queue-focus-accept-all"
+                        >
+                            {focusedRowIds.length === 0
+                                ? 'Nothing to accept'
+                                : `Accept all ${focusedRowIds.length} row${focusedRowIds.length === 1 ? '' : 's'}`}
+                        </button>
+                        <button
+                            type="button"
+                            className="btn btn-link"
+                            onClick={() => setFocusActive(false)}
+                            disabled={busy}
+                            data-testid="synth-review-queue-focus-clear"
+                        >
+                            Clear focus
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <div className="synth-review-queue__bulk-actions">
                 <button

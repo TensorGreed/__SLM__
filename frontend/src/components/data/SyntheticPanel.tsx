@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import api from '../../api/client';
 import PlaybookPickerPanel from './PlaybookPickerPanel';
 import SynthReviewQueue from './SynthReviewQueue';
@@ -85,6 +86,33 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     type Provider = 'ollama' | 'openai' | 'custom';
     const [provider, setProvider] = useState<Provider>('ollama');
     const [generationMode, setGenerationMode] = useState<GenerationMode>('qa');
+
+    // Phase 5c — when Coach Mode lands the user here with
+    // ?focus_synth_source=...#synth-review-queue, scroll the queue
+    // into view + hand the source string to SynthReviewQueue so it
+    // can render the focused "Accept all N rows" banner.
+    const location = useLocation();
+    const focusSynthSource = useMemo(() => {
+        const params = new URLSearchParams(location.search);
+        return params.get('focus_synth_source');
+    }, [location.search]);
+    const reviewQueueRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (location.hash !== '#synth-review-queue') return;
+        // Defer one tick so child panels finish mounting (the queue
+        // fetches on mount; we want to scroll after the wrapper is
+        // sized, not while it's still rendering the loading state).
+        const t = setTimeout(() => {
+            // jsdom (the test runtime) doesn't implement
+            // scrollIntoView; gate the call so component tests don't
+            // need a polyfill.
+            reviewQueueRef.current?.scrollIntoView?.({
+                behavior: 'smooth',
+                block: 'start',
+            });
+        }, 0);
+        return () => clearTimeout(t);
+    }, [location.hash, location.search]);
 
     const [sourceText, setSourceText] = useState('');
     const [numPairs, setNumPairs] = useState(5);
@@ -635,7 +663,12 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <PlaybookPickerPanel projectId={projectId} />
-            <SynthReviewQueue projectId={projectId} />
+            <div ref={reviewQueueRef} id="synth-review-queue">
+                <SynthReviewQueue
+                    projectId={projectId}
+                    focusSource={focusSynthSource}
+                />
+            </div>
             <div className="card">
                 <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 'var(--space-lg)' }}>🧪 Synthetic Data Generation</h3>
                 {prefillSourceStage && (

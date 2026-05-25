@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, mockLocation } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
         post: vi.fn(),
@@ -10,11 +10,18 @@ const { apiMock } = vi.hoisted(() => ({
         put: vi.fn(),
         delete: vi.fn(),
     },
+    mockLocation: { pathname: '/', search: '', hash: '' },
 }));
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
 vi.mock('../../utils/workflowGraphPrefill', () => ({
     loadWorkflowStagePrefill: vi.fn(async () => null),
+}));
+// SyntheticPanel uses `useLocation` (Phase 5c) to read the Coach
+// landing's ?focus_synth_source param + #synth-review-queue hash.
+// Stub the hook so the panel can be rendered without a <Router>.
+vi.mock('react-router-dom', () => ({
+    useLocation: () => mockLocation,
 }));
 
 import SyntheticPanel from './SyntheticPanel';
@@ -86,6 +93,10 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         apiMock.get.mockReset();
         apiMock.post.mockReset();
         installGetRouter();
+        // Reset the URL stub each test — Phase 5c plumbing reads it.
+        mockLocation.pathname = '/';
+        mockLocation.search = '';
+        mockLocation.hash = '';
     });
 
     it('shows the "sample randomly from all cleaned chunks" toggle in QA mode (not just span)', async () => {
@@ -220,5 +231,52 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
                 }),
             );
         });
+    });
+
+    it('forwards ?focus_synth_source from the URL to SynthReviewQueue (Phase 5c)', async () => {
+        // Coach Mode lands the user here with a focus source on the
+        // URL. The panel must read it + pass it down so the queue
+        // renders its focused banner. We override the review-queue
+        // fetch to include a matching pending group; SynthReviewQueue's
+        // banner only renders when the source matches a group.
+        installGetRouter({
+            'review-queue': {
+                project_id: 1,
+                dataset_id: 7,
+                total_rows: 3,
+                total_pending: 3,
+                total_accepted: 0,
+                groups: [
+                    {
+                        synth_source: 'playbook:classification:class_balance_fill:class=technical',
+                        count: 3,
+                        truncated: false,
+                        rows: [
+                            { id: 1, synth_confidence: 0.9, preview: 'a', payload: {} },
+                            { id: 2, synth_confidence: 0.85, preview: 'b', payload: {} },
+                            { id: 3, synth_confidence: 0.8, preview: 'c', payload: {} },
+                        ],
+                    },
+                ],
+                accepted_groups: [],
+            },
+        });
+        mockLocation.search =
+            '?focus_synth_source=playbook%3Aclassification%3Aclass_balance_fill%3Aclass%3Dtechnical';
+        mockLocation.hash = '#synth-review-queue';
+
+        render(<SyntheticPanel projectId={1} />);
+
+        // The focused banner appears with the right copy.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('synth-review-queue-focus-banner'),
+            ).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('synth-review-queue-focus-source').textContent,
+        ).toBe('playbook:classification:class_balance_fill:class=technical');
+        const acceptAll = screen.getByTestId('synth-review-queue-focus-accept-all');
+        expect(acceptAll.textContent).toMatch(/Accept all 3 rows/);
     });
 });

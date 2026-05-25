@@ -550,6 +550,14 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             s["action"]["params"]["target"], "synthetic-review-queue"
         )
+        # Phase 5c — the top source bucket is stamped onto the action
+        # params so CoachSuggestion.tsx can build a focused URL
+        # (?focus_synth_source=...) and SynthReviewQueue can render
+        # its one-click "Accept all N" banner.
+        self.assertEqual(
+            s["action"]["params"]["synth_source"],
+            "playbook:classification:class_balance_fill:class=technical",
+        )
         # 12 pending → severity escalates to "warning" (threshold ≥ 5).
         self.assertEqual(s["severity"], "warning")
         # Title surfaces the count so the user knows the scale.
@@ -598,6 +606,37 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         suggestions = await self._suggestions(gold_rows=gold_rows)
         ids = {s["id"] for s in suggestions}
         self.assertNotIn("gold_set:synth-review-pending", ids)
+
+    async def test_synth_review_pending_omits_synth_source_when_no_groups(self):
+        """Edge: queue reports total_pending > 0 but groups is empty
+        (e.g. legacy rows without synth_source). The action stays
+        actionable but params.synth_source is omitted; SynthReviewQueue
+        won't render the focused banner."""
+        gold_rows = (
+            [{"question": f"unique{i} q{i}", "answer": "a", "label": "billing"} for i in range(15)]
+            + [{"question": f"unique{i + 15} q{i + 15}", "answer": "a", "label": "technical"} for i in range(15)]
+            + [{"question": f"unique{i + 30} q{i + 30}", "answer": "a", "label": "shipping"} for i in range(15)]
+        )
+        queue = {
+            "project_id": 11,
+            "total_pending": 4,
+            "total_accepted": 0,
+            "groups": [],  # legacy / source-less pending rows
+            "accepted_groups": [],
+        }
+        suggestions = await self._suggestions(
+            gold_rows=gold_rows, review_queue=queue
+        )
+        s = next(
+            s for s in suggestions if s["id"] == "gold_set:synth-review-pending"
+        )
+        # Action still fires + still navigates (the queue UI itself
+        # can handle a focus-less landing) but synth_source is absent.
+        self.assertEqual(
+            s["action"]["params"]["target"], "synthetic-review-queue"
+        )
+        self.assertNotIn("synth_source", s["action"]["params"])
+        self.assertIsNone(s["context"]["top_source"])
 
     async def test_synth_review_queue_read_failure_does_not_block_other_suggestions(self):
         """A queue read that throws must not crash the gold_set strip.

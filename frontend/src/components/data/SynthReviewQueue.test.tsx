@@ -269,6 +269,134 @@ describe('SynthReviewQueue', () => {
         );
     });
 
+    // ── Focused-source banner (Phase 5c — Coach landing) ────────────
+
+    it('renders the focused-source banner with the right row count when focusSource matches a group', async () => {
+        apiMock.get.mockResolvedValue({ data: SAMPLE_PAYLOAD });
+        render(
+            <SynthReviewQueue
+                projectId={1}
+                focusSource="playbook:classification:positives_paraphrase"
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-focus-banner')).toBeInTheDocument();
+        });
+        // Source label is rendered exactly.
+        expect(
+            screen.getByTestId('synth-review-queue-focus-source').textContent,
+        ).toBe('playbook:classification:positives_paraphrase');
+        // 2 rows in the matching group → button copy reflects the count.
+        const acceptAll = screen.getByTestId('synth-review-queue-focus-accept-all');
+        expect(acceptAll.textContent).toMatch(/Accept all 2 rows/i);
+        expect(acceptAll).not.toBeDisabled();
+    });
+
+    it('hides the focused banner when no focusSource prop is set', async () => {
+        apiMock.get.mockResolvedValue({ data: SAMPLE_PAYLOAD });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('synth-review-queue-focus-banner'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('focus banner with no matching group renders an empty state + disabled button', async () => {
+        // Defensive: Coach can race with a queue mutation, so the
+        // focusSource may no longer match any pending group by the
+        // time the user lands. Render the banner with "Nothing to
+        // accept" rather than crashing or silently dropping it.
+        apiMock.get.mockResolvedValue({ data: SAMPLE_PAYLOAD });
+        render(
+            <SynthReviewQueue
+                projectId={1}
+                focusSource="playbook:does-not-exist"
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-focus-banner')).toBeInTheDocument();
+        });
+        const acceptAll = screen.getByTestId('synth-review-queue-focus-accept-all');
+        expect(acceptAll.textContent).toMatch(/Nothing to accept/i);
+        expect(acceptAll).toBeDisabled();
+    });
+
+    it('one-click Accept all posts exactly the focused group ids + dismisses the banner', async () => {
+        // Round-trip: the bulk-accept endpoint is called with ONLY the
+        // ids of the focused group (not all pending rows — important
+        // so the user doesn't accidentally accept a sibling source).
+        apiMock.get.mockResolvedValueOnce({ data: SAMPLE_PAYLOAD });
+        // After accept, the queue refetches → return a payload with
+        // the focused source drained.
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...SAMPLE_PAYLOAD,
+                total_pending: 1,
+                groups: [SAMPLE_PAYLOAD.groups[1]],  // only hard_negatives left
+            },
+        });
+        apiMock.post.mockResolvedValue({
+            data: {
+                accepted: 2,
+                rejected: 0,
+                total_remaining_pending: 1,
+            },
+        });
+        render(
+            <SynthReviewQueue
+                projectId={1}
+                focusSource="playbook:classification:positives_paraphrase"
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-focus-accept-all')).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('synth-review-queue-focus-accept-all'),
+        );
+        await waitFor(() => {
+            // Only the ids in the focused group (1, 2) — NOT 3 from
+            // the sibling hard_negatives group.
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/review-queue/bulk-update',
+                { row_ids: [1, 2], action: 'accept' },
+            );
+        });
+        // Banner auto-dismisses once the source bucket is drained.
+        await waitFor(() => {
+            expect(
+                screen.queryByTestId('synth-review-queue-focus-banner'),
+            ).not.toBeInTheDocument();
+        });
+        // Flash names the focused source so the user knows what shipped.
+        expect(screen.getByTestId('synth-review-queue-flash').textContent).toMatch(
+            /Accepted 2 rows from playbook:classification:positives_paraphrase/,
+        );
+    });
+
+    it('Clear focus button dismisses the banner without firing an API call', async () => {
+        apiMock.get.mockResolvedValue({ data: SAMPLE_PAYLOAD });
+        render(
+            <SynthReviewQueue
+                projectId={1}
+                focusSource="playbook:classification:positives_paraphrase"
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-focus-banner')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('synth-review-queue-focus-clear'));
+        await waitFor(() => {
+            expect(
+                screen.queryByTestId('synth-review-queue-focus-banner'),
+            ).not.toBeInTheDocument();
+        });
+        // No bulk-update POST.
+        expect(apiMock.post).not.toHaveBeenCalled();
+    });
+
     it('shows an error + retry when the list endpoint fails', async () => {
         apiMock.get.mockRejectedValueOnce({ response: { status: 500, data: { detail: 'boom' } } });
         apiMock.get.mockResolvedValueOnce({ data: SAMPLE_PAYLOAD });

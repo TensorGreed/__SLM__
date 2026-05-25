@@ -306,11 +306,13 @@ describe('CoachStrip', () => {
         ).not.toBeInTheDocument();
     });
 
-    it('navigates to the Data Studio review-queue section for synthetic-review-queue target (Phase 5c)', async () => {
+    it('navigates to the Synthetic tab review queue with focus_synth_source query (Phase 5c)', async () => {
         // Phase 5c — known navigate targets route to a concrete URL
         // instead of falling through to the toast-hint fallback. The
-        // gold_set:synth-review-pending suggestion uses this so the
-        // user lands directly on the review queue.
+        // gold_set:synth-review-pending suggestion lands on the
+        // Synthetic pipeline tab (where SynthReviewQueue is mounted),
+        // forwards synth_source as ?focus_synth_source=..., and uses
+        // the #synth-review-queue hash so SyntheticPanel scrolls.
         installGetRouter({
             data: {
                 project_id: 42,
@@ -325,7 +327,11 @@ describe('CoachStrip', () => {
                         action: {
                             kind: 'navigate',
                             label: 'Open review queue',
-                            params: { target: 'synthetic-review-queue' },
+                            params: {
+                                target: 'synthetic-review-queue',
+                                synth_source:
+                                    'playbook:classification:class_balance_fill:class=technical',
+                            },
                         },
                         context: { total_pending: 7 },
                     },
@@ -341,12 +347,49 @@ describe('CoachStrip', () => {
         await userEvent.click(
             screen.getByTestId('coach-suggestion-action-gold_set:synth-review-pending'),
         );
-        // Routes to the Data Studio page with the #review-queue hash
-        // so ProjectDataStudioPage's mount effect expands + scrolls to
-        // the section.
         await waitFor(() => {
             expect(navigateMock).toHaveBeenCalledWith(
-                '/project/42/data-studio#review-queue',
+                '/project/42/pipeline/synthetic?focus_synth_source=playbook%3Aclassification%3Aclass_balance_fill%3Aclass%3Dtechnical#synth-review-queue',
+            );
+        });
+    });
+
+    it('navigates without focus_synth_source when the action omits it (Phase 5c)', async () => {
+        // When the queue's top group has no synth_source (legacy
+        // rows), coach_service omits params.synth_source — URL still
+        // routes to the Synthetic tab but without the focus query.
+        installGetRouter({
+            data: {
+                project_id: 42,
+                stage: 'gold_set',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'gold_set:synth-review-pending',
+                        title: '3 synthetic rows pending review',
+                        body: '…',
+                        severity: 'info',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Open review queue',
+                            params: { target: 'synthetic-review-queue' },
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={42} stage="gold_set" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-gold_set:synth-review-pending'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-gold_set:synth-review-pending'),
+        );
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith(
+                '/project/42/pipeline/synthetic#synth-review-queue',
             );
         });
     });

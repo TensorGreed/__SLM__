@@ -76,7 +76,19 @@ The Coach suggestion card surfaces the auto-pinned backend under the action butt
 
 ### Coach Mode reminds you to review pending synth rows
 
-After Coach runs the click-to-execute class-imbalance action, the generated rows land in the synth review queue with `review_status="pending"` and are **silently gated out of training** by the dataset-prep loader. To close that loop, the gold_set Coach surface emits a `gold_set:synth-review-pending` suggestion whenever the queue has pending rows. Severity scales with the pile-up — `info` for 1–4 rows (just a nudge), `warning` for 5+ (meaningful chunk of generated data not yet in training). The action is a `navigate` with target `synthetic-review-queue`; clicking it routes directly to `/project/{id}/data-studio#review-queue`, where the Data Studio page expands + scrolls to the queue panel on mount.
+After Coach runs the click-to-execute class-imbalance action, the generated rows land in the synth review queue with `review_status="pending"` and are **silently gated out of training** by the dataset-prep loader. To close that loop, the gold_set Coach surface emits a `gold_set:synth-review-pending` suggestion whenever the queue has pending rows. Severity scales with the pile-up — `info` for 1–4 rows (just a nudge), `warning` for 5+ (meaningful chunk of generated data not yet in training).
+
+The action is a `navigate` with target `synthetic-review-queue`. Coach also stamps the top pending bucket's `synth_source` onto `action.params.synth_source`. The Coach navigate handler builds a focused URL:
+
+```
+/project/{id}/pipeline/synthetic?focus_synth_source=<source>#synth-review-queue
+```
+
+`SyntheticPanel` reads `focus_synth_source` from the URL, scrolls the queue into view via the `#synth-review-queue` hash, and passes the source down to `SynthReviewQueue` as a `focusSource` prop. `SynthReviewQueue` then renders a prominent focus banner at the top of the panel:
+
+> **Focused on** `playbook:classification:class_balance_fill:class=technical`  ·  12 pending rows  ·  **[ Accept all 12 rows ]**   _Clear focus_
+
+The "Accept all N rows" button POSTs only the ids of the focused group to `/synthetic/review-queue/bulk-update` — never sibling sources (e.g. a `class=billing` bucket from a different run). The banner auto-dismisses once the source bucket is drained. This closes the auto-pin loop in **two clicks**: Coach button → Accept all.
 
 ## vLLM setup
 

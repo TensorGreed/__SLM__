@@ -300,3 +300,64 @@
     color: var(--text-tertiary);
     font-style: italic;
 }
+
+/* Phase 5c — focused-source banner (Coach Mode landing). */
+
+.synth-review-queue__focus-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--accent, #3b82f6);
+    border-left-width: 3px;
+    border-radius: var(--radius-sm);
+    background: rgba(59, 130, 246, 0.08);
+    color: var(--text-primary);
+}
+
+.synth-review-queue__focus-banner.is-empty {
+    border-color: var(--border-muted);
+    background: var(--gray-50);
+}
+
+.synth-review-queue__focus-text {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-size-sm);
+    min-width: 0;
+}
+
+.synth-review-queue__focus-label {
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.synth-review-queue__focus-source {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 1px 6px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.synth-review-queue__focus-count {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.synth-review-queue__focus-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+}
