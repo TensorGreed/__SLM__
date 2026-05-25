@@ -56,6 +56,7 @@ SyntheticPlaybookVerdict = Literal["empty", "attention", "ready"]
 SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
 ReviewQueueVerdict = Literal["empty", "attention", "ready"]
 PrepareDatasetVerdict = Literal["blocked", "attention", "ready"]
+DatasetVersionVerdict = Literal["empty", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -5201,5 +5202,550 @@ async def build_data_studio_prepare_dataset(
             "synthetic_review_queue": synthetic_queue,
             "annotation_totals": annotation_totals,
             "manifest": manifest if bool(manifest_meta.get("readable")) else {},
+        },
+    }
+
+
+def _prepared_dataset_type_order(dataset_type: DatasetType) -> int:
+    order = {
+        DatasetType.TRAIN: 0,
+        DatasetType.VALIDATION: 1,
+        DatasetType.TEST: 2,
+    }
+    return order.get(dataset_type, 99)
+
+
+def _version_payload(version: DatasetVersion) -> dict[str, Any]:
+    manifest = version.manifest if isinstance(version.manifest, dict) else {}
+    split = str(manifest.get("split") or "").strip()
+    count = manifest.get("count")
+    return {
+        "id": int(version.id),
+        "version": int(version.version or 0),
+        "record_count": int(version.record_count or 0),
+        "file_path": version.file_path,
+        "file_exists": _file_exists(version.file_path),
+        "created_at": version.created_at.isoformat() if version.created_at else None,
+        "manifest_split": split or None,
+        "manifest_count": int(count) if isinstance(count, int) else None,
+        "manifest": manifest,
+    }
+
+
+def _dataset_version_history_payload(
+    dataset: Dataset,
+    versions: list[DatasetVersion],
+) -> dict[str, Any]:
+    ordered_versions = sorted(versions, key=lambda item: (int(item.version or 0), int(item.id)), reverse=True)
+    return {
+        "dataset_id": int(dataset.id),
+        "dataset_name": dataset.name,
+        "dataset_type": dataset.dataset_type.value,
+        "row_count": int(dataset.record_count or 0),
+        "file_path": dataset.file_path or "",
+        "file_exists": _file_exists(dataset.file_path),
+        "is_locked": bool(dataset.is_locked),
+        "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+        "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None,
+        "version_count": len(ordered_versions),
+        "latest_version": _version_payload(ordered_versions[0]) if ordered_versions else None,
+        "versions": [_version_payload(version) for version in ordered_versions[:8]],
+    }
+
+
+def _dataset_version_artifact_payload(
+    *,
+    split_key: str,
+    label: str,
+    dataset_type: DatasetType,
+    dataset: Dataset | None,
+    versions: list[DatasetVersion],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    manifest_key = _manifest_split_key(split_key)
+    manifest_splits = manifest.get("splits") if isinstance(manifest.get("splits"), dict) else {}
+    manifest_versions = (
+        manifest.get("dataset_versions")
+        if isinstance(manifest.get("dataset_versions"), dict)
+        else {}
+    )
+    manifest_file_paths = (
+        manifest.get("file_paths") if isinstance(manifest.get("file_paths"), dict) else {}
+    )
+    manifest_file_hashes = (
+        manifest.get("file_hashes") if isinstance(manifest.get("file_hashes"), dict) else {}
+    )
+    ordered_versions = sorted(versions, key=lambda item: (int(item.version or 0), int(item.id)))
+    latest_version = ordered_versions[-1] if ordered_versions else None
+    manifest_version_raw = manifest_versions.get(manifest_key)
+    try:
+        manifest_version = int(manifest_version_raw) if manifest_version_raw is not None else None
+    except (TypeError, ValueError):
+        manifest_version = None
+    manifest_count = int(manifest_splits.get(manifest_key) or 0)
+    dataset_count = int(getattr(dataset, "record_count", 0) or 0)
+    latest_count = int(getattr(latest_version, "record_count", 0) or 0)
+    file_path = str(getattr(dataset, "file_path", "") or manifest_file_paths.get(manifest_key) or "")
+    latest_version_number = int(latest_version.version or 0) if latest_version is not None else None
+    version_matches_manifest = (
+        manifest_version is not None
+        and latest_version_number is not None
+        and manifest_version == latest_version_number
+    )
+    if manifest_count <= 0:
+        row_count_matches_manifest = dataset_count <= 0 and latest_count <= 0
+    else:
+        row_count_matches_manifest = (
+            dataset_count == manifest_count
+            and (latest_version is None or latest_count == manifest_count)
+        )
+
+    return {
+        "key": split_key,
+        "manifest_key": manifest_key,
+        "label": label,
+        "dataset_type": dataset_type.value,
+        "dataset_id": int(dataset.id) if dataset is not None else None,
+        "dataset_name": dataset.name if dataset is not None else None,
+        "row_count": dataset_count,
+        "file_path": file_path,
+        "file_exists": _file_exists(file_path),
+        "version_count": len(ordered_versions),
+        "latest_version": _version_payload(latest_version) if latest_version is not None else None,
+        "latest_version_number": latest_version_number,
+        "manifest_count": manifest_count,
+        "manifest_version": manifest_version,
+        "manifest_file_path": str(manifest_file_paths.get(manifest_key) or ""),
+        "manifest_file_hash": str(manifest_file_hashes.get(manifest_key) or ""),
+        "version_matches_manifest": version_matches_manifest,
+        "row_count_matches_manifest": row_count_matches_manifest,
+    }
+
+
+def _dataset_version_signal(
+    signal_id: str,
+    label: str,
+    status: str,
+    message: str,
+    *,
+    target_tab: str,
+) -> dict[str, str]:
+    return {
+        "id": signal_id,
+        "label": label,
+        "status": status,
+        "message": message,
+        "target_tab": target_tab,
+    }
+
+
+async def build_data_studio_dataset_versions(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return a read-only prepared dataset version summary for Data Studio."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    datasets_result = await db.execute(
+        select(Dataset)
+        .where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(
+                [DatasetType.TRAIN, DatasetType.VALIDATION, DatasetType.TEST]
+            ),
+        )
+        .order_by(Dataset.dataset_type.asc(), Dataset.updated_at.desc(), Dataset.id.asc())
+    )
+    prepared_datasets = list(datasets_result.scalars().all())
+    prepared_dataset_ids = [int(dataset.id) for dataset in prepared_datasets]
+    versions_by_dataset: dict[int, list[DatasetVersion]] = {
+        dataset_id: [] for dataset_id in prepared_dataset_ids
+    }
+    if prepared_dataset_ids:
+        versions_result = await db.execute(
+            select(DatasetVersion)
+            .where(DatasetVersion.dataset_id.in_(prepared_dataset_ids))
+            .order_by(DatasetVersion.dataset_id.asc(), DatasetVersion.version.asc(), DatasetVersion.id.asc())
+        )
+        for version in versions_result.scalars().all():
+            versions_by_dataset.setdefault(int(version.dataset_id), []).append(version)
+
+    datasets_by_type: dict[DatasetType, Dataset] = {}
+    for dataset in sorted(prepared_datasets, key=lambda item: item.updated_at, reverse=True):
+        datasets_by_type.setdefault(dataset.dataset_type, dataset)
+
+    manifest, manifest_meta = _read_prepared_manifest(project_id)
+    artifacts = [
+        _dataset_version_artifact_payload(
+            split_key=split_key,
+            label=label,
+            dataset_type=dataset_type,
+            dataset=datasets_by_type.get(dataset_type),
+            versions=versions_by_dataset.get(int(datasets_by_type[dataset_type].id), [])
+            if dataset_type in datasets_by_type
+            else [],
+            manifest=manifest,
+        )
+        for split_key, label, dataset_type in _PREPARED_SPLIT_SPECS
+    ]
+    history = [
+        _dataset_version_history_payload(dataset, versions_by_dataset.get(int(dataset.id), []))
+        for dataset in sorted(
+            prepared_datasets,
+            key=lambda item: (_prepared_dataset_type_order(item.dataset_type), int(item.id)),
+        )
+    ]
+
+    total_version_count = sum(int(item.get("version_count") or 0) for item in history)
+    latest_total_rows = sum(int(item.get("row_count") or 0) for item in artifacts)
+    all_required_splits = all(int(item.get("row_count") or 0) > 0 for item in artifacts)
+    all_versions_present = all(int(item.get("version_count") or 0) > 0 for item in artifacts)
+    all_files_present = all(bool(item.get("file_exists")) for item in artifacts if int(item.get("row_count") or 0) > 0)
+    all_manifest_refs_match = all(bool(item.get("version_matches_manifest")) for item in artifacts)
+    all_counts_match = all(bool(item.get("row_count_matches_manifest")) for item in artifacts)
+    file_hashes_present = all(bool(item.get("manifest_file_hash")) for item in artifacts)
+    manifest_readable = bool(manifest_meta.get("readable"))
+    manifest_exists = bool(manifest_meta.get("exists"))
+
+    latest_created_at_values = [
+        str(version.get("created_at"))
+        for item in history
+        for version in [item.get("latest_version")]
+        if isinstance(version, dict) and version.get("created_at")
+    ]
+    latest_created_at = max(latest_created_at_values) if latest_created_at_values else None
+
+    recipe_payload = _recipe_payload(project)
+    try:
+        runtime = await resolve_project_domain_runtime(db, project_id)
+        domain_payload = await _domain_applied_summary(db, runtime)
+    except ValueError:
+        runtime = {}
+        domain_payload = {}
+
+    included_types_raw = manifest.get("included_types")
+    included_source_types = [
+        str(item)
+        for item in (included_types_raw if isinstance(included_types_raw, list) else [])
+        if str(item).strip()
+    ]
+    manifest_dataset_versions = (
+        manifest.get("dataset_versions")
+        if isinstance(manifest.get("dataset_versions"), dict)
+        else {}
+    )
+    manifest_file_hashes = (
+        manifest.get("file_hashes") if isinstance(manifest.get("file_hashes"), dict) else {}
+    )
+
+    issues: list[dict[str, str]] = []
+    if not prepared_datasets and not manifest_exists:
+        issues.append(
+            _issue(
+                "dataset_versions_empty",
+                "info",
+                "No prepared dataset versions yet",
+                "Run Dataset Prep to create versioned train, validation, and test artifacts.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+    elif not manifest_readable:
+        issues.append(
+            _issue(
+                "dataset_versions_manifest_missing",
+                "warning",
+                "Prepared manifest is missing or unreadable",
+                "Re-run Dataset Prep so version rows and split files have a reproducible manifest.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    missing_artifacts = [
+        str(item.get("label"))
+        for item in artifacts
+        if int(item.get("row_count") or 0) <= 0
+    ]
+    if prepared_datasets and missing_artifacts:
+        issues.append(
+            _issue(
+                "dataset_versions_missing_split_artifacts",
+                "warning",
+                "Prepared split artifacts are incomplete",
+                f"Missing prepared rows for: {', '.join(missing_artifacts)}.",
+                action_label="Refresh Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    missing_versions = [
+        str(item.get("label"))
+        for item in artifacts
+        if int(item.get("row_count") or 0) > 0 and int(item.get("version_count") or 0) <= 0
+    ]
+    if missing_versions:
+        issues.append(
+            _issue(
+                "dataset_versions_missing_rows",
+                "warning",
+                "Prepared datasets are not versioned",
+                f"Missing DatasetVersion rows for: {', '.join(missing_versions)}.",
+                action_label="Refresh Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    stale_versions = [
+        str(item.get("label"))
+        for item in artifacts
+        if int(item.get("row_count") or 0) > 0
+        and manifest_readable
+        and not bool(item.get("version_matches_manifest"))
+    ]
+    if stale_versions:
+        issues.append(
+            _issue(
+                "dataset_versions_manifest_mismatch",
+                "warning",
+                "Manifest version references are stale",
+                f"Latest version does not match manifest for: {', '.join(stale_versions)}.",
+                action_label="Refresh Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    count_mismatches = [
+        str(item.get("label"))
+        for item in artifacts
+        if int(item.get("row_count") or 0) > 0
+        and manifest_readable
+        and not bool(item.get("row_count_matches_manifest"))
+    ]
+    if count_mismatches:
+        issues.append(
+            _issue(
+                "dataset_versions_count_mismatch",
+                "warning",
+                "Manifest counts do not match artifacts",
+                f"Row counts differ for: {', '.join(count_mismatches)}.",
+                action_label="Refresh Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    missing_files = [
+        str(item.get("label"))
+        for item in artifacts
+        if int(item.get("row_count") or 0) > 0 and not bool(item.get("file_exists"))
+    ]
+    if missing_files:
+        issues.append(
+            _issue(
+                "dataset_versions_files_missing",
+                "warning",
+                "Prepared files are missing",
+                f"Expected prepared JSONL files were not found for: {', '.join(missing_files)}.",
+                action_label="Refresh Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    if manifest_readable and not file_hashes_present:
+        issues.append(
+            _issue(
+                "dataset_versions_hashes_missing",
+                "info",
+                "Manifest hashes are incomplete",
+                "File hashes help confirm that split files have not drifted since preparation.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    if recipe_payload is None:
+        issues.append(
+            _issue(
+                "dataset_versions_recipe_missing",
+                "info",
+                "Recipe context is missing",
+                "A selected recipe makes version reuse easier to interpret for training and evaluation.",
+                action_label="Choose recipe",
+                target_tab="data",
+            )
+        )
+
+    training_ready = (
+        manifest_readable
+        and all_required_splits
+        and all_versions_present
+        and all_files_present
+        and all_manifest_refs_match
+        and all_counts_match
+        and int(artifacts[0].get("row_count") or 0) > 0
+    )
+    eval_ready = (
+        manifest_readable
+        and all_versions_present
+        and all_files_present
+        and int(artifacts[1].get("row_count") or 0) > 0
+        and int(artifacts[2].get("row_count") or 0) > 0
+    )
+    any_versions = total_version_count > 0 or manifest_exists or bool(prepared_datasets)
+
+    if not any_versions:
+        verdict: DatasetVersionVerdict = "empty"
+    elif any(item["severity"] == "warning" for item in issues) or not training_ready:
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    reproducibility = [
+        _dataset_version_signal(
+            "manifest",
+            "Prepared manifest",
+            "met" if manifest_readable else ("attention" if manifest_exists else "missing"),
+            "Prepared manifest is readable." if manifest_readable else "Create or refresh the prepared manifest in Dataset Prep.",
+            target_tab="dataprep",
+        ),
+        _dataset_version_signal(
+            "split_artifacts",
+            "Split artifacts",
+            "met" if all_required_splits else ("attention" if prepared_datasets else "missing"),
+            "Train, validation, and test artifacts have rows." if all_required_splits else "Prepared train/validation/test artifacts are incomplete.",
+            target_tab="dataprep",
+        ),
+        _dataset_version_signal(
+            "version_refs",
+            "Manifest version refs",
+            "met" if all_manifest_refs_match and all_versions_present else ("attention" if total_version_count > 0 else "missing"),
+            "Latest versions match manifest references." if all_manifest_refs_match and all_versions_present else "Refresh Dataset Prep so manifest references latest DatasetVersion rows.",
+            target_tab="dataprep",
+        ),
+        _dataset_version_signal(
+            "row_counts",
+            "Row count alignment",
+            "met" if all_counts_match and all_required_splits else ("attention" if any_versions else "missing"),
+            "Artifact counts match manifest counts." if all_counts_match and all_required_splits else "Manifest counts and artifact counts need review.",
+            target_tab="dataprep",
+        ),
+        _dataset_version_signal(
+            "file_hashes",
+            "File hashes",
+            "met" if file_hashes_present else ("attention" if manifest_readable else "missing"),
+            "Manifest includes split file hashes." if file_hashes_present else "File hashes are missing or incomplete in the manifest.",
+            target_tab="dataprep",
+        ),
+        _dataset_version_signal(
+            "source_inclusion",
+            "Source inclusion",
+            "met" if included_source_types else ("attention" if manifest_readable else "missing"),
+            (
+                f"Manifest records source types: {', '.join(included_source_types)}."
+                if included_source_types
+                else "Manifest does not record source inclusion."
+            ),
+            target_tab="dataprep",
+        ),
+    ]
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_data_studio_checks",
+        "summary": {
+            "prepared_dataset_count": len(prepared_datasets),
+            "total_version_count": total_version_count,
+            "latest_total_rows": latest_total_rows,
+            "latest_created_at": latest_created_at,
+            "manifest_exists": manifest_exists,
+            "manifest_readable": manifest_readable,
+            "manifest_version_ref_count": len(manifest_dataset_versions),
+            "training_reuse_ready": training_ready,
+            "eval_reuse_ready": eval_ready,
+        },
+        "latest_artifacts": artifacts,
+        "version_history": history,
+        "manifest": {
+            "exists": manifest_exists,
+            "readable": manifest_readable,
+            "path": manifest_meta.get("path"),
+            "error": manifest_meta.get("error"),
+            "created_at": manifest.get("created_at"),
+            "seed": manifest.get("seed"),
+            "total_entries": int(manifest.get("total_entries") or 0),
+            "splits": manifest.get("splits") if isinstance(manifest.get("splits"), dict) else {},
+            "ratios": manifest.get("ratios") if isinstance(manifest.get("ratios"), dict) else {},
+            "file_hashes": manifest_file_hashes,
+            "dataset_versions": manifest_dataset_versions,
+            "included_types": included_source_types,
+            "chat_template": manifest.get("chat_template"),
+            "adapter_id": manifest.get("adapter_id"),
+            "task_profile": manifest.get("task_profile"),
+        },
+        "source_context": {
+            "recipe": recipe_payload,
+            "domain": domain_payload,
+            "domain_runtime": {
+                "domain_profile_applied": runtime.get("domain_profile_applied"),
+                "domain_profile_source": runtime.get("domain_profile_source"),
+                "domain_pack_applied": runtime.get("domain_pack_applied"),
+                "domain_pack_source": runtime.get("domain_pack_source"),
+            },
+            "adapter_id": manifest.get("adapter_id"),
+            "task_profile": manifest.get("task_profile"),
+            "included_source_types": included_source_types,
+        },
+        "reuse_readiness": {
+            "training": {
+                "status": "ready" if training_ready else ("attention" if any_versions else "missing"),
+                "target_tab": "training",
+                "message": (
+                    "Prepared train/validation/test versions are reusable for training."
+                    if training_ready
+                    else "Refresh prepared versions before treating this dataset as reusable for training."
+                ),
+            },
+            "evaluation": {
+                "status": "ready" if eval_ready else ("attention" if any_versions else "missing"),
+                "target_tab": "eval",
+                "message": (
+                    "Validation and test artifacts are available for evaluation."
+                    if eval_ready
+                    else "Prepare validation and test artifacts before relying on evaluation reuse."
+                ),
+            },
+        },
+        "reproducibility": reproducibility,
+        "issues": issues,
+        "entry_points": [
+            {
+                "label": "Open Dataset Prep",
+                "target_tab": "dataprep",
+                "reason": "Create or refresh prepared dataset versions.",
+                "requires_confirmation": True,
+            },
+            {
+                "label": "Open Training",
+                "target_tab": "training",
+                "reason": "Use prepared split versions for training runs.",
+                "requires_confirmation": False,
+            },
+            {
+                "label": "Open Eval",
+                "target_tab": "eval",
+                "reason": "Use validation/test artifacts for evaluation.",
+                "requires_confirmation": False,
+            },
+        ],
+        "power_details": {
+            "manifest": manifest if manifest_readable else {},
+            "prepared_dataset_ids": prepared_dataset_ids,
+            "runtime": runtime,
         },
     }

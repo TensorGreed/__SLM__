@@ -1,0 +1,393 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+    AlertTriangle,
+    CheckCircle2,
+    ExternalLink,
+    FileCheck2,
+    GitBranch,
+    History,
+    RefreshCw,
+    ShieldCheck,
+    Workflow,
+} from 'lucide-react';
+
+import { getDataStudioDatasetVersions } from '../../api/dataStudio';
+import type {
+    DataStudioDatasetVersionArtifact,
+    DataStudioDatasetVersionHistoryItem,
+    DataStudioDatasetVersionSignal,
+    DataStudioDatasetVersions,
+    DataStudioIssue,
+} from '../../api/dataStudio';
+import './DataStudioDatasetVersionsPanel.css';
+
+interface DataStudioDatasetVersionsPanelProps {
+    projectId: number;
+    onOpenTarget: (target: string) => void;
+}
+
+const VERSION_VERDICT_COPY: Record<DataStudioDatasetVersions['verdict'], { label: string; detail: string }> = {
+    empty: {
+        label: 'No versions',
+        detail: 'Run Dataset Prep to create reusable train, validation, and test dataset versions.',
+    },
+    attention: {
+        label: 'Check versions',
+        detail: 'Prepared versions exist, but reproducibility or reuse signals need review.',
+    },
+    ready: {
+        label: 'Reusable',
+        detail: 'Prepared dataset versions are aligned with the manifest and ready to reuse downstream.',
+    },
+};
+
+function formatNumber(value: number | undefined): string {
+    return new Intl.NumberFormat().format(Number(value || 0));
+}
+
+function labelForToken(value: string | undefined | null): string {
+    if (!value) return 'Unknown';
+    return value.replace(/_/g, ' ');
+}
+
+function compactJson(value: unknown): string {
+    return JSON.stringify(value || {}, null, 2);
+}
+
+function statusClass(status: string): string {
+    if (status === 'met' || status === 'ready') {
+        return 'ready';
+    }
+    if (status === 'attention') {
+        return 'attention';
+    }
+    return 'missing';
+}
+
+function statusIcon(status: string) {
+    const normalized = statusClass(status);
+    if (normalized === 'ready') {
+        return <CheckCircle2 size={16} aria-hidden="true" />;
+    }
+    return <AlertTriangle size={16} aria-hidden="true" />;
+}
+
+function issueIcon(issue: DataStudioIssue) {
+    if (issue.severity === 'info') {
+        return <CheckCircle2 size={15} aria-hidden="true" />;
+    }
+    return <AlertTriangle size={15} aria-hidden="true" />;
+}
+
+function SignalRow({
+    signal,
+    onOpenTarget,
+}: {
+    signal: DataStudioDatasetVersionSignal;
+    onOpenTarget: (target: string) => void;
+}) {
+    return (
+        <button
+            type="button"
+            className={`data-studio-versions__signal data-studio-versions__signal--${statusClass(signal.status)}`}
+            onClick={() => onOpenTarget(signal.target_tab)}
+        >
+            <span>{statusIcon(signal.status)}</span>
+            <span>
+                <strong>{signal.label}</strong>
+                <small>{signal.message}</small>
+            </span>
+            <b>{labelForToken(signal.status)}</b>
+        </button>
+    );
+}
+
+function ArtifactCard({
+    artifact,
+}: {
+    artifact: DataStudioDatasetVersionArtifact;
+}) {
+    const versionLabel = artifact.latest_version_number
+        ? `v${artifact.latest_version_number}`
+        : 'No version';
+    const manifestLabel = artifact.manifest_version
+        ? `manifest v${artifact.manifest_version}`
+        : 'no manifest ref';
+    return (
+        <article className="data-studio-versions__artifact">
+            <div className="data-studio-versions__artifact-head">
+                <div>
+                    <strong>{artifact.label}</strong>
+                    <small>{labelForToken(artifact.dataset_type)}</small>
+                </div>
+                <span>{versionLabel}</span>
+            </div>
+            <dl>
+                <div>
+                    <dt>Rows</dt>
+                    <dd>{formatNumber(artifact.row_count)}</dd>
+                </div>
+                <div>
+                    <dt>Manifest</dt>
+                    <dd>{formatNumber(artifact.manifest_count)}</dd>
+                </div>
+                <div>
+                    <dt>Versions</dt>
+                    <dd>{formatNumber(artifact.version_count)}</dd>
+                </div>
+            </dl>
+            <div className="data-studio-versions__artifact-flags">
+                <span className={artifact.file_exists ? 'is-ready' : 'is-missing'}>
+                    {artifact.file_exists ? 'File found' : 'File missing'}
+                </span>
+                <span className={artifact.version_matches_manifest ? 'is-ready' : 'is-attention'}>
+                    {manifestLabel}
+                </span>
+                <span className={artifact.row_count_matches_manifest ? 'is-ready' : 'is-attention'}>
+                    {artifact.row_count_matches_manifest ? 'Counts match' : 'Counts differ'}
+                </span>
+            </div>
+        </article>
+    );
+}
+
+function HistoryRow({ item }: { item: DataStudioDatasetVersionHistoryItem }) {
+    const latest = item.latest_version;
+    return (
+        <div className="data-studio-versions__history-row">
+            <div>
+                <strong>{item.dataset_name}</strong>
+                <small>
+                    {labelForToken(item.dataset_type)}
+                    {' · '}
+                    {item.file_exists ? 'file found' : 'file missing'}
+                </small>
+            </div>
+            <div>
+                <span>{latest ? `v${latest.version}` : 'No version'}</span>
+                <small>{formatNumber(item.version_count)} total</small>
+            </div>
+        </div>
+    );
+}
+
+export default function DataStudioDatasetVersionsPanel({
+    projectId,
+    onOpenTarget,
+}: DataStudioDatasetVersionsPanelProps) {
+    const [versions, setVersions] = useState<DataStudioDatasetVersions | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const loadVersions = async () => {
+        setLoading(true);
+        try {
+            const data = await getDataStudioDatasetVersions(projectId);
+            setVersions(data);
+            setError(null);
+        } catch (err: any) {
+            setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio dataset versions.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void loadVersions();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId]);
+
+    const topIssues = useMemo(
+        () => versions?.issues.slice(0, 5) ?? [],
+        [versions],
+    );
+    const entryPoints = useMemo(
+        () => versions?.entry_points.slice(0, 3) ?? [],
+        [versions],
+    );
+
+    if (loading && !versions) {
+        return (
+            <section className="data-studio-versions data-studio-versions--loading">
+                <span>Loading dataset versions...</span>
+            </section>
+        );
+    }
+
+    if (error && !versions) {
+        return (
+            <section className="data-studio-versions data-studio-versions--error">
+                <div>
+                    <h3>Dataset Versions</h3>
+                    <p>{error}</p>
+                </div>
+                <button type="button" className="btn btn-secondary" onClick={() => void loadVersions()}>
+                    Retry
+                </button>
+            </section>
+        );
+    }
+
+    if (!versions) {
+        return null;
+    }
+
+    const verdict = VERSION_VERDICT_COPY[versions.verdict];
+    const recipeName = versions.source_context.recipe?.name || 'No recipe';
+    const domainName = versions.source_context.domain?.profile_display_name
+        || versions.source_context.domain?.pack_display_name
+        || 'Generic domain';
+
+    return (
+        <section
+            className={`data-studio-versions data-studio-versions--${versions.verdict}`}
+            data-testid="data-studio-dataset-versions"
+        >
+            <div className="data-studio-versions__header">
+                <div>
+                    <p className="data-studio-versions__eyebrow">Versions</p>
+                    <h3>Dataset Versions</h3>
+                    <p>{verdict.detail}</p>
+                </div>
+                <div className="data-studio-versions__actions">
+                    <span className={`data-studio-versions__verdict data-studio-versions__verdict--${versions.verdict}`}>
+                        {verdict.label}
+                    </span>
+                    <button
+                        type="button"
+                        className="btn btn-ghost data-studio-versions__refresh"
+                        onClick={() => void loadVersions()}
+                        aria-label="Refresh Data Studio dataset versions"
+                    >
+                        <RefreshCw size={16} aria-hidden="true" />
+                    </button>
+                </div>
+            </div>
+
+            <div className="data-studio-versions__metrics" aria-label="Dataset version metrics">
+                <div className="data-studio-versions__metric">
+                    <History size={18} aria-hidden="true" />
+                    <span>Versions</span>
+                    <strong>{formatNumber(versions.summary.total_version_count)}</strong>
+                </div>
+                <div className="data-studio-versions__metric">
+                    <GitBranch size={18} aria-hidden="true" />
+                    <span>Latest rows</span>
+                    <strong>{formatNumber(versions.summary.latest_total_rows)}</strong>
+                </div>
+                <div className="data-studio-versions__metric">
+                    <FileCheck2 size={18} aria-hidden="true" />
+                    <span>Manifest refs</span>
+                    <strong>{formatNumber(versions.summary.manifest_version_ref_count)}</strong>
+                </div>
+                <div className="data-studio-versions__metric">
+                    <ShieldCheck size={18} aria-hidden="true" />
+                    <span>Reuse</span>
+                    <strong>{versions.summary.training_reuse_ready ? 'Ready' : 'Review'}</strong>
+                </div>
+            </div>
+
+            <div className="data-studio-versions__signals">
+                <span>{recipeName}</span>
+                <span>{domainName}</span>
+                <span>{versions.source_context.adapter_id || 'No adapter in manifest'}</span>
+                <span>{versions.manifest.readable ? 'Manifest readable' : 'Manifest missing'}</span>
+                {versions.read_only ? <span>Read-only check</span> : null}
+            </div>
+
+            <div className="data-studio-versions__entrypoints">
+                {entryPoints.map((entry) => (
+                    <button
+                        type="button"
+                        className={entry.target_tab === 'dataprep' ? 'btn btn-primary' : 'btn btn-secondary'}
+                        key={entry.target_tab}
+                        onClick={() => onOpenTarget(entry.target_tab)}
+                    >
+                        <ExternalLink size={15} aria-hidden="true" />
+                        {entry.label}
+                    </button>
+                ))}
+            </div>
+
+            <div className="data-studio-versions__reuse">
+                <div className={`data-studio-versions__reuse-item data-studio-versions__reuse-item--${statusClass(versions.reuse_readiness.training.status)}`}>
+                    <Workflow size={18} aria-hidden="true" />
+                    <div>
+                        <strong>Training reuse</strong>
+                        <small>{versions.reuse_readiness.training.message}</small>
+                    </div>
+                    <button type="button" className="btn btn-ghost" onClick={() => onOpenTarget('training')}>
+                        Training
+                    </button>
+                </div>
+                <div className={`data-studio-versions__reuse-item data-studio-versions__reuse-item--${statusClass(versions.reuse_readiness.evaluation.status)}`}>
+                    <FileCheck2 size={18} aria-hidden="true" />
+                    <div>
+                        <strong>Eval reuse</strong>
+                        <small>{versions.reuse_readiness.evaluation.message}</small>
+                    </div>
+                    <button type="button" className="btn btn-ghost" onClick={() => onOpenTarget('eval')}>
+                        Eval
+                    </button>
+                </div>
+            </div>
+
+            <div className="data-studio-versions__body">
+                <div className="data-studio-versions__artifacts">
+                    <h4>Latest artifacts</h4>
+                    <div className="data-studio-versions__artifact-list">
+                        {versions.latest_artifacts.map((artifact) => (
+                            <ArtifactCard artifact={artifact} key={artifact.key} />
+                        ))}
+                    </div>
+                </div>
+
+                <div className="data-studio-versions__checks">
+                    <h4>Reproducibility</h4>
+                    <div className="data-studio-versions__signal-list">
+                        {versions.reproducibility.map((signal) => (
+                            <SignalRow signal={signal} key={signal.id} onOpenTarget={onOpenTarget} />
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            <div className="data-studio-versions__history">
+                <h4>Version history</h4>
+                {versions.version_history.length > 0 ? (
+                    <div className="data-studio-versions__history-list">
+                        {versions.version_history.map((item) => (
+                            <HistoryRow item={item} key={item.dataset_id} />
+                        ))}
+                    </div>
+                ) : (
+                    <p className="data-studio-versions__empty">
+                        Version history appears after Dataset Prep writes prepared split versions.
+                    </p>
+                )}
+            </div>
+
+            {topIssues.length > 0 ? (
+                <ul className="data-studio-versions__issues">
+                    {topIssues.map((issue) => (
+                        <li key={issue.id} className={`data-studio-versions__issue data-studio-versions__issue--${issue.severity}`}>
+                            <span>{issueIcon(issue)}</span>
+                            <div>
+                                <strong>{issue.title}</strong>
+                                <small>{issue.message}</small>
+                            </div>
+                            <button type="button" className="btn btn-ghost" onClick={() => onOpenTarget(issue.target_tab)}>
+                                {issue.action_label}
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            ) : null}
+
+            <details className="data-studio-versions__details">
+                <summary>Power details</summary>
+                <pre>{compactJson(versions)}</pre>
+            </details>
+        </section>
+    );
+}

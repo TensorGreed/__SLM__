@@ -1291,6 +1291,169 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertEqual(payload["review_blockers"], [])
         self.assertFalse(any(item["severity"] == "blocker" for item in payload["issues"]))
 
+    def test_dataset_versions_empty_state_is_read_only(self):
+        project_id = self._create_project("data-studio-versions-empty")
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/dataset-versions")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "empty")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        self.assertEqual(payload["summary"]["total_version_count"], 0)
+        self.assertFalse(payload["summary"]["training_reuse_ready"])
+        self.assertFalse(payload["summary"]["eval_reuse_ready"])
+        self.assertFalse(payload["manifest"]["exists"])
+        self.assertEqual(payload["entry_points"][0]["target_tab"], "dataprep")
+        self.assertTrue(payload["entry_points"][0]["requires_confirmation"])
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("dataset_versions_empty", issue_ids)
+
+    def test_dataset_versions_summarizes_manifest_history_and_reuse(self):
+        project_id = self._create_project("data-studio-versions-ready")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_version_state():
+            async with async_session_factory() as db:
+                prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+                prepared_dir.mkdir(parents=True, exist_ok=True)
+                rows = [
+                    {"text": f"Versioned support ticket {idx}", "label": "billing" if idx % 2 else "account"}
+                    for idx in range(30)
+                ]
+                split_rows = {
+                    "train": rows[:24],
+                    "val": rows[24:27],
+                    "test": rows[27:],
+                }
+                split_paths = {}
+                file_hashes = {}
+                for split_name, split_data in split_rows.items():
+                    split_path = prepared_dir / f"{split_name}.jsonl"
+                    split_paths[split_name] = str(split_path)
+                    with split_path.open("w", encoding="utf-8") as handle:
+                        for row in split_data:
+                            handle.write(json.dumps(row) + "\n")
+                    file_hashes[split_name] = f"hash-{split_name}"
+
+                train = Dataset(
+                    project_id=project_id,
+                    name="Train Set",
+                    dataset_type=DatasetType.TRAIN,
+                    record_count=len(split_rows["train"]),
+                    file_path=split_paths["train"],
+                )
+                validation = Dataset(
+                    project_id=project_id,
+                    name="Validation Set",
+                    dataset_type=DatasetType.VALIDATION,
+                    record_count=len(split_rows["val"]),
+                    file_path=split_paths["val"],
+                )
+                test = Dataset(
+                    project_id=project_id,
+                    name="Test Set",
+                    dataset_type=DatasetType.TEST,
+                    record_count=len(split_rows["test"]),
+                    file_path=split_paths["test"],
+                )
+                db.add_all([train, validation, test])
+                await db.flush()
+                db.add_all([
+                    DatasetVersion(
+                        dataset_id=train.id,
+                        version=1,
+                        file_path=split_paths["train"],
+                        record_count=20,
+                        manifest={"split": "train", "count": 20},
+                    ),
+                    DatasetVersion(
+                        dataset_id=train.id,
+                        version=2,
+                        file_path=split_paths["train"],
+                        record_count=len(split_rows["train"]),
+                        manifest={"split": "train", "count": len(split_rows["train"])},
+                    ),
+                    DatasetVersion(
+                        dataset_id=validation.id,
+                        version=1,
+                        file_path=split_paths["val"],
+                        record_count=len(split_rows["val"]),
+                        manifest={"split": "val", "count": len(split_rows["val"])},
+                    ),
+                    DatasetVersion(
+                        dataset_id=test.id,
+                        version=1,
+                        file_path=split_paths["test"],
+                        record_count=len(split_rows["test"]),
+                        manifest={"split": "test", "count": len(split_rows["test"])},
+                    ),
+                ])
+                manifest = {
+                    "project_id": project_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "seed": 42,
+                    "total_entries": len(rows),
+                    "splits": {
+                        "train": len(split_rows["train"]),
+                        "val": len(split_rows["val"]),
+                        "test": len(split_rows["test"]),
+                    },
+                    "ratios": {"train": 0.8, "val": 0.1, "test": 0.1},
+                    "file_paths": split_paths,
+                    "file_hashes": file_hashes,
+                    "dataset_versions": {"train": 2, "val": 1, "test": 1},
+                    "chat_template": "llama3",
+                    "included_types": ["cleaned", "gold_dev", "synthetic"],
+                    "adapter_id": "classification-label",
+                    "adapter_config": {},
+                    "field_mapping": {},
+                    "task_profile": "classification",
+                }
+                (prepared_dir / "manifest.json").write_text(
+                    json.dumps(manifest),
+                    encoding="utf-8",
+                )
+                await db.commit()
+
+        asyncio.run(_seed_version_state())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/dataset-versions")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "ready")
+        self.assertTrue(payload["read_only"])
+        self.assertEqual(payload["summary"]["prepared_dataset_count"], 3)
+        self.assertEqual(payload["summary"]["total_version_count"], 4)
+        self.assertEqual(payload["summary"]["latest_total_rows"], 30)
+        self.assertTrue(payload["summary"]["training_reuse_ready"])
+        self.assertTrue(payload["summary"]["eval_reuse_ready"])
+        self.assertEqual(payload["manifest"]["dataset_versions"], {"train": 2, "val": 1, "test": 1})
+        self.assertEqual(payload["manifest"]["included_types"], ["cleaned", "gold_dev", "synthetic"])
+        self.assertEqual(payload["source_context"]["recipe"]["id"], "classification")
+        self.assertEqual(payload["source_context"]["adapter_id"], "classification-label")
+        artifacts = {item["key"]: item for item in payload["latest_artifacts"]}
+        self.assertEqual(artifacts["train"]["latest_version_number"], 2)
+        self.assertTrue(artifacts["train"]["version_matches_manifest"])
+        self.assertTrue(artifacts["validation"]["row_count_matches_manifest"])
+        history = {item["dataset_type"]: item for item in payload["version_history"]}
+        self.assertEqual(history["train"]["version_count"], 2)
+        signal_status = {item["id"]: item["status"] for item in payload["reproducibility"]}
+        self.assertEqual(signal_status["manifest"], "met")
+        self.assertEqual(signal_status["version_refs"], "met")
+        targets = {item["target_tab"] for item in payload["entry_points"]}
+        self.assertIn("dataprep", targets)
+        self.assertIn("training", targets)
+        self.assertIn("eval", targets)
+        self.assertFalse(any(item["severity"] == "warning" for item in payload["issues"]))
+
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")
         assistant_payload = {

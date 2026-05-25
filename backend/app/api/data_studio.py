@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.auth import GlobalRole
 from app.security import get_request_principal
 from app.services.data_studio_service import (
+    build_data_studio_dataset_versions,
     build_data_studio_domain_detection,
     build_data_studio_gold_set_workbench,
     build_data_studio_llm_assist,
@@ -210,6 +211,22 @@ async def get_data_studio_prepare_dataset(
 
     try:
         return await build_data_studio_prepare_dataset(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/dataset-versions")
+async def get_data_studio_dataset_versions(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a read-only prepared dataset version summary."""
+
+    try:
+        return await build_data_studio_dataset_versions(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

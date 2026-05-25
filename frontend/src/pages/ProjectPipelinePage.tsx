@@ -13,6 +13,7 @@ import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudi
 import DataStudioSyntheticRecommendationsPanel from '../components/data/DataStudioSyntheticRecommendationsPanel';
 import DataStudioReviewQueuePanel from '../components/data/DataStudioReviewQueuePanel';
 import DataStudioPrepareDatasetPanel from '../components/data/DataStudioPrepareDatasetPanel';
+import DataStudioDatasetVersionsPanel from '../components/data/DataStudioDatasetVersionsPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -242,6 +243,10 @@ export default function ProjectPipelinePage() {
                             onOpenTarget={openDataStudioTarget}
                         />
                         <DataStudioPrepareDatasetPanel
+                            projectId={projectId}
+                            onOpenTarget={openDataStudioTarget}
+                        />
+                        <DataStudioDatasetVersionsPanel
                             projectId={projectId}
                             onOpenTarget={openDataStudioTarget}
                         />

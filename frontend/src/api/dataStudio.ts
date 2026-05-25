@@ -9,6 +9,7 @@ export type DataStudioSyntheticPlaybookVerdict = 'empty' | 'attention' | 'ready'
 export type DataStudioSyntheticRecommendationVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioReviewQueueVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioPrepareDatasetVerdict = 'blocked' | 'attention' | 'ready';
+export type DataStudioDatasetVersionVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -870,6 +871,142 @@ export async function getDataStudioPrepareDataset(
 ): Promise<DataStudioPrepareDataset> {
     const resp = await api.get(`/projects/${projectId}/data-studio/prepare-dataset`);
     return resp.data as DataStudioPrepareDataset;
+}
+
+export interface DataStudioDatasetVersionSummary {
+    prepared_dataset_count: number;
+    total_version_count: number;
+    latest_total_rows: number;
+    latest_created_at?: string | null;
+    manifest_exists: boolean;
+    manifest_readable: boolean;
+    manifest_version_ref_count: number;
+    training_reuse_ready: boolean;
+    eval_reuse_ready: boolean;
+}
+
+export interface DataStudioDatasetVersionRecord {
+    id: number;
+    version: number;
+    record_count: number;
+    file_path: string;
+    file_exists: boolean;
+    created_at?: string | null;
+    manifest_split?: string | null;
+    manifest_count?: number | null;
+    manifest: Record<string, unknown>;
+}
+
+export interface DataStudioDatasetVersionArtifact {
+    key: string;
+    manifest_key: string;
+    label: string;
+    dataset_type: string;
+    dataset_id?: number | null;
+    dataset_name?: string | null;
+    row_count: number;
+    file_path: string;
+    file_exists: boolean;
+    version_count: number;
+    latest_version?: DataStudioDatasetVersionRecord | null;
+    latest_version_number?: number | null;
+    manifest_count: number;
+    manifest_version?: number | null;
+    manifest_file_path: string;
+    manifest_file_hash: string;
+    version_matches_manifest: boolean;
+    row_count_matches_manifest: boolean;
+}
+
+export interface DataStudioDatasetVersionHistoryItem {
+    dataset_id: number;
+    dataset_name: string;
+    dataset_type: string;
+    row_count: number;
+    file_path: string;
+    file_exists: boolean;
+    is_locked: boolean;
+    created_at?: string | null;
+    updated_at?: string | null;
+    version_count: number;
+    latest_version?: DataStudioDatasetVersionRecord | null;
+    versions: DataStudioDatasetVersionRecord[];
+}
+
+export interface DataStudioDatasetVersionManifest {
+    exists: boolean;
+    readable: boolean;
+    path: string;
+    error?: string | null;
+    created_at?: string | null;
+    seed?: number | null;
+    total_entries: number;
+    splits: Record<string, number>;
+    ratios: Record<string, number>;
+    file_hashes: Record<string, string>;
+    dataset_versions: Record<string, number>;
+    included_types: string[];
+    chat_template?: string | null;
+    adapter_id?: string | null;
+    task_profile?: string | null;
+}
+
+export interface DataStudioDatasetVersionSourceContext {
+    recipe: DataStudioRecipeSummary | null;
+    domain: DataStudioAppliedDomain;
+    domain_runtime: Record<string, unknown>;
+    adapter_id?: string | null;
+    task_profile?: string | null;
+    included_source_types: string[];
+}
+
+export interface DataStudioDatasetVersionReuseTarget {
+    status: 'ready' | 'attention' | 'missing' | string;
+    target_tab: string;
+    message: string;
+}
+
+export interface DataStudioDatasetVersionSignal {
+    id: string;
+    label: string;
+    status: 'met' | 'attention' | 'missing' | string;
+    message: string;
+    target_tab: string;
+}
+
+export interface DataStudioDatasetVersionEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+    requires_confirmation: boolean;
+}
+
+export interface DataStudioDatasetVersions {
+    project_id: number;
+    verdict: DataStudioDatasetVersionVerdict;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    summary: DataStudioDatasetVersionSummary;
+    latest_artifacts: DataStudioDatasetVersionArtifact[];
+    version_history: DataStudioDatasetVersionHistoryItem[];
+    manifest: DataStudioDatasetVersionManifest;
+    source_context: DataStudioDatasetVersionSourceContext;
+    reuse_readiness: {
+        training: DataStudioDatasetVersionReuseTarget;
+        evaluation: DataStudioDatasetVersionReuseTarget;
+    };
+    reproducibility: DataStudioDatasetVersionSignal[];
+    issues: DataStudioIssue[];
+    entry_points: DataStudioDatasetVersionEntryPoint[];
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioDatasetVersions(
+    projectId: number,
+): Promise<DataStudioDatasetVersions> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/dataset-versions`);
+    return resp.data as DataStudioDatasetVersions;
 }
 
 export interface DataStudioAssistRequest {
