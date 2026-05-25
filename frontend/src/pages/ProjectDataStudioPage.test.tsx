@@ -208,6 +208,52 @@ describe('ProjectDataStudioPage', () => {
         expect(within(index).getByText('No matching sections.')).toBeInTheDocument();
     });
 
+    it('routes compact workflow handoff chips from their relevant sections', async () => {
+        const user = userEvent.setup();
+        render(<ProjectDataStudioPage />);
+
+        await user.click(screen.getByRole('button', { name: /Collapse all/i }));
+
+        const sources = screen.getByTestId('data-studio-section-sources');
+        const domain = screen.getByTestId('data-studio-section-domain');
+        const gold = screen.getByTestId('data-studio-section-gold-set');
+        const synthetic = screen.getByTestId('data-studio-section-synthetic-playbooks');
+        const review = screen.getByTestId('data-studio-section-review-queue');
+        const prepare = screen.getByTestId('data-studio-section-prepare-dataset');
+        const versions = screen.getByTestId('data-studio-section-dataset-versions');
+
+        await user.click(within(sources).getByRole('button', { name: /^Source Ingestion$/i }));
+        expect(setActiveTabMock).toHaveBeenLastCalledWith('data');
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/data');
+        expect(screen.queryByTestId('panel-sources')).not.toBeInTheDocument();
+
+        await user.click(within(domain).getByRole('button', { name: /^Domain Managers$/i }));
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/domain');
+
+        await user.click(within(gold).getByRole('button', { name: /^Gold Set$/i }));
+        expect(setActiveTabMock).toHaveBeenLastCalledWith('goldset');
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/goldset');
+
+        await user.click(within(synthetic).getByRole('button', { name: /^Synthetic$/i }));
+        expect(setActiveTabMock).toHaveBeenLastCalledWith('synthetic');
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/synthetic');
+
+        await user.click(within(review).getByRole('button', { name: /^Review$/i }));
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/annotate');
+
+        await user.click(within(prepare).getByRole('button', { name: /^Dataset Prep$/i }));
+        expect(setActiveTabMock).toHaveBeenLastCalledWith('dataprep');
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/dataprep');
+
+        await user.click(within(versions).getByRole('button', { name: /^Training$/i }));
+        expect(setActiveTabMock).toHaveBeenLastCalledWith('training');
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/training');
+
+        await user.click(within(versions).getByRole('button', { name: /^Eval$/i }));
+        expect(setActiveTabMock).toHaveBeenLastCalledWith('eval');
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/eval');
+    });
+
     it('opens Data Studio sections from hashes and Coach actions', async () => {
         const user = userEvent.setup();
         routeState.hash = '#dataset-versions';

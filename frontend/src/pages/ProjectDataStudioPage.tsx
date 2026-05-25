@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Search } from 'lucide-react';
 
 import DataStudioCoachRailPanel from '../components/data/DataStudioCoachRailPanel';
 import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
@@ -50,12 +50,19 @@ type DataStudioSectionId = typeof DATA_STUDIO_SECTION_IDS[number];
 
 type DataStudioSectionGroup = 'start' | 'shape' | 'examples' | 'release';
 
+interface DataStudioHandoffChip {
+    label: string;
+    target: string;
+    sectionToken?: string | null;
+}
+
 interface DataStudioSectionConfig {
     id: DataStudioSectionId;
     title: string;
     summary: string;
     group: DataStudioSectionGroup;
     keywords: string[];
+    handoffs: DataStudioHandoffChip[];
     content: ReactNode;
 }
 
@@ -102,7 +109,9 @@ interface DataStudioSectionProps {
     title: string;
     summary: string;
     expanded: boolean;
+    handoffs: DataStudioHandoffChip[];
     onToggle: (id: DataStudioSectionId) => void;
+    onOpenHandoff: (handoff: DataStudioHandoffChip) => void;
     sectionRef: (node: HTMLElement | null) => void;
     children: ReactNode;
 }
@@ -167,7 +176,9 @@ function DataStudioSection({
     title,
     summary,
     expanded,
+    handoffs,
     onToggle,
+    onOpenHandoff,
     sectionRef,
     children,
 }: DataStudioSectionProps) {
@@ -194,6 +205,24 @@ function DataStudioSection({
                     <small>{summary}</small>
                 </span>
             </button>
+            {handoffs.length > 0 ? (
+                <div
+                    className="data-studio-page-section__handoffs"
+                    aria-label={`${title} workflow handoffs`}
+                >
+                    {handoffs.map((handoff) => (
+                        <button
+                            type="button"
+                            className="data-studio-page-section__handoff"
+                            key={`${handoff.label}:${handoff.target}:${handoff.sectionToken ?? ''}`}
+                            onClick={() => onOpenHandoff(handoff)}
+                        >
+                            <ExternalLink size={13} aria-hidden="true" />
+                            <span>{handoff.label}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : null}
             {expanded ? (
                 <div id={bodyId} className="data-studio-page-section__body">
                     {children}
@@ -339,6 +368,11 @@ export default function ProjectDataStudioPage() {
                 summary: 'One-page status for recipe, sources, domain, reviews, and the next action.',
                 group: 'start' as const,
                 keywords: ['status', 'readiness', 'recipe', 'next action', 'checks'],
+                handoffs: [
+                    { label: 'Source Ingestion', target: 'data' },
+                    { label: 'Dataset Prep', target: 'dataprep' },
+                    { label: 'Training', target: 'training' },
+                ],
                 content: (
                     <DataStudioOverviewPanel
                         projectId={projectId}
@@ -356,6 +390,9 @@ export default function ProjectDataStudioPage() {
                 summary: 'Read-only source coverage and ingestion health, with source upload kept in Pipeline Runs.',
                 group: 'start' as const,
                 keywords: ['sources', 'ingestion', 'datasets', 'documents', 'coverage'],
+                handoffs: [
+                    { label: 'Source Ingestion', target: 'data' },
+                ],
                 content: <DataStudioSourcesSummaryPanel projectId={projectId} />,
             },
             {
@@ -364,6 +401,9 @@ export default function ProjectDataStudioPage() {
                 summary: 'Recipe-aware mapping preview before Data Prep writes prepared artifacts.',
                 group: 'shape' as const,
                 keywords: ['schema', 'fields', 'mapping', 'contract', 'adapter'],
+                handoffs: [
+                    { label: 'Dataset Prep', target: 'dataprep' },
+                ],
                 content: <DataStudioMappingPreviewPanel projectId={projectId} />,
             },
             {
@@ -372,6 +412,9 @@ export default function ProjectDataStudioPage() {
                 summary: 'Detected training domain, applied profile/pack alignment, and guided draft setup.',
                 group: 'shape' as const,
                 keywords: ['domain', 'profile', 'pack', 'policy', 'pii', 'pci'],
+                handoffs: [
+                    { label: 'Domain Managers', target: 'domain' },
+                ],
                 content: (
                     <DataStudioDomainDetectionPanel
                         projectId={projectId}
@@ -385,6 +428,10 @@ export default function ProjectDataStudioPage() {
                 summary: 'Optional local Ollama or OpenAI-compatible explanations for mapping and domain choices.',
                 group: 'shape' as const,
                 keywords: ['llm', 'ollama', 'openai', 'assist', 'explain'],
+                handoffs: [
+                    { label: 'Domain Managers', target: 'domain' },
+                    { label: 'Dataset Prep', target: 'dataprep' },
+                ],
                 content: <DataStudioAssistPanel projectId={projectId} />,
             },
             {
@@ -393,6 +440,10 @@ export default function ProjectDataStudioPage() {
                 summary: 'Trusted examples, validation status, field coverage, and review needs.',
                 group: 'examples' as const,
                 keywords: ['gold', 'trusted', 'examples', 'labels', 'validation'],
+                handoffs: [
+                    { label: 'Gold Set', target: 'goldset' },
+                    { label: 'Review', target: 'annotate' },
+                ],
                 content: (
                     <DataStudioGoldSetWorkbenchPanel
                         projectId={projectId}
@@ -406,6 +457,9 @@ export default function ProjectDataStudioPage() {
                 summary: 'Local-first generation readiness, playbook compatibility, and review prerequisites.',
                 group: 'examples' as const,
                 keywords: ['synthetic', 'playbooks', 'ollama', 'generation', 'local'],
+                handoffs: [
+                    { label: 'Synthetic', target: 'synthetic' },
+                ],
                 content: (
                     <DataStudioSyntheticPlaybookCenterPanel
                         projectId={projectId}
@@ -419,6 +473,10 @@ export default function ProjectDataStudioPage() {
                 summary: 'Domain-aware strategies based on recipe, mappings, Gold Set, and review queue state.',
                 group: 'examples' as const,
                 keywords: ['synthetic', 'recommendations', 'strategy', 'domain', 'gold'],
+                handoffs: [
+                    { label: 'Synthetic', target: 'synthetic' },
+                    { label: 'Gold Set', target: 'goldset' },
+                ],
                 content: (
                     <DataStudioSyntheticRecommendationsPanel
                         projectId={projectId}
@@ -434,6 +492,11 @@ export default function ProjectDataStudioPage() {
                 summary: 'Synthetic, Gold Set, promoted, and annotation review needs grouped for triage.',
                 group: 'release' as const,
                 keywords: ['review', 'queue', 'annotation', 'triage', 'promoted'],
+                handoffs: [
+                    { label: 'Review', target: 'annotate' },
+                    { label: 'Synthetic', target: 'synthetic' },
+                    { label: 'Gold Set', target: 'goldset' },
+                ],
                 content: (
                     <DataStudioReviewQueuePanel
                         projectId={projectId}
@@ -447,6 +510,10 @@ export default function ProjectDataStudioPage() {
                 summary: 'Readiness checks for recipe, mapping, splits, reviews, Gold Set, synthetic, and manifest outputs.',
                 group: 'release' as const,
                 keywords: ['prepare', 'dataset', 'splits', 'manifest', 'data prep'],
+                handoffs: [
+                    { label: 'Dataset Prep', target: 'dataprep' },
+                    { label: 'Review', target: 'annotate' },
+                ],
                 content: (
                     <DataStudioPrepareDatasetPanel
                         projectId={projectId}
@@ -460,6 +527,11 @@ export default function ProjectDataStudioPage() {
                 summary: 'Prepared artifact versions, manifest metadata, reproducibility, and downstream reuse.',
                 group: 'release' as const,
                 keywords: ['versions', 'artifacts', 'manifest', 'training', 'eval'],
+                handoffs: [
+                    { label: 'Dataset Prep', target: 'dataprep' },
+                    { label: 'Training', target: 'training' },
+                    { label: 'Eval', target: 'eval' },
+                ],
                 content: (
                     <DataStudioDatasetVersionsPanel
                         projectId={projectId}
@@ -593,7 +665,9 @@ export default function ProjectDataStudioPage() {
                         title={section.title}
                         summary={section.summary}
                         expanded={expandedSections.has(section.id)}
+                        handoffs={section.handoffs}
                         onToggle={toggleSection}
+                        onOpenHandoff={(handoff) => openDataStudioTarget(handoff.target, handoff.sectionToken)}
                         sectionRef={setSectionRef(section.id)}
                     >
                         {section.content}
