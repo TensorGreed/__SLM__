@@ -79,6 +79,7 @@ describe('ProjectSidebar nav matrix', () => {
     ['/project/1/wizard', undefined, 'Runs and Stages'],
     ['/project/1/wizard', { sidebarRail: 'training' }, 'Model Configuration'],
     ['/project/1/pipeline/data', undefined, 'Runs and Stages'],
+    ['/project/1/data-studio', undefined, 'Runs and Stages'],
     ['/project/1/pipeline/training', undefined, 'Model Configuration'],
     ['/project/1/training-config', undefined, 'Model Configuration'],
     ['/project/1/playground', undefined, 'Model Configuration'],
@@ -108,6 +109,15 @@ describe('ProjectSidebar nav matrix', () => {
     await user.click(screen.getByRole('button', { name: 'Playground' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/project/1/playground');
     expect(screen.getByText('Model Configuration')).toBeInTheDocument();
+  });
+
+  it('surfaces Data Studio as a Data Pipeline panel item', async () => {
+    const user = userEvent.setup();
+    renderSidebar(['/project/1/pipeline/data']);
+
+    await user.click(screen.getByRole('button', { name: 'Data Studio' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/project/1/data-studio');
+    expect(screen.getByText('Runs and Stages')).toBeInTheDocument();
   });
 });
 
@@ -330,4 +340,3 @@ describe('ProjectSidebar collapse', () => {
     expect(document.body.classList.contains('sidebar-collapsed')).toBe(false);
   });
 });
-

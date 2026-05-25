@@ -20,7 +20,7 @@ import './DataStudioCoachRailPanel.css';
 
 interface DataStudioCoachRailPanelProps {
     projectId: number;
-    onOpenTarget: (target: string) => void;
+    onOpenTarget: (target: string, sectionId?: string | null) => void;
 }
 
 const COACH_VERDICT_COPY: Record<DataStudioCoachRail['verdict'], { label: string; detail: string }> = {
@@ -70,7 +70,7 @@ function ActionCard({
     onOpenTarget,
 }: {
     action: DataStudioCoachAction;
-    onOpenTarget: (target: string) => void;
+    onOpenTarget: (target: string, sectionId?: string | null) => void;
 }) {
     return (
         <article className={`data-studio-coach__action data-studio-coach__action--${action.priority}`}>
@@ -80,7 +80,7 @@ function ActionCard({
                 <span>{action.section_label}</span>
             </div>
             <p>{action.message}</p>
-            <button type="button" className="btn btn-primary" onClick={() => onOpenTarget(action.target_tab)}>
+            <button type="button" className="btn btn-primary" onClick={() => onOpenTarget(action.target_tab, action.section_id)}>
                 <ExternalLink size={15} aria-hidden="true" />
                 {action.action_label}
             </button>
@@ -93,14 +93,14 @@ function CheckButton({
     onOpenTarget,
 }: {
     check: DataStudioCoachCheck;
-    onOpenTarget: (target: string) => void;
+    onOpenTarget: (target: string, sectionId?: string | null) => void;
 }) {
     const totalOpen = check.blocker_count + check.warning_count;
     return (
         <button
             type="button"
             className={`data-studio-coach__check data-studio-coach__check--${statusClass(check.status)}`}
-            onClick={() => onOpenTarget(check.target_tab)}
+            onClick={() => onOpenTarget(check.target_tab, check.id)}
         >
             <span>{statusIcon(check.status)}</span>
             <span>
@@ -117,13 +117,13 @@ function StepRow({
     onOpenTarget,
 }: {
     step: DataStudioCoachAction;
-    onOpenTarget: (target: string) => void;
+    onOpenTarget: (target: string, sectionId?: string | null) => void;
 }) {
     return (
         <button
             type="button"
             className={`data-studio-coach__step data-studio-coach__step--${step.severity}`}
-            onClick={() => onOpenTarget(step.target_tab)}
+            onClick={() => onOpenTarget(step.target_tab, step.section_id)}
         >
             <span>{step.severity === 'info' ? <CheckCircle2 size={15} aria-hidden="true" /> : <AlertTriangle size={15} aria-hidden="true" />}</span>
             <span>

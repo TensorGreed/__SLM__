@@ -136,7 +136,7 @@ describe('DataStudioCoachRailPanel', () => {
         expect(screen.getByText('10')).toBeInTheDocument();
 
         fireEvent.click(screen.getAllByRole('button', { name: /Choose recipe/i })[0]);
-        expect(onOpenTarget).toHaveBeenCalledWith('data');
+        expect(onOpenTarget).toHaveBeenCalledWith('data', 'overview');
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/coach');
     });
 
@@ -203,6 +203,6 @@ describe('DataStudioCoachRailPanel', () => {
         expect(screen.getAllByText('Launch training from the prepared dataset').length).toBeGreaterThan(0);
 
         fireEvent.click(screen.getAllByRole('button', { name: /Open Training/i })[0]);
-        expect(onOpenTarget).toHaveBeenCalledWith('training');
+        expect(onOpenTarget).toHaveBeenCalledWith('training', 'dataset_versions');
     });
 });

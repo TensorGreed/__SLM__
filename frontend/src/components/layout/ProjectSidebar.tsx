@@ -168,6 +168,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
     const pipelineBasePath = `/project/${projectId}/pipeline`;
     const pipelineDataPath = `${pipelineBasePath}/data`;
     const pipelineTrainingPath = `${pipelineBasePath}/training`;
+    const dataStudioPath = `/project/${projectId}/data-studio`;
 
     const currentStageIndex = useMemo(
         () => (pipelineStatus ? getStageIndex(pipelineStatus.current_stage) : 0),
@@ -176,6 +177,7 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
 
     const isPipelineDataRoute = location.pathname === pipelineBasePath || location.pathname === pipelineDataPath;
     const isPipelineTrainingRoute = location.pathname === pipelineTrainingPath;
+    const isDataStudioRoute = location.pathname === dataStudioPath;
     const isWorkflowRoute = location.pathname === `/project/${projectId}/workflow`;
     const isRecipesRoute = location.pathname === `/project/${projectId}/recipes`;
     const isTrainingConfigRoute = location.pathname === `/project/${projectId}/training-config`;
@@ -344,6 +346,14 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             >
                                 <FolderTree size={15} />
                                 <span className="nav-label">Runs</span>
+                            </button>
+                            <button
+                                className={`workspace-nav-item ${isDataStudioRoute ? 'active' : ''}`}
+                                onClick={() => navigate(dataStudioPath)}
+                                title="Data Studio"
+                            >
+                                <ClipboardList size={15} />
+                                <span className="nav-label">Data Studio</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isAnnotateRoute ? 'active' : ''}`}

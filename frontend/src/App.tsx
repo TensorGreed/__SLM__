@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProjectListPage from './pages/ProjectListPage';
 import ProjectWorkspaceLayout from './pages/ProjectWorkspaceLayout';
 import ProjectPipelinePage from './pages/ProjectPipelinePage';
+import ProjectDataStudioPage from './pages/ProjectDataStudioPage';
 import ProjectDomainPage from './pages/ProjectDomainPage';
 import ProjectDomainPacksPage from './pages/ProjectDomainPacksPage';
 import ProjectDomainProfilesPage from './pages/ProjectDomainProfilesPage';
@@ -43,6 +44,7 @@ function App() {
               <Route path="wizard" element={<ProjectWizardPage />} />
               <Route path="pipeline" element={<Navigate to="data" replace />} />
               <Route path="pipeline/:tabKey" element={<ProjectPipelinePage />} />
+              <Route path="data-studio" element={<ProjectDataStudioPage />} />
               <Route path="workflow" element={<ProjectWorkflowPage />} />
               <Route path="domain" element={<ProjectDomainPage />} />
               <Route path="domain/packs" element={<ProjectDomainPacksPage />} />

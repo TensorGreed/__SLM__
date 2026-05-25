@@ -27,6 +27,7 @@ import {
     FolderTree,
     Home,
     Layers,
+    PenSquare,
     Puzzle,
     Rocket,
     Search,
@@ -73,8 +74,24 @@ function buildItems(
     if (projectId == null) return items;
     const base = `/project/${projectId}`;
 
-    const trainingItems: Array<[string, string, ReactNode]> = [
+    const pipelineItems: Array<[string, string, ReactNode]> = [
         ['Pipeline Runs', `${base}/pipeline/data`, <FolderTree size={14} />],
+        ['Data Studio', `${base}/data-studio`, <ClipboardList size={14} />],
+        ['Annotation', `${base}/annotate`, <PenSquare size={14} />],
+    ];
+
+    for (const [label, path, icon] of pipelineItems) {
+        items.push({
+            id: path,
+            label,
+            hint: path,
+            section: 'Data Pipeline',
+            icon,
+            onSelect: () => navigate(path),
+        });
+    }
+
+    const trainingItems: Array<[string, string, ReactNode]> = [
         ['Training Configurations', `${base}/training-config`, <Settings2 size={14} />],
         ['Base Model Registry', `${base}/models`, <Boxes size={14} />],
         ['Autopilot Planner', `${base}/autopilot`, <ClipboardList size={14} />],

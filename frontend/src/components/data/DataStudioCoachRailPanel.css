@@ -1,8 +1,5 @@
 .data-studio-coach {
-    position: sticky;
-    top: var(--space-md);
-    z-index: 2;
-    margin-bottom: var(--space-lg);
+    margin: 0;
     padding: var(--space-lg);
     border: 1px solid var(--border-default);
     border-radius: 8px;
@@ -331,10 +328,6 @@
 }
 
 @media (max-width: 980px) {
-    .data-studio-coach {
-        position: static;
-    }
-
     .data-studio-coach__metrics,
     .data-studio-coach__body,
     .data-studio-coach__check-grid {

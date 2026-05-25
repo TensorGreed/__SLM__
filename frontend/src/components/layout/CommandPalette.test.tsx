@@ -41,9 +41,12 @@ describe('CommandPalette', () => {
         ).toBeInTheDocument();
         // Multiple sections.
         expect(screen.getByText('Navigation')).toBeInTheDocument();
+        expect(screen.getByText('Data Pipeline')).toBeInTheDocument();
         expect(screen.getByText('Training')).toBeInTheDocument();
         // A few well-known actions.
         expect(screen.getByText('Pipeline Runs')).toBeInTheDocument();
+        expect(screen.getByText('Data Studio')).toBeInTheDocument();
+        expect(screen.getByText('Annotation')).toBeInTheDocument();
         expect(screen.getByText('Observability')).toBeInTheDocument();
     });
 
@@ -63,6 +66,7 @@ describe('CommandPalette', () => {
         await screen.findByRole('dialog');
         // Always visible.
         expect(screen.getByText('Pipeline Runs')).toBeInTheDocument();
+        expect(screen.getByText('Data Studio')).toBeInTheDocument();
         // Hidden when beginner.
         expect(screen.queryByText('Adapter Studio')).not.toBeInTheDocument();
         expect(screen.queryByText('Extension Studio')).not.toBeInTheDocument();

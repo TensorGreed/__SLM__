@@ -3,18 +3,6 @@ import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router
 
 import PipelineProgress from '../components/dashboard/PipelineProgress';
 import IngestionPanel from '../components/data/IngestionPanel';
-import DataStudioCoachRailPanel from '../components/data/DataStudioCoachRailPanel';
-import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
-import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
-import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
-import DataStudioDomainDetectionPanel from '../components/data/DataStudioDomainDetectionPanel';
-import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
-import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
-import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudioSyntheticPlaybookCenterPanel';
-import DataStudioSyntheticRecommendationsPanel from '../components/data/DataStudioSyntheticRecommendationsPanel';
-import DataStudioReviewQueuePanel from '../components/data/DataStudioReviewQueuePanel';
-import DataStudioPrepareDatasetPanel from '../components/data/DataStudioPrepareDatasetPanel';
-import DataStudioDatasetVersionsPanel from '../components/data/DataStudioDatasetVersionsPanel';
 import CleaningPanel from '../components/data/CleaningPanel';
 import GoldSetPanel from '../components/data/GoldSetPanel';
 import SyntheticPanel from '../components/data/SyntheticPanel';
@@ -170,94 +158,10 @@ export default function ProjectPipelinePage() {
         navigate(`/project/${projectId}/pipeline/${nextTab}`);
     };
 
-    const openDataStudioTarget = (target: string) => {
-        if (isTabKey(target)) {
-            setActiveTab(target);
-            navigate(`/project/${projectId}/pipeline/${target}`);
-            return;
-        }
-        if (target === 'annotate') {
-            navigate(`/project/${projectId}/annotate`);
-            return;
-        }
-        if (target === 'domain') {
-            navigate(`/project/${projectId}/domain`);
-            return;
-        }
-        if (target === 'domain-packs') {
-            navigate(`/project/${projectId}/domain/packs`);
-            return;
-        }
-        if (target === 'domain-profiles') {
-            navigate(`/project/${projectId}/domain/profiles`);
-        }
-    };
-
     const renderTabContent = () => {
         switch (resolvedTab) {
             case 'data':
-                return (
-                    <>
-                        <DataStudioCoachRailPanel
-                            projectId={projectId}
-                            onOpenTarget={openDataStudioTarget}
-                        />
-                        <DataStudioOverviewPanel
-                            projectId={projectId}
-                            onOpenTab={(targetTab) => {
-                                if (!isTabKey(targetTab)) {
-                                    return;
-                                }
-                                setActiveTab(targetTab);
-                                navigate(`/project/${projectId}/pipeline/${targetTab}`);
-                            }}
-                        />
-                        <DataStudioSourcesSummaryPanel projectId={projectId} />
-                        <DataStudioMappingPreviewPanel projectId={projectId} />
-                        <DataStudioDomainDetectionPanel
-                            projectId={projectId}
-                            onOpenTarget={openDataStudioTarget}
-                        />
-                        <DataStudioAssistPanel projectId={projectId} />
-                        <DataStudioGoldSetWorkbenchPanel
-                            projectId={projectId}
-                            onOpenGoldSet={() => {
-                                setActiveTab('goldset');
-                                navigate(`/project/${projectId}/pipeline/goldset`);
-                            }}
-                        />
-                        <DataStudioSyntheticPlaybookCenterPanel
-                            projectId={projectId}
-                            onOpenSynthetic={() => {
-                                setActiveTab('synthetic');
-                                navigate(`/project/${projectId}/pipeline/synthetic`);
-                            }}
-                        />
-                        <DataStudioSyntheticRecommendationsPanel
-                            projectId={projectId}
-                            onOpenTab={(targetTab) => {
-                                if (!isTabKey(targetTab)) {
-                                    return;
-                                }
-                                setActiveTab(targetTab);
-                                navigate(`/project/${projectId}/pipeline/${targetTab}`);
-                            }}
-                        />
-                        <DataStudioReviewQueuePanel
-                            projectId={projectId}
-                            onOpenTarget={openDataStudioTarget}
-                        />
-                        <DataStudioPrepareDatasetPanel
-                            projectId={projectId}
-                            onOpenTarget={openDataStudioTarget}
-                        />
-                        <DataStudioDatasetVersionsPanel
-                            projectId={projectId}
-                            onOpenTarget={openDataStudioTarget}
-                        />
-                        <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />
-                    </>
-                );
+                return <IngestionPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'cleaning': return <CleaningPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'goldset': return <GoldSetPanel projectId={projectId} onNextStep={goToNextTab} />;
             case 'synthetic': return <SyntheticPanel projectId={projectId} onNextStep={goToNextTab} />;
