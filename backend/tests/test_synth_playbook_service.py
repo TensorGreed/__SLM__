@@ -70,9 +70,10 @@ class _CannedBackend:
     def describe(self) -> str:
         return "canned:test"
 
-    async def complete(self, prompt: str, *, system_prompt: str | None = None, max_tokens: int = 1024, temperature: float = 0.7) -> str:
+    async def complete(self, prompt: str, *, system_prompt: str | None = None, max_tokens: int = 1024, temperature: float = 0.7, response_schema: dict | None = None) -> str:
         self.last_prompt = prompt
         self.last_system = system_prompt
+        self.last_response_schema = response_schema
         return self._response
 
 

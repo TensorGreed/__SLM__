@@ -127,6 +127,7 @@ class OllamaBackend:
         system_prompt: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        response_schema: dict | None = None,  # noqa: ARG002 — Ollama's /v1/chat/completions ignores OpenAI's response_format=json_schema; the playbook parser handles structure.
     ) -> str:
         if httpx is None:
             raise SynthBackendError("httpx is not installed; install httpx to use OllamaBackend.")

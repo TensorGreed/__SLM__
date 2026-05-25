@@ -89,6 +89,48 @@ class ClassificationClassBalanceFillPlaybook:
             target_count=target,
         )
 
+    def response_schema(self, ctx: PlaybookContext) -> dict | None:
+        """JSON Schema describing one synthetic row.
+
+        Constrains schema-aware backends (NeMo / NIM Phase 5b) to emit
+        ``{"text": str, "label": <one of known labels>}``. When the
+        target_class is already pinned (auto-pick happens in
+        build_prompt), we narrow the ``label`` enum to that single
+        value so the decoder can't drift to a different class.
+
+        Backends without structured-output support (Ollama, teacher)
+        silently ignore the schema — the playbook's parse_output +
+        validate steps still enforce shape after the fact.
+        """
+        gold = ctx.get("gold_rows") or []
+        known = sorted(self._collect_labels(gold))
+        target_class = ctx.get("target_class")
+        if target_class and target_class in known:
+            label_choices = [target_class]
+        elif known:
+            label_choices = known
+        else:
+            # No labels yet — fall back to free-form string so the
+            # decoder isn't blocked on an empty enum.
+            return {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "minLength": 1},
+                    "label": {"type": "string", "minLength": 1},
+                },
+                "required": ["text", "label"],
+                "additionalProperties": False,
+            }
+        return {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1},
+                "label": {"type": "string", "enum": label_choices},
+            },
+            "required": ["text", "label"],
+            "additionalProperties": False,
+        }
+
     def parse_output(self, raw_llm_output: str, ctx: PlaybookContext) -> list[dict[str, Any]]:
         return parse_jsonl_lines(raw_llm_output)
 

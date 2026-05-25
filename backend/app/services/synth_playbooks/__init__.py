@@ -19,6 +19,7 @@ from .base import (
     SynthRow,
     register_playbook,
     get_playbook,
+    get_response_schema,
     list_playbooks,
 )
 from . import classification_paraphrase  # noqa: F401 — register on import
@@ -53,6 +54,7 @@ __all__ = [
     "SynthMode",
     "SynthRow",
     "get_playbook",
+    "get_response_schema",
     "list_playbooks",
     "register_playbook",
 ]

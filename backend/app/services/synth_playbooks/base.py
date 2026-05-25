@@ -70,6 +70,24 @@ class Playbook(Protocol):
     def validate(self, parsed_rows: list[dict[str, Any]], ctx: PlaybookContext) -> list[SynthRow]: ...
 
 
+def get_response_schema(playbook: Playbook, ctx: PlaybookContext) -> dict | None:
+    """Return the playbook's per-row JSON Schema, if it defines one.
+
+    The schema is forwarded to schema-aware backends (NeMo / NIM) as
+    ``response_format=json_schema``. Playbooks that don't need
+    structured-output constraints simply don't define
+    ``response_schema`` — backends that do support it then fall back
+    to free-form generation + parser-only validation.
+    """
+    fn = getattr(playbook, "response_schema", None)
+    if not callable(fn):
+        return None
+    schema = fn(ctx)
+    if not isinstance(schema, dict) or not schema:
+        return None
+    return schema
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Registry: (recipe_id, mode) → Playbook instance.
 # ─────────────────────────────────────────────────────────────────────

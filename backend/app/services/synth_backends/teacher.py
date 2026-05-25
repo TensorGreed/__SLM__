@@ -47,6 +47,7 @@ class TeacherModelBackend:
         system_prompt: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        response_schema: dict | None = None,  # noqa: ARG002 — the legacy teacher dispatcher (call_teacher_model) has no schema hook; the playbook parser handles structure.
     ) -> str:
         # Import lazily to avoid a circular import at module load time.
         from app.services.synthetic_service import call_teacher_model  # noqa: WPS433

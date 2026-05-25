@@ -92,8 +92,16 @@ To pin NeMo as the default, leave `OLLAMA_HOST` pointing at a non-running daemon
 | `NeMo timed out after 600s` | Large prompts / underpowered GPU | Lower `target_count` in the playbook UI, bump `NEMO_TIMEOUT_SECONDS`, or pick a smaller model. |
 | Generated rows "disappear" after a successful run | They went to the **synth review queue** with `review_status="pending"` — gated out of training until you accept them | Open the Synthetic tab's review queue and accept/reject the rows. |
 
-## Why no schema-constrained output yet?
+## Schema-constrained generation (Phase 5b)
 
-The Epic 2 playbook framework calls `backend.complete(prompt)` and gets raw text back; the playbook then runs its own `parse_output()` + `validate()` pass. NeMo's real differentiator — schema-guided generation — requires extending the `SynthBackend` protocol with a `response_schema` parameter and threading it through all three backends.
+Phase 5b extends `SynthBackend.complete()` with an optional `response_schema: dict | None = None` parameter:
 
-That's deliberately deferred to **Epic 5 Phase 5b**. Phase 5a ships the transport so power users can start exercising NeMo for raw text generation today.
+- **`NemoBackend`** — forwards the schema as `response_format={"type": "json_schema", "json_schema": {"name": "synth_row", "schema": <your-schema>, "strict": true}}` on the chat-completion payload. NIM honors this exactly like the OpenAI Structured-Outputs API — the model is constrained to emit JSON validating against the schema, so playbooks get clean parses even on small / instruction-shaky models.
+- **`OllamaBackend`** — accepts the kwarg and silently ignores it. Ollama's `/v1/chat/completions` doesn't implement OpenAI's `response_format=json_schema`, so threading the schema in would just add an ignored field; the playbook's `parse_output()` + `validate()` pass handles structure either way.
+- **`TeacherModelBackend`** — same: accepts the kwarg, doesn't forward it (the legacy dispatcher has no schema hook).
+
+Playbooks opt in by defining an optional `response_schema(ctx) -> dict | None` method. The orchestrator picks it up via `get_response_schema(playbook, ctx)` and forwards the result.
+
+Today, **only the `class_balance_fill` playbook** (classification recipe) defines a schema — it builds a JSON Schema from the gold-set labels and narrows the `label` enum to the resolved `target_class` so NIM can't drift to a different class. Other playbooks return `None` and run as before.
+
+Defense-in-depth: `parse_jsonl_lines` still strips markdown fences after the fact, so a NIM that ignores `strict` (or any fallback backend that silently ignored the schema) still produces parseable rows.

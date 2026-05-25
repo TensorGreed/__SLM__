@@ -45,6 +45,7 @@ from app.services.synth_playbooks import (
     SynthMode,
     SynthRow,
     get_playbook,
+    get_response_schema,
     list_playbooks,
 )
 from app.config import settings
@@ -197,12 +198,17 @@ async def run_playbook(
     selected_backend = backend_override or pick_backend(backend, registry=BACKEND_REGISTRY)
 
     prompt = playbook.build_prompt(ctx)
+    # Per-row JSON Schema (Phase 5b): schema-aware backends (NeMo / NIM)
+    # consume it via response_format; others silently ignore — the
+    # playbook parser still validates structure either way.
+    response_schema = get_response_schema(playbook, ctx)
     started_at = time.monotonic()
     raw_llm_output = await selected_backend.complete(
         prompt,
         system_prompt=_system_prompt_for_mode(mode),
         max_tokens=2048,
         temperature=0.7,
+        response_schema=response_schema,
     )
     elapsed = time.monotonic() - started_at
 

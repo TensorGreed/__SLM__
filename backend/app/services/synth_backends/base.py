@@ -42,7 +42,18 @@ class SynthBackend(Protocol):
         system_prompt: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        response_schema: dict | None = None,
     ) -> str:  # pragma: no cover - default no-op
+        """Generate text for `prompt`.
+
+        `response_schema` is an optional JSON Schema. Backends that
+        natively support schema-constrained decoding (NeMo / NIM)
+        forward it as ``response_format`` on the chat-completion call;
+        backends that don't (Ollama, the legacy teacher dispatcher)
+        silently ignore it — playbooks always also enforce structure
+        via parse_output/validate, so an ignored schema is a soft
+        downgrade, never a failure.
+        """
         ...
 
     def describe(self) -> str:  # pragma: no cover - default no-op

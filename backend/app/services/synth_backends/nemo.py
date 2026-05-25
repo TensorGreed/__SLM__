@@ -1,15 +1,18 @@
-"""NVIDIA NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).
+"""NVIDIA NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a + 5b).
 
 Talks to a locally-running NIM (NVIDIA Inference Microservice) or
 NeMo Data Designer endpoint over its OpenAI-compatible
-``/v1/chat/completions`` API. Schema-constrained generation is
-deliberately out of scope for Phase 5a — the backend mirrors the
-existing OllamaBackend transport behavior and lets the playbook
-framework do its own parse/validate pass.
+``/v1/chat/completions`` API.
 
-Phase 5b will extend the SynthBackend protocol with an optional
-``response_schema`` parameter and route it into NeMo's structured-
-output API.
+Phase 5b adds schema-constrained decoding: when the playbook passes
+a JSON Schema via ``response_schema=``, the backend forwards it as
+``response_format={"type": "json_schema", "json_schema": {...}}`` on
+the chat completion. NeMo / NIM honor this exactly like the OpenAI
+Structured Outputs API — the model is constrained to emit JSON that
+validates against the schema, so playbooks get clean parses even on
+small / instruction-shaky models. The playbook parser still runs
+afterwards as a defense-in-depth check (and a no-op fall-through on
+backends that ignore the schema).
 
 Configuration (set in env / .env):
 
@@ -109,6 +112,7 @@ class NemoBackend:
         system_prompt: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        response_schema: dict | None = None,
     ) -> str:
         if httpx is None:
             raise SynthBackendError(
@@ -138,6 +142,18 @@ class NemoBackend:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if response_schema is not None:
+            # NIM / NeMo Data Designer mirrors the OpenAI Structured
+            # Outputs shape. `strict: true` forces the decoder to stay
+            # on-schema; `name` is a label NIM logs back in errors.
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "synth_row",
+                    "schema": response_schema,
+                    "strict": True,
+                },
+            }
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
