@@ -346,6 +346,14 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertGreaterEqual(len(payload["evidence"]), 2)
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("domain_candidate_not_applied", issue_ids)
+        setup = payload["domain_setup"]
+        self.assertTrue(setup["available"])
+        self.assertTrue(setup["recommended"])
+        self.assertEqual(setup["detected_domain_id"], "support_faq")
+        self.assertEqual(setup["profile_id"], "support-faq-profile-v1")
+        self.assertEqual(setup["pack_id"], "support-faq-pack-v1")
+        self.assertEqual(setup["profile_contract"]["status"], "draft")
+        self.assertEqual(setup["pack_contract"]["default_profile_id"], "support-faq-profile-v1")
 
     def test_domain_detection_empty_project_uses_generic_runtime(self):
         project_id = self._create_project("data-studio-domain-empty")
@@ -360,6 +368,112 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("domain_needs_source_evidence", issue_ids)
         self.assertIn("low_domain_confidence", issue_ids)
+        self.assertIsNone(payload["domain_setup"])
+
+    def test_domain_detection_policy_setup_creates_missing_drafts_after_confirmation(self):
+        project_id = self._create_project("data-studio-policy-domain")
+
+        async def _seed_policy_source():
+            async with async_session_factory() as db:
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "policy_qa.jsonl"
+                rows = [
+                    {
+                        "question": "Which leave policy covers a caregiver emergency?",
+                        "answer": "The handbook says caregiver leave is covered when eligibility and notice requirements are met.",
+                        "context": "Caregiver leave policy section 4.2 describes eligibility, exceptions, and notice rules.",
+                        "policy_section": "leave-4.2",
+                    },
+                    {
+                        "question": "Can a manager approve an exception to the benefit policy?",
+                        "answer": "Exceptions require compliance review and written approval before the benefit is applied.",
+                        "context": "Benefit policy section 7 lists exception handling and compliance guidance.",
+                        "policy_section": "benefits-7",
+                    },
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Policy Q&A",
+                    dataset_type=DatasetType.RAW,
+                    record_count=2,
+                    file_path=str(raw_path),
+                )
+                db.add(raw_ds)
+                await db.flush()
+                db.add(
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="policy_qa.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=2,
+                    )
+                )
+                await db.commit()
+
+        asyncio.run(_seed_policy_source())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/domain-detection")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["detected_domain"]["id"], "policy_qa")
+        setup = payload["domain_setup"]
+        self.assertEqual(setup["detected_domain_label"], "Policy Q&A")
+        self.assertEqual(setup["profile_id"], "policy-qa-profile-v1")
+        self.assertEqual(setup["pack_id"], "policy-qa-pack-v1")
+        self.assertTrue(setup["can_create_profile"])
+        self.assertTrue(setup["can_create_pack"])
+        guidance_ids = {item["id"] for item in setup["guidance"]}
+        self.assertIn("unknowns", guidance_ids)
+        task = setup["profile_contract"]["tasks"][0]
+        self.assertIn("policy_section", task["optional_fields"])
+        self.assertEqual(setup["pack_contract"]["status"], "draft")
+
+        rejected = self.client.post(
+            f"/api/projects/{project_id}/data-studio/domain-detection/domain-setup",
+            json={"confirm": False},
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+
+        create_resp = self.client.post(
+            f"/api/projects/{project_id}/data-studio/domain-detection/domain-setup",
+            json={"confirm": True},
+        )
+        self.assertEqual(create_resp.status_code, 200, create_resp.text)
+        created = create_resp.json()
+        self.assertEqual(created["status"], "created")
+        self.assertTrue(created["created_profile"])
+        self.assertTrue(created["created_pack"])
+        self.assertFalse(created["assigned_to_project"])
+        self.assertEqual(created["profile"]["profile_id"], "policy-qa-profile-v1")
+        self.assertEqual(created["profile"]["status"], "draft")
+        self.assertEqual(created["pack"]["pack_id"], "policy-qa-pack-v1")
+
+        profile_resp = self.client.get("/api/domain-profiles/policy-qa-profile-v1")
+        self.assertEqual(profile_resp.status_code, 200, profile_resp.text)
+        self.assertEqual(profile_resp.json()["status"], "draft")
+        pack_resp = self.client.get("/api/domain-packs/policy-qa-pack-v1")
+        self.assertEqual(pack_resp.status_code, 200, pack_resp.text)
+        self.assertEqual(pack_resp.json()["default_profile_id"], "policy-qa-profile-v1")
+
+        repeat_resp = self.client.post(
+            f"/api/projects/{project_id}/data-studio/domain-detection/domain-setup",
+            json={"confirm": True},
+        )
+        self.assertEqual(repeat_resp.status_code, 200, repeat_resp.text)
+        repeat = repeat_resp.json()
+        self.assertEqual(repeat["status"], "already_exists")
+        self.assertFalse(repeat["created_profile"])
+        self.assertFalse(repeat["created_pack"])
 
     def test_gold_set_workbench_summarizes_rows_versions_and_queue(self):
         project_id = self._create_project("data-studio-gold")

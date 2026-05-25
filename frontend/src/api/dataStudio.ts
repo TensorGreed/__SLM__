@@ -269,6 +269,43 @@ export interface DataStudioDomainRisk {
     message: string;
 }
 
+export interface DataStudioDomainSetupGuidance {
+    id: string;
+    title: string;
+    recommendation: string;
+    why: string;
+}
+
+export interface DataStudioDomainSetupChoice {
+    id: string;
+    label: string;
+    target: string;
+    detail: string;
+}
+
+export interface DataStudioDomainSetupPreview {
+    available: boolean;
+    recommended: boolean;
+    reason: string;
+    read_only: boolean;
+    requires_confirmation: boolean;
+    create_mode: string;
+    detected_domain_id: string;
+    detected_domain_label: string;
+    profile_id: string;
+    pack_id: string;
+    profile_exists: boolean;
+    pack_exists: boolean;
+    profile_status?: string | null;
+    pack_status?: string | null;
+    can_create_profile: boolean;
+    can_create_pack: boolean;
+    guidance: DataStudioDomainSetupGuidance[];
+    choices: DataStudioDomainSetupChoice[];
+    profile_contract: Record<string, unknown>;
+    pack_contract: Record<string, unknown>;
+}
+
 export interface DataStudioDomainDetection {
     project_id: number;
     verdict: DataStudioDomainVerdict;
@@ -280,12 +317,46 @@ export interface DataStudioDomainDetection {
     suggested_actions: DataStudioDomainAction[];
     risks: DataStudioDomainRisk[];
     issues: DataStudioIssue[];
+    domain_setup?: DataStudioDomainSetupPreview | null;
     power_details: Record<string, unknown>;
 }
 
 export async function getDataStudioDomainDetection(projectId: number): Promise<DataStudioDomainDetection> {
     const resp = await api.get(`/projects/${projectId}/data-studio/domain-detection`);
     return resp.data as DataStudioDomainDetection;
+}
+
+export interface DataStudioDomainSetupCreateResponse {
+    status: 'created' | 'already_exists' | string;
+    project_id: number;
+    detected_domain_id: string;
+    detected_domain_label: string;
+    created_profile: boolean;
+    created_pack: boolean;
+    assigned_to_project: boolean;
+    profile: {
+        profile_id: string;
+        display_name: string;
+        status: string;
+        version: string;
+    };
+    pack: {
+        pack_id: string;
+        display_name: string;
+        status: string;
+        version: string;
+        default_profile_id?: string | null;
+    };
+    next_targets: string[];
+}
+
+export async function createDataStudioDomainSetup(
+    projectId: number,
+): Promise<DataStudioDomainSetupCreateResponse> {
+    const resp = await api.post(`/projects/${projectId}/data-studio/domain-detection/domain-setup`, {
+        confirm: true,
+    });
+    return resp.data as DataStudioDomainSetupCreateResponse;
 }
 
 export interface DataStudioGoldSetValidation {

@@ -29,12 +29,14 @@ from app.models.gold_set_annotation import (
 )
 from app.models.label_job import LabelJob, LabelRow
 from app.models.project import Project
+from app.schemas.domain_pack import DomainPackContract
+from app.schemas.domain_profile import DomainProfileContract
 from app.services.dataset_service import (
     preview_project_data_adapter,
     resolve_project_dataset_adapter_preference,
 )
-from app.services.domain_pack_service import get_domain_pack
-from app.services.domain_profile_service import get_domain_profile
+from app.services.domain_pack_service import create_domain_pack, get_domain_pack
+from app.services.domain_profile_service import create_domain_profile, get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
 from app.services.recipe_service import get_recipe
 from app.services.synth_backends import BACKEND_REGISTRY
@@ -625,6 +627,579 @@ def _domain_risks(candidate: dict[str, Any]) -> list[dict[str, str]]:
     return risks
 
 
+_DOMAIN_SETUP_MIN_CONFIDENCE = 0.45
+
+
+def _domain_setup_slug(value: Any) -> str:
+    token = str(value or "").strip().lower().replace("_", "-")
+    token = re.sub(r"[^a-z0-9-]+", "-", token)
+    token = re.sub(r"-{2,}", "-", token).strip("-")
+    return token or "detected-domain"
+
+
+def _clone_jsonable(value: Any) -> Any:
+    return json.loads(json.dumps(value, default=str))
+
+
+def _policy_qa_profile_payload(profile_id: str) -> dict[str, Any]:
+    return {
+        "$schema": "slm.domain-profile/v1",
+        "profile_id": profile_id,
+        "version": "1.0.0",
+        "display_name": "Policy Q&A Profile",
+        "description": (
+            "Draft profile for source-backed policy question answering with "
+            "exceptions, unknown-answer behavior, and review gates."
+        ),
+        "owner": "workspace",
+        "status": "draft",
+        "tasks": [
+            {
+                "task_id": "policy-qa",
+                "output_mode": "text",
+                "required_fields": ["question", "answer"],
+                "optional_fields": [
+                    "context",
+                    "policy_section",
+                    "source",
+                    "effective_date",
+                    "exception_type",
+                    "rationale",
+                ],
+            }
+        ],
+        "canonical_schema": {
+            "required": ["input_text", "target_text"],
+            "aliases": {
+                "input_text": [
+                    "question",
+                    "prompt",
+                    "policy_question",
+                    "employee_question",
+                    "customer_question",
+                ],
+                "target_text": ["answer", "response", "policy_answer", "expected_answer"],
+                "context": [
+                    "context",
+                    "policy_text",
+                    "section_text",
+                    "source_excerpt",
+                    "passage",
+                ],
+                "metadata": [
+                    "policy_section",
+                    "source",
+                    "effective_date",
+                    "exception_type",
+                    "jurisdiction",
+                    "audience",
+                ],
+            },
+        },
+        "normalization": {
+            "trim_whitespace": True,
+            "drop_empty_records": True,
+            "dedupe": {"enabled": True, "method": "hash(input_text,target_text,context)"},
+            "pii_redaction": {"enabled": False, "policy": "review_before_training"},
+        },
+        "data_quality": {
+            "min_records": 300,
+            "max_null_ratio": 0.08,
+            "max_duplicate_ratio": 0.15,
+            "required_coverage": {
+                "input_text": 0.99,
+                "target_text": 0.99,
+                "context": 0.7,
+            },
+        },
+        "dataset_split": {
+            "train": 0.8,
+            "val": 0.1,
+            "test": 0.1,
+            "stratify_by": ["policy_section", "exception_type"],
+            "seed": 42,
+            "leakage_checks": ["exact_text_overlap", "policy_section_overlap"],
+        },
+        "training_defaults": {
+            "training_mode": "sft",
+            "chat_template": "llama3",
+            "num_epochs": 3,
+            "batch_size": 4,
+            "learning_rate": 0.0002,
+            "use_lora": True,
+        },
+        "evaluation": {
+            "metrics": [
+                {"metric_id": "exact_match", "weight": 0.2, "threshold": 0.5},
+                {"metric_id": "f1", "weight": 0.25, "threshold": 0.68},
+                {"metric_id": "source_coverage", "weight": 0.25, "threshold": 0.75},
+                {"metric_id": "unknown_answer_pass_rate", "weight": 0.15, "threshold": 0.8},
+                {"metric_id": "safety_pass_rate", "weight": 0.15, "threshold": 0.92},
+            ],
+            "required_metrics_for_promotion": [
+                "f1",
+                "source_coverage",
+                "safety_pass_rate",
+            ],
+        },
+        "tools": {
+            "retrieval": {"enabled": False, "adapter": None},
+            "function_calling": {"enabled": False, "adapter": None},
+            "required_secrets": [],
+        },
+        "registry_gates": {
+            "to_staging": {"min_metrics": {"f1": 0.68, "source_coverage": 0.75}},
+            "to_production": {
+                "min_metrics": {
+                    "f1": 0.72,
+                    "source_coverage": 0.82,
+                    "safety_pass_rate": 0.94,
+                },
+                "max_regression_vs_prod": {"f1": 0.03},
+            },
+        },
+        "audit": {
+            "require_human_approval_for_production": True,
+            "notes_required_on_force_promotion": True,
+        },
+    }
+
+
+def _pii_pci_profile_payload(profile_id: str) -> dict[str, Any]:
+    return {
+        "$schema": "slm.domain-profile/v1",
+        "profile_id": profile_id,
+        "version": "1.0.0",
+        "display_name": "PII/PCI Detection Profile",
+        "description": (
+            "Draft profile for sensitive-data detection, masking review, "
+            "and false-negative focused evaluation."
+        ),
+        "owner": "workspace",
+        "status": "draft",
+        "tasks": [
+            {
+                "task_id": "pii-pci-detection",
+                "output_mode": "label",
+                "required_fields": ["text", "label"],
+                "optional_fields": ["entity", "category", "span", "redacted_text", "rationale"],
+            }
+        ],
+        "canonical_schema": {
+            "required": ["input_text", "target_text"],
+            "aliases": {
+                "input_text": ["text", "input", "message", "document", "raw_text"],
+                "target_text": ["label", "category", "entity", "pii_type", "pci_type"],
+                "context": ["span", "surrounding_text", "example_context"],
+                "metadata": ["redacted_text", "policy", "source", "risk_level"],
+            },
+        },
+        "normalization": {
+            "trim_whitespace": True,
+            "drop_empty_records": True,
+            "dedupe": {"enabled": True, "method": "hash(input_text,target_text)"},
+            "pii_redaction": {"enabled": True, "policy": "mask_training_values"},
+        },
+        "data_quality": {
+            "min_records": 500,
+            "max_null_ratio": 0.04,
+            "max_duplicate_ratio": 0.12,
+            "required_coverage": {"input_text": 0.99, "target_text": 0.99},
+        },
+        "dataset_split": {
+            "train": 0.8,
+            "val": 0.1,
+            "test": 0.1,
+            "stratify_by": ["label", "entity"],
+            "seed": 42,
+            "leakage_checks": ["exact_text_overlap", "sensitive_value_overlap"],
+        },
+        "training_defaults": {
+            "training_mode": "sft",
+            "chat_template": "llama3",
+            "num_epochs": 3,
+            "batch_size": 4,
+            "learning_rate": 0.0002,
+            "use_lora": True,
+        },
+        "evaluation": {
+            "metrics": [
+                {"metric_id": "precision", "weight": 0.22, "threshold": 0.9},
+                {"metric_id": "recall", "weight": 0.3, "threshold": 0.92},
+                {"metric_id": "f1", "weight": 0.24, "threshold": 0.9},
+                {"metric_id": "false_negative_rate", "weight": 0.14, "threshold": 0.04},
+                {"metric_id": "safety_pass_rate", "weight": 0.1, "threshold": 0.95},
+            ],
+            "required_metrics_for_promotion": ["recall", "f1", "safety_pass_rate"],
+        },
+        "tools": {
+            "retrieval": {"enabled": False, "adapter": None},
+            "function_calling": {"enabled": False, "adapter": None},
+            "required_secrets": [],
+        },
+        "registry_gates": {
+            "to_staging": {"min_metrics": {"recall": 0.9, "f1": 0.88}},
+            "to_production": {
+                "min_metrics": {"recall": 0.94, "f1": 0.9, "safety_pass_rate": 0.96},
+                "max_regression_vs_prod": {"recall": 0.02, "f1": 0.02},
+            },
+        },
+        "audit": {
+            "require_human_approval_for_production": True,
+            "notes_required_on_force_promotion": True,
+        },
+    }
+
+
+def _generic_domain_profile_payload(candidate: dict[str, Any], profile_id: str) -> dict[str, Any]:
+    domain_id = str(candidate.get("id") or "detected_domain")
+    label = str(candidate.get("label") or "Detected Domain")
+    recipes = {str(item) for item in candidate.get("recommended_recipes") or []}
+    matched_fields = [
+        str(field)
+        for field in list(candidate.get("matched_fields") or [])[:8]
+        if str(field).strip()
+    ]
+    classification_like = "classification" in recipes or "span-extraction" in recipes
+    if classification_like:
+        task_id = f"{_domain_setup_slug(domain_id)}-classification"
+        output_mode = "label"
+        required_fields = ["input", "label"]
+        optional_fields = ["category", "rationale", "source", "difficulty"]
+        metrics = [
+            {"metric_id": "accuracy", "weight": 0.25, "threshold": 0.75},
+            {"metric_id": "macro_f1", "weight": 0.35, "threshold": 0.7},
+            {"metric_id": "class_balance", "weight": 0.15, "threshold": 0.8},
+            {"metric_id": "safety_pass_rate", "weight": 0.25, "threshold": 0.9},
+        ]
+        required_metrics = ["macro_f1", "safety_pass_rate"]
+        coverage = {"input_text": 0.99, "target_text": 0.98}
+        stratify_by = ["label", "category"]
+    else:
+        task_id = f"{_domain_setup_slug(domain_id)}-qa"
+        output_mode = "text"
+        required_fields = ["question", "answer"]
+        optional_fields = ["context", "source", "rationale", "difficulty"]
+        metrics = [
+            {"metric_id": "exact_match", "weight": 0.2, "threshold": 0.5},
+            {"metric_id": "f1", "weight": 0.32, "threshold": 0.65},
+            {"metric_id": "llm_judge_pass_rate", "weight": 0.28, "threshold": 0.75},
+            {"metric_id": "safety_pass_rate", "weight": 0.2, "threshold": 0.9},
+        ]
+        required_metrics = ["f1", "llm_judge_pass_rate", "safety_pass_rate"]
+        coverage = {"input_text": 0.99, "target_text": 0.99}
+        stratify_by = ["source", "difficulty"]
+
+    return {
+        "$schema": "slm.domain-profile/v1",
+        "profile_id": profile_id,
+        "version": "1.0.0",
+        "display_name": f"{label} Profile",
+        "description": f"Draft profile generated from Data Studio detection for {label} projects.",
+        "owner": "workspace",
+        "status": "draft",
+        "tasks": [
+            {
+                "task_id": task_id,
+                "output_mode": output_mode,
+                "required_fields": required_fields,
+                "optional_fields": optional_fields,
+            }
+        ],
+        "canonical_schema": {
+            "required": ["input_text", "target_text"],
+            "aliases": {
+                "input_text": ["question", "prompt", "input", "text", "message"],
+                "target_text": ["answer", "response", "output", "label", "completion"],
+                "context": ["context", "passage", "document", "source_excerpt"],
+                "metadata": ["source", "category", "labels", *matched_fields],
+            },
+        },
+        "normalization": {
+            "trim_whitespace": True,
+            "drop_empty_records": True,
+            "dedupe": {"enabled": True, "method": "hash(input_text,target_text)"},
+            "pii_redaction": {"enabled": False, "policy": "review_before_training"},
+        },
+        "data_quality": {
+            "min_records": 300,
+            "max_null_ratio": 0.08,
+            "max_duplicate_ratio": 0.15,
+            "required_coverage": coverage,
+        },
+        "dataset_split": {
+            "train": 0.8,
+            "val": 0.1,
+            "test": 0.1,
+            "stratify_by": stratify_by,
+            "seed": 42,
+            "leakage_checks": ["exact_text_overlap"],
+        },
+        "training_defaults": {
+            "training_mode": "sft",
+            "chat_template": "llama3",
+            "num_epochs": 3,
+            "batch_size": 4,
+            "learning_rate": 0.0002,
+            "use_lora": True,
+        },
+        "evaluation": {
+            "metrics": metrics,
+            "required_metrics_for_promotion": required_metrics,
+        },
+        "tools": {
+            "retrieval": {"enabled": False, "adapter": None},
+            "function_calling": {"enabled": False, "adapter": None},
+            "required_secrets": [],
+        },
+        "registry_gates": {
+            "to_staging": {"min_metrics": {"f1": 0.65}},
+            "to_production": {
+                "min_metrics": {"f1": 0.7, "safety_pass_rate": 0.92},
+                "max_regression_vs_prod": {"f1": 0.03},
+            },
+        },
+        "audit": {
+            "require_human_approval_for_production": True,
+            "notes_required_on_force_promotion": True,
+        },
+    }
+
+
+def _domain_setup_profile_payload(candidate: dict[str, Any], profile_id: str) -> dict[str, Any]:
+    domain_id = str(candidate.get("id") or "")
+    if domain_id == "policy_qa":
+        return _policy_qa_profile_payload(profile_id)
+    if domain_id == "pii_pci_detection":
+        return _pii_pci_profile_payload(profile_id)
+    return _generic_domain_profile_payload(candidate, profile_id)
+
+
+def _domain_setup_pack_payload(
+    candidate: dict[str, Any],
+    *,
+    pack_id: str,
+    profile_payload: dict[str, Any],
+) -> dict[str, Any]:
+    label = str(candidate.get("label") or "Detected Domain")
+    slug = _domain_setup_slug(candidate.get("id") or label)
+    return {
+        "$schema": "slm.domain-pack/v1",
+        "pack_id": pack_id,
+        "version": "1.0.0",
+        "display_name": f"{label} Pack",
+        "description": (
+            f"Draft domain pack generated from Data Studio detection for {label}. "
+            "Review before assigning to the project."
+        ),
+        "owner": "workspace",
+        "status": "draft",
+        "default_profile_id": profile_payload.get("profile_id"),
+        "tags": [slug, "data-studio", "domain-detection"],
+        "hooks": {
+            "normalizer": {"id": "default-normalizer", "config": {}},
+            "validator": {"id": "default-validator", "config": {}},
+            "evaluator": {"id": "default-evaluator", "config": {}},
+        },
+        "overlay": {
+            "dataset_split": _clone_jsonable(profile_payload.get("dataset_split") or {}),
+            "training_defaults": _clone_jsonable(profile_payload.get("training_defaults") or {}),
+            "data_quality": _clone_jsonable(profile_payload.get("data_quality") or {}),
+            "normalization": _clone_jsonable(profile_payload.get("normalization") or {}),
+            "tools": _clone_jsonable(profile_payload.get("tools") or {}),
+            "evaluation": _clone_jsonable(profile_payload.get("evaluation") or {}),
+            "registry_gates": _clone_jsonable(profile_payload.get("registry_gates") or {}),
+            "audit": _clone_jsonable(profile_payload.get("audit") or {}),
+        },
+    }
+
+
+def _domain_setup_contract_payloads(candidate: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    slug = _domain_setup_slug(candidate.get("id") or candidate.get("label"))
+    profile_id = f"{slug}-profile-v1"
+    pack_id = f"{slug}-pack-v1"
+    profile_contract = DomainProfileContract.model_validate(
+        _domain_setup_profile_payload(candidate, profile_id)
+    )
+    profile_payload = profile_contract.model_dump(by_alias=True, exclude_none=True)
+    pack_contract = DomainPackContract.model_validate(
+        _domain_setup_pack_payload(
+            candidate,
+            pack_id=pack_id,
+            profile_payload=profile_payload,
+        )
+    )
+    pack_payload = pack_contract.model_dump(by_alias=True, exclude_none=True)
+    return profile_payload, pack_payload
+
+
+def _domain_setup_guidance(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    domain_id = str(candidate.get("id") or "")
+    if domain_id == "policy_qa":
+        return [
+            {
+                "id": "task_shape",
+                "title": "Task shape",
+                "recommendation": "Use Policy Q&A with question, answer, context, and policy-section metadata.",
+                "why": "Policy assistants need grounded answers and enough metadata to catch stale or exception-heavy rules.",
+            },
+            {
+                "id": "unknowns",
+                "title": "Unknown-answer behavior",
+                "recommendation": "Include examples where the policy does not answer the question.",
+                "why": "This reduces confident answers when the handbook or policy source is incomplete.",
+            },
+            {
+                "id": "source_gates",
+                "title": "Evaluation gates",
+                "recommendation": "Track F1, source coverage, unknown-answer pass rate, and safety pass rate.",
+                "why": "Good policy models should be correct, source-backed, and cautious around ambiguity.",
+            },
+            {
+                "id": "activation",
+                "title": "Activation",
+                "recommendation": "Create drafts, review them, then assign the pack/profile from the Domain managers.",
+                "why": "Data Studio previews the setup but does not switch project defaults without you.",
+            },
+        ]
+    if domain_id == "pii_pci_detection":
+        return [
+            {
+                "id": "task_shape",
+                "title": "Task shape",
+                "recommendation": "Use text plus sensitive-label/entity fields with redacted examples where possible.",
+                "why": "PII/PCI training benefits from explicit classes and safe handling of sensitive values.",
+            },
+            {
+                "id": "false_negatives",
+                "title": "Risk focus",
+                "recommendation": "Gate promotion on recall, F1, and safety pass rate.",
+                "why": "False negatives can leak sensitive data, so recall needs more weight than broad accuracy.",
+            },
+            {
+                "id": "masking",
+                "title": "Normalization",
+                "recommendation": "Enable masking before training and review raw production examples carefully.",
+                "why": "The model should learn patterns without storing real account or card data.",
+            },
+            {
+                "id": "activation",
+                "title": "Activation",
+                "recommendation": "Create drafts, review them, then assign the pack/profile from the Domain managers.",
+                "why": "Data Studio previews the setup but does not switch project defaults without you.",
+            },
+        ]
+    label = str(candidate.get("label") or "this domain")
+    return [
+        {
+            "id": "task_shape",
+            "title": "Task shape",
+            "recommendation": f"Use a {label} profile aligned to the detected recipe and fields.",
+            "why": "Domain profiles make required fields, splits, metrics, and review gates explicit.",
+        },
+        {
+            "id": "coverage",
+            "title": "Coverage",
+            "recommendation": "Review required-field coverage, label balance, and representative edge cases.",
+            "why": "A domain setup is most useful when it encodes the examples the model must handle reliably.",
+        },
+        {
+            "id": "evaluation",
+            "title": "Evaluation",
+            "recommendation": "Set promotion gates before training so wins and regressions are measurable.",
+            "why": "Power users can tune metrics in the draft profile before assigning it.",
+        },
+        {
+            "id": "activation",
+            "title": "Activation",
+            "recommendation": "Create drafts, review them, then assign the pack/profile from the Domain managers.",
+            "why": "Data Studio previews the setup but does not switch project defaults without you.",
+        },
+    ]
+
+
+async def _domain_setup_preview(
+    db: AsyncSession,
+    *,
+    detected: dict[str, Any],
+    runtime_is_generic: bool,
+    runtime_matches: bool,
+) -> dict[str, Any] | None:
+    domain_id = str(detected.get("id") or "")
+    confidence = float(detected.get("confidence") or 0.0)
+    if domain_id == "generic_domain" or confidence < _DOMAIN_SETUP_MIN_CONFIDENCE:
+        return None
+
+    profile_payload, pack_payload = _domain_setup_contract_payloads(detected)
+    profile_id = str(profile_payload.get("profile_id") or "")
+    pack_id = str(pack_payload.get("pack_id") or "")
+    profile = await get_domain_profile(db, profile_id)
+    pack = await get_domain_pack(db, pack_id)
+    profile_exists = profile is not None
+    pack_exists = pack is not None
+    label = str(detected.get("label") or "the detected domain")
+
+    if profile_exists and pack_exists:
+        reason = (
+            f"BrewSLM already has a {label} profile and pack draft. Review "
+            "or assign them from the Domain managers."
+        )
+    elif runtime_is_generic:
+        reason = (
+            f"Sampled rows look like {label}, but the project is still using "
+            "generic domain defaults."
+        )
+    elif not runtime_matches:
+        reason = (
+            f"Sampled rows look like {label}, but the applied domain setup "
+            "appears to point elsewhere."
+        )
+    else:
+        reason = f"BrewSLM can prepare a draft {label} domain setup for review."
+
+    return {
+        "available": True,
+        "recommended": bool(runtime_is_generic or not runtime_matches),
+        "reason": reason,
+        "read_only": True,
+        "requires_confirmation": True,
+        "create_mode": "create_missing_drafts",
+        "detected_domain_id": domain_id,
+        "detected_domain_label": label,
+        "profile_id": profile_id,
+        "pack_id": pack_id,
+        "profile_exists": profile_exists,
+        "pack_exists": pack_exists,
+        "profile_status": getattr(getattr(profile, "status", None), "value", None) if profile else None,
+        "pack_status": getattr(getattr(pack, "status", None), "value", None) if pack else None,
+        "can_create_profile": not profile_exists,
+        "can_create_pack": not pack_exists,
+        "guidance": _domain_setup_guidance(detected),
+        "choices": [
+            {
+                "id": "use_existing",
+                "label": "Use existing setup",
+                "target": "domain",
+                "detail": "Open the Domain controls to assign or inspect an existing profile and pack.",
+            },
+            {
+                "id": "create_drafts",
+                "label": "Create draft setup",
+                "target": "create_drafts",
+                "detail": "Create only the missing draft profile/pack records; do not assign them automatically.",
+            },
+            {
+                "id": "power_user_managers",
+                "label": "Open pack/profile managers",
+                "target": "domain-packs",
+                "detail": "Review the full JSON contracts, hook defaults, overlays, and promotion gates.",
+            },
+        ],
+        "profile_contract": profile_payload,
+        "pack_contract": pack_payload,
+    }
+
+
 async def build_data_studio_domain_detection(
     db: AsyncSession,
     project_id: int,
@@ -764,6 +1339,13 @@ async def build_data_studio_domain_detection(
     else:
         verdict = "unknown"
 
+    domain_setup = await _domain_setup_preview(
+        db,
+        detected=detected,
+        runtime_is_generic=runtime_is_generic,
+        runtime_matches=runtime_matches,
+    )
+
     return {
         "project_id": project_id,
         "verdict": verdict,
@@ -785,6 +1367,7 @@ async def build_data_studio_domain_detection(
         "suggested_actions": _domain_actions(detected),
         "risks": _domain_risks(detected),
         "issues": issues,
+        "domain_setup": domain_setup,
         "power_details": {
             "signals": list(detected.get("signals") or []),
             "candidate_domains": candidates[:5],
@@ -798,6 +1381,62 @@ async def build_data_studio_domain_detection(
             "raw_fields": fields,
             "inferred_task_profiles": inferred_profiles,
         },
+    }
+
+
+async def create_data_studio_domain_setup_from_detection(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Create missing draft domain profile/pack records from detection preview."""
+
+    detection = await build_data_studio_domain_detection(db, project_id)
+    setup = detection.get("domain_setup")
+    if not isinstance(setup, dict) or not setup.get("available"):
+        raise ValueError("No domain setup draft is available for the current detection.")
+
+    profile_payload = setup.get("profile_contract")
+    pack_payload = setup.get("pack_contract")
+    if not isinstance(profile_payload, dict) or not isinstance(pack_payload, dict):
+        raise ValueError("Domain setup draft is missing profile or pack contracts.")
+
+    profile_contract = DomainProfileContract.model_validate(profile_payload)
+    pack_contract = DomainPackContract.model_validate(pack_payload)
+
+    existing_profile = await get_domain_profile(db, profile_contract.profile_id)
+    existing_pack = await get_domain_pack(db, pack_contract.pack_id)
+
+    created_profile = False
+    created_pack = False
+    if existing_profile is None:
+        existing_profile = await create_domain_profile(db, profile_contract)
+        created_profile = True
+    if existing_pack is None:
+        existing_pack = await create_domain_pack(db, pack_contract)
+        created_pack = True
+
+    return {
+        "status": "created" if created_profile or created_pack else "already_exists",
+        "project_id": project_id,
+        "detected_domain_id": setup.get("detected_domain_id"),
+        "detected_domain_label": setup.get("detected_domain_label"),
+        "created_profile": created_profile,
+        "created_pack": created_pack,
+        "assigned_to_project": False,
+        "profile": {
+            "profile_id": existing_profile.profile_id,
+            "display_name": existing_profile.display_name,
+            "status": getattr(existing_profile.status, "value", existing_profile.status),
+            "version": existing_profile.version,
+        },
+        "pack": {
+            "pack_id": existing_pack.pack_id,
+            "display_name": existing_pack.display_name,
+            "status": getattr(existing_pack.status, "value", existing_pack.status),
+            "version": existing_pack.version,
+            "default_profile_id": existing_pack.default_profile_id,
+        },
+        "next_targets": ["domain", "domain-packs", "domain-profiles"],
     }
 
 

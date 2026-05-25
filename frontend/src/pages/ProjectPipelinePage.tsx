@@ -175,6 +175,18 @@ export default function ProjectPipelinePage() {
         }
         if (target === 'annotate') {
             navigate(`/project/${projectId}/annotate`);
+            return;
+        }
+        if (target === 'domain') {
+            navigate(`/project/${projectId}/domain`);
+            return;
+        }
+        if (target === 'domain-packs') {
+            navigate(`/project/${projectId}/domain/packs`);
+            return;
+        }
+        if (target === 'domain-profiles') {
+            navigate(`/project/${projectId}/domain/profiles`);
         }
     };
 
@@ -195,7 +207,10 @@ export default function ProjectPipelinePage() {
                         />
                         <DataStudioSourcesSummaryPanel projectId={projectId} />
                         <DataStudioMappingPreviewPanel projectId={projectId} />
-                        <DataStudioDomainDetectionPanel projectId={projectId} />
+                        <DataStudioDomainDetectionPanel
+                            projectId={projectId}
+                            onOpenTarget={openDataStudioTarget}
+                        />
                         <DataStudioAssistPanel projectId={projectId} />
                         <DataStudioGoldSetWorkbenchPanel
                             projectId={projectId}

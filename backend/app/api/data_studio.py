@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
+from app.models.auth import GlobalRole
+from app.security import get_request_principal
 from app.services.data_studio_service import (
     build_data_studio_domain_detection,
     build_data_studio_gold_set_workbench,
@@ -19,6 +22,7 @@ from app.services.data_studio_service import (
     build_data_studio_sources,
     build_data_studio_synthetic_playbook_center,
     build_data_studio_synthetic_recommendations,
+    create_data_studio_domain_setup_from_detection,
 )
 
 
@@ -31,6 +35,20 @@ class DataStudioAssistRequest(BaseModel):
     api_url: str = Field(default="", max_length=2048)
     api_key: str = Field(default="", max_length=4096)
     model_name: str = Field(default="llama3", min_length=1, max_length=256)
+
+
+class DataStudioDomainSetupCreateRequest(BaseModel):
+    confirm: bool = False
+
+
+def _require_domain_setup_write_access(request: Request) -> None:
+    principal = get_request_principal(request)
+    if not settings.AUTH_ENABLED:
+        return
+    if principal is None:
+        raise HTTPException(401, "Authentication required")
+    if principal.role not in {GlobalRole.ADMIN, GlobalRole.ENGINEER}:
+        raise HTTPException(403, "Only admin or engineer can create domain setup drafts")
 
 
 @router.get("/overview")
@@ -90,6 +108,27 @@ async def get_data_studio_domain_detection(
 
     try:
         return await build_data_studio_domain_detection(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.post("/domain-detection/domain-setup")
+async def create_data_studio_domain_setup(
+    project_id: int,
+    req: DataStudioDomainSetupCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create missing draft domain setup records from detection after confirmation."""
+
+    _require_domain_setup_write_access(request)
+    if not req.confirm:
+        raise HTTPException(400, "Confirmation is required before creating domain setup drafts.")
+    try:
+        return await create_data_studio_domain_setup_from_detection(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

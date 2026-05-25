@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
+        post: vi.fn(),
     },
 }));
 
@@ -90,6 +91,65 @@ const domainPayload = {
             target_tab: 'data',
         },
     ],
+    domain_setup: {
+        available: true,
+        recommended: true,
+        reason: 'Sampled rows look like Support FAQ, but the project is still using generic domain defaults.',
+        read_only: true,
+        requires_confirmation: true,
+        create_mode: 'create_missing_drafts',
+        detected_domain_id: 'support_faq',
+        detected_domain_label: 'Support FAQ',
+        profile_id: 'support-faq-profile-v1',
+        pack_id: 'support-faq-pack-v1',
+        profile_exists: false,
+        pack_exists: false,
+        profile_status: null,
+        pack_status: null,
+        can_create_profile: true,
+        can_create_pack: true,
+        guidance: [
+            {
+                id: 'task_shape',
+                title: 'Task shape',
+                recommendation: 'Use a Support FAQ profile aligned to the detected recipe and fields.',
+                why: 'Domain profiles make required fields, splits, metrics, and review gates explicit.',
+            },
+            {
+                id: 'coverage',
+                title: 'Coverage',
+                recommendation: 'Review required-field coverage and representative edge cases.',
+                why: 'A domain setup is most useful when it encodes the examples the model must handle reliably.',
+            },
+        ],
+        choices: [
+            {
+                id: 'use_existing',
+                label: 'Use existing setup',
+                target: 'domain',
+                detail: 'Open the Domain controls to assign or inspect an existing profile and pack.',
+            },
+            {
+                id: 'create_drafts',
+                label: 'Create draft setup',
+                target: 'create_drafts',
+                detail: 'Create only the missing draft profile/pack records.',
+            },
+        ],
+        profile_contract: {
+            '$schema': 'slm.domain-profile/v1',
+            profile_id: 'support-faq-profile-v1',
+            status: 'draft',
+            display_name: 'Support FAQ Profile',
+        },
+        pack_contract: {
+            '$schema': 'slm.domain-pack/v1',
+            pack_id: 'support-faq-pack-v1',
+            status: 'draft',
+            default_profile_id: 'support-faq-profile-v1',
+            display_name: 'Support FAQ Pack',
+        },
+    },
     power_details: {
         signals: ['columns:question,answer', 'terms:refund,password reset,ticket'],
         candidate_domains: [],
@@ -100,6 +160,11 @@ const domainPayload = {
 describe('DataStudioDomainDetectionPanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
     });
 
     it('renders detected domain, applied runtime, evidence, and guidance', async () => {
@@ -120,7 +185,70 @@ describe('DataStudioDomainDetectionPanel', () => {
         expect(screen.getByText('Column signals')).toBeInTheDocument();
         expect(screen.getByText(/Add customer phrasing variants/i)).toBeInTheDocument();
         expect(screen.getByText('Specific domain not applied')).toBeInTheDocument();
+        expect(screen.getByTestId('data-studio-domain-setup')).toBeInTheDocument();
+        expect(screen.getByText('Create Support FAQ setup from detection')).toBeInTheDocument();
+        expect(screen.getByText('support-faq-profile-v1')).toBeInTheDocument();
+        expect(screen.getByText('support-faq-pack-v1')).toBeInTheDocument();
+        expect(screen.getByText('Task shape')).toBeInTheDocument();
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/domain-detection');
+    });
+
+    it('creates missing setup drafts only after confirmation', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValueOnce(true);
+        apiMock.get.mockResolvedValue({ data: domainPayload });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                status: 'created',
+                project_id: 1,
+                detected_domain_id: 'support_faq',
+                detected_domain_label: 'Support FAQ',
+                created_profile: true,
+                created_pack: true,
+                assigned_to_project: false,
+                profile: {
+                    profile_id: 'support-faq-profile-v1',
+                    display_name: 'Support FAQ Profile',
+                    status: 'draft',
+                    version: '1.0.0',
+                },
+                pack: {
+                    pack_id: 'support-faq-pack-v1',
+                    display_name: 'Support FAQ Pack',
+                    status: 'draft',
+                    version: '1.0.0',
+                    default_profile_id: 'support-faq-profile-v1',
+                },
+                next_targets: ['domain', 'domain-packs', 'domain-profiles'],
+            },
+        });
+
+        render(<DataStudioDomainDetectionPanel projectId={1} />);
+
+        const createButton = await screen.findByRole('button', { name: /Create draft setup/i });
+        fireEvent.click(createButton);
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/data-studio/domain-detection/domain-setup',
+                { confirm: true },
+            );
+        });
+        expect(await screen.findByText(/Created profile draft support-faq-profile-v1/i)).toBeInTheDocument();
+    });
+
+    it('routes users to existing domain managers', async () => {
+        const onOpenTarget = vi.fn();
+        apiMock.get.mockResolvedValueOnce({ data: domainPayload });
+
+        render(<DataStudioDomainDetectionPanel projectId={1} onOpenTarget={onOpenTarget} />);
+
+        fireEvent.click(await screen.findByRole('button', { name: /Use existing setup/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Pack manager/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Profile manager/i }));
+
+        expect(onOpenTarget).toHaveBeenNthCalledWith(1, 'domain');
+        expect(onOpenTarget).toHaveBeenNthCalledWith(2, 'domain-packs');
+        expect(onOpenTarget).toHaveBeenNthCalledWith(3, 'domain-profiles');
     });
 
     it('renders generic empty-state domain guidance', async () => {
@@ -165,6 +293,7 @@ describe('DataStudioDomainDetectionPanel', () => {
                         target_tab: 'data',
                     },
                 ],
+                domain_setup: null,
             },
         });
 
@@ -177,5 +306,6 @@ describe('DataStudioDomainDetectionPanel', () => {
         expect(screen.getByText('25%')).toBeInTheDocument();
         expect(screen.getByText('No source sample yet')).toBeInTheDocument();
         expect(screen.getByText(/Add representative source rows/i)).toBeInTheDocument();
+        expect(screen.queryByTestId('data-studio-domain-setup')).not.toBeInTheDocument();
     });
 });
