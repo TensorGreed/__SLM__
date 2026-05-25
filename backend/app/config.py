@@ -89,6 +89,18 @@ class Settings(BaseSettings):
     NEMO_DEFAULT_MODEL: str = ""
     NEMO_TIMEOUT_SECONDS: float = 600.0
 
+    # ── vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c) ────────────────
+    # vLLM's OpenAI-compatible server natively honors
+    # ``response_format={"type":"json_schema",...}`` end-to-end — unlike
+    # Ollama which silently ignores it. This is the backend that
+    # actually exercises the Phase 5b schema on small / local models.
+    # Same opt-in shape as NEMO_*: only surfaces in the picker when
+    # VLLM_API_URL is reachable; auto-pick order is unchanged.
+    VLLM_API_URL: str = ""
+    VLLM_API_KEY: str = ""
+    VLLM_DEFAULT_MODEL: str = ""
+    VLLM_TIMEOUT_SECONDS: float = 600.0
+
     # ── Judge Model (for evaluation) ────────────────────────────────────
     JUDGE_MODEL_API_URL: str = ""
     JUDGE_MODEL_API_KEY: str = ""

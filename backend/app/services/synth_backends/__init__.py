@@ -21,15 +21,19 @@ from .base import SynthBackend, SynthBackendError, pick_backend
 from .nemo import NemoBackend
 from .ollama import OllamaBackend
 from .teacher import TeacherModelBackend
+from .vllm import VllmBackend
 
 # Order matters: pick_backend() walks this list in order when no
-# explicit backend is requested. NeMo is positioned LAST so auto-pick
-# for existing local-only installs (Ollama users) is unchanged —
-# users opt into NeMo by pinning it via the picker.
+# explicit backend is requested. NeMo + vLLM are positioned LAST so
+# auto-pick for existing local-only installs (Ollama users) is
+# unchanged — users opt into the power-user backends by pinning them
+# via the picker. vLLM lands after NeMo so a user with both
+# configured still gets NeMo first (matches the Phase 5a/5b ordering).
 BACKEND_REGISTRY: list[type[SynthBackend]] = [
     OllamaBackend,
     TeacherModelBackend,
     NemoBackend,
+    VllmBackend,
 ]
 
 
@@ -40,5 +44,6 @@ __all__ = [
     "SynthBackend",
     "SynthBackendError",
     "TeacherModelBackend",
+    "VllmBackend",
     "pick_backend",
 ]

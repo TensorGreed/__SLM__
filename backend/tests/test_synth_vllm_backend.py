@@ -1,19 +1,24 @@
-"""Tests for the NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).
+"""Tests for the vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
 
 Covers:
 - Constructor reads from settings + accepts explicit overrides.
-- ``is_available`` returns False without NEMO_API_URL, False on unreachable,
+- ``is_available`` returns False without VLLM_API_URL, False on unreachable,
   True on HTTP 200, True on 401/403 (auth-required is still "reachable").
 - ``describe()`` includes the pinned model when set.
 - ``complete()`` happy path returns the OpenAI-shaped content.
-- ``complete()`` raises ``SynthBackendError`` for: missing URL,
-  missing model, timeout, HTTP 401 (with key hint), HTTP 404 (with
-  model-name hint), generic HTTPError, JSON-decode error, unexpected
-  response shape.
+- ``complete()`` forwards ``response_schema`` as ``response_format=json_schema``
+  end-to-end (this is the whole point of the vLLM backend vs. Ollama:
+  vLLM honors structured outputs, Ollama silently ignores them).
+- ``complete()`` omits ``response_format`` when no schema is passed.
+- ``complete()`` raises ``SynthBackendError`` for: missing URL, missing
+  model, timeout, HTTP 401 (with key hint), HTTP 404 (with model
+  hint), HTTP 400 with schema-rejection hint, generic HTTPError,
+  JSON-decode error, unexpected response shape.
+- Registry ordering: vLLM is registered LAST so existing auto-pick
+  behavior is unchanged.
+- ``pick_backend("vllm:<model>")`` routes correctly.
 
-The httpx-mocking pattern mirrors ``test_phase61_synthetic_teacher_parsing.py``:
-patch ``httpx.AsyncClient`` (async path) or ``httpx.get`` (sync
-reachability probe) with a fake context manager.
+Mocking pattern mirrors test_synth_nemo_backend.py.
 """
 
 from __future__ import annotations
@@ -35,12 +40,13 @@ from app.services.synth_backends import (  # noqa: E402
     NemoBackend,
     OllamaBackend,
     SynthBackendError,
+    VllmBackend,
     pick_backend,
 )
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Test doubles
+# Test doubles (mirrors test_synth_nemo_backend.py)
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -58,8 +64,6 @@ class _FakeResponse:
 
     def json(self):
         if self._json == "__decode_error__":
-            # Sentinel: simulate a JSON decode failure (e.g. HTML 502
-            # from a reverse proxy).
             raise ValueError("not json")
         return self._json
 
@@ -76,20 +80,10 @@ class _FakeResponse:
 
 
 class _FakeAsyncClient:
-    """Async context manager mimicking ``httpx.AsyncClient`` for the
-    purposes of mocking ``NemoBackend.complete``. The ``handler`` is a
-    callable that takes the POST kwargs and returns a ``_FakeResponse``
-    (or raises an httpx error)."""
-
     def __init__(self, handler):
         self._handler = handler
 
-    def __init_subclass__(cls, **kwargs):  # pragma: no cover
-        super().__init_subclass__(**kwargs)
-
     def __call__(self, *args, **kwargs):
-        # Some call sites instantiate AsyncClient with a timeout kwarg;
-        # we ignore it.
         return self
 
     async def __aenter__(self):
@@ -103,15 +97,7 @@ class _FakeAsyncClient:
 
 
 def _patch_async_client(handler):
-    fake_factory = _FakeAsyncClient(handler)
-    return patch.object(httpx, "AsyncClient", fake_factory)
-
-
-def _settings_overrides(**kwargs):
-    """Patch every NEMO_* attribute on the settings singleton + clean
-    up after the test. ``unittest.mock.patch.object`` doesn't compose
-    nicely for 4 attributes so we apply them directly with a finally."""
-    return _SettingsCtx(kwargs)
+    return patch.object(httpx, "AsyncClient", _FakeAsyncClient(handler))
 
 
 class _SettingsCtx:
@@ -131,56 +117,61 @@ class _SettingsCtx:
         return False
 
 
+def _settings_overrides(**kwargs):
+    return _SettingsCtx(kwargs)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Reachability + describe + constructor
 # ─────────────────────────────────────────────────────────────────────
 
 
-class NemoBackendReachabilityTests(unittest.TestCase):
+class VllmBackendReachabilityTests(unittest.TestCase):
     def test_is_available_false_when_url_unset(self):
-        with _settings_overrides(NEMO_API_URL=""):
-            self.assertFalse(NemoBackend.is_available())
+        with _settings_overrides(VLLM_API_URL=""):
+            self.assertFalse(VllmBackend.is_available())
 
     def test_is_available_true_when_url_returns_200(self):
         def fake_get(url, headers=None, timeout=None):
             return _FakeResponse(status_code=200, json_data={"data": []})
 
-        with _settings_overrides(NEMO_API_URL="http://localhost:8000"):
+        with _settings_overrides(VLLM_API_URL="http://localhost:8000"):
             with patch.object(httpx, "get", side_effect=fake_get):
-                self.assertTrue(NemoBackend.is_available())
+                self.assertTrue(VllmBackend.is_available())
 
     def test_is_available_treats_auth_failures_as_reachable(self):
-        # The picker shouldn't hide NeMo when the user has the
-        # endpoint but a bad/missing key — they'd think NeMo isn't
-        # supported when it really is + just needs configuration.
         for status in (401, 403):
             with self.subTest(status=status):
-                with _settings_overrides(NEMO_API_URL="http://test"):
+                with _settings_overrides(VLLM_API_URL="http://test"):
                     with patch.object(
                         httpx,
                         "get",
                         return_value=_FakeResponse(status_code=status),
                     ):
-                        self.assertTrue(NemoBackend.is_available())
+                        self.assertTrue(VllmBackend.is_available())
 
     def test_is_available_false_when_endpoint_unreachable(self):
         def boom(url, headers=None, timeout=None):
             raise httpx.ConnectError("no route to host")
 
-        with _settings_overrides(NEMO_API_URL="http://localhost:8000"):
+        with _settings_overrides(VLLM_API_URL="http://localhost:8000"):
             with patch.object(httpx, "get", side_effect=boom):
-                self.assertFalse(NemoBackend.is_available())
+                self.assertFalse(VllmBackend.is_available())
 
     def test_describe_includes_pinned_model(self):
-        backend = NemoBackend(
-            host="http://nim", model="meta/llama-3.1-70b-instruct"
+        backend = VllmBackend(
+            host="http://vllm",
+            model="meta-llama/Meta-Llama-3.1-8B-Instruct",
         )
-        self.assertEqual(backend.describe(), "nemo:meta/llama-3.1-70b-instruct")
+        self.assertEqual(
+            backend.describe(),
+            "vllm:meta-llama/Meta-Llama-3.1-8B-Instruct",
+        )
 
     def test_describe_falls_back_to_name_without_model(self):
-        with _settings_overrides(NEMO_DEFAULT_MODEL=""):
-            backend = NemoBackend(host="http://nim")
-            self.assertEqual(backend.describe(), "nemo")
+        with _settings_overrides(VLLM_DEFAULT_MODEL=""):
+            backend = VllmBackend(host="http://vllm")
+            self.assertEqual(backend.describe(), "vllm")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -188,10 +179,8 @@ class NemoBackendReachabilityTests(unittest.TestCase):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
+class VllmBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
     async def test_complete_happy_path_returns_content(self):
-        # Capture the outbound request so we can also assert prompt
-        # shaping (system + user messages) + auth header.
         captured: dict = {}
 
         def handler(url, **kwargs):
@@ -202,15 +191,15 @@ class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
                 status_code=200,
                 json_data={
                     "choices": [
-                        {"message": {"content": "  generated json blob  "}}
+                        {"message": {"content": "vllm-generated"}}
                     ]
                 },
             )
 
-        backend = NemoBackend(
-            host="http://nim",
-            model="meta/llama-3.1-70b-instruct",
-            api_key="secret-key",
+        backend = VllmBackend(
+            host="http://vllm",
+            model="meta-llama/Meta-Llama-3.1-8B-Instruct",
+            api_key="vllm-secret",
         )
         with _patch_async_client(handler):
             out = await backend.complete(
@@ -220,64 +209,96 @@ class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
                 temperature=0.3,
             )
 
-        self.assertEqual(out, "  generated json blob  ")
+        self.assertEqual(out, "vllm-generated")
+        self.assertEqual(captured["url"], "http://vllm/v1/chat/completions")
         self.assertEqual(
-            captured["url"], "http://nim/v1/chat/completions"
+            captured["headers"]["Authorization"], "Bearer vllm-secret"
         )
-        # Auth header propagates from settings/constructor.
-        self.assertEqual(
-            captured["headers"]["Authorization"], "Bearer secret-key"
-        )
-        # OpenAI-chat shaping: system message comes first.
         msgs = captured["json"]["messages"]
         self.assertEqual(msgs[0]["role"], "system")
         self.assertEqual(msgs[1]["role"], "user")
-        # max_tokens + temperature flow through.
         self.assertEqual(captured["json"]["max_tokens"], 512)
         self.assertEqual(captured["json"]["temperature"], 0.3)
+        # No schema passed → no response_format on the wire.
+        self.assertNotIn("response_format", captured["json"])
+
+    async def test_complete_forwards_response_schema_end_to_end(self):
+        """The whole reason vLLM exists as a backend: it honors
+        ``response_format=json_schema`` (vLLM uses xgrammar/outlines
+        for constrained decoding). Verify the schema lands on the
+        wire in OpenAI Structured-Outputs shape with ``strict: true``."""
+        captured: dict = {}
+
+        def handler(url, **kwargs):
+            captured["json"] = kwargs.get("json")
+            return _FakeResponse(
+                status_code=200,
+                json_data={
+                    "choices": [{"message": {"content": '{"x": 1}'}}]
+                },
+            )
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "label": {"type": "string", "enum": ["rare"]},
+            },
+            "required": ["text", "label"],
+            "additionalProperties": False,
+        }
+        backend = VllmBackend(host="http://vllm", model="m")
+        with _patch_async_client(handler):
+            await backend.complete("Generate.", response_schema=schema)
+
+        rf = captured["json"].get("response_format")
+        self.assertIsNotNone(rf, "vLLM payload must carry response_format")
+        self.assertEqual(rf["type"], "json_schema")
+        self.assertEqual(rf["json_schema"]["name"], "synth_row")
+        self.assertEqual(rf["json_schema"]["schema"], schema)
+        self.assertTrue(rf["json_schema"]["strict"])
 
     async def test_complete_raises_when_url_unset(self):
-        with _settings_overrides(NEMO_API_URL=""):
-            backend = NemoBackend(model="some/model")
+        with _settings_overrides(VLLM_API_URL=""):
+            backend = VllmBackend(model="some/model")
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
-            self.assertIn("NEMO_API_URL", str(cm.exception))
+            self.assertIn("VLLM_API_URL", str(cm.exception))
 
     async def test_complete_raises_when_model_unset(self):
-        with _settings_overrides(NEMO_DEFAULT_MODEL=""):
-            backend = NemoBackend(host="http://nim")
+        with _settings_overrides(VLLM_DEFAULT_MODEL=""):
+            backend = VllmBackend(host="http://vllm")
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
-            self.assertIn("NEMO_DEFAULT_MODEL", str(cm.exception))
+            self.assertIn("VLLM_DEFAULT_MODEL", str(cm.exception))
 
     async def test_complete_wraps_timeout(self):
         def handler(url, **kwargs):
             raise httpx.TimeoutException("timed out")
 
-        backend = NemoBackend(host="http://nim", model="m")
+        backend = VllmBackend(host="http://vllm", model="m")
         with _patch_async_client(handler):
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
         msg = str(cm.exception)
         self.assertIn("timed out", msg.lower())
-        # Hint surfaces the env var for the user to bump.
-        self.assertIn("NEMO_TIMEOUT_SECONDS", msg)
+        self.assertIn("VLLM_TIMEOUT_SECONDS", msg)
 
     async def test_complete_wraps_401_with_api_key_hint(self):
         def handler(url, **kwargs):
             return _FakeResponse(status_code=401, text="unauthorized")
 
-        backend = NemoBackend(host="http://nim", model="m")
+        backend = VllmBackend(host="http://vllm", model="m")
         with _patch_async_client(handler):
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
-        self.assertIn("NEMO_API_KEY", str(cm.exception))
+        self.assertIn("VLLM_API_KEY", str(cm.exception))
 
     async def test_complete_wraps_404_with_model_listing_hint(self):
         def handler(url, **kwargs):
             return _FakeResponse(status_code=404, text="model not found")
 
-        backend = NemoBackend(host="http://nim", model="missing/model")
+        backend = VllmBackend(host="http://vllm", model="missing/model")
         with _patch_async_client(handler):
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
@@ -285,11 +306,33 @@ class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("missing/model", msg)
         self.assertIn("/v1/models", msg)
 
+    async def test_complete_wraps_400_schema_rejection_with_hint(self):
+        """vLLM rejects unsupported JSON Schema features (e.g. ``$ref``,
+        certain enum shapes) with HTTP 400. The wrapper should surface
+        an actionable hint pointing the playbook author at
+        response_schema()."""
+        def handler(url, **kwargs):
+            return _FakeResponse(
+                status_code=400,
+                text="Invalid json_schema: unsupported feature $ref",
+            )
+
+        backend = VllmBackend(host="http://vllm", model="m")
+        with _patch_async_client(handler):
+            with self.assertRaises(SynthBackendError) as cm:
+                await backend.complete(
+                    "hi",
+                    response_schema={"$ref": "#/definitions/Bad"},
+                )
+        msg = str(cm.exception)
+        self.assertIn("rejected the JSON Schema", msg)
+        self.assertIn("response_schema", msg)
+
     async def test_complete_wraps_generic_http_error(self):
         def handler(url, **kwargs):
             raise httpx.ConnectError("connection reset")
 
-        backend = NemoBackend(host="http://nim", model="m")
+        backend = VllmBackend(host="http://vllm", model="m")
         with _patch_async_client(handler):
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
@@ -297,12 +340,9 @@ class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_complete_wraps_json_decode_error(self):
         def handler(url, **kwargs):
-            # __decode_error__ sentinel forces _FakeResponse.json() to
-            # raise ValueError, mimicking an HTML 502 page from a
-            # reverse proxy.
             return _FakeResponse(status_code=200, json_data="__decode_error__")  # type: ignore[arg-type]
 
-        backend = NemoBackend(host="http://nim", model="m")
+        backend = VllmBackend(host="http://vllm", model="m")
         with _patch_async_client(handler):
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
@@ -315,7 +355,7 @@ class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
                 json_data={"unexpected": "shape"},
             )
 
-        backend = NemoBackend(host="http://nim", model="m")
+        backend = VllmBackend(host="http://vllm", model="m")
         with _patch_async_client(handler):
             with self.assertRaises(SynthBackendError) as cm:
                 await backend.complete("hi")
@@ -327,45 +367,45 @@ class NemoBackendCompleteTests(unittest.IsolatedAsyncioTestCase):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class SynthBackendRegistryTests(unittest.TestCase):
-    def test_registry_includes_nemo_after_ollama_and_teacher(self):
-        # Order matters: existing auto-pick must keep returning Ollama
-        # / Teacher first so existing local-only installs see no
-        # change in behavior. NeMo (Phase 5a) lands after both; vLLM
-        # (Phase 5c) lands after NeMo. Either ordering is fine for
-        # the "existing installs unchanged" guarantee — what we lock
-        # in here is that NeMo comes AFTER Ollama and Teacher.
+class VllmRegistryTests(unittest.TestCase):
+    def test_registry_includes_vllm_last(self):
+        """vLLM must land AFTER Ollama, Teacher, AND NeMo. Auto-pick
+        for existing installs (Ollama users) is unchanged; same goes
+        for power users who already configured NeMo."""
         names = [c.name for c in BACKEND_REGISTRY]
-        self.assertIn("nemo", names)
-        self.assertGreater(names.index("nemo"), names.index("ollama"))
-        self.assertGreater(names.index("nemo"), names.index("teacher"))
+        self.assertIn("vllm", names)
+        self.assertEqual(names[-1], "vllm")
+        # NeMo is still second-to-last (Phase 5a ordering preserved).
+        self.assertEqual(names[-2], "nemo")
 
-    def test_pick_backend_routes_explicit_nemo_pin(self):
-        with _settings_overrides(NEMO_API_URL="http://nim"):
+    def test_pick_backend_routes_explicit_vllm_pin(self):
+        with _settings_overrides(VLLM_API_URL="http://vllm"):
             with patch.object(
                 httpx,
                 "get",
                 return_value=_FakeResponse(status_code=200, json_data={}),
             ):
-                backend = pick_backend("nemo:meta/llama-3.1-70b-instruct")
-        self.assertIsInstance(backend, NemoBackend)
+                backend = pick_backend(
+                    "vllm:meta-llama/Meta-Llama-3.1-8B-Instruct"
+                )
+        self.assertIsInstance(backend, VllmBackend)
         self.assertEqual(
-            backend.describe(), "nemo:meta/llama-3.1-70b-instruct"
+            backend.describe(),
+            "vllm:meta-llama/Meta-Llama-3.1-8B-Instruct",
         )
 
-    def test_pick_backend_unknown_name_raises(self):
-        with self.assertRaises(SynthBackendError):
-            pick_backend("not-a-real-backend")
-
-    def test_pick_backend_auto_pick_skips_nemo_when_ollama_available(self):
-        # Auto-pick walks BACKEND_REGISTRY in order. Even with NeMo
-        # reachable, Ollama wins when present — existing users see no
-        # change. Patch Ollama's classmethod to claim available; NeMo's
-        # too, just to prove the order is what protects us.
-        with _settings_overrides(NEMO_API_URL="http://nim"):
+    def test_pick_backend_auto_pick_skips_vllm_when_ollama_available(self):
+        """Auto-pick walks BACKEND_REGISTRY in order. Even with vLLM +
+        NeMo + Ollama all reachable, Ollama wins — existing users see
+        no change."""
+        with _settings_overrides(
+            VLLM_API_URL="http://vllm",
+            NEMO_API_URL="http://nim",
+        ):
             with (
                 patch.object(OllamaBackend, "is_available", return_value=True),
                 patch.object(NemoBackend, "is_available", return_value=True),
+                patch.object(VllmBackend, "is_available", return_value=True),
             ):
                 backend = pick_backend(None)
         self.assertIsInstance(backend, OllamaBackend)
