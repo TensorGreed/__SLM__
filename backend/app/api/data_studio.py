@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.auth import GlobalRole
 from app.security import get_request_principal
 from app.services.data_studio_service import (
+    build_data_studio_coach_rail,
     build_data_studio_dataset_versions,
     build_data_studio_domain_detection,
     build_data_studio_gold_set_workbench,
@@ -62,6 +63,22 @@ async def get_data_studio_overview(
 
     try:
         return await build_data_studio_overview(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/coach")
+async def get_data_studio_coach_rail(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a read-only cross-section Data Studio coach rail."""
+
+    try:
+        return await build_data_studio_coach_rail(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router
 
 import PipelineProgress from '../components/dashboard/PipelineProgress';
 import IngestionPanel from '../components/data/IngestionPanel';
+import DataStudioCoachRailPanel from '../components/data/DataStudioCoachRailPanel';
 import DataStudioOverviewPanel from '../components/data/DataStudioOverviewPanel';
 import DataStudioSourcesSummaryPanel from '../components/data/DataStudioSourcesSummaryPanel';
 import DataStudioMappingPreviewPanel from '../components/data/DataStudioMappingPreviewPanel';
@@ -197,6 +198,10 @@ export default function ProjectPipelinePage() {
             case 'data':
                 return (
                     <>
+                        <DataStudioCoachRailPanel
+                            projectId={projectId}
+                            onOpenTarget={openDataStudioTarget}
+                        />
                         <DataStudioOverviewPanel
                             projectId={projectId}
                             onOpenTab={(targetTab) => {

@@ -1,6 +1,7 @@
 import api from './client';
 
 export type DataStudioVerdict = 'blocked' | 'needs_work' | 'ready';
+export type DataStudioCoachVerdict = 'blocked' | 'attention' | 'ready';
 export type DataStudioSourcesVerdict = 'empty' | 'attention' | 'healthy';
 export type DataStudioMappingVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
@@ -84,6 +85,69 @@ export interface DataStudioOverview {
 export async function getDataStudioOverview(projectId: number): Promise<DataStudioOverview> {
     const resp = await api.get(`/projects/${projectId}/data-studio/overview`);
     return resp.data as DataStudioOverview;
+}
+
+export interface DataStudioCoachSummary {
+    blocker_count: number;
+    warning_count: number;
+    info_count: number;
+    section_count: number;
+    ready_section_count: number;
+    empty_section_count: number;
+    next_action_target?: string | null;
+}
+
+export interface DataStudioCoachAction {
+    id: string;
+    section_id: string;
+    section_label: string;
+    severity: DataStudioIssueSeverity;
+    priority: 'high' | 'medium' | 'low' | string;
+    title: string;
+    message: string;
+    action_label: string;
+    target_tab: string;
+    requires_user_confirmation: boolean;
+}
+
+export interface DataStudioCoachCheck {
+    id: string;
+    label: string;
+    status: 'blocked' | 'attention' | 'ready' | 'empty' | string;
+    verdict: string;
+    target_tab: string;
+    action_label: string;
+    message: string;
+    blocker_count: number;
+    warning_count: number;
+    info_count: number;
+}
+
+export interface DataStudioCoachEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+    requires_confirmation: boolean;
+}
+
+export interface DataStudioCoachRail {
+    project_id: number;
+    verdict: DataStudioCoachVerdict;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    summary: DataStudioCoachSummary;
+    next_action: DataStudioCoachAction;
+    next_steps: DataStudioCoachAction[];
+    checks: DataStudioCoachCheck[];
+    issues: DataStudioCoachAction[];
+    entry_points: DataStudioCoachEntryPoint[];
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioCoachRail(projectId: number): Promise<DataStudioCoachRail> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/coach`);
+    return resp.data as DataStudioCoachRail;
 }
 
 export interface DataStudioSourceTotals {

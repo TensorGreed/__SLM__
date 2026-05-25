@@ -1454,6 +1454,198 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertIn("eval", targets)
         self.assertFalse(any(item["severity"] == "warning" for item in payload["issues"]))
 
+    def test_coach_rail_empty_project_prioritizes_cross_section_blockers(self):
+        project_id = self._create_project("data-studio-coach-empty")
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/coach")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "blocked")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        self.assertGreater(payload["summary"]["blocker_count"], 0)
+        self.assertEqual(payload["next_action"]["severity"], "blocker")
+        self.assertIn(payload["next_action"]["target_tab"], {"data", "goldset"})
+        check_ids = {item["id"] for item in payload["checks"]}
+        self.assertIn("sources", check_ids)
+        self.assertIn("mapping", check_ids)
+        self.assertIn("prepare_dataset", check_ids)
+        issue_sections = {item["section_id"] for item in payload["issues"]}
+        self.assertIn("overview", issue_sections)
+        self.assertIn("mapping", issue_sections)
+        self.assertEqual(payload["entry_points"][0]["target_tab"], "dataprep")
+
+    def test_coach_rail_routes_to_training_when_reusable_versions_are_ready(self):
+        project_id = self._create_project("data-studio-coach-ready")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_coach_ready_state():
+            async with async_session_factory() as db:
+                gold_dir = settings.DATA_DIR / "projects" / str(project_id) / "gold"
+                gold_dir.mkdir(parents=True, exist_ok=True)
+                gold_path = gold_dir / "gold_dev.jsonl"
+                gold_rows = [
+                    {"text": f"Trusted classification example {idx}", "label": "billing" if idx % 2 else "account"}
+                    for idx in range(25)
+                ]
+                with gold_path.open("w", encoding="utf-8") as handle:
+                    for row in gold_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+                prepared_dir.mkdir(parents=True, exist_ok=True)
+                rows = [
+                    {"text": f"Prepared classification example {idx}", "label": "billing" if idx % 2 else "account"}
+                    for idx in range(30)
+                ]
+                split_rows = {
+                    "train": rows[:24],
+                    "val": rows[24:27],
+                    "test": rows[27:],
+                }
+                split_paths = {}
+                file_hashes = {}
+                for split_name, split_data in split_rows.items():
+                    split_path = prepared_dir / f"{split_name}.jsonl"
+                    split_paths[split_name] = str(split_path)
+                    with split_path.open("w", encoding="utf-8") as handle:
+                        for row in split_data:
+                            handle.write(json.dumps(row) + "\n")
+                    file_hashes[split_name] = f"hash-{split_name}"
+
+                gold = Dataset(
+                    project_id=project_id,
+                    name="Gold Dev",
+                    dataset_type=DatasetType.GOLD_DEV,
+                    record_count=len(gold_rows),
+                    file_path=str(gold_path),
+                )
+                train = Dataset(
+                    project_id=project_id,
+                    name="Train Set",
+                    dataset_type=DatasetType.TRAIN,
+                    record_count=len(split_rows["train"]),
+                    file_path=split_paths["train"],
+                )
+                validation = Dataset(
+                    project_id=project_id,
+                    name="Validation Set",
+                    dataset_type=DatasetType.VALIDATION,
+                    record_count=len(split_rows["val"]),
+                    file_path=split_paths["val"],
+                )
+                test = Dataset(
+                    project_id=project_id,
+                    name="Test Set",
+                    dataset_type=DatasetType.TEST,
+                    record_count=len(split_rows["test"]),
+                    file_path=split_paths["test"],
+                )
+                db.add_all([gold, train, validation, test])
+                await db.flush()
+                gold_version = GoldSetVersion(
+                    gold_set_id=gold.id,
+                    version=1,
+                    status=GoldSetVersionStatus.DRAFT,
+                )
+                db.add(gold_version)
+                await db.flush()
+                db.add_all([
+                    GoldSetRow(
+                        gold_set_id=gold.id,
+                        version_id=gold_version.id,
+                        source_row_key=f"gold-{idx}",
+                        input={"text": row["text"]},
+                        expected={"label": row["label"]},
+                        labels={"category": row["label"]},
+                        status=GoldSetRowStatus.APPROVED,
+                    )
+                    for idx, row in enumerate(gold_rows)
+                ])
+                db.add_all([
+                    DatasetVersion(
+                        dataset_id=train.id,
+                        version=1,
+                        file_path=split_paths["train"],
+                        record_count=len(split_rows["train"]),
+                        manifest={"split": "train", "count": len(split_rows["train"])},
+                    ),
+                    DatasetVersion(
+                        dataset_id=validation.id,
+                        version=1,
+                        file_path=split_paths["val"],
+                        record_count=len(split_rows["val"]),
+                        manifest={"split": "val", "count": len(split_rows["val"])},
+                    ),
+                    DatasetVersion(
+                        dataset_id=test.id,
+                        version=1,
+                        file_path=split_paths["test"],
+                        record_count=len(split_rows["test"]),
+                        manifest={"split": "test", "count": len(split_rows["test"])},
+                    ),
+                ])
+                manifest = {
+                    "project_id": project_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "seed": 42,
+                    "total_entries": len(rows),
+                    "splits": {
+                        "train": len(split_rows["train"]),
+                        "val": len(split_rows["val"]),
+                        "test": len(split_rows["test"]),
+                    },
+                    "ratios": {"train": 0.8, "val": 0.1, "test": 0.1},
+                    "file_paths": split_paths,
+                    "file_hashes": file_hashes,
+                    "dataset_versions": {"train": 1, "val": 1, "test": 1},
+                    "chat_template": "llama3",
+                    "included_types": ["gold_dev"],
+                    "adapter_id": "classification-label",
+                    "adapter_config": {},
+                    "field_mapping": {},
+                    "task_profile": "classification",
+                }
+                (prepared_dir / "manifest.json").write_text(
+                    json.dumps(manifest),
+                    encoding="utf-8",
+                )
+                await db.commit()
+
+        class FakeOllamaBackend:
+            name = "ollama"
+
+            @classmethod
+            def is_available(cls):
+                return True
+
+            def describe(self):
+                return "ollama:llama3"
+
+        asyncio.run(_seed_coach_ready_state())
+        with patch(
+            "app.services.data_studio_service.BACKEND_REGISTRY",
+            [FakeOllamaBackend],
+        ):
+            resp = self.client.get(f"/api/projects/{project_id}/data-studio/coach")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["summary"]["blocker_count"], 0)
+        self.assertEqual(payload["summary"]["warning_count"], 0)
+        self.assertEqual(payload["next_action"]["target_tab"], "training")
+        self.assertEqual(payload["next_action"]["action_label"], "Open Training")
+        check_status = {item["id"]: item["status"] for item in payload["checks"]}
+        self.assertEqual(check_status["prepare_dataset"], "ready")
+        self.assertEqual(check_status["dataset_versions"], "ready")
+        self.assertEqual(payload["power_details"]["training_reuse_ready"], True)
+
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")
         assistant_payload = {

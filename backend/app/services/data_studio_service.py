@@ -57,6 +57,7 @@ SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
 ReviewQueueVerdict = Literal["empty", "attention", "ready"]
 PrepareDatasetVerdict = Literal["blocked", "attention", "ready"]
 DatasetVersionVerdict = Literal["empty", "attention", "ready"]
+CoachVerdict = Literal["blocked", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -5747,5 +5748,422 @@ async def build_data_studio_dataset_versions(
             "manifest": manifest if manifest_readable else {},
             "prepared_dataset_ids": prepared_dataset_ids,
             "runtime": runtime,
+        },
+    }
+
+
+_COACH_SECTION_ORDER: dict[str, int] = {
+    "overview": 0,
+    "sources": 1,
+    "mapping": 2,
+    "domain": 3,
+    "gold_set": 4,
+    "synthetic_playbooks": 5,
+    "synthetic_recommendations": 6,
+    "review_queue": 7,
+    "prepare_dataset": 8,
+    "dataset_versions": 9,
+}
+
+_COACH_CONFIRMATION_TARGETS = {
+    "data",
+    "dataprep",
+    "synthetic",
+    "goldset",
+    "annotate",
+    "domain",
+    "domain-packs",
+    "domain-profiles",
+    "training",
+    "eval",
+}
+
+
+def _coach_priority(severity: str) -> str:
+    if severity == "blocker":
+        return "high"
+    if severity == "warning":
+        return "medium"
+    return "low"
+
+
+def _coach_severity_rank(severity: str) -> int:
+    return {"blocker": 0, "warning": 1, "info": 2}.get(severity, 3)
+
+
+def _coach_issue(
+    *,
+    section_id: str,
+    section_label: str,
+    issue: dict[str, Any],
+    index: int,
+) -> dict[str, Any]:
+    severity = str(issue.get("severity") or "info")
+    if severity not in {"blocker", "warning", "info"}:
+        severity = "info"
+    target_tab = str(issue.get("target_tab") or "data")
+    return {
+        "id": f"{section_id}:{issue.get('id') or index}",
+        "section_id": section_id,
+        "section_label": section_label,
+        "severity": severity,
+        "priority": _coach_priority(severity),
+        "title": str(issue.get("title") or section_label),
+        "message": str(issue.get("message") or ""),
+        "action_label": str(issue.get("action_label") or "Open"),
+        "target_tab": target_tab,
+        "requires_user_confirmation": target_tab in _COACH_CONFIRMATION_TARGETS,
+        "sort": [
+            _coach_severity_rank(severity),
+            _COACH_SECTION_ORDER.get(section_id, 99),
+            index,
+        ],
+    }
+
+
+def _coach_status(
+    *,
+    verdict: Any,
+    issues: list[dict[str, Any]],
+) -> str:
+    if any(str(item.get("severity") or "") == "blocker" for item in issues):
+        return "blocked"
+    if any(str(item.get("severity") or "") == "warning" for item in issues):
+        return "attention"
+    verdict_token = str(verdict or "").strip().lower()
+    if verdict_token == "empty":
+        return "empty"
+    if verdict_token in {"attention", "needs_work", "unknown"}:
+        return "attention"
+    return "ready"
+
+
+def _coach_section(
+    *,
+    section_id: str,
+    label: str,
+    verdict: Any,
+    issues: list[dict[str, Any]],
+    target_tab: str,
+    action_label: str,
+    ready_message: str,
+    empty_message: str | None = None,
+) -> dict[str, Any]:
+    status = _coach_status(verdict=verdict, issues=issues)
+    blocker_count = sum(1 for item in issues if str(item.get("severity") or "") == "blocker")
+    warning_count = sum(1 for item in issues if str(item.get("severity") or "") == "warning")
+    info_count = sum(1 for item in issues if str(item.get("severity") or "") == "info")
+    if issues:
+        first_issue = sorted(
+            issues,
+            key=lambda item: _coach_severity_rank(str(item.get("severity") or "info")),
+        )[0]
+        message = str(first_issue.get("title") or ready_message)
+    elif status == "empty" and empty_message:
+        message = empty_message
+    else:
+        message = ready_message
+    return {
+        "id": section_id,
+        "label": label,
+        "status": status,
+        "verdict": str(verdict or ""),
+        "target_tab": target_tab,
+        "action_label": action_label,
+        "message": message,
+        "blocker_count": blocker_count,
+        "warning_count": warning_count,
+        "info_count": info_count,
+    }
+
+
+def _coach_next_action_from_entry(
+    *,
+    action_id: str,
+    title: str,
+    message: str,
+    action_label: str,
+    target_tab: str,
+    priority: str = "low",
+    section_id: str = "overview",
+    section_label: str = "Data Studio",
+    requires_user_confirmation: bool = False,
+) -> dict[str, Any]:
+    return {
+        "id": action_id,
+        "section_id": section_id,
+        "section_label": section_label,
+        "severity": "info",
+        "priority": priority,
+        "title": title,
+        "message": message,
+        "action_label": action_label,
+        "target_tab": target_tab,
+        "requires_user_confirmation": requires_user_confirmation,
+    }
+
+
+def _coach_public_action(action: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in action.items()
+        if key != "sort"
+    }
+
+
+async def build_data_studio_coach_rail(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return a read-only cross-section coach rail for Data Studio."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    overview = await build_data_studio_overview(db, project_id)
+    sources = await build_data_studio_sources(db, project_id)
+    mapping = await build_data_studio_mapping_preview(db, project_id)
+    domain = await build_data_studio_domain_detection(db, project_id)
+    gold = await build_data_studio_gold_set_workbench(db, project_id)
+    synthetic_playbooks = await build_data_studio_synthetic_playbook_center(db, project_id)
+    synthetic_recommendations = await build_data_studio_synthetic_recommendations(db, project_id)
+    review_queue = await build_data_studio_review_queue(db, project_id)
+    prepare_dataset = await build_data_studio_prepare_dataset(db, project_id)
+    dataset_versions = await build_data_studio_dataset_versions(db, project_id)
+
+    section_specs = [
+        {
+            "id": "overview",
+            "label": "Overview",
+            "payload": overview,
+            "target_tab": "data",
+            "action_label": "Open Data",
+            "ready_message": "Project readiness looks clear.",
+            "empty_message": None,
+        },
+        {
+            "id": "sources",
+            "label": "Sources",
+            "payload": sources,
+            "target_tab": "data",
+            "action_label": "Open Sources",
+            "ready_message": "Sources are connected and readable.",
+            "empty_message": "No source data has been added yet.",
+        },
+        {
+            "id": "mapping",
+            "label": "Mapping",
+            "payload": mapping,
+            "target_tab": "dataprep",
+            "action_label": "Review Mapping",
+            "ready_message": "Schema mapping is aligned with the recipe.",
+            "empty_message": "Mapping needs previewable source rows.",
+        },
+        {
+            "id": "domain",
+            "label": "Domain",
+            "payload": domain,
+            "target_tab": "domain",
+            "action_label": "Review Domain",
+            "ready_message": "Domain signals are confirmed or low risk.",
+            "empty_message": "Domain evidence is still limited.",
+        },
+        {
+            "id": "gold_set",
+            "label": "Gold Set",
+            "payload": gold,
+            "target_tab": "goldset",
+            "action_label": "Open Gold Set",
+            "ready_message": "Trusted Gold Set examples are ready.",
+            "empty_message": "Gold Set examples are not ready yet.",
+        },
+        {
+            "id": "synthetic_playbooks",
+            "label": "Synthetic Playbooks",
+            "payload": synthetic_playbooks,
+            "target_tab": "synthetic",
+            "action_label": "Open Synthetic",
+            "ready_message": "Synthetic playbook prerequisites are ready.",
+            "empty_message": "Synthetic playbooks need recipe context.",
+        },
+        {
+            "id": "synthetic_recommendations",
+            "label": "Synthetic Recommendations",
+            "payload": synthetic_recommendations,
+            "target_tab": "synthetic",
+            "action_label": "Open Recommendations",
+            "ready_message": "Synthetic recommendations are available.",
+            "empty_message": "Synthetic recommendations need more setup.",
+        },
+        {
+            "id": "review_queue",
+            "label": "Review Queue",
+            "payload": review_queue,
+            "target_tab": "synthetic",
+            "action_label": "Open Review",
+            "ready_message": "Review gates are clear.",
+            "empty_message": "No review queue is active.",
+        },
+        {
+            "id": "prepare_dataset",
+            "label": "Prepare Dataset",
+            "payload": prepare_dataset,
+            "target_tab": "dataprep",
+            "action_label": "Open Dataset Prep",
+            "ready_message": "Dataset preparation checks are aligned.",
+            "empty_message": None,
+        },
+        {
+            "id": "dataset_versions",
+            "label": "Dataset Versions",
+            "payload": dataset_versions,
+            "target_tab": "dataprep",
+            "action_label": "Open Versions",
+            "ready_message": "Prepared versions are reusable.",
+            "empty_message": "Prepared dataset versions are not available yet.",
+        },
+    ]
+
+    coach_issues: list[dict[str, Any]] = []
+    checks: list[dict[str, Any]] = []
+    for section in section_specs:
+        payload = section["payload"]
+        issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
+        section_id = str(section["id"])
+        section_label = str(section["label"])
+        for index, issue in enumerate(issues):
+            if isinstance(issue, dict):
+                coach_issues.append(
+                    _coach_issue(
+                        section_id=section_id,
+                        section_label=section_label,
+                        issue=issue,
+                        index=index,
+                    )
+                )
+        checks.append(
+            _coach_section(
+                section_id=section_id,
+                label=section_label,
+                verdict=payload.get("verdict"),
+                issues=[item for item in issues if isinstance(item, dict)],
+                target_tab=str(section["target_tab"]),
+                action_label=str(section["action_label"]),
+                ready_message=str(section["ready_message"]),
+                empty_message=section.get("empty_message"),
+            )
+        )
+
+    coach_issues.sort(key=lambda item: tuple(item.get("sort") or [99, 99, 99]))
+    blocker_count = sum(1 for item in coach_issues if item["severity"] == "blocker")
+    warning_count = sum(1 for item in coach_issues if item["severity"] == "warning")
+    info_count = sum(1 for item in coach_issues if item["severity"] == "info")
+    empty_section_count = sum(1 for item in checks if item["status"] == "empty")
+    ready_section_count = sum(1 for item in checks if item["status"] == "ready")
+
+    if blocker_count:
+        verdict: CoachVerdict = "blocked"
+    elif warning_count or empty_section_count:
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    actionable_issues = [
+        issue
+        for issue in coach_issues
+        if issue["severity"] in {"blocker", "warning"}
+    ]
+    if actionable_issues:
+        next_action = _coach_public_action(actionable_issues[0])
+    else:
+        version_reuse = dataset_versions.get("reuse_readiness")
+        training_reuse = (
+            version_reuse.get("training")
+            if isinstance(version_reuse, dict) and isinstance(version_reuse.get("training"), dict)
+            else {}
+        )
+        if str(training_reuse.get("status") or "") == "ready":
+            next_action = _coach_next_action_from_entry(
+                action_id="coach_open_training",
+                title="Launch training from the prepared dataset",
+                message=str(training_reuse.get("message") or "Prepared versions are ready for training."),
+                action_label="Open Training",
+                target_tab="training",
+                priority="medium",
+                section_id="dataset_versions",
+                section_label="Dataset Versions",
+                requires_user_confirmation=True,
+            )
+        else:
+            entry = prepare_dataset.get("entry_point") if isinstance(prepare_dataset.get("entry_point"), dict) else {}
+            next_action = _coach_next_action_from_entry(
+                action_id="coach_open_dataset_prep",
+                title="Prepare a dataset version",
+                message=str(entry.get("reason") or "Create or refresh prepared dataset versions."),
+                action_label=str(entry.get("label") or "Open Dataset Prep"),
+                target_tab=str(entry.get("target_tab") or "dataprep"),
+                priority="medium",
+                section_id="prepare_dataset",
+                section_label="Prepare Dataset",
+                requires_user_confirmation=True,
+            )
+
+    next_steps = [_coach_public_action(item) for item in actionable_issues[:5]]
+    if not next_steps:
+        next_steps = [next_action]
+    elif next_action["id"] not in {item["id"] for item in next_steps}:
+        next_steps.insert(0, next_action)
+        next_steps = next_steps[:5]
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_data_studio_checks",
+        "summary": {
+            "blocker_count": blocker_count,
+            "warning_count": warning_count,
+            "info_count": info_count,
+            "section_count": len(checks),
+            "ready_section_count": ready_section_count,
+            "empty_section_count": empty_section_count,
+            "next_action_target": next_action.get("target_tab"),
+        },
+        "next_action": next_action,
+        "next_steps": next_steps,
+        "checks": checks,
+        "issues": [_coach_public_action(item) for item in coach_issues[:30]],
+        "entry_points": [
+            {
+                "label": "Open Data Prep",
+                "target_tab": "dataprep",
+                "reason": "Review mapping, split, manifest, and version checks.",
+                "requires_confirmation": True,
+            },
+            {
+                "label": "Open Synthetic",
+                "target_tab": "synthetic",
+                "reason": "Generate or review synthetic rows.",
+                "requires_confirmation": True,
+            },
+            {
+                "label": "Open Training",
+                "target_tab": "training",
+                "reason": "Use prepared dataset versions for training.",
+                "requires_confirmation": True,
+            },
+        ],
+        "power_details": {
+            "section_verdicts": {
+                str(section["id"]): str(section["payload"].get("verdict") or "")
+                for section in section_specs
+            },
+            "overview_primary_action": overview.get("primary_action"),
+            "prepare_can_prepare": prepare_dataset.get("can_prepare"),
+            "training_reuse_ready": (dataset_versions.get("summary") or {}).get("training_reuse_ready")
+            if isinstance(dataset_versions.get("summary"), dict)
+            else None,
         },
     }
