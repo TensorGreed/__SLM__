@@ -44,7 +44,7 @@ function t(timecode: string): number {
 export const VIDEOS: Record<string, VideoMeta> = {
     v03: {
         id: 'v03',
-        youtubeId: null,
+        youtubeId: "93D9XMNeKhU",
         title: 'Fine-Tune an SLM on Support Tickets — Full Pipeline Walkthrough',
         chapters: [
             { label: 'Intro', timeSeconds: t('00:00') },
