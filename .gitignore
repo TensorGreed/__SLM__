@@ -35,6 +35,7 @@ data/projects/
 data/exports/
 data/models/
 data/support_bundles/
+data/curriculum_ab/
 
 # Test run artifacts (per-phase SQLite DBs and DATA_DIR trees)
 backend/tests/*.db

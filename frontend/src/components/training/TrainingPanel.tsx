@@ -681,6 +681,7 @@ type ConfigFieldKey =
   | 'eval_steps'
   | 'sequence_packing'
   | 'use_lora'
+  | 'curriculum'
   | 'lora_r'
   | 'lora_alpha'
   | 'target_modules'
@@ -748,6 +749,14 @@ export default function TrainingPanel({
   const [evalSteps, setEvalSteps] = useState(100);
   const [sequencePacking, setSequencePacking] = useState(true);
   const [useLora, setUseLora] = useState(true);
+  // Phase 6d — curriculum learning toggle. Default starts off; the
+  // backend (training_service._decide_curriculum_default) auto-sets
+  // it true at create_experiment time for thin classification
+  // projects when the field is unset. We initialize the toggle from
+  // the project's defaults effect like every other field; explicit
+  // user touch (touchedConfig.curriculum) sends the value through
+  // includeField so the user's choice always wins.
+  const [curriculum, setCurriculum] = useState(false);
   const [loraR, setLoraR] = useState(16);
   const [loraAlpha, setLoraAlpha] = useState(32);
   const [targetModules, setTargetModules] = useState('q_proj, v_proj');
@@ -790,6 +799,7 @@ export default function TrainingPanel({
     eval_steps: false,
     sequence_packing: false,
     use_lora: false,
+    curriculum: false,
     lora_r: false,
     lora_alpha: false,
     target_modules: false,
@@ -1314,6 +1324,11 @@ export default function TrainingPanel({
     if (includeField('eval_steps')) config.eval_steps = evalSteps;
     if (includeField('sequence_packing')) config.sequence_packing = sequencePacking;
     if (includeField('use_lora')) config.use_lora = useLora;
+    // Phase 6d — only forward curriculum when the user has explicitly
+    // touched it. Leaving it unset lets the backend's auto-default
+    // heuristic fire (on for thin classification projects, off
+    // otherwise); sending false explicitly would clobber that.
+    if (includeField('curriculum')) config.curriculum = curriculum;
     if (includeField('lora_r')) config.lora_r = loraR;
     if (includeField('lora_alpha')) config.lora_alpha = loraAlpha;
     if (includeField('target_modules')) config.target_modules = parsedTargetModules;
@@ -1397,6 +1412,7 @@ export default function TrainingPanel({
     setSequencePacking(parseBoolean(config.sequence_packing, sequencePacking));
     const nextUseLora = parseBoolean(config.use_lora, useLora);
     setUseLora(nextUseLora);
+    setCurriculum(parseBoolean(config.curriculum, curriculum));
     setLoraR(Math.max(1, parseNumber(config.lora_r, loraR)));
     setLoraAlpha(Math.max(1, parseNumber(config.lora_alpha, loraAlpha)));
     if (Array.isArray(config.target_modules)) {
@@ -5201,6 +5217,26 @@ export default function TrainingPanel({
                   {showSetupPower && (
                   <div>
                     <h4 className="training-config-section-title">Advanced & PEFT</h4>
+                    <div
+                      className="form-group training-toggle-row"
+                      data-testid="training-config-curriculum-row"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={curriculum}
+                        onChange={(e) => {
+                          setCurriculum(e.target.checked);
+                          setTouchedConfig((prev) => ({ ...prev, curriculum: true }));
+                        }}
+                        data-testid="training-config-curriculum-toggle"
+                      />
+                      <label className="form-label form-label-inline-tight">
+                        Curriculum learning
+                        <span style={{ marginLeft: 8, color: 'var(--text-tertiary)', fontWeight: 400, fontSize: '0.85em' }}>
+                          (recommended for thin classification: easy rows first, then harder ones; auto-on by default for classification projects with ≤ 200 train rows)
+                        </span>
+                      </label>
+                    </div>
                     <div className="form-group training-toggle-row">
                       <input
                         type="checkbox"

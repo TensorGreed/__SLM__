@@ -91,6 +91,79 @@ def _experiment_dir(project_id: int, experiment_id: int) -> Path:
     return d
 
 
+# Phase 6d — curriculum-learning default-on heuristic threshold.
+# The Phase 6c A/B (2026-05-25, 5 seeds, GB10 GPU) cleared the gate
+# with classification templates at exactly 144 training rows; the
+# 200 ceiling gives headroom for slightly thicker thin-data projects
+# while staying well below the regime where uniform training is
+# already strong. Revisit if a future A/B with larger projects
+# (200-500 rows) shows the lift plateauing.
+CURRICULUM_AUTO_ON_MAX_TRAIN_ROWS: int = 200
+
+
+def _decide_curriculum_default(
+    *,
+    project_obj: Project | None,
+    project_id: int,
+) -> dict:
+    """Return {'should_default_on': bool, 'reason': str}.
+
+    Fires True iff: project's selected recipe has a curriculum
+    scoring mode (today: classification only) AND the prepared
+    train.jsonl has ≤ ``CURRICULUM_AUTO_ON_MAX_TRAIN_ROWS`` rows.
+    Returns False with a categorical reason otherwise — the reason
+    flows into ``config._curriculum_auto_defaulted`` for the UI to
+    show on the experiment card so users understand why curriculum
+    is (or isn't) on.
+
+    Designed to be cheap: no embedder load, no DB hop beyond the
+    project we already fetched. A missing prepared file means
+    "default off" (gate fails closed — better than auto-on on a
+    state we couldn't verify)."""
+    # Local import to avoid pulling curriculum_service into the
+    # training_service module-load if curriculum is never used.
+    from app.services.curriculum_service import (
+        recommended_scoring_mode_for_recipe,
+    )
+
+    selected_recipe = (project_obj.selected_recipe or {}) if project_obj else {}
+    recipe_id = selected_recipe.get("recipe_id")
+    if not recipe_id:
+        return {"should_default_on": False, "reason": "no_recipe_selected"}
+    if recommended_scoring_mode_for_recipe(recipe_id) is None:
+        return {
+            "should_default_on": False,
+            "reason": f"recipe_has_no_curriculum:{recipe_id}",
+        }
+
+    train_file = settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "train.jsonl"
+    if not train_file.exists():
+        return {"should_default_on": False, "reason": "no_prepared_train_file"}
+
+    # Cheap line count — prepared/train.jsonl is one row per line.
+    try:
+        with train_file.open(encoding="utf-8") as f:
+            row_count = sum(1 for line in f if line.strip())
+    except OSError as e:
+        return {"should_default_on": False, "reason": f"train_file_unreadable:{e}"}
+
+    if row_count > CURRICULUM_AUTO_ON_MAX_TRAIN_ROWS:
+        return {
+            "should_default_on": False,
+            "reason": (
+                f"thick_dataset:{row_count}>{CURRICULUM_AUTO_ON_MAX_TRAIN_ROWS}"
+            ),
+        }
+
+    return {
+        "should_default_on": True,
+        "reason": (
+            f"thin_classification:{row_count}_rows_<=_"
+            f"{CURRICULUM_AUTO_ON_MAX_TRAIN_ROWS}_threshold"
+        ),
+    }
+
+
 async def _maybe_apply_curriculum(
     *,
     db: AsyncSession,
@@ -216,8 +289,9 @@ async def create_experiment(
     training_mode: TrainingMode = TrainingMode.SFT,
 ) -> Experiment:
     """Create a new training experiment."""
-    project = await db.execute(select(Project).where(Project.id == project_id))
-    if not project.scalar_one_or_none():
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project_obj = project_row.scalar_one_or_none()
+    if not project_obj:
         raise ValueError(f"Project {project_id} not found")
 
     base_model_validation = evaluate_training_base_model_compatibility(base_model=base_model)
@@ -233,6 +307,21 @@ async def create_experiment(
         if len(validation_errors) > 3:
             preview = f"{preview}; (+{len(validation_errors) - 3} more)"
         raise ValueError(f"Base model validation failed: {preview}")
+
+    # Phase 6d — auto-on heuristic for curriculum learning. Fires
+    # only when the caller hasn't set ``curriculum`` explicitly, so
+    # API/CLI callers who want a specific value get it (opt-out
+    # preserved). Phase 6c A/B run (2026-05-25) showed +54-93% F1
+    # lift on the 2 classification templates at ≤ 200 training rows.
+    if "curriculum" not in config:
+        auto_decision = _decide_curriculum_default(
+            project_obj=project_obj,
+            project_id=project_id,
+        )
+        if auto_decision["should_default_on"]:
+            config = dict(config)
+            config["curriculum"] = True
+            config["_curriculum_auto_defaulted"] = auto_decision["reason"]
 
     exp = Experiment(
         project_id=project_id,
