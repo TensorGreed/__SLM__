@@ -815,6 +815,9 @@ export interface DataStudioQualitySafetySummary {
     low_quality_signal_count: number;
     pending_review_count: number;
     domain_signal_count: number;
+    domain_authored_check_count?: number;
+    domain_authored_warning_count?: number;
+    domain_authored_blocker_count?: number;
 }
 
 export interface DataStudioQualitySafetyDomain {
@@ -839,6 +842,8 @@ export interface DataStudioQualitySafetyCheck {
     domain_label: string;
     evidence: string[];
     action_label: string;
+    domain_authored?: boolean;
+    read_only_preview?: boolean;
 }
 
 export interface DataStudioQualitySafetyGroup {
@@ -874,6 +879,21 @@ export interface DataStudioQualitySafetyAssist {
     target_tab: string;
 }
 
+export interface DataStudioQualitySafetyDomainAuthored {
+    available: boolean;
+    preview_only: boolean;
+    applied_profile_id?: string | null;
+    applied_profile_source?: string | null;
+    applied_pack_id?: string | null;
+    applied_pack_source?: string | null;
+    check_count: number;
+    failing_count: number;
+    blocker_count: number;
+    warning_count: number;
+    ready_count: number;
+    supported_sources: string[];
+}
+
 export interface DataStudioQualitySafety {
     project_id: number;
     verdict: DataStudioQualitySafetyVerdict;
@@ -882,6 +902,7 @@ export interface DataStudioQualitySafety {
     source_of_truth: string;
     summary: DataStudioQualitySafetySummary;
     domain: DataStudioQualitySafetyDomain;
+    domain_authored: DataStudioQualitySafetyDomainAuthored;
     checks: DataStudioQualitySafetyCheck[];
     findings_by_source: DataStudioQualitySafetyGroup[];
     findings_by_status: DataStudioQualitySafetyStatusGroup[];

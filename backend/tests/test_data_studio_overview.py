@@ -28,6 +28,8 @@ from app.config import settings  # noqa: E402
 from app.database import async_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument  # noqa: E402
+from app.models.domain_pack import DomainPack, DomainPackStatus  # noqa: E402
+from app.models.domain_profile import DomainProfile, DomainProfileStatus  # noqa: E402
 from app.models.gold_set_annotation import (  # noqa: E402
     GoldSetReviewerQueue,
     GoldSetReviewerQueueStatus,
@@ -37,6 +39,7 @@ from app.models.gold_set_annotation import (  # noqa: E402
     GoldSetVersionStatus,
 )
 from app.models.label_job import LabelJob, LabelRow  # noqa: E402
+from app.models.project import Project  # noqa: E402
 
 
 class DataStudioOverviewEndpointTests(unittest.TestCase):
@@ -511,6 +514,213 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertGreaterEqual(status_counts["blocked"], 2)
         source_labels = {item["label"] for item in payload["findings_by_source"]}
         self.assertIn("policy_rows.jsonl", source_labels)
+
+    def test_quality_safety_applies_domain_authored_profile_and_pack_checks(self):
+        project_id = self._create_project("data-studio-domain-authored-quality")
+
+        async def _seed_domain_authored_quality():
+            async with async_session_factory() as db:
+                profile_id = f"policy-authored-profile-{project_id}"
+                pack_id = f"policy-authored-pack-{project_id}"
+                profile_contract = {
+                    "$schema": "slm.domain-profile/v1",
+                    "profile_id": profile_id,
+                    "version": "1.0.0",
+                    "display_name": "Policy Authored Quality Profile",
+                    "description": "Test profile with domain-authored quality checks.",
+                    "owner": "workspace",
+                    "status": "active",
+                    "tasks": [
+                        {
+                            "task_id": "policy-qa",
+                            "output_mode": "text",
+                            "required_fields": ["question", "answer", "context"],
+                            "optional_fields": ["policy_section", "citation"],
+                        }
+                    ],
+                    "canonical_schema": {
+                        "required": ["input_text", "target_text", "context"],
+                        "aliases": {
+                            "input_text": ["question", "prompt"],
+                            "target_text": ["answer", "response"],
+                            "context": ["context", "policy_text"],
+                            "citation": ["policy_section", "citation"],
+                        },
+                    },
+                    "normalization": {
+                        "trim_whitespace": True,
+                        "drop_empty_records": True,
+                        "dedupe": {"enabled": True},
+                        "pii_redaction": {"enabled": True, "policy": "mask_training_values"},
+                    },
+                    "data_quality": {
+                        "min_records": 10,
+                        "max_null_ratio": 0.05,
+                        "max_duplicate_ratio": 0.2,
+                        "required_coverage": {"context": 1.0},
+                        "forbidden_phrases": ["always guarantee"],
+                        "citation_required": True,
+                        "citation_fields": ["policy_section", "citation"],
+                        "recommended_checks": [
+                            {
+                                "id": "policy-disallow-guarantee",
+                                "type": "regex",
+                                "label": "No guarantee language",
+                                "pattern": "always guarantee",
+                                "mode": "forbid",
+                                "severity": "warning",
+                                "target_tab": "data",
+                                "action_label": "Inspect sources",
+                            }
+                        ],
+                    },
+                    "dataset_split": {
+                        "train": 0.8,
+                        "val": 0.1,
+                        "test": 0.1,
+                        "stratify_by": ["policy_section"],
+                        "seed": 42,
+                        "leakage_checks": ["exact_text_overlap", "policy_section_overlap"],
+                    },
+                    "audit": {"require_human_approval_for_production": True},
+                }
+                pack_contract = {
+                    "$schema": "slm.domain-pack/v1",
+                    "pack_id": pack_id,
+                    "version": "1.0.0",
+                    "display_name": "Policy Authored Quality Pack",
+                    "description": "Test pack overlay with required field checks.",
+                    "owner": "workspace",
+                    "status": "active",
+                    "default_profile_id": profile_id,
+                    "overlay": {
+                        "data_quality": {
+                            "context_required": True,
+                            "context_fields": ["context", "policy_text"],
+                            "recommended_checks": [
+                                {
+                                    "id": "must-have-policy-section",
+                                    "type": "required_field",
+                                    "label": "Policy section required",
+                                    "fields": ["policy_section"],
+                                    "min_coverage": 1.0,
+                                    "target_tab": "dataprep",
+                                    "action_label": "Review mapping",
+                                }
+                            ],
+                        }
+                    },
+                }
+                profile = DomainProfile(
+                    profile_id=profile_id,
+                    version="1.0.0",
+                    display_name="Policy Authored Quality Profile",
+                    description="Test profile with domain-authored quality checks.",
+                    owner="workspace",
+                    status=DomainProfileStatus.ACTIVE,
+                    schema_ref="slm.domain-profile/v1",
+                    contract=profile_contract,
+                    is_system=False,
+                )
+                db.add(profile)
+                await db.flush()
+                pack = DomainPack(
+                    pack_id=pack_id,
+                    version="1.0.0",
+                    display_name="Policy Authored Quality Pack",
+                    description="Test pack overlay with required field checks.",
+                    owner="workspace",
+                    status=DomainPackStatus.ACTIVE,
+                    schema_ref="slm.domain-pack/v1",
+                    default_profile_id=profile_id,
+                    contract=pack_contract,
+                    is_system=False,
+                )
+                db.add(pack)
+                await db.flush()
+
+                project = await db.get(Project, project_id)
+                project.domain_pack_id = pack.id
+                project.domain_profile_id = profile.id
+
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "domain_authored_policy.jsonl"
+                rows = [
+                    {
+                        "question": "Which leave policy covers a caregiver emergency?",
+                        "answer": "The policy answer should never always guarantee approval.",
+                    },
+                    {
+                        "question": "Can a manager approve a benefit exception?",
+                        "answer": "Exceptions require compliance review.",
+                    },
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Domain Authored Policy",
+                    dataset_type=DatasetType.RAW,
+                    record_count=len(rows),
+                    file_path=str(raw_path),
+                )
+                db.add(raw_ds)
+                await db.flush()
+                db.add(
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="domain_authored_policy.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=len(rows),
+                    )
+                )
+                await db.commit()
+
+        asyncio.run(_seed_domain_authored_quality())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/quality-safety")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertTrue(payload["domain_authored"]["available"])
+        self.assertTrue(payload["domain_authored"]["preview_only"])
+        self.assertEqual(
+            payload["domain_authored"]["applied_profile_id"],
+            f"policy-authored-profile-{project_id}",
+        )
+        self.assertEqual(
+            payload["domain_authored"]["applied_pack_id"],
+            f"policy-authored-pack-{project_id}",
+        )
+        self.assertGreaterEqual(payload["summary"]["domain_authored_check_count"], 5)
+        self.assertGreaterEqual(payload["summary"]["domain_authored_warning_count"], 1)
+        self.assertGreaterEqual(payload["domain_authored"]["failing_count"], 1)
+
+        authored_checks = [
+            check for check in payload["checks"] if check.get("domain_authored")
+        ]
+        self.assertTrue(authored_checks)
+        self.assertTrue(all(check.get("read_only_preview") for check in authored_checks))
+        check_ids = {check["id"] for check in authored_checks}
+        self.assertIn("domain_authored_required_coverage", check_ids)
+        self.assertIn("domain_authored_forbidden_phrases_data-quality", check_ids)
+        self.assertIn("domain_authored_explicit_regex_policy-disallow-guarantee", check_ids)
+        self.assertIn("domain_authored_explicit_field_must-have-policy-section", check_ids)
+        self.assertIn("domain_authored_context_gate", check_ids)
+        self.assertIn("domain_authored_review_gate", check_ids)
+
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("domain_authored_required_coverage", issue_ids)
+        self.assertIn("domain_authored_explicit_regex_policy-disallow-guarantee", issue_ids)
+        owner_labels = {item["label"] for item in payload["findings_by_owner"]}
+        self.assertIn("Domain Managers", owner_labels)
 
     def test_domain_detection_policy_setup_creates_missing_drafts_after_confirmation(self):
         project_id = self._create_project("data-studio-policy-domain")

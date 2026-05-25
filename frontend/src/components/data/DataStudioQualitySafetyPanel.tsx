@@ -174,10 +174,14 @@ export default function DataStudioQualitySafetyPanel({
 
     const topChecks = useMemo(
         () => {
-            const checks = quality?.checks ?? [];
+            const checks = (quality?.checks ?? []).filter((check) => !check.domain_authored);
             const nonReady = checks.filter((check) => check.status !== 'ready');
             return (nonReady.length > 0 ? nonReady : checks).slice(0, 6);
         },
+        [quality],
+    );
+    const domainAuthoredChecks = useMemo(
+        () => (quality?.checks ?? []).filter((check) => check.domain_authored).slice(0, 6),
         [quality],
     );
 
@@ -263,6 +267,7 @@ export default function DataStudioQualitySafetyPanel({
                 <span>{formatPercent(quality.domain.confidence)} domain confidence</span>
                 <span>{formatNumber(quality.summary.duplicate_signal_count)} duplicate signals</span>
                 <span>{formatNumber(quality.summary.leakage_overlap_count)} leakage overlaps</span>
+                <span>{formatNumber(quality.summary.domain_authored_check_count)} domain checks</span>
                 <span>{quality.read_only ? 'Read-only scan' : 'Can mutate'}</span>
             </div>
 
@@ -305,6 +310,38 @@ export default function DataStudioQualitySafetyPanel({
                 </div>
 
                 <div className="data-studio-quality__groups">
+                    {quality.domain_authored?.available ? (
+                        <div className="data-studio-quality__domain-authored">
+                            <div>
+                                <h4>Domain-authored previews</h4>
+                                <p>
+                                    {formatNumber(quality.domain_authored.check_count)}
+                                    {' checks from '}
+                                    {quality.domain_authored.applied_profile_id || quality.domain_authored.applied_pack_id || 'applied domain setup'}
+                                </p>
+                            </div>
+                            {domainAuthoredChecks.length > 0 ? (
+                                <div className="data-studio-quality__check-list">
+                                    {domainAuthoredChecks.map((check) => (
+                                        <CheckCard check={check} key={check.id} onOpenTarget={onOpenTarget} />
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="data-studio-quality__empty">
+                                    Applied domain setup has no previewable quality checks yet.
+                                </p>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="data-studio-quality__domain-authored data-studio-quality__domain-authored--empty">
+                            <h4>Domain-authored previews</h4>
+                            <p>Apply a specific Domain Profile or Pack to preview domain-owned checks here.</p>
+                            <button type="button" className="btn btn-secondary" onClick={() => onOpenTarget('domain')}>
+                                <ExternalLink size={15} aria-hidden="true" />
+                                Open Domain Managers
+                            </button>
+                        </div>
+                    )}
                     <GroupList
                         title="By workflow owner"
                         groups={quality.findings_by_owner}

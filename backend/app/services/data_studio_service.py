@@ -5496,6 +5496,759 @@ def _quality_split_fingerprints(rows: list[dict[str, Any]]) -> set[str]:
     return fingerprints
 
 
+def _quality_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    return [value]
+
+
+def _quality_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "required"}
+    return bool(value)
+
+
+def _quality_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _quality_contract_extra_checks(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    containers: list[Any] = [
+        contract.get("quality_checks"),
+        contract.get("recommended_quality_checks"),
+        contract.get("recommended_checks"),
+    ]
+    for key in ("data_quality", "safety", "privacy", "review_gates"):
+        section = contract.get(key)
+        if isinstance(section, dict):
+            containers.extend([
+                section.get("quality_checks"),
+                section.get("recommended_quality_checks"),
+                section.get("recommended_checks"),
+                section.get("checks"),
+            ])
+    checks: list[dict[str, Any]] = []
+    for container in containers:
+        for item in _quality_list(container):
+            if isinstance(item, dict):
+                checks.append(item)
+            elif isinstance(item, str) and item.strip():
+                checks.append({"id": _domain_setup_slug(item), "label": item, "type": "note"})
+    return checks
+
+
+def _quality_domain_contract_context(
+    runtime: dict[str, Any],
+    *,
+    profile_contract: dict[str, Any] | None = None,
+    pack_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    contract = runtime.get("effective_contract")
+    if not isinstance(contract, dict):
+        contract = {}
+    profile_id = str(runtime.get("domain_profile_applied") or "").strip()
+    pack_id = str(runtime.get("domain_pack_applied") or "").strip()
+    profile_source = str(runtime.get("domain_profile_source") or "").strip()
+    pack_source = str(runtime.get("domain_pack_source") or "").strip()
+    pack_overlay = runtime.get("pack_overlay") if isinstance(runtime.get("pack_overlay"), dict) else {}
+    explicit_checks: list[dict[str, Any]] = []
+    seen_check_ids: set[str] = set()
+    for source_contract in [profile_contract, pack_overlay, pack_contract, contract]:
+        if not isinstance(source_contract, dict):
+            continue
+        for check in _quality_contract_extra_checks(source_contract):
+            check_key = str(check.get("id") or check.get("label") or check.get("title") or check)
+            if check_key in seen_check_ids:
+                continue
+            seen_check_ids.add(check_key)
+            explicit_checks.append(check)
+    non_generic_profile = bool(profile_id and profile_id != "generic-domain-v1")
+    non_generic_pack = bool(pack_id and pack_id != "general-pack-v1")
+    available = bool(non_generic_profile or non_generic_pack or explicit_checks)
+    return {
+        "available": available,
+        "preview_only": True,
+        "applied_profile_id": profile_id or None,
+        "applied_profile_source": profile_source or None,
+        "applied_pack_id": pack_id or None,
+        "applied_pack_source": pack_source or None,
+        "contract": contract,
+        "explicit_checks": explicit_checks,
+    }
+
+
+def _quality_contract_aliases(contract: dict[str, Any]) -> dict[str, list[str]]:
+    aliases: dict[str, list[str]] = {}
+
+    def add_alias(field: Any, alias: Any) -> None:
+        key = str(field or "").strip()
+        token = str(alias or "").strip()
+        if not key or not token:
+            return
+        bucket = aliases.setdefault(key, [])
+        if token not in bucket:
+            bucket.append(token)
+
+    canonical_schema = contract.get("canonical_schema")
+    if isinstance(canonical_schema, dict):
+        raw_aliases = canonical_schema.get("aliases")
+        if isinstance(raw_aliases, dict):
+            for field, values in raw_aliases.items():
+                add_alias(field, field)
+                for alias in _quality_list(values):
+                    add_alias(field, alias)
+        for field in _quality_list(canonical_schema.get("required")):
+            add_alias(field, field)
+
+    for task in _quality_list(contract.get("tasks")):
+        if not isinstance(task, dict):
+            continue
+        for field in _quality_list(task.get("required_fields")) + _quality_list(task.get("optional_fields")):
+            add_alias(field, field)
+    return aliases
+
+
+def _quality_contract_field_candidates(
+    field: str,
+    aliases: dict[str, list[str]],
+) -> list[str]:
+    candidates: list[str] = []
+    for item in [field, *aliases.get(field, [])]:
+        token = str(item or "").strip()
+        if token and token not in candidates:
+            candidates.append(token)
+    return candidates or [field]
+
+
+def _quality_contract_field_value(
+    row: dict[str, Any],
+    field: str,
+    aliases: dict[str, list[str]],
+) -> Any:
+    candidates = _quality_contract_field_candidates(field, aliases)
+    lowered = {str(key).lower(): key for key in row.keys()}
+    for candidate in candidates:
+        if candidate in row:
+            return row.get(candidate)
+        match = lowered.get(candidate.lower())
+        if match is not None:
+            return row.get(match)
+    return None
+
+
+def _quality_contract_text_for_field(
+    row: dict[str, Any],
+    field: str | None,
+    aliases: dict[str, list[str]],
+) -> str:
+    if field:
+        value = _quality_contract_field_value(row, field, aliases)
+        values: list[str] = []
+        _flatten_text_values(value, values, limit=20)
+        return " ".join(values).strip()
+    return _quality_scan_text(row)
+
+
+def _quality_contract_field_coverage(
+    scan_rows: list[dict[str, Any]],
+    field: str,
+    aliases: dict[str, list[str]],
+) -> dict[str, Any]:
+    present = 0
+    missing = 0
+    missing_sources: Counter[str] = Counter()
+    for item in scan_rows:
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        if _field_has_value(_quality_contract_field_value(row, field, aliases)):
+            present += 1
+        else:
+            missing += 1
+            missing_sources[str(item.get("source") or "Project sample")] += 1
+    total = present + missing
+    return {
+        "field": field,
+        "present": present,
+        "missing": missing,
+        "ratio": (present / total) if total else 0.0,
+        "missing_sources": missing_sources,
+    }
+
+
+def _quality_domain_check_id(prefix: str, value: Any) -> str:
+    return f"domain_authored_{prefix}_{_domain_setup_slug(value)}"[:160]
+
+
+def _quality_domain_severity(value: Any, default: IssueSeverity = "warning") -> IssueSeverity:
+    token = str(value or default).strip().lower()
+    if token in {"blocker", "warning", "info"}:
+        return token  # type: ignore[return-value]
+    if token in {"error", "critical", "high"}:
+        return "blocker"
+    if token in {"medium", "warn"}:
+        return "warning"
+    return default
+
+
+def _quality_domain_status(severity: IssueSeverity, count: int) -> str:
+    if count <= 0:
+        return "ready"
+    return "blocked" if severity == "blocker" else "attention"
+
+
+def _quality_domain_authored_checks(
+    *,
+    domain_context: dict[str, Any],
+    scan_rows: list[dict[str, Any]],
+    row_texts: list[str],
+    pii_total: int,
+    duplicate_signal_count: int,
+    leakage_overlap_count: int,
+    synthetic_pending: int,
+    gold_review_needed: int,
+    annotation_review_needed: int,
+    annotation_unpromoted: int,
+    domain_id: str,
+    domain_label: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    contract = domain_context.get("contract") if isinstance(domain_context.get("contract"), dict) else {}
+    explicit_checks = (
+        domain_context.get("explicit_checks")
+        if isinstance(domain_context.get("explicit_checks"), list)
+        else []
+    )
+    aliases = _quality_contract_aliases(contract)
+    data_quality = contract.get("data_quality") if isinstance(contract.get("data_quality"), dict) else {}
+    normalization = contract.get("normalization") if isinstance(contract.get("normalization"), dict) else {}
+    dataset_split = contract.get("dataset_split") if isinstance(contract.get("dataset_split"), dict) else {}
+    audit = contract.get("audit") if isinstance(contract.get("audit"), dict) else {}
+
+    if not domain_context.get("available"):
+        return [], {
+            "available": False,
+            "preview_only": True,
+            "applied_profile_id": domain_context.get("applied_profile_id"),
+            "applied_profile_source": domain_context.get("applied_profile_source"),
+            "applied_pack_id": domain_context.get("applied_pack_id"),
+            "applied_pack_source": domain_context.get("applied_pack_source"),
+            "check_count": 0,
+            "failing_count": 0,
+            "blocker_count": 0,
+            "warning_count": 0,
+            "ready_count": 0,
+            "supported_sources": [],
+        }
+
+    checks: list[dict[str, Any]] = []
+
+    def append_check(check: dict[str, Any]) -> None:
+        check["domain_authored"] = True
+        check["read_only_preview"] = True
+        checks.append(check)
+
+    total_rows = len(scan_rows)
+    min_records = data_quality.get("min_records")
+    if isinstance(min_records, int) and min_records > 0:
+        missing_records = max(0, min_records - total_rows)
+        severity: IssueSeverity = "warning"
+        append_check(
+            _quality_check(
+                "domain_authored_min_records",
+                "Domain minimum row target",
+                "domain-authored",
+                _quality_domain_status(severity, missing_records),
+                severity if missing_records else "info",
+                (
+                    f"Applied domain contract recommends at least {min_records} row(s); "
+                    f"{total_rows} row(s) are available in the scan sample."
+                ),
+                count=missing_records,
+                target_tab="data" if total_rows <= 0 else "synthetic",
+                workflow_owner="Domain Managers",
+                source="Applied domain contract",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=["This is a readiness target, not an automatic mutation."],
+                action_label="Review domain setup",
+            )
+        )
+
+    required_fields: dict[str, float] = {}
+    canonical_schema = contract.get("canonical_schema") if isinstance(contract.get("canonical_schema"), dict) else {}
+    for field in _quality_list(canonical_schema.get("required")):
+        token = str(field or "").strip()
+        if token:
+            required_fields.setdefault(token, 1.0)
+    required_coverage = data_quality.get("required_coverage")
+    if isinstance(required_coverage, dict):
+        for field, threshold in required_coverage.items():
+            token = str(field or "").strip()
+            if token:
+                required_fields[token] = max(required_fields.get(token, 0.0), _quality_float(threshold, 1.0))
+    for task in _quality_list(contract.get("tasks")):
+        if not isinstance(task, dict):
+            continue
+        for field in _quality_list(task.get("required_fields")):
+            token = str(field or "").strip()
+            if token:
+                required_fields.setdefault(token, 1.0)
+
+    coverage_gaps: list[str] = []
+    missing_sources: Counter[str] = Counter()
+    for field, threshold in required_fields.items():
+        coverage = _quality_contract_field_coverage(scan_rows, field, aliases)
+        ratio = float(coverage.get("ratio") or 0.0)
+        missing = int(coverage.get("missing") or 0)
+        if total_rows <= 0 or ratio < threshold:
+            coverage_gaps.append(f"{field}: {round(ratio * 100)}% < {round(threshold * 100)}%")
+            missing_sources.update(coverage.get("missing_sources") or Counter())
+    if coverage_gaps:
+        append_check(
+            _quality_check(
+                "domain_authored_required_coverage",
+                "Domain-required field coverage",
+                "domain-authored",
+                "attention",
+                "warning",
+                "Applied domain contract requires stronger field coverage before training.",
+                count=len(coverage_gaps),
+                target_tab="dataprep",
+                workflow_owner="Domain Managers",
+                source=_quality_top_source(missing_sources, "Applied domain contract"),
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=coverage_gaps[:5],
+                action_label="Review mapping",
+            )
+        )
+    elif required_fields:
+        append_check(
+            _quality_check(
+                "domain_authored_required_coverage_clear",
+                "Domain-required fields covered",
+                "domain-authored",
+                "ready",
+                "info",
+                "Applied domain-required fields meet configured coverage thresholds in the scanned sample.",
+                count=0,
+                target_tab="dataprep",
+                workflow_owner="Domain Managers",
+                source="Applied domain contract",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=list(required_fields.keys())[:5],
+                action_label="Review mapping",
+            )
+        )
+
+    max_duplicate_ratio = data_quality.get("max_duplicate_ratio")
+    if max_duplicate_ratio is not None and row_texts:
+        threshold = _quality_float(max_duplicate_ratio, 1.0)
+        duplicate_ratio = duplicate_signal_count / max(1, len(row_texts))
+        excess = max(0, duplicate_signal_count - int(threshold * len(row_texts)))
+        if duplicate_ratio > threshold:
+            append_check(
+                _quality_check(
+                    "domain_authored_duplicate_ratio",
+                    "Domain duplicate ratio",
+                    "domain-authored",
+                    "attention",
+                    "warning",
+                    f"Duplicate signal ratio is {round(duplicate_ratio * 100)}%; domain threshold is {round(threshold * 100)}%.",
+                    count=max(1, excess),
+                    target_tab="dataprep",
+                    workflow_owner="Domain Managers",
+                    source="Applied domain contract",
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=["Tune dedupe or refresh splits before relying on evaluation metrics."],
+                    action_label="Open Data Prep",
+                )
+            )
+
+    leakage_checks = [
+        str(item)
+        for item in _quality_list(dataset_split.get("leakage_checks"))
+        if str(item).strip()
+    ]
+    if leakage_checks:
+        severity = "blocker" if leakage_overlap_count else "info"
+        append_check(
+            _quality_check(
+                "domain_authored_leakage_gates",
+                "Domain leakage gates",
+                "domain-authored",
+                _quality_domain_status(severity, leakage_overlap_count),
+                severity,
+                (
+                    f"Applied domain contract asks for leakage checks: {', '.join(leakage_checks[:4])}."
+                    if leakage_overlap_count <= 0
+                    else "Applied domain leakage gates found overlap in prepared splits."
+                ),
+                count=leakage_overlap_count,
+                target_tab="dataprep",
+                workflow_owner="Domain Managers",
+                source="Applied domain contract",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=leakage_checks[:5],
+                action_label="Open Data Prep",
+            )
+        )
+
+    for section_key in ("data_quality", "safety", "privacy"):
+        section = contract.get(section_key)
+        if not isinstance(section, dict):
+            continue
+        forbidden_phrases = [
+            str(item.get("phrase") if isinstance(item, dict) else item).strip()
+            for item in _quality_list(section.get("forbidden_phrases"))
+            if str(item.get("phrase") if isinstance(item, dict) else item).strip()
+        ]
+        if forbidden_phrases:
+            match_count = 0
+            match_sources: Counter[str] = Counter()
+            lowered_phrases = [phrase.lower() for phrase in forbidden_phrases]
+            for item in scan_rows:
+                text = _quality_scan_text(item.get("row") if isinstance(item.get("row"), dict) else {}).lower()
+                if any(phrase in text for phrase in lowered_phrases):
+                    match_count += 1
+                    match_sources[str(item.get("source") or "Project sample")] += 1
+            if match_count:
+                append_check(
+                    _quality_check(
+                        _quality_domain_check_id("forbidden_phrases", section_key),
+                        "Domain forbidden phrases",
+                        "domain-authored",
+                        "attention",
+                        "warning",
+                        f"Applied domain contract found {match_count} row(s) with forbidden phrase matches.",
+                        count=match_count,
+                        target_tab="data",
+                        workflow_owner="Domain Managers",
+                        source=_quality_top_source(match_sources),
+                        domain_id=domain_id,
+                        domain_label=domain_label,
+                        evidence=["Forbidden phrase values are not echoed in this preview."],
+                        action_label="Inspect sources",
+                    )
+                )
+
+    pii_redaction = normalization.get("pii_redaction")
+    pii_redaction_enabled = isinstance(pii_redaction, dict) and _quality_bool(pii_redaction.get("enabled"))
+    privacy_rules = contract.get("privacy") if isinstance(contract.get("privacy"), dict) else {}
+    privacy_required = pii_redaction_enabled or _quality_bool(privacy_rules.get("pii_redaction_required"))
+    if privacy_required:
+        redaction_fields = {
+            "redacted_text",
+            "masked_text",
+            "redaction",
+            "redaction_policy",
+            "pii_masked",
+        }
+        has_redaction_field = any(
+            field.lower() in redaction_fields
+            for item in scan_rows
+            for field in ((item.get("row") if isinstance(item.get("row"), dict) else {}).keys())
+        )
+        if pii_total and not has_redaction_field:
+            append_check(
+                _quality_check(
+                    "domain_authored_privacy_redaction",
+                    "Domain privacy redaction gate",
+                    "domain-authored",
+                    "blocked",
+                    "blocker",
+                    "Applied domain contract requires PII redaction, but sensitive patterns appear without redaction fields.",
+                    count=pii_total,
+                    target_tab="data",
+                    workflow_owner="Domain Managers",
+                    source="Applied domain contract",
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=["Values are redacted from this preview; inspect sources before preparing datasets."],
+                    action_label="Inspect sources",
+                )
+            )
+        else:
+            append_check(
+                _quality_check(
+                    "domain_authored_privacy_redaction_ready",
+                    "Domain privacy redaction gate",
+                    "domain-authored",
+                    "ready",
+                    "info",
+                    "Applied domain privacy redaction gate is configured; no blocking unredacted PII signal was found.",
+                    count=0,
+                    target_tab="domain",
+                    workflow_owner="Domain Managers",
+                    source="Applied domain contract",
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=[],
+                    action_label="Open Domain Managers",
+                )
+            )
+
+    review_gate_count = synthetic_pending + gold_review_needed + annotation_review_needed + annotation_unpromoted
+    review_gates = data_quality.get("review_gates") or contract.get("review_gates")
+    human_review_required = (
+        _quality_bool(audit.get("require_human_approval_for_production"))
+        or _quality_bool(data_quality.get("human_review_required"))
+        or bool(review_gates)
+    )
+    if human_review_required:
+        append_check(
+            _quality_check(
+                "domain_authored_review_gate",
+                "Domain review gate",
+                "domain-authored",
+                _quality_domain_status("warning", review_gate_count),
+                "warning" if review_gate_count else "info",
+                (
+                    f"Applied domain contract requires review gates; {review_gate_count} review item(s) are still open."
+                    if review_gate_count
+                    else "Applied domain contract requires review gates, and current review queues are clear."
+                ),
+                count=review_gate_count,
+                target_tab="synthetic" if synthetic_pending else ("goldset" if gold_review_needed else "annotate"),
+                workflow_owner="Domain Managers",
+                source="Applied domain contract",
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=[
+                    f"Synthetic pending: {synthetic_pending}.",
+                    f"Gold Set review needed: {gold_review_needed}.",
+                    f"Annotation review/promotion: {annotation_review_needed + annotation_unpromoted}.",
+                ],
+                action_label="Open Review",
+            )
+        )
+
+    citation_required = _quality_bool(data_quality.get("citation_required")) or _quality_bool(contract.get("citation_required"))
+    context_required = _quality_bool(data_quality.get("context_required")) or _quality_bool(contract.get("context_required"))
+    citation_fields = [
+        str(item).strip()
+        for item in _quality_list(data_quality.get("citation_fields") or contract.get("citation_fields"))
+        if str(item).strip()
+    ] or ["citation", "source", "reference", "policy_section"]
+    context_fields = [
+        str(item).strip()
+        for item in _quality_list(data_quality.get("context_fields") or contract.get("context_fields"))
+        if str(item).strip()
+    ] or ["context", "source_excerpt", "passage", "policy_text"]
+    expectations: list[tuple[str, list[str]]] = []
+    if citation_required:
+        expectations.append(("citation", citation_fields))
+    if context_required:
+        expectations.append(("context", context_fields))
+    for expected_label, expected_fields in expectations:
+        present = 0
+        missing = 0
+        missing_sources: Counter[str] = Counter()
+        for item in scan_rows:
+            row = item.get("row") if isinstance(item.get("row"), dict) else {}
+            if any(_field_has_value(_quality_contract_field_value(row, field, aliases)) for field in expected_fields):
+                present += 1
+            else:
+                missing += 1
+                missing_sources[str(item.get("source") or "Project sample")] += 1
+        append_check(
+            _quality_check(
+                f"domain_authored_{expected_label}_gate",
+                f"Domain {expected_label} expectation",
+                "domain-authored",
+                _quality_domain_status("warning", missing),
+                "warning" if missing else "info",
+                (
+                    f"Applied domain contract expects {expected_label} fields; {missing} scanned row(s) are missing them."
+                    if missing
+                    else f"Applied domain {expected_label} expectation is satisfied in the scanned sample."
+                ),
+                count=missing,
+                target_tab="dataprep",
+                workflow_owner="Domain Managers",
+                source=_quality_top_source(missing_sources, "Applied domain contract"),
+                domain_id=domain_id,
+                domain_label=domain_label,
+                evidence=expected_fields[:5],
+                action_label="Review mapping",
+            )
+        )
+
+    for index, check in enumerate(explicit_checks):
+        if not isinstance(check, dict):
+            continue
+        check_type = str(check.get("type") or check.get("kind") or "").strip().lower().replace("-", "_")
+        label = str(check.get("label") or check.get("title") or check.get("id") or f"Domain check {index + 1}")
+        severity = _quality_domain_severity(check.get("severity"), "warning")
+        target_tab = str(check.get("target_tab") or check.get("target") or "domain")
+        action_label = str(check.get("action_label") or "Open Domain Managers")
+
+        if check_type in {"required_field", "required_fields", "field_coverage"}:
+            fields = [
+                str(item).strip()
+                for item in _quality_list(check.get("fields") or check.get("field"))
+                if str(item).strip()
+            ]
+            min_coverage = _quality_float(check.get("min_coverage") or check.get("threshold"), 1.0)
+            gaps: list[str] = []
+            missing_sources: Counter[str] = Counter()
+            for field in fields:
+                coverage = _quality_contract_field_coverage(scan_rows, field, aliases)
+                if float(coverage.get("ratio") or 0.0) < min_coverage:
+                    gaps.append(f"{field}: {round(float(coverage.get('ratio') or 0.0) * 100)}%")
+                    missing_sources.update(coverage.get("missing_sources") or Counter())
+            append_check(
+                _quality_check(
+                    _quality_domain_check_id("explicit_field", check.get("id") or label),
+                    label,
+                    "domain-authored",
+                    _quality_domain_status(severity, len(gaps)),
+                    severity if gaps else "info",
+                    str(check.get("message") or ("Domain-authored field coverage check found gaps." if gaps else "Domain-authored field coverage check is clear.")),
+                    count=len(gaps),
+                    target_tab=target_tab if gaps else "domain",
+                    workflow_owner="Domain Managers",
+                    source=_quality_top_source(missing_sources, "Applied domain contract"),
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=gaps[:5],
+                    action_label=action_label,
+                )
+            )
+            continue
+
+        if check_type in {"regex", "pattern", "regex_pattern"} or check.get("pattern"):
+            pattern = str(check.get("pattern") or "").strip()
+            if not pattern:
+                continue
+            mode = str(check.get("mode") or check.get("expectation") or "forbid").strip().lower()
+            field = str(check.get("field") or "").strip() or None
+            flags = 0 if _quality_bool(check.get("case_sensitive")) else re.IGNORECASE
+            try:
+                compiled = re.compile(pattern, flags)
+            except re.error as exc:
+                append_check(
+                    _quality_check(
+                        _quality_domain_check_id("invalid_regex", check.get("id") or label),
+                        f"{label} regex invalid",
+                        "domain-authored",
+                        "attention",
+                        "warning",
+                        f"Domain-authored regex could not compile: {str(exc)[:160]}",
+                        count=1,
+                        target_tab="domain",
+                        workflow_owner="Domain Managers",
+                        source="Applied domain contract",
+                        domain_id=domain_id,
+                        domain_label=domain_label,
+                        evidence=[],
+                        action_label="Open Domain Managers",
+                    )
+                )
+                continue
+            match_count = 0
+            source_counts: Counter[str] = Counter()
+            for item in scan_rows:
+                row = item.get("row") if isinstance(item.get("row"), dict) else {}
+                text = _quality_contract_text_for_field(row, field, aliases)
+                matched = bool(compiled.search(text))
+                failed = not matched if mode in {"require", "required", "must_match"} else matched
+                if failed:
+                    match_count += 1
+                    source_counts[str(item.get("source") or "Project sample")] += 1
+            append_check(
+                _quality_check(
+                    _quality_domain_check_id("explicit_regex", check.get("id") or label),
+                    label,
+                    "domain-authored",
+                    _quality_domain_status(severity, match_count),
+                    severity if match_count else "info",
+                    str(check.get("message") or f"Domain-authored regex check {'found matches' if mode not in {'require', 'required', 'must_match'} else 'found missing matches'}."),
+                    count=match_count,
+                    target_tab=target_tab if match_count else "domain",
+                    workflow_owner="Domain Managers",
+                    source=_quality_top_source(source_counts, "Applied domain contract"),
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=["Regex evidence is summarized without echoing matched values."],
+                    action_label=action_label,
+                )
+            )
+            continue
+
+        if check_type in {"forbidden_phrase", "forbidden_phrases"} or check.get("phrases"):
+            phrases = [
+                str(item).strip().lower()
+                for item in _quality_list(check.get("phrases") or check.get("phrase"))
+                if str(item).strip()
+            ]
+            match_count = 0
+            source_counts: Counter[str] = Counter()
+            for item in scan_rows:
+                row = item.get("row") if isinstance(item.get("row"), dict) else {}
+                text = _quality_scan_text(row).lower()
+                if any(phrase in text for phrase in phrases):
+                    match_count += 1
+                    source_counts[str(item.get("source") or "Project sample")] += 1
+            append_check(
+                _quality_check(
+                    _quality_domain_check_id("explicit_phrase", check.get("id") or label),
+                    label,
+                    "domain-authored",
+                    _quality_domain_status(severity, match_count),
+                    severity if match_count else "info",
+                    str(check.get("message") or "Domain-authored forbidden phrase check completed."),
+                    count=match_count,
+                    target_tab=target_tab if match_count else "domain",
+                    workflow_owner="Domain Managers",
+                    source=_quality_top_source(source_counts, "Applied domain contract"),
+                    domain_id=domain_id,
+                    domain_label=domain_label,
+                    evidence=["Forbidden phrase values are not echoed in this preview."],
+                    action_label=action_label,
+                )
+            )
+
+    blocker_count = sum(1 for check in checks if check.get("severity") == "blocker")
+    warning_count = sum(1 for check in checks if check.get("severity") == "warning")
+    ready_count = sum(1 for check in checks if check.get("status") == "ready")
+    supported_sources = [
+        source
+        for source in [
+            "profile:data_quality",
+            "profile:normalization",
+            "profile:dataset_split",
+            "profile:audit",
+            "contract:quality_checks" if explicit_checks else "",
+        ]
+        if source
+    ]
+    return checks, {
+        "available": True,
+        "preview_only": True,
+        "applied_profile_id": domain_context.get("applied_profile_id"),
+        "applied_profile_source": domain_context.get("applied_profile_source"),
+        "applied_pack_id": domain_context.get("applied_pack_id"),
+        "applied_pack_source": domain_context.get("applied_pack_source"),
+        "check_count": len(checks),
+        "failing_count": sum(1 for check in checks if check.get("status") != "ready"),
+        "blocker_count": blocker_count,
+        "warning_count": warning_count,
+        "ready_count": ready_count,
+        "supported_sources": supported_sources,
+    }
+
+
 async def build_data_studio_quality_safety(
     db: AsyncSession,
     project_id: int,
@@ -5510,6 +6263,27 @@ async def build_data_studio_quality_safety(
     domain = await build_data_studio_domain_detection(db, project_id)
     review_queue = await build_data_studio_review_queue(db, project_id)
     prepare_dataset = await build_data_studio_prepare_dataset(db, project_id)
+    try:
+        domain_runtime = await resolve_project_domain_runtime(db, project_id)
+    except ValueError:
+        domain_runtime = {}
+    profile_contract: dict[str, Any] | None = None
+    pack_contract: dict[str, Any] | None = None
+    profile_id = str(domain_runtime.get("domain_profile_applied") or "").strip()
+    pack_id = str(domain_runtime.get("domain_pack_applied") or "").strip()
+    if profile_id:
+        profile = await get_domain_profile(db, profile_id)
+        if profile is not None and isinstance(profile.contract, dict):
+            profile_contract = profile.contract
+    if pack_id:
+        pack = await get_domain_pack(db, pack_id)
+        if pack is not None and isinstance(pack.contract, dict):
+            pack_contract = pack.contract
+    domain_contract_context = _quality_domain_contract_context(
+        domain_runtime,
+        profile_contract=profile_contract,
+        pack_contract=pack_contract,
+    )
 
     detected_domain = domain.get("detected_domain") if isinstance(domain.get("detected_domain"), dict) else {}
     domain_id = str(detected_domain.get("id") or "generic_domain")
@@ -6136,6 +6910,23 @@ async def build_data_studio_quality_safety(
             )
         )
 
+    domain_authored_checks, domain_authored_summary = _quality_domain_authored_checks(
+        domain_context=domain_contract_context,
+        scan_rows=scan_rows,
+        row_texts=row_texts,
+        pii_total=pii_total,
+        duplicate_signal_count=duplicate_signal_count,
+        leakage_overlap_count=leakage_overlap_count,
+        synthetic_pending=synthetic_pending,
+        gold_review_needed=gold_review_needed,
+        annotation_review_needed=annotation_review_needed,
+        annotation_unpromoted=annotation_unpromoted,
+        domain_id=domain_id,
+        domain_label=domain_label,
+    )
+    for check in domain_authored_checks:
+        add_check(check)
+
     if not scan_rows:
         add_check(
             _quality_check(
@@ -6243,6 +7034,9 @@ async def build_data_studio_quality_safety(
             "low_quality_signal_count": low_quality_total,
             "pending_review_count": synthetic_pending + gold_review_needed + annotation_review_needed + annotation_unpromoted,
             "domain_signal_count": 1 if domain_confidence >= _DOMAIN_SETUP_MIN_CONFIDENCE else 0,
+            "domain_authored_check_count": int(domain_authored_summary.get("check_count") or 0),
+            "domain_authored_warning_count": int(domain_authored_summary.get("warning_count") or 0),
+            "domain_authored_blocker_count": int(domain_authored_summary.get("blocker_count") or 0),
         },
         "domain": {
             "id": domain_id,
@@ -6250,6 +7044,7 @@ async def build_data_studio_quality_safety(
             "confidence": round(domain_confidence, 4),
             "source": detected_domain.get("source"),
         },
+        "domain_authored": domain_authored_summary,
         "checks": checks,
         "findings_by_source": _quality_group_rows(source_groups, source_targets),
         "findings_by_status": status_groups,
@@ -6272,6 +7067,7 @@ async def build_data_studio_quality_safety(
             "required_fields_below_100": required_gaps,
             "split_row_counts": split_row_counts,
             "domain_evidence": domain.get("evidence") if isinstance(domain.get("evidence"), list) else [],
+            "domain_authored_check_ids": [check.get("id") for check in domain_authored_checks],
             "review_totals": review_totals,
         },
     }

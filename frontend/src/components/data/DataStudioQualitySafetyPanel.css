@@ -189,7 +189,8 @@
 
 .data-studio-quality__checks,
 .data-studio-quality__groups,
-.data-studio-quality__group {
+.data-studio-quality__group,
+.data-studio-quality__domain-authored {
     border: 1px solid var(--border-default);
     border-radius: 8px;
     background: var(--bg-primary);
@@ -203,9 +204,30 @@
 }
 
 .data-studio-quality__checks h4,
-.data-studio-quality__group h4 {
+.data-studio-quality__group h4,
+.data-studio-quality__domain-authored h4 {
     margin: 0 0 var(--space-sm);
     font-size: var(--font-size-sm);
+}
+
+.data-studio-quality__domain-authored {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.data-studio-quality__domain-authored > div:first-child p,
+.data-studio-quality__domain-authored--empty p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.data-studio-quality__domain-authored--empty .btn {
+    width: fit-content;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
 }
 
 .data-studio-quality__check-list,

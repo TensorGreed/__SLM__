@@ -29,6 +29,9 @@ const qualityPayload = {
         low_quality_signal_count: 1,
         pending_review_count: 5,
         domain_signal_count: 1,
+        domain_authored_check_count: 2,
+        domain_authored_warning_count: 1,
+        domain_authored_blocker_count: 0,
     },
     domain: {
         id: 'policy_qa',
@@ -68,6 +71,42 @@ const qualityPayload = {
             domain_label: 'Policy Q&A',
             evidence: ['train/validation: 1 overlapping row(s)'],
             action_label: 'Refresh splits',
+        },
+        {
+            id: 'domain_authored_required_coverage',
+            label: 'Domain-required field coverage',
+            category: 'domain-authored',
+            status: 'attention',
+            severity: 'warning',
+            message: 'Applied domain contract requires stronger field coverage before training.',
+            count: 1,
+            target_tab: 'dataprep',
+            workflow_owner: 'Domain Managers',
+            source: 'Applied domain contract',
+            domain_id: 'policy_qa',
+            domain_label: 'Policy Q&A',
+            evidence: ['context: 0% < 70%'],
+            action_label: 'Review mapping',
+            domain_authored: true,
+            read_only_preview: true,
+        },
+        {
+            id: 'domain_authored_review_gate',
+            label: 'Domain review gate',
+            category: 'domain-authored',
+            status: 'ready',
+            severity: 'info',
+            message: 'Applied domain contract requires review gates.',
+            count: 0,
+            target_tab: 'domain',
+            workflow_owner: 'Domain Managers',
+            source: 'Applied domain contract',
+            domain_id: 'policy_qa',
+            domain_label: 'Policy Q&A',
+            evidence: [],
+            action_label: 'Open Review',
+            domain_authored: true,
+            read_only_preview: true,
         },
     ],
     findings_by_source: [
@@ -155,6 +194,20 @@ const qualityPayload = {
         auto_apply: false,
         target_tab: 'assist',
     },
+    domain_authored: {
+        available: true,
+        preview_only: true,
+        applied_profile_id: 'policy-qa-profile-v1',
+        applied_profile_source: 'project',
+        applied_pack_id: 'policy-qa-pack-v1',
+        applied_pack_source: 'project',
+        check_count: 2,
+        failing_count: 1,
+        blocker_count: 0,
+        warning_count: 1,
+        ready_count: 1,
+        supported_sources: ['profile:data_quality', 'profile:audit'],
+    },
     power_details: {},
 };
 
@@ -182,6 +235,9 @@ describe('DataStudioQualitySafetyPanel', () => {
         expect(screen.getByText('Source Ingestion')).toBeInTheDocument();
         expect(screen.getByText('By source')).toBeInTheDocument();
         expect(screen.getByText('policy.csv')).toBeInTheDocument();
+        expect(screen.getByText('Domain-authored previews')).toBeInTheDocument();
+        expect(screen.getByText(/2 checks from policy-qa-profile-v1/i)).toBeInTheDocument();
+        expect(screen.getByText('Domain-required field coverage')).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole('button', { name: /Inspect sources/i }));
         expect(onOpenTarget).toHaveBeenCalledWith('data');
