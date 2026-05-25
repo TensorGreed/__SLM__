@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import api from '../../api/client';
 import type { DomainPackResponse, DomainPackSummary, Project } from '../../types';
@@ -152,6 +152,7 @@ export default function DomainPackManager({
   const [isLoading, setIsLoading] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
   const [selectedPackId, setSelectedPackId] = useState('');
+  const selectedPackIdRef = useRef('');
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -170,6 +171,15 @@ export default function DomainPackManager({
   const [isHookReloading, setIsHookReloading] = useState(false);
   const [hookStatusMessage, setHookStatusMessage] = useState('');
   const [hookErrorMessage, setHookErrorMessage] = useState('');
+
+  const selectPack = useCallback((packId: string) => {
+    selectedPackIdRef.current = packId;
+    setSelectedPackId(packId);
+  }, []);
+
+  const selectPackFromUser = useCallback((packId: string) => {
+    selectPack(packId);
+  }, [selectPack]);
 
   const loadPacks = useCallback(async () => {
     setIsLoading(true);
@@ -213,14 +223,23 @@ export default function DomainPackManager({
   );
 
   useEffect(() => {
-    if (activePack) {
-      setSelectedPackId(activePack.pack_id);
+    const currentSelectedPackId = selectedPackIdRef.current || selectedPackId;
+    if (currentSelectedPackId && packs.some((item) => item.pack_id === currentSelectedPackId)) {
+      if (currentSelectedPackId !== selectedPackId) {
+        setSelectedPackId(currentSelectedPackId);
+      }
       return;
     }
-    if (!selectedPackId && packs.length > 0) {
-      setSelectedPackId(packs[0].pack_id);
+    if (activePack) {
+      selectPack(activePack.pack_id);
+      return;
     }
-  }, [activePack, packs, selectedPackId]);
+    if (packs.length > 0) {
+      selectPack(packs[0].pack_id);
+      return;
+    }
+    selectPack('');
+  }, [activePack, packs, selectPack, selectedPackId]);
 
   const handleAssign = async () => {
     if (!selectedPackId) {
@@ -288,7 +307,7 @@ export default function DomainPackManager({
       const duplicated = res.data;
       const duplicatedContract = isRecord(duplicated.contract) ? duplicated.contract : {};
       setStatusMessage(`Duplicated pack as ${duplicated.pack_id}@${duplicated.version}`);
-      setSelectedPackId(duplicated.pack_id);
+      selectPack(duplicated.pack_id);
       setEditorMode('edit');
       setEditorTargetPackId(duplicated.pack_id);
       setEditorJson(JSON.stringify(duplicatedContract, null, 2));
@@ -337,7 +356,7 @@ export default function DomainPackManager({
           ? `Created pack: ${response.pack_id}`
           : `Updated pack: ${response.pack_id}`,
       );
-      setSelectedPackId(response.pack_id);
+      selectPack(response.pack_id);
       setEditorOpen(false);
       await loadPacks();
     } catch (err) {
@@ -488,7 +507,7 @@ export default function DomainPackManager({
         <select
           className="input"
           value={selectedPackId}
-          onChange={(e) => setSelectedPackId(e.target.value)}
+          onChange={(e) => selectPackFromUser(e.target.value)}
           disabled={packs.length === 0}
         >
           {packs.length === 0 ? (
@@ -523,27 +542,38 @@ export default function DomainPackManager({
       {errorMessage && <div className="domain-pack-status domain-pack-status--error">{errorMessage}</div>}
 
       <div className="domain-pack-list">
-        {packs.map((pack) => (
-          <div key={pack.id} className={`domain-pack-item ${pack.id === activeDomainPackId ? 'active' : ''}`}>
-            <div className="identity">
-              <strong>{pack.display_name}</strong>
-              <span className="meta">
-                {pack.pack_id}@{pack.version}
-              </span>
-              {pack.default_profile_id && (
+        {packs.map((pack) => {
+          const isActive = pack.id === activeDomainPackId;
+          const isSelected = pack.pack_id === selectedPackId;
+          return (
+            <button
+              key={pack.id}
+              type="button"
+              className={`domain-pack-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+              onClick={() => selectPackFromUser(pack.pack_id)}
+              aria-pressed={isSelected}
+            >
+              <div className="identity">
+                <strong>{pack.display_name}</strong>
                 <span className="meta">
-                  default profile: {pack.default_profile_id}
+                  {pack.pack_id}@{pack.version}
                 </span>
-              )}
-            </div>
-            <div className="badges">
-              <span className={`badge ${pack.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                {pack.status}
-              </span>
-              {pack.is_system && <span className="badge badge-info">system</span>}
-            </div>
-          </div>
-        ))}
+                {pack.default_profile_id && (
+                  <span className="meta">
+                    default profile: {pack.default_profile_id}
+                  </span>
+                )}
+              </div>
+              <div className="badges">
+                {isSelected && <span className="badge badge-info">selected</span>}
+                <span className={`badge ${pack.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
+                  {pack.status}
+                </span>
+                {pack.is_system && <span className="badge badge-info">system</span>}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="domain-pack-hooks-panel">

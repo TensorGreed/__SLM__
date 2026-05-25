@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import api from '../../api/client';
 import type { DomainProfileResponse, DomainProfileSummary, Project } from '../../types';
@@ -114,6 +114,7 @@ export default function DomainProfileManager({
   const [isLoading, setIsLoading] = useState(false);
   const [isAssigning, setIsAssigning] = useState(false);
   const [selectedProfileId, setSelectedProfileId] = useState('');
+  const selectedProfileIdRef = useRef('');
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -122,6 +123,11 @@ export default function DomainProfileManager({
   const [editorTargetProfileId, setEditorTargetProfileId] = useState<string | null>(null);
   const [editorJson, setEditorJson] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+
+  const selectProfile = useCallback((profileId: string) => {
+    selectedProfileIdRef.current = profileId;
+    setSelectedProfileId(profileId);
+  }, []);
 
   const loadProfiles = useCallback(async () => {
     setIsLoading(true);
@@ -147,14 +153,23 @@ export default function DomainProfileManager({
   );
 
   useEffect(() => {
-    if (activeProfile) {
-      setSelectedProfileId(activeProfile.profile_id);
+    const currentSelectedProfileId = selectedProfileIdRef.current || selectedProfileId;
+    if (currentSelectedProfileId && profiles.some((item) => item.profile_id === currentSelectedProfileId)) {
+      if (currentSelectedProfileId !== selectedProfileId) {
+        setSelectedProfileId(currentSelectedProfileId);
+      }
       return;
     }
-    if (!selectedProfileId && profiles.length > 0) {
-      setSelectedProfileId(profiles[0].profile_id);
+    if (activeProfile) {
+      selectProfile(activeProfile.profile_id);
+      return;
     }
-  }, [activeProfile, profiles, selectedProfileId]);
+    if (profiles.length > 0) {
+      selectProfile(profiles[0].profile_id);
+      return;
+    }
+    selectProfile('');
+  }, [activeProfile, profiles, selectProfile, selectedProfileId]);
 
   const handleAssign = async () => {
     if (!selectedProfileId) {
@@ -215,7 +230,7 @@ export default function DomainProfileManager({
       );
       const duplicated = res.data;
       setStatusMessage(`Duplicated profile as ${duplicated.profile_id}@${duplicated.version}`);
-      setSelectedProfileId(duplicated.profile_id);
+      selectProfile(duplicated.profile_id);
       setEditorMode('edit');
       setEditorTargetProfileId(duplicated.profile_id);
       setEditorJson(JSON.stringify(duplicated.contract || {}, null, 2));
@@ -261,7 +276,7 @@ export default function DomainProfileManager({
           ? `Created profile: ${response.profile_id}`
           : `Updated profile: ${response.profile_id}`,
       );
-      setSelectedProfileId(response.profile_id);
+      selectProfile(response.profile_id);
       setEditorOpen(false);
       await loadProfiles();
     } catch (err) {
@@ -300,7 +315,7 @@ export default function DomainProfileManager({
         <select
           className="input"
           value={selectedProfileId}
-          onChange={(e) => setSelectedProfileId(e.target.value)}
+          onChange={(e) => selectProfile(e.target.value)}
           disabled={profiles.length === 0}
         >
           {profiles.length === 0 ? (
@@ -335,25 +350,33 @@ export default function DomainProfileManager({
       {errorMessage && <div className="domain-profile-status domain-profile-status--error">{errorMessage}</div>}
 
       <div className="domain-profile-list">
-        {profiles.map((profile) => (
-          <div
-            key={profile.id}
-            className={`domain-profile-item ${profile.id === activeDomainProfileId ? 'active' : ''}`}
-          >
-            <div className="identity">
-              <strong>{profile.display_name}</strong>
-              <span className="meta">
-                {profile.profile_id}@{profile.version}
-              </span>
-            </div>
-            <div className="badges">
-              <span className={`badge ${profile.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
-                {profile.status}
-              </span>
-              {profile.is_system && <span className="badge badge-info">system</span>}
-            </div>
-          </div>
-        ))}
+        {profiles.map((profile) => {
+          const isActive = profile.id === activeDomainProfileId;
+          const isSelected = profile.profile_id === selectedProfileId;
+          return (
+            <button
+              type="button"
+              key={profile.id}
+              className={`domain-profile-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+              onClick={() => selectProfile(profile.profile_id)}
+              aria-pressed={isSelected}
+            >
+              <div className="identity">
+                <strong>{profile.display_name}</strong>
+                <span className="meta">
+                  {profile.profile_id}@{profile.version}
+                </span>
+              </div>
+              <div className="badges">
+                {isSelected && <span className="badge badge-info">selected</span>}
+                <span className={`badge ${profile.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
+                  {profile.status}
+                </span>
+                {profile.is_system && <span className="badge badge-info">system</span>}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {editorOpen && (
