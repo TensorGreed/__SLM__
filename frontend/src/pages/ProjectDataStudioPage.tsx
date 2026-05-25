@@ -59,10 +59,16 @@ interface DataStudioHandoffChip {
 }
 
 type DataStudioHandoffSignalStatus = 'blocker' | 'attention' | 'ready';
+type DataStudioTriageFilter = 'all' | DataStudioHandoffSignalStatus;
 
 interface DataStudioHandoffSignal {
     status: DataStudioHandoffSignalStatus;
     label: string;
+}
+
+interface DataStudioSectionSignalSummary {
+    directSignal: DataStudioHandoffSignal | null;
+    statuses: Set<DataStudioHandoffSignalStatus>;
 }
 
 interface DataStudioSectionConfig {
@@ -122,6 +128,7 @@ interface DataStudioSectionProps {
     onToggle: (id: DataStudioSectionId) => void;
     onOpenHandoff: (handoff: DataStudioHandoffChip) => void;
     getHandoffSignal: (handoff: DataStudioHandoffChip, sectionId: DataStudioSectionId) => DataStudioHandoffSignal | null;
+    triageFilter: DataStudioTriageFilter;
     sectionRef: (node: HTMLElement | null) => void;
     children: ReactNode;
 }
@@ -131,6 +138,13 @@ const HANDOFF_SIGNAL_LABELS: Record<DataStudioHandoffSignalStatus, string> = {
     attention: 'Attention',
     ready: 'Ready',
 };
+
+const TRIAGE_FILTERS: Array<{ id: DataStudioTriageFilter; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'blocker', label: 'Blockers' },
+    { id: 'attention', label: 'Attention' },
+    { id: 'ready', label: 'Ready' },
+];
 
 function isTabKey(value: string | undefined): value is TabKey {
     return !!value && PIPELINE_TAB_KEYS.includes(value as TabKey);
@@ -178,6 +192,28 @@ function handoffSignalFromCheck(check: DataStudioCoachCheck): DataStudioHandoffS
     };
 }
 
+function sectionIndexStatusLabel(
+    summary: DataStudioSectionSignalSummary | undefined,
+    expanded: boolean,
+    triageFilter: DataStudioTriageFilter,
+): string {
+    const openState = expanded ? 'Open' : 'Closed';
+    if (
+        triageFilter !== 'all'
+        && summary?.statuses.has(triageFilter)
+        && summary.directSignal?.status !== triageFilter
+    ) {
+        return `${HANDOFF_SIGNAL_LABELS[triageFilter]} handoff · ${openState}`;
+    }
+    if (summary?.directSignal) {
+        return `${summary.directSignal.label} · ${openState}`;
+    }
+    if (triageFilter !== 'all' && summary?.statuses.has(triageFilter)) {
+        return `${HANDOFF_SIGNAL_LABELS[triageFilter]} handoff · ${openState}`;
+    }
+    return openState;
+}
+
 function readExpandedSections(projectId: number): Set<DataStudioSectionId> {
     if (typeof window === 'undefined') {
         return new Set(DEFAULT_EXPANDED_SECTIONS);
@@ -220,6 +256,7 @@ function DataStudioSection({
     onToggle,
     onOpenHandoff,
     getHandoffSignal,
+    triageFilter,
     sectionRef,
     children,
 }: DataStudioSectionProps) {
@@ -253,12 +290,16 @@ function DataStudioSection({
                 >
                     {handoffs.map((handoff) => {
                         const signal = getHandoffSignal(handoff, id);
+                        const matchesActiveFilter = triageFilter !== 'all' && signal?.status === triageFilter;
+                        const mutedByActiveFilter = triageFilter !== 'all' && signal?.status !== triageFilter;
                         return (
                             <button
                                 type="button"
                                 className={[
                                     'data-studio-page-section__handoff',
                                     signal ? `data-studio-page-section__handoff--${signal.status}` : '',
+                                    matchesActiveFilter ? 'is-filter-match' : '',
+                                    mutedByActiveFilter ? 'is-filter-muted' : '',
                                 ].filter(Boolean).join(' ')}
                                 data-status={signal?.status}
                                 key={`${handoff.label}:${handoff.target}:${handoff.sectionToken ?? ''}`}
@@ -292,6 +333,7 @@ export default function ProjectDataStudioPage() {
         () => readExpandedSections(projectId),
     );
     const [sectionSearch, setSectionSearch] = useState('');
+    const [triageFilter, setTriageFilter] = useState<DataStudioTriageFilter>('all');
     const [coachSignals, setCoachSignals] = useState<DataStudioCoachRail | null>(null);
 
     useEffect(() => {
@@ -617,26 +659,69 @@ export default function ProjectDataStudioPage() {
         [openDataStudioTarget, openPipelineTab, projectId],
     );
 
+    const sectionSignalSummaries = useMemo(() => {
+        const summaries = new Map<DataStudioSectionId, DataStudioSectionSignalSummary>();
+        sectionConfigs.forEach((section) => {
+            const statuses = new Set<DataStudioHandoffSignalStatus>();
+            const directSignal = handoffSignalsBySection.get(section.id) ?? null;
+            if (directSignal) {
+                statuses.add(directSignal.status);
+            }
+            section.handoffs.forEach((handoff) => {
+                const signal = getHandoffSignal(handoff, section.id);
+                if (signal) {
+                    statuses.add(signal.status);
+                }
+            });
+            summaries.set(section.id, { directSignal, statuses });
+        });
+        return summaries;
+    }, [getHandoffSignal, handoffSignalsBySection, sectionConfigs]);
+
+    const triageFilterCounts = useMemo(() => {
+        const counts: Record<DataStudioTriageFilter, number> = {
+            all: sectionConfigs.length,
+            blocker: 0,
+            attention: 0,
+            ready: 0,
+        };
+        sectionConfigs.forEach((section) => {
+            const statuses = sectionSignalSummaries.get(section.id)?.statuses;
+            if (!statuses) {
+                return;
+            }
+            if (statuses.has('blocker')) counts.blocker += 1;
+            if (statuses.has('attention')) counts.attention += 1;
+            if (statuses.has('ready')) counts.ready += 1;
+        });
+        return counts;
+    }, [sectionConfigs, sectionSignalSummaries]);
+
     const visibleSectionGroups = useMemo(() => {
         const query = sectionSearch.trim().toLowerCase();
         const matches = (section: DataStudioSectionConfig) => {
+            const signalSummary = sectionSignalSummaries.get(section.id);
             if (!query) {
-                return true;
+                return triageFilter === 'all' || !!signalSummary?.statuses.has(triageFilter);
             }
             const haystack = [
                 section.title,
                 section.summary,
                 SECTION_GROUP_LABELS[section.group],
                 ...section.keywords,
+                signalSummary?.directSignal?.label ?? '',
+                ...(signalSummary ? Array.from(signalSummary.statuses).map((status) => HANDOFF_SIGNAL_LABELS[status]) : []),
             ].join(' ').toLowerCase();
-            return haystack.includes(query);
+            const searchMatches = haystack.includes(query);
+            const filterMatches = triageFilter === 'all' || !!signalSummary?.statuses.has(triageFilter);
+            return searchMatches && filterMatches;
         };
 
         return SECTION_GROUP_ORDER.map((group) => ({
             group,
             sections: sectionConfigs.filter((section) => section.group === group && matches(section)),
         })).filter((group) => group.sections.length > 0);
-    }, [sectionConfigs, sectionSearch]);
+    }, [sectionConfigs, sectionSearch, sectionSignalSummaries, triageFilter]);
 
     const openSectionCount = expandedSections.size;
     const activeSectionId = normalizeSectionToken(location.hash);
@@ -690,6 +775,29 @@ export default function ProjectDataStudioPage() {
                         </label>
                     </div>
 
+                    <div className="data-studio-page-index__filters" role="group" aria-label="Data Studio triage filters">
+                        {TRIAGE_FILTERS.map((filter) => {
+                            const isActive = triageFilter === filter.id;
+                            const count = triageFilterCounts[filter.id];
+                            return (
+                                <button
+                                    type="button"
+                                    key={filter.id}
+                                    className={[
+                                        'data-studio-page-index__filter',
+                                        filter.id !== 'all' ? `data-studio-page-index__filter--${filter.id}` : '',
+                                        isActive ? 'is-active' : '',
+                                    ].filter(Boolean).join(' ')}
+                                    aria-pressed={isActive}
+                                    onClick={() => setTriageFilter(filter.id)}
+                                >
+                                    <span>{filter.label}</span>
+                                    <small>{count}</small>
+                                </button>
+                            );
+                        })}
+                    </div>
+
                     {visibleSectionGroups.length > 0 ? (
                         <div className="data-studio-page-index__groups">
                             {visibleSectionGroups.map(({ group, sections }) => (
@@ -698,17 +806,28 @@ export default function ProjectDataStudioPage() {
                                         {SECTION_GROUP_LABELS[group]}
                                     </span>
                                     <div className="data-studio-page-index__buttons">
-                                        {sections.map((section) => (
-                                            <button
-                                                type="button"
-                                                key={section.id}
-                                                className={`data-studio-page-index__button${activeSectionId === section.id ? ' is-active' : ''}`}
-                                                onClick={() => openDataStudioSection(section.id)}
-                                            >
-                                                <span>{section.title}</span>
-                                                <small>{expandedSections.has(section.id) ? 'Open' : 'Closed'}</small>
-                                            </button>
-                                        ))}
+                                        {sections.map((section) => {
+                                            const summary = sectionSignalSummaries.get(section.id);
+                                            const directStatus = summary?.directSignal?.status;
+                                            const matchesActiveFilter = triageFilter !== 'all' && !!summary?.statuses.has(triageFilter);
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    key={section.id}
+                                                    className={[
+                                                        'data-studio-page-index__button',
+                                                        activeSectionId === section.id ? 'is-active' : '',
+                                                        directStatus ? `data-studio-page-index__button--${directStatus}` : '',
+                                                        matchesActiveFilter ? 'is-filter-match' : '',
+                                                    ].filter(Boolean).join(' ')}
+                                                    data-status={directStatus}
+                                                    onClick={() => openDataStudioSection(section.id)}
+                                                >
+                                                    <span>{section.title}</span>
+                                                    <small>{sectionIndexStatusLabel(summary, expandedSections.has(section.id), triageFilter)}</small>
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             ))}
@@ -744,6 +863,7 @@ export default function ProjectDataStudioPage() {
                         onToggle={toggleSection}
                         onOpenHandoff={(handoff) => openDataStudioTarget(handoff.target, handoff.sectionToken)}
                         getHandoffSignal={getHandoffSignal}
+                        triageFilter={triageFilter}
                         sectionRef={setSectionRef(section.id)}
                     >
                         {section.content}

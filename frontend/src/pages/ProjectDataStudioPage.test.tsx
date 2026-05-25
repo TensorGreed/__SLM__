@@ -265,6 +265,58 @@ describe('ProjectDataStudioPage', () => {
         expect(within(index).getByText('No matching sections.')).toBeInTheDocument();
     });
 
+    it('filters the section index by Coach triage signals while preserving hash navigation', async () => {
+        const user = userEvent.setup();
+        render(<ProjectDataStudioPage />);
+
+        const index = screen.getByRole('region', { name: /Data Studio section index/i });
+        const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
+        const blockerFilter = await within(filters).findByRole('button', { name: /^Blockers\s+5$/i });
+
+        await user.click(screen.getByRole('button', { name: /Collapse all/i }));
+        await user.click(blockerFilter);
+
+        expect(blockerFilter).toHaveAttribute('aria-pressed', 'true');
+        expect(within(index).getByRole('button', { name: /Sources summary.*Blocker/i })).toBeInTheDocument();
+        expect(within(index).getByRole('button', { name: /Review Queue.*Blocker/i })).toBeInTheDocument();
+        expect(within(index).queryByRole('button', { name: /Domain detection/i })).not.toBeInTheDocument();
+        expect(within(index).queryByRole('button', { name: /Schema mapping/i })).not.toBeInTheDocument();
+
+        await user.type(
+            within(index).getByRole('searchbox', { name: /Search Data Studio sections/i }),
+            'sources',
+        );
+
+        const sourcesJump = within(index).getByRole('button', { name: /Sources summary.*Blocker/i });
+        expect(sourcesJump).toHaveClass('is-filter-match');
+        expect(within(index).queryByRole('button', { name: /Review Queue/i })).not.toBeInTheDocument();
+
+        await user.click(sourcesJump);
+        expect(screen.getByTestId('panel-sources')).toBeInTheDocument();
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/data-studio#sources', { replace: false });
+    });
+
+    it('highlights matching handoff chips for active triage filters without disabling navigation', async () => {
+        const user = userEvent.setup();
+        render(<ProjectDataStudioPage />);
+
+        const index = screen.getByRole('region', { name: /Data Studio section index/i });
+        const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
+        await user.click(await within(filters).findByRole('button', { name: /^Ready\s+7$/i }));
+
+        const review = screen.getByTestId('data-studio-section-review-queue');
+        const readyGoldChip = await within(review).findByRole('button', { name: /^Gold Set\s+Ready$/i });
+        const blockerReviewChip = await within(review).findByRole('button', { name: /^Review\s+Blocker$/i });
+        const attentionSyntheticChip = await within(review).findByRole('button', { name: /^Synthetic\s+Attention$/i });
+
+        expect(readyGoldChip).toHaveClass('is-filter-match');
+        expect(blockerReviewChip).toHaveClass('is-filter-muted');
+        expect(attentionSyntheticChip).toHaveClass('is-filter-muted');
+
+        await user.click(blockerReviewChip);
+        expect(navigateMock).toHaveBeenLastCalledWith('/project/77/annotate');
+    });
+
     it('routes compact workflow handoff chips from their relevant sections', async () => {
         const user = userEvent.setup();
         render(<ProjectDataStudioPage />);
