@@ -327,6 +327,142 @@ def _text_cache_key(text: str) -> str:
     return h.hexdigest()
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase 6b — on-disk curriculum shards for the training pipeline.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class CurriculumShardManifest(TypedDict):
+    """Manifest describing the on-disk curriculum shards.
+
+    The training pipeline reads ``shard_path`` as its new ``train_file``
+    and threads the rest of these fields into ``runtime_config`` so
+    the UI / eval surfaces can show "this experiment ran with
+    curriculum learning, easy-half = N rows."
+    """
+
+    scoring_mode: ScoringMode
+    shard_path: str           # path to the ordered easy_half + full_set JSONL
+    meta_path: str            # path to the JSON-serialized ranking + counts
+    total_rows: int           # rows in the full training set
+    easy_count: int           # rows in the bottom-50% (easy) half
+    full_count: int           # rows in the full set (= total_rows; alias for symmetry)
+
+
+def build_curriculum_shards(
+    rows: list[dict[str, Any]],
+    *,
+    scoring_mode: ScoringMode,
+    output_dir: Path,
+    group_key: str = "label",
+    text_keys: tuple[str, ...] = ("text", "input", "question"),
+    embedder: Callable[[list[str]], list[list[float]]] | None = None,
+    cache_dir: Path | None = None,
+) -> CurriculumShardManifest:
+    """Rank ``rows`` by difficulty and write the curriculum shard to
+    disk: a single JSONL file whose contents are ``[bottom_50%] +
+    [full_set]`` in that order.
+
+    Why one ordered file + one trainer run (not two trainer runs):
+      - HF Trainer doesn't expose a per-epoch dataset-swap hook, so
+        a true "epoch 1 on easy half, epoch 2..N on full set" schedule
+        would require chaining two training runs with intermediate
+        checkpoint plumbing — substantial orchestration with no
+        empirical mandate yet. Phase 6c's A/B harness will tell us
+        whether the simpler "easy rows seen first" effect lifts F1
+        on classification; if it does AND loss-curve diagnostics
+        suggest easy-row overfitting, Phase 6e adds the strict
+        two-stage schedule as a follow-up.
+      - The trainer must run with shuffle disabled so the easy-first
+        ordering is preserved. The caller (``training_service``)
+        passes ``curriculum_disable_shuffle=True`` through the
+        training config; ``train.py`` reads it and swaps the
+        Trainer's default ``RandomSampler`` for a ``SequentialSampler``.
+
+    Returns a manifest with paths + counts so the training_service
+    can persist a curriculum block under ``runtime_config`` (for
+    observability + the UI's "this run used curriculum" badge).
+
+    Raises ``CurriculumUnavailable`` on the same conditions as
+    ``rank_rows`` (empty input, unknown scoring mode, missing
+    sentence-transformers).
+    """
+    if not rows:
+        raise CurriculumUnavailable(
+            "Cannot build curriculum shards from an empty row list."
+        )
+    ranked = rank_rows(
+        rows,
+        scoring_mode=scoring_mode,
+        group_key=group_key,
+        text_keys=text_keys,
+        embedder=embedder,
+        cache_dir=cache_dir,
+    )
+
+    # Match each ranked entry back to its source row. Falls back to
+    # 0-indexed position when the row lacks an ``id`` (mirrors the
+    # rank_rows behavior).
+    rows_by_key: dict[str, dict[str, Any]] = {}
+    for idx, row in enumerate(rows):
+        rid = row.get("id") if isinstance(row.get("id"), (int, str)) else idx
+        rows_by_key[f"id:{rid}"] = row
+
+    # Sort ranked entries ascending by difficulty → easiest first.
+    ranked_sorted = sorted(ranked, key=lambda entry: entry["rank"])
+    total = len(ranked_sorted)
+    # Bottom-50% — round up so a 3-row project still gets 2 easy
+    # rows in the warmup shard. Single-row projects fall through
+    # with easy_count = 1 (= full set; curriculum is a no-op but the
+    # shard is still well-formed).
+    easy_count = max(1, (total + 1) // 2)
+    easy_entries = ranked_sorted[:easy_count]
+    full_entries = ranked_sorted  # full set; preserves easy-first ordering for non-shuffled trainer.
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shard_path = output_dir / "train.curriculum.jsonl"
+    meta_path = output_dir / "train.curriculum_meta.json"
+
+    with shard_path.open("w", encoding="utf-8") as f:
+        # Pass 1: easy half (each row once).
+        for entry in easy_entries:
+            row = rows_by_key.get(f"id:{entry['row_id']}")
+            if row is None:
+                continue
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        # Pass 2: the full set, easy → hard. After pass 1 the easy
+        # rows have been seen once; in pass 2 they show up again
+        # (so the bottom half gets 2x exposure), then the hard rows
+        # are seen for the first time near the end. This is the
+        # ordered concatenation Phase 6c will A/B against uniform
+        # training.
+        for entry in full_entries:
+            row = rows_by_key.get(f"id:{entry['row_id']}")
+            if row is None:
+                continue
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    # Write the ranking metadata for observability + debugging. JSON
+    # so a human can `cat` it. Small enough (~80 bytes / row) that
+    # we keep the full ranking, not a truncated preview.
+    meta_payload = {
+        "scoring_mode": scoring_mode,
+        "total_rows": total,
+        "easy_count": easy_count,
+        "ranked": ranked_sorted,
+    }
+    meta_path.write_text(json.dumps(meta_payload, indent=2), encoding="utf-8")
+
+    return {
+        "scoring_mode": scoring_mode,
+        "shard_path": str(shard_path),
+        "meta_path": str(meta_path),
+        "total_rows": total,
+        "easy_count": easy_count,
+        "full_count": total,
+    }
+
+
 def _sentence_transformer_embedder(texts: list[str]) -> list[list[float]]:
     """Default embedder. Hard-fails when sentence-transformers isn't
     installed (unlike dataset_intelligence_service, which falls back

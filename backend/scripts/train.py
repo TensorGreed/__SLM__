@@ -2617,6 +2617,38 @@ def _run_training_attempt(
         )
     )
 
+    # ── Curriculum learning (Phase 6b) ──────────────────────────────
+    # training_service.start_training sets curriculum_disable_shuffle
+    # when it overrides train_file with an easy-first ordered shard
+    # (built by curriculum_service.build_curriculum_shards). HF
+    # Trainer's default ``_get_train_sampler`` returns a RandomSampler
+    # which would destroy the ordering, so we monkey-patch it on this
+    # one trainer instance to return a SequentialSampler instead. No
+    # change for runs without the flag.
+    if config.get("curriculum_disable_shuffle"):
+        try:
+            from torch.utils.data import SequentialSampler
+
+            def _curriculum_sequential_sampler(self):
+                return SequentialSampler(self.train_dataset)
+
+            trainer._get_train_sampler = (
+                _curriculum_sequential_sampler.__get__(trainer, type(trainer))
+            )
+            _emit_runtime_event(
+                "curriculum_sampler_swapped",
+                {"sampler": "SequentialSampler"},
+            )
+        except Exception as e:  # noqa: BLE001
+            # Sampler swap is best-effort — if it fails for some
+            # transformers version we don't know about, training
+            # still proceeds (just with the shard's rows shuffled,
+            # losing the curriculum signal but not breaking the run).
+            warnings.append(
+                f"Curriculum sampler swap failed ({e!r}); shard rows "
+                f"will be shuffled by the trainer's default sampler."
+            )
+
     # Story 1.7: don't default to "auto" anymore. If the user / API
     # doesn't pass an explicit resume_from_checkpoint, we won't pick
     # up a stale checkpoint from output_dir on our own. The compat

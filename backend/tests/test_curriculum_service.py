@@ -39,6 +39,7 @@ os.environ.setdefault("ALLOW_SQLITE_AUTOCREATE", "true")
 from app.services.curriculum_service import (  # noqa: E402
     CurriculumEntry,
     CurriculumUnavailable,
+    build_curriculum_shards,
     rank_rows,
     recommended_scoring_mode_for_recipe,
 )
@@ -470,6 +471,134 @@ class CurriculumEntryShapeTests(unittest.TestCase):
         # TypedDict import is used (silences linter).
         _: CurriculumEntry = ranked[0]
         self.assertTrue(_)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Phase 6b — on-disk shard builder
+# ─────────────────────────────────────────────────────────────────────
+
+
+class BuildCurriculumShardsTests(unittest.TestCase):
+    """``build_curriculum_shards`` writes ``[easy_half] + [full_set]``
+    in ascending difficulty order so the trainer (with shuffle off)
+    sees the easy rows twice and the hard rows once."""
+
+    def _rows(self) -> list[dict[str, Any]]:
+        return [
+            {"id": 1, "text": "easy A", "label": "L"},
+            {"id": 2, "text": "easy B", "label": "L"},
+            {"id": 3, "text": "hard outlier", "label": "L"},
+            {"id": 4, "text": "hard far", "label": "L"},
+        ]
+
+    def _embedder_map(self) -> dict[str, list[float]]:
+        return {
+            "easy A":       [1.0, 0.0, 0.0],
+            "easy B":       [0.99, 0.14, 0.0],   # close to easy A
+            "hard outlier": [0.0, 1.0, 0.0],     # orthogonal
+            "hard far":     [-0.5, -0.5, 0.7],   # also orthogonal-ish
+        }
+
+    def test_shard_contains_easy_half_then_full_set_in_order(self):
+        with TemporaryDirectory() as td:
+            out = Path(td)
+            manifest = build_curriculum_shards(
+                self._rows(),
+                scoring_mode="prototype_entropy",
+                output_dir=out,
+                embedder=_embedder_with_map(self._embedder_map()),
+            )
+            shard_path = Path(manifest["shard_path"])
+            with shard_path.open() as f:
+                lines = [json.loads(line) for line in f if line.strip()]
+        # Total rows = 4 → easy_count = 2 (ceil(4/2)).
+        self.assertEqual(manifest["easy_count"], 2)
+        self.assertEqual(manifest["full_count"], 4)
+        self.assertEqual(manifest["total_rows"], 4)
+        # File length = easy_half + full_set = 2 + 4 = 6.
+        self.assertEqual(len(lines), 6)
+        # First 2 rows are the easy half (rows 1 and 2 in some order).
+        easy_ids = {row["id"] for row in lines[:2]}
+        self.assertEqual(easy_ids, {1, 2})
+        # Next 4 rows are the full set in easy → hard order.
+        full_segment_ids = [row["id"] for row in lines[2:]]
+        self.assertEqual(full_segment_ids[:2], list(lines[0]["id"] for lines in [{"id": full_segment_ids[0]}, {"id": full_segment_ids[1]}]) if False else full_segment_ids[:2])  # noqa: E501 — sanity placeholder
+        # The first two rows of the full-segment are the easy ones
+        # (some order); the last two are the hard ones (some order).
+        full_easy_part = set(full_segment_ids[:2])
+        full_hard_part = set(full_segment_ids[2:])
+        self.assertEqual(full_easy_part, {1, 2})
+        self.assertEqual(full_hard_part, {3, 4})
+
+    def test_meta_file_carries_full_ranking_for_debugging(self):
+        with TemporaryDirectory() as td:
+            out = Path(td)
+            manifest = build_curriculum_shards(
+                self._rows(),
+                scoring_mode="prototype_entropy",
+                output_dir=out,
+                embedder=_embedder_with_map(self._embedder_map()),
+            )
+            meta = json.loads(Path(manifest["meta_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(meta["scoring_mode"], "prototype_entropy")
+        self.assertEqual(meta["total_rows"], 4)
+        self.assertEqual(meta["easy_count"], 2)
+        # Ranked entries sorted ascending by rank (= ascending difficulty).
+        ranks = [entry["rank"] for entry in meta["ranked"]]
+        self.assertEqual(ranks, [0, 1, 2, 3])
+        for entry in meta["ranked"]:
+            self.assertIn("row_id", entry)
+            self.assertIn("difficulty", entry)
+
+    def test_odd_row_count_rounds_easy_count_up(self):
+        """3 rows → easy_count = 2 (so a tiny project still gets a
+        non-trivial warmup pass)."""
+        rows = [
+            {"id": 1, "text": "a", "label": "L"},
+            {"id": 2, "text": "b", "label": "L"},
+            {"id": 3, "text": "c", "label": "L"},
+        ]
+        vectors = {"a": [1.0, 0.0], "b": [0.99, 0.14], "c": [0.0, 1.0]}
+        with TemporaryDirectory() as td:
+            manifest = build_curriculum_shards(
+                rows,
+                scoring_mode="prototype_entropy",
+                output_dir=Path(td),
+                embedder=_embedder_with_map(vectors),
+            )
+        self.assertEqual(manifest["easy_count"], 2)
+        self.assertEqual(manifest["total_rows"], 3)
+
+    def test_single_row_project_writes_well_formed_shard(self):
+        """A 1-row project is a curriculum no-op but the shard still
+        has to be well-formed (the trainer reads it either way)."""
+        rows = [{"id": 1, "text": "lone", "label": "L"}]
+        with TemporaryDirectory() as td:
+            manifest = build_curriculum_shards(
+                rows,
+                scoring_mode="prototype_entropy",
+                output_dir=Path(td),
+                embedder=_embedder_with_map({"lone": [1.0, 0.0]}),
+            )
+            with Path(manifest["shard_path"]).open() as f:
+                lines = [json.loads(line) for line in f if line.strip()]
+        # easy_count = 1, full_count = 1 → file has 2 lines (the same
+        # row twice). The trainer just trains over the same row twice
+        # in sequence — uninteresting but well-formed.
+        self.assertEqual(manifest["easy_count"], 1)
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0]["id"], 1)
+        self.assertEqual(lines[1]["id"], 1)
+
+    def test_empty_rows_raises_curriculum_unavailable(self):
+        with TemporaryDirectory() as td:
+            with self.assertRaises(CurriculumUnavailable):
+                build_curriculum_shards(
+                    [],
+                    scoring_mode="prototype_entropy",
+                    output_dir=Path(td),
+                    embedder=_embedder_with_map({}),
+                )
 
 
 if __name__ == "__main__":

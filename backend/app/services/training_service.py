@@ -91,6 +91,121 @@ def _experiment_dir(project_id: int, experiment_id: int) -> Path:
     return d
 
 
+async def _maybe_apply_curriculum(
+    *,
+    db: AsyncSession,
+    project_id: int,
+    train_file: Path,
+    output_dir: Path,
+    resolved_config: dict,
+    training_mode: str,
+) -> dict:
+    """Phase 6b — build the curriculum shard + signal train.py when
+    ``config.curriculum`` is set + the project is curriculum-eligible.
+
+    Returns a serializable block for ``runtime_config["curriculum"]``
+    so the UI / debug surfaces can show whether curriculum applied,
+    and if not, why. Mutates ``resolved_config`` to add
+    ``curriculum_disable_shuffle=True`` when curriculum is actually
+    applied (read by ``train.py`` to swap its default RandomSampler
+    for a SequentialSampler).
+
+    Recipe gating: today only ``classification`` has a curriculum
+    scoring mode (Phase 6a shipped ``prototype_entropy``). Other
+    recipes record a ``skip_reason`` and fall through to uniform
+    training — the caller leaves ``train_file`` unchanged in that
+    case.
+
+    The block is always returned (never raises) so a curriculum
+    failure can't prevent training from starting. Worst case: the
+    user asked for curriculum, didn't get it, sees the
+    ``skip_reason`` in the experiment's runtime config and the
+    standard run proceeds.
+    """
+    block: dict[str, object] = {
+        "requested": _coerce_bool(resolved_config.get("curriculum"), False),
+        "applied": False,
+    }
+    if not block["requested"]:
+        return block
+
+    # Curriculum is an SFT-time concept; DPO/ORPO have their own
+    # alignment-dataset path with different shape semantics.
+    if training_mode in {"dpo", "orpo"}:
+        block["skip_reason"] = f"unsupported_training_mode:{training_mode}"
+        return block
+
+    project = await db.get(Project, project_id)
+    selected_recipe = (project.selected_recipe or {}) if project else {}
+    recipe_id = selected_recipe.get("recipe_id")
+
+    # Lazy import so the curriculum stack doesn't pull
+    # sentence-transformers into module-load if curriculum is never used.
+    from app.services.curriculum_service import (
+        CurriculumUnavailable,
+        build_curriculum_shards,
+        recommended_scoring_mode_for_recipe,
+    )
+
+    scoring_mode = recommended_scoring_mode_for_recipe(recipe_id or "")
+    if scoring_mode is None:
+        block["skip_reason"] = f"unsupported_recipe:{recipe_id or 'unset'}"
+        return block
+
+    # Load the prepared training rows. The prepared file is the
+    # authoritative training corpus for this run (gold + accepted
+    # synth, post-dedupe, post-split), so we rank exactly the rows
+    # that are going into training.
+    rows: list[dict] = []
+    try:
+        with train_file.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError as e:
+        block["skip_reason"] = f"train_file_unreadable:{e}"
+        return block
+
+    if not rows:
+        block["skip_reason"] = "train_file_empty"
+        return block
+
+    try:
+        manifest = build_curriculum_shards(
+            rows,
+            scoring_mode=scoring_mode,
+            output_dir=output_dir / "curriculum",
+            cache_dir=(
+                settings.DATA_DIR / "projects" / str(project_id) / "curriculum"
+            ),
+        )
+    except CurriculumUnavailable as e:
+        # sentence-transformers missing on this install — surface
+        # the package name in the reason so the user can install it.
+        block["skip_reason"] = f"embedder_unavailable:{e}"
+        return block
+
+    # Apply: signal train.py to disable shuffle, surface the manifest.
+    resolved_config["curriculum_disable_shuffle"] = True
+    block.update(
+        {
+            "applied": True,
+            "scoring_mode": manifest["scoring_mode"],
+            "shard_path": manifest["shard_path"],
+            "meta_path": manifest["meta_path"],
+            "easy_count": manifest["easy_count"],
+            "total_rows": manifest["total_rows"],
+            "recipe_id": recipe_id,
+        }
+    )
+    return block
+
+
 async def create_experiment(
     db: AsyncSession,
     project_id: int,
@@ -894,6 +1009,31 @@ async def start_training(
                     else "disabled_in_config"
                 ),
             }
+
+    # ── Curriculum learning (Phase 6b, opt-in) ──────────────────────
+    # When ``config.curriculum`` is true, override ``train_file`` with
+    # an easy-first ordered shard and signal ``train.py`` to disable
+    # the Trainer's default RandomSampler. Recipe-gated to
+    # classification today (Phase 6a only ships the prototype_entropy
+    # scoring mode); other recipes get a "skipped" reason recorded in
+    # runtime_config and fall through to uniform training. The whole
+    # block is a no-op when ``curriculum`` is unset / false, so
+    # existing training paths are unchanged.
+    curriculum_block = await _maybe_apply_curriculum(
+        db=db,
+        project_id=project_id,
+        train_file=train_file,
+        output_dir=output_dir,
+        resolved_config=resolved_config,
+        training_mode=training_mode,
+    )
+    runtime_config["curriculum"] = curriculum_block
+    if curriculum_block.get("applied"):
+        # The shard path replaces train_file for the rest of the
+        # dispatch (data-shape gate, runtime launch). The original
+        # train.jsonl is preserved; the shard lives under output_dir
+        # so eval / debugging can read it later.
+        train_file = Path(str(curriculum_block["shard_path"]))
 
     # ── Data-shape gate ─────────────────────────────────────────────
     # Refuse to launch an SFT run on domain-pretrain-shape data
