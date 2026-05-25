@@ -72,6 +72,8 @@ Each option that actually honors the playbook's `response_schema` (`nemo`, `vllm
 
 Coach Mode's class-imbalance suggestion (`gold_set:class-imbalance`) — the click-to-execute action that runs `class_balance_fill` — auto-pins the highest-ranked schema-aware backend when one is configured + reachable. Preference order is **vLLM > NeMo** (vLLM enforces the schema during decoding via xgrammar / outlines; NeMo passes it upstream where enforcement quality depends on the model + NIM version). When neither is reachable the suggestion stamps no `backend` and the orchestrator's auto-pick takes over (typically Ollama, which silently ignores the schema). This means users on a vLLM-equipped install get constrained decoding "for free" from the Coach button without having to remember to switch the dropdown manually.
 
+The Coach suggestion card surfaces the auto-pinned backend under the action button as a caption — e.g. **will run on `vllm:meta-llama/Meta-Llama-3.1-8B-Instruct`  ✓ schema-aware** — so users see the upgrade happening instead of it being silently applied. The schema-aware chip renders only when the pinned backend matches `context.schema_aware_backend` (also stamped by `coach_service`), so the UI never has to maintain its own backend-name allowlist.
+
 ## vLLM setup
 
 `VllmBackend` talks to a local vLLM server over the standard OpenAI-compatible `/v1/chat/completions` API. vLLM is the recommended backend when you want Phase 5b's schema-constrained generation to actually constrain decoding — it implements `response_format=json_schema` via xgrammar / outlines, which Ollama does not.

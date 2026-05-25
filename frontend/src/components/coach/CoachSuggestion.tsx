@@ -312,16 +312,94 @@ export default function CoachSuggestionCard({
                     ))}
                 </div>
             </div>
-            <button
-                type="button"
-                className="btn btn-primary"
-                style={{ fontSize: 'var(--font-size-xs)', whiteSpace: 'nowrap' }}
-                onClick={handleClick}
-                disabled={isExecuting}
-                data-testid={`coach-suggestion-action-${suggestion.id}`}
+            <div
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-end',
+                    gap: 4,
+                    minWidth: 0,
+                }}
             >
-                {isExecuting ? '⏳ Working…' : suggestion.action.label}
-            </button>
+                <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ fontSize: 'var(--font-size-xs)', whiteSpace: 'nowrap' }}
+                    onClick={handleClick}
+                    disabled={isExecuting}
+                    data-testid={`coach-suggestion-action-${suggestion.id}`}
+                >
+                    {isExecuting ? '⏳ Working…' : suggestion.action.label}
+                </button>
+                {(() => {
+                    // Phase 5c — surface auto-pinned backend so users
+                    // see the constrained-decoding upgrade happening
+                    // instead of it being silently applied. Reads
+                    // params.backend (set by coach_service when a
+                    // schema-aware backend is configured); the
+                    // ``· schema-aware`` chip renders when
+                    // context.schema_aware_backend matches (which is
+                    // also stamped by coach_service so the UI doesn't
+                    // have to maintain its own backend-name allowlist).
+                    const params = suggestion.action.params ?? {};
+                    const ctx = suggestion.context ?? {};
+                    const pinnedBackend =
+                        typeof params['backend'] === 'string'
+                            ? (params['backend'] as string)
+                            : null;
+                    if (!pinnedBackend) return null;
+                    const schemaAwarePin =
+                        typeof ctx['schema_aware_backend'] === 'string'
+                            ? (ctx['schema_aware_backend'] as string)
+                            : null;
+                    const isSchemaAware = schemaAwarePin === pinnedBackend;
+                    return (
+                        <div
+                            style={{
+                                fontSize: '0.65rem',
+                                color: 'var(--text-tertiary)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                maxWidth: 240,
+                                textAlign: 'right',
+                                lineHeight: 1.35,
+                            }}
+                            data-testid={`coach-suggestion-backend-${suggestion.id}`}
+                        >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                will run on <code style={{
+                                    fontFamily: 'var(--font-mono)',
+                                    fontSize: '0.65rem',
+                                    padding: '0 3px',
+                                    background: 'var(--gray-50)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    color: 'var(--text-secondary)',
+                                }}>{pinnedBackend}</code>
+                            </span>
+                            {isSchemaAware && (
+                                <span
+                                    title="This backend forwards the playbook's JSON Schema as response_format=json_schema and enforces it during decoding."
+                                    style={{
+                                        padding: '1px 6px',
+                                        border: '1px solid var(--color-success, #15803d)',
+                                        borderRadius: 999,
+                                        background: 'var(--color-success-bg, rgba(34, 197, 94, 0.10))',
+                                        color: 'var(--color-success-fg, #166534)',
+                                        fontSize: '0.6rem',
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap',
+                                        cursor: 'help',
+                                    }}
+                                    data-testid={`coach-suggestion-schema-badge-${suggestion.id}`}
+                                >
+                                    ✓ schema-aware
+                                </span>
+                            )}
+                        </div>
+                    );
+                })()}
+            </div>
         </div>
     );
 }

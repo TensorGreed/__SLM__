@@ -153,6 +153,149 @@ describe('CoachStrip', () => {
         });
     });
 
+    it('renders the auto-pinned backend caption with the schema-aware badge (Phase 5c)', async () => {
+        // The caption surfaces under the action button so users see
+        // the constrained-decoding upgrade happening, not silently
+        // applied. Caption renders iff params.backend is set; the
+        // schema-aware chip renders iff context.schema_aware_backend
+        // matches params.backend (both stamped by coach_service).
+        installGetRouter({
+            data: {
+                project_id: 7,
+                stage: 'gold_set',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'gold_set:class-imbalance',
+                        title: 'Class distribution is skewed',
+                        body: 'Generate examples for the minority class.',
+                        severity: 'critical',
+                        action: {
+                            kind: 'run_playbook',
+                            label: "Generate 50 examples for 'technical'",
+                            params: {
+                                mode: 'class_balance_fill',
+                                target_count: 50,
+                                target_class: 'technical',
+                                backend: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
+                            },
+                        },
+                        context: {
+                            schema_aware_backend: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={7} stage="gold_set" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-gold_set:class-imbalance'),
+            ).toBeInTheDocument();
+        });
+        // Caption visible + names the pinned backend.
+        const caption = screen.getByTestId(
+            'coach-suggestion-backend-gold_set:class-imbalance',
+        );
+        expect(caption.textContent).toMatch(/will run on/i);
+        expect(caption.textContent).toContain('vllm:meta-llama/Meta-Llama-3.1-8B-Instruct');
+        // Schema-aware chip renders.
+        expect(
+            screen.getByTestId('coach-suggestion-schema-badge-gold_set:class-imbalance'),
+        ).toBeInTheDocument();
+    });
+
+    it('omits the backend caption when Coach did not pin a backend (Phase 5c)', async () => {
+        // Ollama-only install — coach_service omits params.backend so
+        // the orchestrator auto-picks. No caption should render; the
+        // card should look identical to its pre-5c shape.
+        installGetRouter({
+            data: {
+                project_id: 8,
+                stage: 'gold_set',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'gold_set:class-imbalance',
+                        title: 'Class distribution is skewed',
+                        body: 'Generate examples for the minority class.',
+                        severity: 'critical',
+                        action: {
+                            kind: 'run_playbook',
+                            label: "Generate 50 examples for 'technical'",
+                            params: {
+                                mode: 'class_balance_fill',
+                                target_count: 50,
+                                target_class: 'technical',
+                                // no backend pin
+                            },
+                        },
+                        context: { schema_aware_backend: null },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={8} stage="gold_set" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-gold_set:class-imbalance'),
+            ).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('coach-suggestion-backend-gold_set:class-imbalance'),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByTestId('coach-suggestion-schema-badge-gold_set:class-imbalance'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('renders the backend caption without the schema-aware chip when the pin is not schema-aware (Phase 5c)', async () => {
+        // Defensive: if Coach ever pins a non-schema-aware backend
+        // (no contract guarantees this won't happen in a future
+        // phase), the caption still surfaces the pin so the user
+        // can see it — but without the green chip, because
+        // context.schema_aware_backend doesn't match.
+        installGetRouter({
+            data: {
+                project_id: 9,
+                stage: 'gold_set',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'gold_set:class-imbalance',
+                        title: 'Class distribution is skewed',
+                        body: 'Generate examples for the minority class.',
+                        severity: 'critical',
+                        action: {
+                            kind: 'run_playbook',
+                            label: 'Generate 50 examples',
+                            params: {
+                                mode: 'class_balance_fill',
+                                target_count: 50,
+                                target_class: 'technical',
+                                backend: 'ollama:llama3.1:8b',
+                            },
+                        },
+                        context: { schema_aware_backend: null },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={9} stage="gold_set" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-gold_set:class-imbalance'),
+            ).toBeInTheDocument();
+        });
+        const caption = screen.getByTestId(
+            'coach-suggestion-backend-gold_set:class-imbalance',
+        );
+        expect(caption.textContent).toContain('ollama:llama3.1:8b');
+        expect(
+            screen.queryByTestId('coach-suggestion-schema-badge-gold_set:class-imbalance'),
+        ).not.toBeInTheDocument();
+    });
+
     it('forwards a schema-aware backend pin on run_playbook actions (Phase 5c)', async () => {
         // Coach Mode stamps params.backend on class_balance_fill
         // suggestions when a schema-aware backend (vllm > nemo) is
