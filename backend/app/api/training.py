@@ -264,6 +264,12 @@ class PlaygroundChatRequest(BaseModel):
     session_title: str | None = Field(default=None, max_length=255)
     save_history: bool = True
     messages: list[PlaygroundChatMessage] = Field(default_factory=list, min_length=1)
+    # Phase 9b — auto-RAG opt-in. Default False so existing playground
+    # calls are unchanged. The frontend toggle (Phase 9d) flips this
+    # when the project's recipe + index are eligible; for Phase 9b
+    # power users can flip it per-request to A/B inline.
+    auto_rag: bool = False
+    auto_rag_k: int = Field(default=3, ge=1, le=10)
 
 
 class PlaygroundSessionCreateRequest(BaseModel):
@@ -3333,6 +3339,59 @@ async def playground_chat(
     )
     if not normalized_messages:
         raise HTTPException(400, "At least one non-empty chat message is required.")
+
+    # Phase 9b — auto-RAG retrieve + prepend. Opt-in via req.auto_rag.
+    # Silently skips (returns None) when the recipe / index aren't
+    # eligible — caller sees ``auto_rag.applied == False`` in the
+    # response and infers why from ``auto_rag.skip_reason``. We pull
+    # the LAST user message as the retrieval query — multi-turn
+    # context retrieval is Phase 9b.1 if it shows up as a need.
+    auto_rag_block: dict[str, Any] = {"applied": False}
+    if req.auto_rag:
+        last_user = next(
+            (m for m in reversed(normalized_messages) if (m.get("role") or "").lower() == "user"),
+            None,
+        )
+        query_text = str((last_user or {}).get("content") or "").strip()
+        if not query_text:
+            auto_rag_block["skip_reason"] = "no_user_message_to_query"
+        else:
+            from app.services.auto_rag_service import build_preamble_from_query
+            preamble = await build_preamble_from_query(
+                db, project_id, query_text, k=req.auto_rag_k
+            )
+            if preamble is None:
+                auto_rag_block["skip_reason"] = "recipe_or_index_ineligible"
+            else:
+                # Prepend the preamble as a system message at the
+                # front. We don't merge with an existing system
+                # prompt (if any) — keeping them separate so the
+                # model sees the user's persona system msg first,
+                # then the retrieval block right before the chat.
+                preamble_message = {
+                    "role": "system",
+                    "content": preamble["preamble_text"],
+                }
+                # Insert AFTER any pre-existing system messages so
+                # the user-set persona keeps priority position.
+                insert_at = 0
+                for i, m in enumerate(normalized_messages):
+                    if (m.get("role") or "").lower() != "system":
+                        break
+                    insert_at = i + 1
+                normalized_messages = (
+                    normalized_messages[:insert_at]
+                    + [preamble_message]
+                    + normalized_messages[insert_at:]
+                )
+                auto_rag_block = {
+                    "applied": True,
+                    "k": req.auto_rag_k,
+                    "query": query_text,
+                    "retrieved": preamble["retrieved"],
+                    "preamble_inserted_at": insert_at,
+                }
+
     try:
         result = await run_playground_chat(
             provider=runtime_provider,
@@ -3352,6 +3411,33 @@ async def playground_chat(
         transcript = list(normalized_messages)
         transcript.append({"role": "assistant", "content": str(result.get("reply") or "").strip()})
         try:
+            session_metadata: dict[str, Any] = {
+                "message_count": len(req.messages),
+                "last_latency_ms": result.get("latency_ms"),
+                "requested_model_name": requested_model_name,
+                "resolved_model_name": resolved_model_name,
+                "runtime_hint": runtime_resolution.get("runtime_hint"),
+            }
+            # Phase 9b — persist the retrieval into the session
+            # metadata so Phase 9d's interpretability panel can
+            # render "which (Q, A) pairs influenced this response."
+            # Stored under a known key so the UI doesn't need to
+            # know about the rest of the metadata bag.
+            if auto_rag_block.get("applied"):
+                session_metadata["auto_rag"] = {
+                    "applied": True,
+                    "k": auto_rag_block.get("k"),
+                    "query": auto_rag_block.get("query"),
+                    "retrieved": auto_rag_block.get("retrieved"),
+                }
+            elif req.auto_rag:
+                # Even when skipped, surface why so the UI can show
+                # a "auto-RAG requested but not applied (reason)"
+                # chip instead of silently dropping the user's flag.
+                session_metadata["auto_rag"] = {
+                    "applied": False,
+                    "skip_reason": auto_rag_block.get("skip_reason"),
+                }
             session = await save_playground_session_transcript(
                 db,
                 project_id=project_id,
@@ -3364,13 +3450,7 @@ async def playground_chat(
                 temperature=req.temperature,
                 max_tokens=req.max_tokens,
                 transcript=transcript,
-                metadata={
-                    "message_count": len(req.messages),
-                    "last_latency_ms": result.get("latency_ms"),
-                    "requested_model_name": requested_model_name,
-                    "resolved_model_name": resolved_model_name,
-                    "runtime_hint": runtime_resolution.get("runtime_hint"),
-                },
+                metadata=session_metadata,
             )
             session_payload = serialize_playground_session_summary(session)
         except ValueError as e:
@@ -3386,6 +3466,12 @@ async def playground_chat(
         "resolved_model_name": resolved_model_name,
         "resolved_provider": runtime_provider,
         "runtime_hint": runtime_resolution.get("runtime_hint"),
+        # Phase 9b — auto_rag block: ``applied`` + retrieval payload
+        # when retrieval fired, or ``applied=false`` + ``skip_reason``
+        # when the user requested it but recipe/index made it skip.
+        # Absent entirely when the user didn't request auto_rag at all
+        # (preserves the old response shape for non-auto-rag callers).
+        **({"auto_rag": auto_rag_block} if req.auto_rag else {}),
         **result,
     }
 

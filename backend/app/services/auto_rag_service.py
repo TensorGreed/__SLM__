@@ -310,6 +310,199 @@ def build_bm25_index(
 # ─────────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase 9b — project-scoped helpers (training completion + inference)
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def _load_rag_corpus_rows(db, project_id: int) -> list[dict[str, Any]]:
+    """Load the rows the BM25 index should be built over.
+
+    Reuses ``dataset_service._load_records_from_file`` (which excludes
+    pending synth rows) so the corpus stays in sync with what the
+    training pipeline trained on. Same loader the preview API uses.
+    """
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.models.dataset import Dataset, DatasetType
+    from app.services.dataset_service import _load_records_from_file
+
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_(
+                [
+                    DatasetType.GOLD_DEV,
+                    DatasetType.GOLD_TEST,
+                    DatasetType.SYNTHETIC,
+                ]
+            ),
+        )
+    )
+    rows: list[dict[str, Any]] = []
+    for dataset in result.scalars():
+        if not dataset.file_path:
+            continue
+        path = Path(dataset.file_path)
+        if not path.exists():
+            continue
+        rows.extend(_load_records_from_file(path))
+    # Also fall back to the prepared/train.jsonl file when the
+    # Dataset rows don't surface anything (e.g. older projects that
+    # never registered a Dataset row but did write the prepared
+    # split). Phase 9b's training-completion hook always has the
+    # prepared file written, so this fallback is the load-bearing
+    # path for index rebuilds.
+    if not rows:
+        prepared = (
+            settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "train.jsonl"
+        )
+        if prepared.exists():
+            try:
+                with prepared.open(encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rows.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                pass
+    return rows
+
+
+async def build_index_for_project(db, project_id: int) -> dict[str, Any]:
+    """Phase 9b training-completion hook. Builds the BM25 index for
+    ``project_id`` if (recipe is RAG-eligible AND there are rows to
+    index). **Never raises** — failures land in the returned dict so
+    a broken build can't take down training completion.
+
+    Returns ``{built: bool, reason: str, index_path: str|None,
+    doc_count: int|None}`` for observability (the caller can stamp
+    this onto the experiment's runtime_config).
+    """
+    from app.config import settings
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        return {"built": False, "reason": "project_not_found"}
+    selected_recipe = project.selected_recipe or {}
+    recipe_id = selected_recipe.get("recipe_id")
+    if not recipe_id:
+        return {"built": False, "reason": "no_recipe_selected"}
+    if recommended_text_keys_for_recipe(recipe_id) is None:
+        return {
+            "built": False,
+            "reason": f"recipe_has_no_auto_rag:{recipe_id}",
+        }
+    rows = await _load_rag_corpus_rows(db, project_id)
+    if not rows:
+        return {"built": False, "reason": "no_corpus_rows"}
+    index_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+    try:
+        manifest = build_bm25_index(
+            rows,
+            recipe_id=recipe_id,
+            output_dir=index_dir,
+        )
+    except AutoRagUnavailable as e:
+        return {"built": False, "reason": f"build_failed:{e}"}
+    return {
+        "built": True,
+        "reason": "ok",
+        "index_path": manifest["index_path"],
+        "doc_count": manifest["doc_count"],
+        "recipe_id": recipe_id,
+    }
+
+
+# Prepend preamble template — known shape so Phase 9c's A/B can
+# attribute lift to this specific framing (a future bake-off
+# variant would compare alternative phrasings against this baseline).
+# Stays a short, neutral instruction that doesn't claim the
+# retrieved pairs are authoritative — the model is being given
+# *examples*, not *answers*.
+_AUTO_RAG_PREAMBLE_TEMPLATE = (
+    "Reference Q&A pairs from the knowledge base (use them to ground "
+    "your answer; cite the matching pair number if you use one):\n"
+    "{pairs}\n"
+    "Now answer the user's next question."
+)
+
+
+async def build_preamble_from_query(
+    db,
+    project_id: int,
+    query: str,
+    *,
+    k: int = 3,
+) -> dict[str, Any] | None:
+    """Phase 9b inference-time helper. Returns
+    ``{preamble_text, retrieved}`` or ``None`` when auto-RAG should
+    skip (recipe ineligible, no index, empty query, no hits). Never
+    raises — broken-index errors return None so inference can fall
+    back to no-RAG without blowing up.
+
+    The preamble is a system-message-shaped string that the caller
+    prepends to the chat messages. ``retrieved`` is the same shape
+    the preview endpoint returns, so Phase 9d's interpretability
+    panel can render it without a new contract.
+    """
+    from app.config import settings
+    from app.models.project import Project
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        return None
+    selected_recipe = project.selected_recipe or {}
+    recipe_id = selected_recipe.get("recipe_id")
+    if not recipe_id or recommended_text_keys_for_recipe(recipe_id) is None:
+        return None  # recipe not eligible — silent skip
+    index_dir = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+    if not (index_dir / "bm25_index.json").exists():
+        return None  # no index yet — silent skip (the build hook runs at training completion)
+    try:
+        hits = retrieve(query, index_dir=index_dir, k=k)
+    except AutoRagUnavailable:
+        return None
+    if not hits:
+        return None
+    pairs_text = "\n\n".join(_format_pair(idx, hit) for idx, hit in enumerate(hits, start=1))
+    preamble_text = _AUTO_RAG_PREAMBLE_TEMPLATE.format(pairs=pairs_text)
+    return {
+        "preamble_text": preamble_text,
+        "retrieved": hits,
+    }
+
+
+def _format_pair(idx: int, hit: RetrievedChunk) -> str:
+    """Format one retrieved (Q, A) pair for the preamble. Handles
+    both nested template shape and pre-flattened rows so the same
+    formatter works regardless of which call path built the index."""
+    payload = hit.get("payload") or {}
+    question = ""
+    answer = ""
+    # Top-level first.
+    if isinstance(payload.get("question"), str):
+        question = payload["question"]
+    if isinstance(payload.get("answer"), str):
+        answer = payload["answer"]
+    # Then nested input/expected.
+    if not question:
+        nested = payload.get("input")
+        if isinstance(nested, dict) and isinstance(nested.get("question"), str):
+            question = nested["question"]
+    if not answer:
+        nested = payload.get("expected")
+        if isinstance(nested, dict) and isinstance(nested.get("answer"), str):
+            answer = nested["answer"]
+    return f"[{idx}] Q: {question}\n    A: {answer}"
+
+
 def retrieve(
     query: str,
     *,

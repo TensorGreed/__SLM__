@@ -755,7 +755,16 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import MagicMock, patch
 
         class _StubProject:
-            id = 21
+            # Use a deliberately-high project_id so other tests in
+            # the same pytest run can't accidentally seed a
+            # ``prepared/train.jsonl`` at the same path and trigger
+            # the Phase 6d curriculum nudge (which reads from
+            # ``settings.DATA_DIR/projects/<id>/prepared/train.jsonl``
+            # for thin-classification projects). Project IDs assigned
+            # by TestClient template-instantiation start at 1 and
+            # auto-increment; 999021 is comfortably above any
+            # realistic test-run count.
+            id = 999021
             base_model_name = current_base
             selected_recipe = (
                 {"recipe_id": "classification"} if with_recipe else None

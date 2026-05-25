@@ -91,6 +91,29 @@ def _experiment_dir(project_id: int, experiment_id: int) -> Path:
     return d
 
 
+async def _safe_build_auto_rag_index(
+    db: AsyncSession, *, project_id: int
+) -> dict:
+    """Phase 9b — fire-and-forget auto-RAG index build hook called
+    from the training-completion paths. Wraps
+    ``auto_rag_service.build_index_for_project`` in a catch-all so
+    a broken build (corrupt prepared file, unexpected exception)
+    can never prevent the experiment from being marked COMPLETED.
+
+    The returned dict is the same shape the service emits — gets
+    stamped onto ``runtime_config["auto_rag_build"]`` so the UI
+    can show "auto-RAG index built (N docs)" or the skip reason."""
+    try:
+        from app.services.auto_rag_service import build_index_for_project
+
+        return await build_index_for_project(db, project_id)
+    except Exception as e:  # noqa: BLE001 — never block training completion
+        return {
+            "built": False,
+            "reason": f"unexpected_error:{type(e).__name__}:{e}",
+        }
+
+
 # Phase 6d — curriculum-learning default-on heuristic threshold.
 # The Phase 6c A/B (2026-05-25, 5 seeds, GB10 GPU) cleared the gate
 # with classification templates at exactly 144 training rows; the
@@ -585,6 +608,15 @@ async def _monitor_external_training(
                 if process.returncode == 0:
                     exp.status = ExperimentStatus.COMPLETED
                     final_status = "completed"
+                    # Phase 9b — fire the auto-RAG index build on
+                    # training completion so the playground's auto-RAG
+                    # path has an index to load. Best-effort: any
+                    # failure lands on runtime["auto_rag_build"] as a
+                    # skip reason, never blocks the COMPLETED status.
+                    runtime["auto_rag_build"] = await _safe_build_auto_rag_index(
+                        db, project_id=int(exp.project_id)
+                    )
+                    exp.config = {**config, "_runtime": runtime}
                 else:
                     exp.status = ExperimentStatus.FAILED
                     final_status = "failed"
@@ -868,6 +900,16 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                 project_id_for_event = int(exp.project_id)
                 exp_name_for_event = str(exp.name or "")
                 final_loss_for_event = round(current_loss, 4)
+                # Phase 9b — same auto-RAG index build hook as the
+                # external runtime. Best-effort; result lands on
+                # runtime_config for the UI to surface.
+                cfg = dict(exp.config or {})
+                runtime = dict(cfg.get("_runtime") or {})
+                runtime["auto_rag_build"] = await _safe_build_auto_rag_index(
+                    db, project_id=int(exp.project_id)
+                )
+                cfg["_runtime"] = runtime
+                exp.config = cfg
                 await db.commit()
             else:
                 project_id_for_event = None

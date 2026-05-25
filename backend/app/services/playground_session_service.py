@@ -167,6 +167,7 @@ def _last_message_preview(transcript: list[dict[str, str]]) -> str:
 
 def _serialize_session_common(session: PlaygroundSession) -> tuple[list[dict[str, str]], dict[str, Any]]:
     transcript = _normalize_transcript(list(session.transcript or []))
+    raw_metadata = dict(session.metadata_ or {})
     payload: dict[str, Any] = {
         "id": session.id,
         "project_id": session.project_id,
@@ -179,6 +180,12 @@ def _serialize_session_common(session: PlaygroundSession) -> tuple[list[dict[str
         "max_tokens": int(session.max_tokens),
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        # Phase 9b — surface the full metadata bag so the UI can read
+        # ``metadata.auto_rag`` (the interpretability surface for the
+        # auto-RAG feature) and any future per-session metadata
+        # without needing another endpoint. Existing consumers that
+        # don't read ``metadata`` are unaffected (additive field).
+        "metadata": raw_metadata,
     }
     return transcript, payload
 

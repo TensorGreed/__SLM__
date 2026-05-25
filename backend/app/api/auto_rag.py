@@ -24,6 +24,7 @@ from app.database import get_db
 from app.models.project import Project
 from app.services.auto_rag_service import (
     AutoRagUnavailable,
+    _load_rag_corpus_rows,
     build_bm25_index,
     recommended_text_keys_for_recipe,
     retrieve,
@@ -144,44 +145,6 @@ async def preview_auto_rag(
         "index": manifest,
         "retrieved": retrieved,
     }
-
-
-async def _load_rag_corpus_rows(
-    db: AsyncSession, project_id: int
-) -> list[dict[str, Any]]:
-    """Load the rows the BM25 index should be built over.
-
-    Reuses ``dataset_service._load_records_from_file`` so pending
-    synth rows stay out of the corpus (consistent with what the
-    training pipeline trains on). For Phase 9a the corpus is the
-    union of gold + accepted-synth, same as the training prep step's
-    output."""
-    from sqlalchemy import select
-
-    from app.models.dataset import Dataset, DatasetType
-    from app.services.dataset_service import _load_records_from_file
-
-    result = await db.execute(
-        select(Dataset).where(
-            Dataset.project_id == project_id,
-            Dataset.dataset_type.in_(
-                [
-                    DatasetType.GOLD_DEV,
-                    DatasetType.GOLD_TEST,
-                    DatasetType.SYNTHETIC,
-                ]
-            ),
-        )
-    )
-    rows: list[dict[str, Any]] = []
-    for dataset in result.scalars():
-        if not dataset.file_path:
-            continue
-        path = Path(dataset.file_path)
-        if not path.exists():
-            continue
-        rows.extend(_load_records_from_file(path))
-    return rows
 
 
 def _index_row_count(index_path: Path) -> int:
