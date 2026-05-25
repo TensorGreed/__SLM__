@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument
+from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument
 from app.models.gold_set_annotation import (
     GoldSetReviewerQueue,
     GoldSetReviewerQueueStatus,
@@ -55,6 +55,7 @@ GoldSetVerdict = Literal["empty", "attention", "ready"]
 SyntheticPlaybookVerdict = Literal["empty", "attention", "ready"]
 SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
 ReviewQueueVerdict = Literal["empty", "attention", "ready"]
+PrepareDatasetVerdict = Literal["blocked", "attention", "ready"]
 AssistFocus = Literal["mapping", "domain"]
 AssistProvider = Literal["ollama", "openai_compatible"]
 
@@ -4536,4 +4537,669 @@ async def build_data_studio_mapping_preview(
             "inferred_task_profiles": preview.get("inferred_task_profiles") if isinstance(preview.get("inferred_task_profiles"), list) else [],
         },
         "issues": issues,
+    }
+
+
+_PREPARED_SPLIT_SPECS: tuple[tuple[str, str, DatasetType], ...] = (
+    ("train", "Train", DatasetType.TRAIN),
+    ("validation", "Validation", DatasetType.VALIDATION),
+    ("test", "Test", DatasetType.TEST),
+)
+
+
+def _manifest_split_key(split_key: str) -> str:
+    return "val" if split_key == "validation" else split_key
+
+
+def _prepare_check(
+    check_id: str,
+    label: str,
+    status: str,
+    message: str,
+    *,
+    target_tab: str,
+) -> dict[str, str]:
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "message": message,
+        "target_tab": target_tab,
+    }
+
+
+def _prepared_manifest_path(project_id: int) -> Path:
+    return settings.DATA_DIR / "projects" / str(project_id) / "prepared" / "manifest.json"
+
+
+def _read_prepared_manifest(project_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    path = _prepared_manifest_path(project_id)
+    meta: dict[str, Any] = {
+        "exists": path.exists(),
+        "readable": False,
+        "path": str(path),
+        "error": None,
+    }
+    if not path.exists():
+        return {}, meta
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        meta["error"] = str(exc)[:240]
+        return {}, meta
+    if not isinstance(payload, dict):
+        meta["error"] = "Prepared manifest is not a JSON object."
+        return {}, meta
+    meta["readable"] = True
+    return payload, meta
+
+
+def _dataset_version_summary(version: DatasetVersion | None) -> dict[str, Any] | None:
+    if version is None:
+        return None
+    return {
+        "id": int(version.id),
+        "version": int(version.version or 0),
+        "record_count": int(version.record_count or 0),
+        "file_path": version.file_path,
+        "created_at": version.created_at.isoformat() if version.created_at else None,
+        "manifest": version.manifest if isinstance(version.manifest, dict) else {},
+    }
+
+
+def _file_exists(path: str | None) -> bool:
+    token = str(path or "").strip()
+    if not token:
+        return False
+    try:
+        return Path(token).exists()
+    except OSError:
+        return False
+
+
+def _prepared_split_summary(
+    *,
+    split_key: str,
+    label: str,
+    dataset_type: DatasetType,
+    dataset: Dataset | None,
+    versions: list[DatasetVersion],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    manifest_key = _manifest_split_key(split_key)
+    manifest_splits = manifest.get("splits") if isinstance(manifest.get("splits"), dict) else {}
+    manifest_file_paths = (
+        manifest.get("file_paths") if isinstance(manifest.get("file_paths"), dict) else {}
+    )
+    manifest_versions = (
+        manifest.get("dataset_versions")
+        if isinstance(manifest.get("dataset_versions"), dict)
+        else {}
+    )
+    latest_version = versions[-1] if versions else None
+    dataset_file_path = str(getattr(dataset, "file_path", "") or "")
+    manifest_file_path = str(manifest_file_paths.get(manifest_key) or "")
+    file_path = dataset_file_path or manifest_file_path
+    row_count = int(getattr(dataset, "record_count", 0) or 0)
+    manifest_count = int(manifest_splits.get(manifest_key) or 0)
+    manifest_version = manifest_versions.get(manifest_key)
+    try:
+        manifest_version_int = int(manifest_version) if manifest_version is not None else None
+    except (TypeError, ValueError):
+        manifest_version_int = None
+
+    return {
+        "key": split_key,
+        "manifest_key": manifest_key,
+        "label": label,
+        "dataset_type": dataset_type.value,
+        "dataset_id": int(dataset.id) if dataset is not None else None,
+        "exists": dataset is not None,
+        "row_count": row_count,
+        "file_path": file_path,
+        "file_exists": _file_exists(file_path),
+        "manifest_count": manifest_count,
+        "manifest_version": manifest_version_int,
+        "version_count": len(versions),
+        "latest_version": _dataset_version_summary(latest_version),
+    }
+
+
+def _prepare_review_blocker(
+    blocker_id: str,
+    label: str,
+    count: int,
+    message: str,
+    *,
+    severity: IssueSeverity,
+    target_tab: str,
+) -> dict[str, Any]:
+    return {
+        "id": blocker_id,
+        "label": label,
+        "count": int(count),
+        "severity": severity,
+        "message": message,
+        "target_tab": target_tab,
+    }
+
+
+async def build_data_studio_prepare_dataset(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return a read-only dataset preparation readiness summary."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    overview = await build_data_studio_overview(db, project_id)
+    mapping = await build_data_studio_mapping_preview(db, project_id)
+    gold = await build_data_studio_gold_set_workbench(db, project_id)
+    synthetic_queue = _review_queue_summary(await list_review_queue(db, project_id))
+    annotation = await _annotation_review_summary(db, project_id)
+
+    datasets_result = await db.execute(
+        select(Dataset).where(Dataset.project_id == project_id)
+    )
+    datasets = list(datasets_result.scalars().all())
+    datasets_by_type: dict[DatasetType, Dataset] = {}
+    for dataset in sorted(datasets, key=lambda item: item.updated_at, reverse=True):
+        datasets_by_type.setdefault(dataset.dataset_type, dataset)
+
+    prepared_dataset_ids = [
+        int(dataset.id)
+        for dataset in datasets
+        if dataset.dataset_type in {DatasetType.TRAIN, DatasetType.VALIDATION, DatasetType.TEST}
+    ]
+    versions_by_dataset: dict[int, list[DatasetVersion]] = {
+        dataset_id: [] for dataset_id in prepared_dataset_ids
+    }
+    if prepared_dataset_ids:
+        versions_result = await db.execute(
+            select(DatasetVersion)
+            .where(DatasetVersion.dataset_id.in_(prepared_dataset_ids))
+            .order_by(DatasetVersion.dataset_id.asc(), DatasetVersion.version.asc())
+        )
+        for version in versions_result.scalars().all():
+            versions_by_dataset.setdefault(int(version.dataset_id), []).append(version)
+
+    manifest, manifest_meta = _read_prepared_manifest(project_id)
+    split_items = [
+        _prepared_split_summary(
+            split_key=split_key,
+            label=label,
+            dataset_type=dataset_type,
+            dataset=datasets_by_type.get(dataset_type),
+            versions=versions_by_dataset.get(int(datasets_by_type[dataset_type].id), [])
+            if dataset_type in datasets_by_type
+            else [],
+            manifest=manifest,
+        )
+        for split_key, label, dataset_type in _PREPARED_SPLIT_SPECS
+    ]
+    prepared_total_rows = sum(int(item["row_count"] or 0) for item in split_items)
+    all_splits_have_rows = all(int(item["row_count"] or 0) > 0 for item in split_items)
+    any_split_has_rows = any(int(item["row_count"] or 0) > 0 for item in split_items)
+    if all_splits_have_rows:
+        split_status = "ready"
+    elif any_split_has_rows:
+        split_status = "partial"
+    else:
+        split_status = "missing"
+
+    missing_dataset_versions = [
+        str(item["key"])
+        for item in split_items
+        if int(item["row_count"] or 0) > 0 and int(item["version_count"] or 0) <= 0
+    ]
+    missing_manifest_versions = [
+        str(item["key"])
+        for item in split_items
+        if int(item["row_count"] or 0) > 0 and item.get("manifest_version") is None
+    ]
+
+    manifest_total_entries = int(manifest.get("total_entries") or 0)
+    if bool(manifest_meta.get("readable")) and prepared_total_rows > 0:
+        manifest_status = (
+            "ready"
+            if not missing_dataset_versions and not missing_manifest_versions
+            else "attention"
+        )
+    elif prepared_total_rows > 0 or bool(manifest_meta.get("exists")):
+        manifest_status = "attention"
+    else:
+        manifest_status = "missing"
+
+    recipe_payload = overview.get("recipe") if isinstance(overview.get("recipe"), dict) else None
+    row_counts = overview.get("row_counts") if isinstance(overview.get("row_counts"), dict) else {}
+    mapping_summary = mapping.get("summary") if isinstance(mapping.get("summary"), dict) else {}
+    effective_mapping = (
+        mapping.get("effective_mapping") if isinstance(mapping.get("effective_mapping"), dict) else {}
+    )
+    mapping_source = mapping.get("source") if isinstance(mapping.get("source"), dict) else None
+    mapping_contract_pass = bool(mapping_summary.get("contract_pass"))
+    required_gaps = [
+        str(item)
+        for item in list(mapping_summary.get("required_fields_below_100") or [])
+        if str(item).strip()
+    ]
+
+    trainable_rows = int(row_counts.get("trainable") or 0)
+    gold_totals = gold.get("totals") if isinstance(gold.get("totals"), dict) else {}
+    annotation_totals = (
+        annotation.get("totals") if isinstance(annotation.get("totals"), dict) else {}
+    )
+    synthetic_pending = int(synthetic_queue.get("total_pending") or 0)
+    synthetic_accepted = int(synthetic_queue.get("total_accepted") or 0)
+    gold_review_needed = int(gold_totals.get("review_needed") or 0)
+    gold_trusted = int(gold_totals.get("trusted_examples") or 0)
+    annotation_review_needed = int(annotation_totals.get("review_needed") or 0)
+    annotation_labeled_unpromoted = int(annotation_totals.get("labeled_unpromoted") or 0)
+
+    issues: list[dict[str, str]] = []
+    review_blockers: list[dict[str, Any]] = []
+
+    if recipe_payload is None:
+        issues.append(
+            _issue(
+                "prepare_missing_recipe",
+                "blocker",
+                "Recipe not selected",
+                "Pick a recipe before preparing splits so BrewSLM knows the training shape.",
+                action_label="Choose recipe",
+                target_tab="data",
+            )
+        )
+
+    if trainable_rows <= 0:
+        issues.append(
+            _issue(
+                "prepare_no_trainable_rows",
+                "blocker",
+                "No trainable rows",
+                "Add sources, create Gold Set examples, or accept synthetic rows before preparing a dataset.",
+                action_label="Add sources",
+                target_tab="data",
+            )
+        )
+
+    if mapping_source is None:
+        issues.append(
+            _issue(
+                "prepare_no_mapping_source",
+                "blocker",
+                "No mapping source",
+                "Add a previewable source so the adapter contract can be checked before splitting.",
+                action_label="Add sources",
+                target_tab="data",
+            )
+        )
+    elif not mapping_contract_pass:
+        gap_text = f" Missing fields: {', '.join(required_gaps)}." if required_gaps else ""
+        issues.append(
+            _issue(
+                "prepare_mapping_contract_not_ready",
+                "blocker",
+                "Mapping contract is not ready",
+                f"Review the adapter preview before preparing train/validation/test files.{gap_text}",
+                action_label="Review mapping",
+                target_tab="dataprep",
+            )
+        )
+
+    if trainable_rows > 0 and trainable_rows < 20:
+        issues.append(
+            _issue(
+                "prepare_low_trainable_rows",
+                "warning",
+                "Very small training set",
+                f"{trainable_rows} trainable row(s) can test the flow, but useful SFT usually needs more examples.",
+                action_label="Add or generate rows",
+                target_tab="synthetic",
+            )
+        )
+
+    if synthetic_pending > 0:
+        review_blockers.append(
+            _prepare_review_blocker(
+                "synthetic_pending_review",
+                "Synthetic rows pending review",
+                synthetic_pending,
+                "Pending generated rows are excluded from dataset prep until accepted.",
+                severity="warning",
+                target_tab="synthetic",
+            )
+        )
+        issues.append(
+            _issue(
+                "prepare_synthetic_pending_review",
+                "warning",
+                "Synthetic rows pending review",
+                f"{synthetic_pending} generated row(s) will stay out of prepared splits until accepted.",
+                action_label="Review synthetic rows",
+                target_tab="synthetic",
+            )
+        )
+
+    if gold_review_needed > 0:
+        review_blockers.append(
+            _prepare_review_blocker(
+                "gold_needs_review",
+                "Gold Set rows need review",
+                gold_review_needed,
+                "Gold Set examples are more valuable after approval or lock review.",
+                severity="warning",
+                target_tab="goldset",
+            )
+        )
+        issues.append(
+            _issue(
+                "prepare_gold_needs_review",
+                "warning",
+                "Gold Set review is open",
+                f"{gold_review_needed} Gold Set row(s) still need review.",
+                action_label="Open Gold Set",
+                target_tab="goldset",
+            )
+        )
+
+    if annotation_labeled_unpromoted > 0:
+        review_blockers.append(
+            _prepare_review_blocker(
+                "annotation_labeled_unpromoted",
+                "Annotation labels need promotion",
+                annotation_labeled_unpromoted,
+                "Labeled annotation rows are not included downstream until promoted by the annotation workflow.",
+                severity="warning",
+                target_tab="annotate",
+            )
+        )
+        issues.append(
+            _issue(
+                "prepare_annotation_labeled_unpromoted",
+                "warning",
+                "Annotation labels are not promoted",
+                f"{annotation_labeled_unpromoted} labeled annotation row(s) are waiting for promotion.",
+                action_label="Open Annotation",
+                target_tab="annotate",
+            )
+        )
+
+    if annotation_review_needed > 0:
+        review_blockers.append(
+            _prepare_review_blocker(
+                "annotation_review_open",
+                "Annotation review work is open",
+                annotation_review_needed,
+                "Assigned or unlabeled annotation rows are still in review.",
+                severity="warning",
+                target_tab="annotate",
+            )
+        )
+        issues.append(
+            _issue(
+                "prepare_annotation_review_open",
+                "warning",
+                "Annotation review is open",
+                f"{annotation_review_needed} annotation row(s) are assigned or waiting for labels.",
+                action_label="Continue annotation",
+                target_tab="annotate",
+            )
+        )
+
+    has_blockers = any(item["severity"] == "blocker" for item in issues)
+    if not has_blockers and split_status == "missing":
+        issues.append(
+            _issue(
+                "prepare_splits_missing",
+                "warning",
+                "Prepared splits are missing",
+                "Open Dataset Prep to create train, validation, and test files after confirming the split settings.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+    elif split_status == "partial":
+        missing_splits = [
+            str(item["label"])
+            for item in split_items
+            if int(item["row_count"] or 0) <= 0
+        ]
+        issues.append(
+            _issue(
+                "prepare_splits_partial",
+                "warning",
+                "Prepared splits are incomplete",
+                f"Missing rows for: {', '.join(missing_splits)}.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    if prepared_total_rows > 0 and not bool(manifest_meta.get("readable")):
+        issues.append(
+            _issue(
+                "prepare_manifest_missing",
+                "warning",
+                "Prepared manifest is missing or unreadable",
+                "Re-run Dataset Prep after confirming split settings so the manifest matches the split files.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    if missing_dataset_versions:
+        issues.append(
+            _issue(
+                "prepare_dataset_versions_missing",
+                "warning",
+                "Prepared split versions are missing",
+                f"Missing DatasetVersion rows for: {', '.join(missing_dataset_versions)}.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    if missing_manifest_versions:
+        issues.append(
+            _issue(
+                "prepare_manifest_versions_missing",
+                "warning",
+                "Manifest version references are incomplete",
+                f"Manifest has no dataset version reference for: {', '.join(missing_manifest_versions)}.",
+                action_label="Open Dataset Prep",
+                target_tab="dataprep",
+            )
+        )
+
+    blocker_count = sum(1 for item in issues if item["severity"] == "blocker")
+    warning_count = sum(1 for item in issues if item["severity"] == "warning")
+    if blocker_count:
+        verdict: PrepareDatasetVerdict = "blocked"
+    elif warning_count:
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    if recipe_payload is None:
+        recipe_status = "missing"
+        recipe_message = "Choose a recipe to make split and adapter checks recipe-aware."
+    else:
+        recipe_status = "met"
+        recipe_message = f"{recipe_payload.get('name') or recipe_payload.get('id')} is selected."
+
+    if mapping_source is None:
+        mapping_status = "missing"
+        mapping_message = "No previewable rows are available for adapter contract checks."
+    elif recipe_payload is None:
+        mapping_status = "attention"
+        mapping_message = "Mapping can be previewed, but it is not tied to a selected recipe yet."
+    elif mapping_contract_pass:
+        mapping_status = "met"
+        mapping_message = "Adapter mapping passes the required field contract for the selected recipe."
+    else:
+        mapping_status = "attention"
+        mapping_message = "Adapter mapping needs review before creating prepared split files."
+
+    review_status = "met" if not review_blockers else "attention"
+    if synthetic_pending > 0:
+        review_target_tab = "synthetic"
+    elif gold_review_needed > 0:
+        review_target_tab = "goldset"
+    elif annotation_review_needed > 0 or annotation_labeled_unpromoted > 0:
+        review_target_tab = "annotate"
+    else:
+        review_target_tab = "dataprep"
+    split_check_status = "met" if split_status == "ready" else split_status
+    manifest_check_status = (
+        "met"
+        if manifest_status == "ready"
+        else ("missing" if manifest_status == "missing" else "attention")
+    )
+
+    checks = [
+        _prepare_check(
+            "recipe",
+            "Recipe readiness",
+            recipe_status,
+            recipe_message,
+            target_tab="data",
+        ),
+        _prepare_check(
+            "mapping_contract",
+            "Mapping contract",
+            mapping_status,
+            mapping_message,
+            target_tab="dataprep",
+        ),
+        _prepare_check(
+            "trainable_rows",
+            "Trainable rows",
+            "met" if trainable_rows > 0 else "missing",
+            f"{trainable_rows} row(s) are currently eligible for preparation.",
+            target_tab="data",
+        ),
+        _prepare_check(
+            "review_gates",
+            "Review gates",
+            review_status,
+            "Review queues are clear." if not review_blockers else "Some reviewed data will be excluded or needs attention.",
+            target_tab=review_target_tab,
+        ),
+        _prepare_check(
+            "split_files",
+            "Prepared split files",
+            split_check_status,
+            (
+                "Train, validation, and test splits are present."
+                if split_status == "ready"
+                else "Open Dataset Prep to create or refresh prepared split files."
+            ),
+            target_tab="dataprep",
+        ),
+        _prepare_check(
+            "manifest_versions",
+            "Manifest and versions",
+            manifest_check_status,
+            (
+                "Prepared manifest and DatasetVersion rows are aligned."
+                if manifest_status == "ready"
+                else "Prepared manifest/version records will be created when Dataset Prep runs."
+            ),
+            target_tab="dataprep",
+        ),
+    ]
+
+    included_types_raw = manifest.get("included_types")
+    included_source_types = [
+        str(item)
+        for item in (included_types_raw if isinstance(included_types_raw, list) else [])
+        if str(item).strip()
+    ]
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "can_prepare": blocker_count == 0,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_data_studio_checks",
+        "recipe": {
+            "status": recipe_status,
+            "selected": recipe_payload,
+            "message": recipe_message,
+        },
+        "mapping": {
+            "status": mapping_status,
+            "message": mapping_message,
+            "verdict": mapping.get("verdict"),
+            "contract_pass": mapping_contract_pass,
+            "source": mapping_source,
+            "adapter_id": effective_mapping.get("adapter_id"),
+            "task_profile": effective_mapping.get("task_profile"),
+            "mapping_success_rate": float(mapping_summary.get("mapping_success_rate") or 0.0),
+            "sampled_records": int(mapping_summary.get("sampled_records") or 0),
+            "mapped_records": int(mapping_summary.get("mapped_records") or 0),
+            "required_fields": list(mapping_summary.get("required_fields") or []),
+            "required_fields_below_100": required_gaps,
+        },
+        "splits": {
+            "status": split_status,
+            "total_prepared_rows": prepared_total_rows,
+            "required_splits": [item[0] for item in _PREPARED_SPLIT_SPECS],
+            "items": split_items,
+        },
+        "manifest": {
+            "status": manifest_status,
+            "exists": bool(manifest_meta.get("exists")),
+            "readable": bool(manifest_meta.get("readable")),
+            "path": manifest_meta.get("path"),
+            "error": manifest_meta.get("error"),
+            "created_at": manifest.get("created_at"),
+            "total_entries": manifest_total_entries,
+            "splits": manifest.get("splits") if isinstance(manifest.get("splits"), dict) else {},
+            "ratios": manifest.get("ratios") if isinstance(manifest.get("ratios"), dict) else {},
+            "included_types": included_source_types,
+            "adapter_id": manifest.get("adapter_id"),
+            "task_profile": manifest.get("task_profile"),
+            "dataset_versions": (
+                manifest.get("dataset_versions")
+                if isinstance(manifest.get("dataset_versions"), dict)
+                else {}
+            ),
+            "missing_dataset_version_splits": missing_dataset_versions,
+            "missing_manifest_version_splits": missing_manifest_versions,
+        },
+        "inclusion": {
+            "trainable_rows": trainable_rows,
+            "raw_rows": int(row_counts.get("raw") or 0),
+            "cleaned_rows": int(row_counts.get("cleaned") or 0),
+            "gold_rows": int(row_counts.get("gold") or 0),
+            "synthetic_total": int(row_counts.get("synthetic_total") or 0),
+            "synthetic_pending": synthetic_pending,
+            "synthetic_accepted": synthetic_accepted,
+            "synthetic_pending_excluded": synthetic_pending > 0,
+            "gold_trusted_examples": gold_trusted,
+            "gold_review_needed": gold_review_needed,
+            "included_source_types": included_source_types,
+        },
+        "review_blockers": review_blockers,
+        "checks": checks,
+        "issues": issues,
+        "entry_point": {
+            "label": "Open Dataset Prep",
+            "target_tab": "dataprep",
+            "reason": "Confirm adapter and split settings before writing prepared files.",
+            "requires_confirmation": True,
+        },
+        "power_details": {
+            "overview_issues": overview.get("issues") if isinstance(overview.get("issues"), list) else [],
+            "mapping_issues": mapping.get("issues") if isinstance(mapping.get("issues"), list) else [],
+            "gold_validation": gold.get("validation") if isinstance(gold.get("validation"), dict) else {},
+            "synthetic_review_queue": synthetic_queue,
+            "annotation_totals": annotation_totals,
+            "manifest": manifest if bool(manifest_meta.get("readable")) else {},
+        },
     }

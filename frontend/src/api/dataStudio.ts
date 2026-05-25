@@ -8,6 +8,7 @@ export type DataStudioGoldSetVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticPlaybookVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticRecommendationVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioReviewQueueVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioPrepareDatasetVerdict = 'blocked' | 'attention' | 'ready';
 export type DataStudioAssistFocus = 'mapping' | 'domain';
 export type DataStudioAssistProvider = 'ollama' | 'openai_compatible';
 export type DataStudioAssistStatus = 'ok' | 'unavailable' | 'invalid_response';
@@ -734,6 +735,141 @@ export async function getDataStudioReviewQueue(
 ): Promise<DataStudioReviewQueue> {
     const resp = await api.get(`/projects/${projectId}/data-studio/review-queue`);
     return resp.data as DataStudioReviewQueue;
+}
+
+export interface DataStudioPrepareRecipe {
+    status: 'met' | 'attention' | 'missing' | string;
+    selected: DataStudioRecipeSummary | null;
+    message: string;
+}
+
+export interface DataStudioPrepareMapping {
+    status: 'met' | 'attention' | 'missing' | string;
+    message: string;
+    verdict?: string | null;
+    contract_pass: boolean;
+    source: DataStudioMappingSource | null;
+    adapter_id?: string | null;
+    task_profile?: string | null;
+    mapping_success_rate: number;
+    sampled_records: number;
+    mapped_records: number;
+    required_fields: string[];
+    required_fields_below_100: string[];
+}
+
+export interface DataStudioPrepareSplitVersion {
+    id: number;
+    version: number;
+    record_count: number;
+    file_path: string;
+    created_at?: string | null;
+    manifest: Record<string, unknown>;
+}
+
+export interface DataStudioPrepareSplitItem {
+    key: string;
+    manifest_key: string;
+    label: string;
+    dataset_type: string;
+    dataset_id?: number | null;
+    exists: boolean;
+    row_count: number;
+    file_path: string;
+    file_exists: boolean;
+    manifest_count: number;
+    manifest_version?: number | null;
+    version_count: number;
+    latest_version?: DataStudioPrepareSplitVersion | null;
+}
+
+export interface DataStudioPrepareSplits {
+    status: 'ready' | 'partial' | 'missing' | string;
+    total_prepared_rows: number;
+    required_splits: string[];
+    items: DataStudioPrepareSplitItem[];
+}
+
+export interface DataStudioPrepareManifest {
+    status: 'ready' | 'attention' | 'missing' | string;
+    exists: boolean;
+    readable: boolean;
+    path: string;
+    error?: string | null;
+    created_at?: string | null;
+    total_entries: number;
+    splits: Record<string, number>;
+    ratios: Record<string, number>;
+    included_types: string[];
+    adapter_id?: string | null;
+    task_profile?: string | null;
+    dataset_versions: Record<string, number>;
+    missing_dataset_version_splits: string[];
+    missing_manifest_version_splits: string[];
+}
+
+export interface DataStudioPrepareInclusion {
+    trainable_rows: number;
+    raw_rows: number;
+    cleaned_rows: number;
+    gold_rows: number;
+    synthetic_total: number;
+    synthetic_pending: number;
+    synthetic_accepted: number;
+    synthetic_pending_excluded: boolean;
+    gold_trusted_examples: number;
+    gold_review_needed: number;
+    included_source_types: string[];
+}
+
+export interface DataStudioPrepareReviewBlocker {
+    id: string;
+    label: string;
+    count: number;
+    severity: DataStudioIssueSeverity;
+    message: string;
+    target_tab: string;
+}
+
+export interface DataStudioPrepareCheck {
+    id: string;
+    label: string;
+    status: 'met' | 'attention' | 'missing' | 'partial' | string;
+    message: string;
+    target_tab: string;
+}
+
+export interface DataStudioPrepareEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+    requires_confirmation: boolean;
+}
+
+export interface DataStudioPrepareDataset {
+    project_id: number;
+    verdict: DataStudioPrepareDatasetVerdict;
+    can_prepare: boolean;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    recipe: DataStudioPrepareRecipe;
+    mapping: DataStudioPrepareMapping;
+    splits: DataStudioPrepareSplits;
+    manifest: DataStudioPrepareManifest;
+    inclusion: DataStudioPrepareInclusion;
+    review_blockers: DataStudioPrepareReviewBlocker[];
+    checks: DataStudioPrepareCheck[];
+    issues: DataStudioIssue[];
+    entry_point: DataStudioPrepareEntryPoint;
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioPrepareDataset(
+    projectId: number,
+): Promise<DataStudioPrepareDataset> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/prepare-dataset`);
+    return resp.data as DataStudioPrepareDataset;
 }
 
 export interface DataStudioAssistRequest {

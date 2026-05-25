@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.database import async_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models.dataset import Dataset, DatasetType, DocumentStatus, RawDocument  # noqa: E402
+from app.models.dataset import Dataset, DatasetType, DatasetVersion, DocumentStatus, RawDocument  # noqa: E402
 from app.models.gold_set_annotation import (  # noqa: E402
     GoldSetReviewerQueue,
     GoldSetReviewerQueueStatus,
@@ -1130,6 +1130,166 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         self.assertEqual(payload["triage"][0]["target_tab"], "synthetic")
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("review_queue_no_review_sources", issue_ids)
+
+    def test_prepare_dataset_empty_project_is_blocked_and_read_only(self):
+        project_id = self._create_project("data-studio-prepare-empty")
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/prepare-dataset")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "blocked")
+        self.assertFalse(payload["can_prepare"])
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_data_studio_checks")
+        self.assertEqual(payload["entry_point"]["target_tab"], "dataprep")
+        self.assertTrue(payload["entry_point"]["requires_confirmation"])
+        self.assertEqual(payload["recipe"]["status"], "missing")
+        self.assertEqual(payload["mapping"]["status"], "missing")
+        self.assertEqual(payload["splits"]["status"], "missing")
+        self.assertEqual(payload["manifest"]["status"], "missing")
+        issue_ids = {item["id"] for item in payload["issues"]}
+        self.assertIn("prepare_missing_recipe", issue_ids)
+        self.assertIn("prepare_no_trainable_rows", issue_ids)
+        self.assertIn("prepare_no_mapping_source", issue_ids)
+
+    def test_prepare_dataset_ready_when_mapping_splits_manifest_and_versions_align(self):
+        project_id = self._create_project("data-studio-prepare-ready")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_prepare_state():
+            async with async_session_factory() as db:
+                source_dir = settings.DATA_DIR / "projects" / str(project_id) / "cleaned"
+                source_dir.mkdir(parents=True, exist_ok=True)
+                cleaned_path = source_dir / "cleaned.jsonl"
+                cleaned_rows = [
+                    {"text": f"Support ticket {idx}", "label": "billing" if idx % 2 else "account"}
+                    for idx in range(24)
+                ]
+                with cleaned_path.open("w", encoding="utf-8") as handle:
+                    for row in cleaned_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+                prepared_dir.mkdir(parents=True, exist_ok=True)
+                split_rows = {
+                    "train": cleaned_rows[:20],
+                    "val": cleaned_rows[20:22],
+                    "test": cleaned_rows[22:],
+                }
+                split_paths = {}
+                for split_name, rows in split_rows.items():
+                    split_path = prepared_dir / f"{split_name}.jsonl"
+                    split_paths[split_name] = str(split_path)
+                    with split_path.open("w", encoding="utf-8") as handle:
+                        for row in rows:
+                            handle.write(json.dumps(row) + "\n")
+
+                cleaned = Dataset(
+                    project_id=project_id,
+                    name="Cleaned Rows",
+                    dataset_type=DatasetType.CLEANED,
+                    record_count=len(cleaned_rows),
+                    file_path=str(cleaned_path),
+                )
+                train = Dataset(
+                    project_id=project_id,
+                    name="Train Set",
+                    dataset_type=DatasetType.TRAIN,
+                    record_count=len(split_rows["train"]),
+                    file_path=split_paths["train"],
+                )
+                validation = Dataset(
+                    project_id=project_id,
+                    name="Validation Set",
+                    dataset_type=DatasetType.VALIDATION,
+                    record_count=len(split_rows["val"]),
+                    file_path=split_paths["val"],
+                )
+                test = Dataset(
+                    project_id=project_id,
+                    name="Test Set",
+                    dataset_type=DatasetType.TEST,
+                    record_count=len(split_rows["test"]),
+                    file_path=split_paths["test"],
+                )
+                db.add_all([cleaned, train, validation, test])
+                await db.flush()
+                db.add_all([
+                    DatasetVersion(
+                        dataset_id=train.id,
+                        version=1,
+                        file_path=split_paths["train"],
+                        record_count=len(split_rows["train"]),
+                        manifest={"split": "train", "count": len(split_rows["train"])},
+                    ),
+                    DatasetVersion(
+                        dataset_id=validation.id,
+                        version=1,
+                        file_path=split_paths["val"],
+                        record_count=len(split_rows["val"]),
+                        manifest={"split": "val", "count": len(split_rows["val"])},
+                    ),
+                    DatasetVersion(
+                        dataset_id=test.id,
+                        version=1,
+                        file_path=split_paths["test"],
+                        record_count=len(split_rows["test"]),
+                        manifest={"split": "test", "count": len(split_rows["test"])},
+                    ),
+                ])
+                manifest = {
+                    "project_id": project_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "seed": 42,
+                    "total_entries": len(cleaned_rows),
+                    "splits": {
+                        "train": len(split_rows["train"]),
+                        "val": len(split_rows["val"]),
+                        "test": len(split_rows["test"]),
+                    },
+                    "ratios": {"train": 0.8, "val": 0.1, "test": 0.1},
+                    "file_paths": split_paths,
+                    "file_hashes": {},
+                    "dataset_versions": {"train": 1, "val": 1, "test": 1},
+                    "chat_template": "llama3",
+                    "included_types": ["cleaned"],
+                    "adapter_id": "classification-label",
+                    "adapter_config": {},
+                    "field_mapping": {},
+                    "task_profile": "classification",
+                }
+                (prepared_dir / "manifest.json").write_text(
+                    json.dumps(manifest),
+                    encoding="utf-8",
+                )
+                await db.commit()
+
+        asyncio.run(_seed_prepare_state())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/prepare-dataset")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "ready")
+        self.assertTrue(payload["can_prepare"])
+        self.assertTrue(payload["read_only"])
+        self.assertEqual(payload["recipe"]["selected"]["id"], "classification")
+        self.assertEqual(payload["mapping"]["status"], "met")
+        self.assertTrue(payload["mapping"]["contract_pass"])
+        self.assertEqual(payload["splits"]["status"], "ready")
+        self.assertEqual(payload["splits"]["total_prepared_rows"], 24)
+        self.assertEqual(payload["manifest"]["status"], "ready")
+        self.assertEqual(payload["manifest"]["dataset_versions"], {"train": 1, "val": 1, "test": 1})
+        self.assertEqual(payload["inclusion"]["cleaned_rows"], 24)
+        self.assertEqual(payload["inclusion"]["included_source_types"], ["cleaned"])
+        self.assertEqual(payload["review_blockers"], [])
+        self.assertFalse(any(item["severity"] == "blocker" for item in payload["issues"]))
 
     def test_llm_assist_mapping_uses_ollama_default_without_applying(self):
         project_id = self._create_project("data-studio-assist")
