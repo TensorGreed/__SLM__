@@ -14,6 +14,7 @@ import DataStudioSyntheticRecommendationsPanel from '../components/data/DataStud
 import DataStudioReviewQueuePanel from '../components/data/DataStudioReviewQueuePanel';
 import DataStudioPrepareDatasetPanel from '../components/data/DataStudioPrepareDatasetPanel';
 import DataStudioDatasetVersionsPanel from '../components/data/DataStudioDatasetVersionsPanel';
+import type { DataStudioCoachCheck, DataStudioCoachRail } from '../api/dataStudio';
 import { useProjectStore } from '../stores/projectStore';
 import type { TabKey } from '../types';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -54,6 +55,14 @@ interface DataStudioHandoffChip {
     label: string;
     target: string;
     sectionToken?: string | null;
+    signalSectionId?: DataStudioSectionId;
+}
+
+type DataStudioHandoffSignalStatus = 'blocker' | 'attention' | 'ready';
+
+interface DataStudioHandoffSignal {
+    status: DataStudioHandoffSignalStatus;
+    label: string;
 }
 
 interface DataStudioSectionConfig {
@@ -112,9 +121,16 @@ interface DataStudioSectionProps {
     handoffs: DataStudioHandoffChip[];
     onToggle: (id: DataStudioSectionId) => void;
     onOpenHandoff: (handoff: DataStudioHandoffChip) => void;
+    getHandoffSignal: (handoff: DataStudioHandoffChip, sectionId: DataStudioSectionId) => DataStudioHandoffSignal | null;
     sectionRef: (node: HTMLElement | null) => void;
     children: ReactNode;
 }
+
+const HANDOFF_SIGNAL_LABELS: Record<DataStudioHandoffSignalStatus, string> = {
+    blocker: 'Blocker',
+    attention: 'Attention',
+    ready: 'Ready',
+};
 
 function isTabKey(value: string | undefined): value is TabKey {
     return !!value && PIPELINE_TAB_KEYS.includes(value as TabKey);
@@ -136,6 +152,30 @@ function normalizeSectionToken(value: string | null | undefined): DataStudioSect
     }
     const normalized = decoded.replace(/^#/, '').trim().toLowerCase().replace(/_/g, '-');
     return SECTION_TOKEN_ALIASES[normalized] ?? null;
+}
+
+function handoffSignalFromCheck(check: DataStudioCoachCheck): DataStudioHandoffSignal | null {
+    const status = String(check.status || '').toLowerCase();
+    let signalStatus: DataStudioHandoffSignalStatus | null = null;
+    if (status === 'ready') {
+        signalStatus = 'ready';
+    } else if (status === 'blocked' || check.blocker_count > 0) {
+        signalStatus = 'blocker';
+    } else if (
+        status === 'attention'
+        || status === 'empty'
+        || status === 'needs_work'
+        || check.warning_count > 0
+    ) {
+        signalStatus = 'attention';
+    }
+    if (!signalStatus) {
+        return null;
+    }
+    return {
+        status: signalStatus,
+        label: HANDOFF_SIGNAL_LABELS[signalStatus],
+    };
 }
 
 function readExpandedSections(projectId: number): Set<DataStudioSectionId> {
@@ -179,6 +219,7 @@ function DataStudioSection({
     handoffs,
     onToggle,
     onOpenHandoff,
+    getHandoffSignal,
     sectionRef,
     children,
 }: DataStudioSectionProps) {
@@ -210,17 +251,25 @@ function DataStudioSection({
                     className="data-studio-page-section__handoffs"
                     aria-label={`${title} workflow handoffs`}
                 >
-                    {handoffs.map((handoff) => (
-                        <button
-                            type="button"
-                            className="data-studio-page-section__handoff"
-                            key={`${handoff.label}:${handoff.target}:${handoff.sectionToken ?? ''}`}
-                            onClick={() => onOpenHandoff(handoff)}
-                        >
-                            <ExternalLink size={13} aria-hidden="true" />
-                            <span>{handoff.label}</span>
-                        </button>
-                    ))}
+                    {handoffs.map((handoff) => {
+                        const signal = getHandoffSignal(handoff, id);
+                        return (
+                            <button
+                                type="button"
+                                className={[
+                                    'data-studio-page-section__handoff',
+                                    signal ? `data-studio-page-section__handoff--${signal.status}` : '',
+                                ].filter(Boolean).join(' ')}
+                                data-status={signal?.status}
+                                key={`${handoff.label}:${handoff.target}:${handoff.sectionToken ?? ''}`}
+                                onClick={() => onOpenHandoff(handoff)}
+                            >
+                                <ExternalLink size={13} aria-hidden="true" />
+                                <span>{handoff.label}</span>
+                                {signal ? <small>{signal.label}</small> : null}
+                            </button>
+                        );
+                    })}
                 </div>
             ) : null}
             {expanded ? (
@@ -237,14 +286,20 @@ export default function ProjectDataStudioPage() {
     const location = useLocation();
     const { projectId } = useOutletContext<ProjectWorkspaceContextValue>();
     const { setActiveTab } = useProjectStore();
+    const previousProjectIdRef = useRef(projectId);
     const sectionRefs = useRef<Partial<Record<DataStudioSectionId, HTMLElement | null>>>({});
     const [expandedSections, setExpandedSections] = useState<Set<DataStudioSectionId>>(
         () => readExpandedSections(projectId),
     );
     const [sectionSearch, setSectionSearch] = useState('');
+    const [coachSignals, setCoachSignals] = useState<DataStudioCoachRail | null>(null);
 
     useEffect(() => {
         setExpandedSections(readExpandedSections(projectId));
+        if (previousProjectIdRef.current !== projectId) {
+            previousProjectIdRef.current = projectId;
+            setCoachSignals(null);
+        }
     }, [projectId]);
 
     const updateExpandedSections = useCallback(
@@ -360,7 +415,26 @@ export default function ProjectDataStudioPage() {
         updateExpandedSections(() => new Set());
     }, [updateExpandedSections]);
 
-    const sectionConfigs = useMemo(
+    const handoffSignalsBySection = useMemo(() => {
+        const signals = new Map<DataStudioSectionId, DataStudioHandoffSignal>();
+        coachSignals?.checks.forEach((check) => {
+            const sectionId = normalizeSectionToken(check.id);
+            const signal = handoffSignalFromCheck(check);
+            if (sectionId && signal) {
+                signals.set(sectionId, signal);
+            }
+        });
+        return signals;
+    }, [coachSignals]);
+
+    const getHandoffSignal = useCallback(
+        (handoff: DataStudioHandoffChip, fallbackSectionId: DataStudioSectionId) => (
+            handoffSignalsBySection.get(handoff.signalSectionId ?? fallbackSectionId) ?? null
+        ),
+        [handoffSignalsBySection],
+    );
+
+    const sectionConfigs = useMemo<DataStudioSectionConfig[]>(
         () => [
             {
                 id: 'overview' as const,
@@ -369,9 +443,9 @@ export default function ProjectDataStudioPage() {
                 group: 'start' as const,
                 keywords: ['status', 'readiness', 'recipe', 'next action', 'checks'],
                 handoffs: [
-                    { label: 'Source Ingestion', target: 'data' },
-                    { label: 'Dataset Prep', target: 'dataprep' },
-                    { label: 'Training', target: 'training' },
+                    { label: 'Source Ingestion', target: 'data', signalSectionId: 'sources' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'prepare-dataset' },
+                    { label: 'Training', target: 'training', signalSectionId: 'dataset-versions' },
                 ],
                 content: (
                     <DataStudioOverviewPanel
@@ -391,7 +465,7 @@ export default function ProjectDataStudioPage() {
                 group: 'start' as const,
                 keywords: ['sources', 'ingestion', 'datasets', 'documents', 'coverage'],
                 handoffs: [
-                    { label: 'Source Ingestion', target: 'data' },
+                    { label: 'Source Ingestion', target: 'data', signalSectionId: 'sources' },
                 ],
                 content: <DataStudioSourcesSummaryPanel projectId={projectId} />,
             },
@@ -402,7 +476,7 @@ export default function ProjectDataStudioPage() {
                 group: 'shape' as const,
                 keywords: ['schema', 'fields', 'mapping', 'contract', 'adapter'],
                 handoffs: [
-                    { label: 'Dataset Prep', target: 'dataprep' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'mapping' },
                 ],
                 content: <DataStudioMappingPreviewPanel projectId={projectId} />,
             },
@@ -413,7 +487,7 @@ export default function ProjectDataStudioPage() {
                 group: 'shape' as const,
                 keywords: ['domain', 'profile', 'pack', 'policy', 'pii', 'pci'],
                 handoffs: [
-                    { label: 'Domain Managers', target: 'domain' },
+                    { label: 'Domain Managers', target: 'domain', signalSectionId: 'domain' },
                 ],
                 content: (
                     <DataStudioDomainDetectionPanel
@@ -429,8 +503,8 @@ export default function ProjectDataStudioPage() {
                 group: 'shape' as const,
                 keywords: ['llm', 'ollama', 'openai', 'assist', 'explain'],
                 handoffs: [
-                    { label: 'Domain Managers', target: 'domain' },
-                    { label: 'Dataset Prep', target: 'dataprep' },
+                    { label: 'Domain Managers', target: 'domain', signalSectionId: 'domain' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'mapping' },
                 ],
                 content: <DataStudioAssistPanel projectId={projectId} />,
             },
@@ -441,8 +515,8 @@ export default function ProjectDataStudioPage() {
                 group: 'examples' as const,
                 keywords: ['gold', 'trusted', 'examples', 'labels', 'validation'],
                 handoffs: [
-                    { label: 'Gold Set', target: 'goldset' },
-                    { label: 'Review', target: 'annotate' },
+                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
                 ],
                 content: (
                     <DataStudioGoldSetWorkbenchPanel
@@ -458,7 +532,7 @@ export default function ProjectDataStudioPage() {
                 group: 'examples' as const,
                 keywords: ['synthetic', 'playbooks', 'ollama', 'generation', 'local'],
                 handoffs: [
-                    { label: 'Synthetic', target: 'synthetic' },
+                    { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-playbooks' },
                 ],
                 content: (
                     <DataStudioSyntheticPlaybookCenterPanel
@@ -474,8 +548,8 @@ export default function ProjectDataStudioPage() {
                 group: 'examples' as const,
                 keywords: ['synthetic', 'recommendations', 'strategy', 'domain', 'gold'],
                 handoffs: [
-                    { label: 'Synthetic', target: 'synthetic' },
-                    { label: 'Gold Set', target: 'goldset' },
+                    { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-recommendations' },
+                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
                 ],
                 content: (
                     <DataStudioSyntheticRecommendationsPanel
@@ -493,9 +567,9 @@ export default function ProjectDataStudioPage() {
                 group: 'release' as const,
                 keywords: ['review', 'queue', 'annotation', 'triage', 'promoted'],
                 handoffs: [
-                    { label: 'Review', target: 'annotate' },
-                    { label: 'Synthetic', target: 'synthetic' },
-                    { label: 'Gold Set', target: 'goldset' },
+                    { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
+                    { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-playbooks' },
+                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
                 ],
                 content: (
                     <DataStudioReviewQueuePanel
@@ -511,8 +585,8 @@ export default function ProjectDataStudioPage() {
                 group: 'release' as const,
                 keywords: ['prepare', 'dataset', 'splits', 'manifest', 'data prep'],
                 handoffs: [
-                    { label: 'Dataset Prep', target: 'dataprep' },
-                    { label: 'Review', target: 'annotate' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'prepare-dataset' },
+                    { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
                 ],
                 content: (
                     <DataStudioPrepareDatasetPanel
@@ -528,9 +602,9 @@ export default function ProjectDataStudioPage() {
                 group: 'release' as const,
                 keywords: ['versions', 'artifacts', 'manifest', 'training', 'eval'],
                 handoffs: [
-                    { label: 'Dataset Prep', target: 'dataprep' },
-                    { label: 'Training', target: 'training' },
-                    { label: 'Eval', target: 'eval' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'dataset-versions' },
+                    { label: 'Training', target: 'training', signalSectionId: 'dataset-versions' },
+                    { label: 'Eval', target: 'eval', signalSectionId: 'dataset-versions' },
                 ],
                 content: (
                     <DataStudioDatasetVersionsPanel
@@ -591,6 +665,7 @@ export default function ProjectDataStudioPage() {
                 <DataStudioCoachRailPanel
                     projectId={projectId}
                     onOpenTarget={openDataStudioTarget}
+                    onCoachLoaded={setCoachSignals}
                 />
 
                 <section className="data-studio-page-index" aria-label="Data Studio section index">
@@ -668,6 +743,7 @@ export default function ProjectDataStudioPage() {
                         handoffs={section.handoffs}
                         onToggle={toggleSection}
                         onOpenHandoff={(handoff) => openDataStudioTarget(handoff.target, handoff.sectionToken)}
+                        getHandoffSignal={getHandoffSignal}
                         sectionRef={setSectionRef(section.id)}
                     >
                         {section.content}

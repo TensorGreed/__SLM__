@@ -122,8 +122,15 @@ describe('DataStudioCoachRailPanel', () => {
     it('renders a beginner next action and compact power checks', async () => {
         apiMock.get.mockResolvedValueOnce({ data: coachPayload });
         const onOpenTarget = vi.fn();
+        const onCoachLoaded = vi.fn();
 
-        render(<DataStudioCoachRailPanel projectId={1} onOpenTarget={onOpenTarget} />);
+        render(
+            <DataStudioCoachRailPanel
+                projectId={1}
+                onOpenTarget={onOpenTarget}
+                onCoachLoaded={onCoachLoaded}
+            />,
+        );
 
         await waitFor(() => {
             expect(screen.getByTestId('data-studio-coach-rail')).toBeInTheDocument();
@@ -137,6 +144,7 @@ describe('DataStudioCoachRailPanel', () => {
 
         fireEvent.click(screen.getAllByRole('button', { name: /Choose recipe/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('data', 'overview');
+        expect(onCoachLoaded).toHaveBeenCalledWith(coachPayload);
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/coach');
     });
 

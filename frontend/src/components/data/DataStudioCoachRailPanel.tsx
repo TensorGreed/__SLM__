@@ -21,6 +21,7 @@ import './DataStudioCoachRailPanel.css';
 interface DataStudioCoachRailPanelProps {
     projectId: number;
     onOpenTarget: (target: string, sectionId?: string | null) => void;
+    onCoachLoaded?: (coach: DataStudioCoachRail | null) => void;
 }
 
 const COACH_VERDICT_COPY: Record<DataStudioCoachRail['verdict'], { label: string; detail: string }> = {
@@ -138,6 +139,7 @@ function StepRow({
 export default function DataStudioCoachRailPanel({
     projectId,
     onOpenTarget,
+    onCoachLoaded,
 }: DataStudioCoachRailPanelProps) {
     const [coach, setCoach] = useState<DataStudioCoachRail | null>(null);
     const [loading, setLoading] = useState(true);
@@ -148,9 +150,13 @@ export default function DataStudioCoachRailPanel({
         try {
             const data = await getDataStudioCoachRail(projectId);
             setCoach(data);
+            onCoachLoaded?.(data);
             setError(null);
         } catch (err: any) {
             setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio coach.');
+            if (!coach) {
+                onCoachLoaded?.(null);
+            }
         } finally {
             setLoading(false);
         }

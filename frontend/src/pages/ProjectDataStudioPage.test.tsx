@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { navigateMock, setActiveTabMock, routeState, contextState } = vi.hoisted(() => ({
+const { navigateMock, setActiveTabMock, routeState, contextState, coachRailPayload } = vi.hoisted(() => ({
     navigateMock: vi.fn(),
     setActiveTabMock: vi.fn(),
     routeState: {
@@ -10,6 +10,49 @@ const { navigateMock, setActiveTabMock, routeState, contextState } = vi.hoisted(
     },
     contextState: {
         projectId: 77,
+    },
+    coachRailPayload: {
+        project_id: 77,
+        verdict: 'attention',
+        read_only: true,
+        auto_apply: false,
+        source_of_truth: 'deterministic_data_studio_checks',
+        summary: {
+            blocker_count: 2,
+            warning_count: 3,
+            info_count: 0,
+            section_count: 11,
+            ready_section_count: 4,
+            empty_section_count: 1,
+            next_action_target: 'annotate',
+        },
+        next_action: {
+            id: 'review_queue:pending',
+            section_id: 'review_queue',
+            section_label: 'Review Queue',
+            severity: 'blocker',
+            priority: 'high',
+            title: 'Review pending rows',
+            message: 'Synthetic rows need review before training.',
+            action_label: 'Open review',
+            target_tab: 'data',
+            requires_user_confirmation: true,
+        },
+        next_steps: [],
+        checks: [
+            { id: 'sources', status: 'blocked', label: 'Sources', target_tab: 'data', message: 'Sources need attention.', blocker_count: 1, warning_count: 0, info_count: 0 },
+            { id: 'mapping', status: 'ready', label: 'Mapping', target_tab: 'dataprep', message: 'Mapping is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
+            { id: 'domain', status: 'attention', label: 'Domain', target_tab: 'domain', message: 'Domain needs confirmation.', blocker_count: 0, warning_count: 1, info_count: 0 },
+            { id: 'gold_set', status: 'ready', label: 'Gold Set', target_tab: 'goldset', message: 'Gold Set is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
+            { id: 'synthetic_playbooks', status: 'attention', label: 'Synthetic Playbooks', target_tab: 'synthetic', message: 'Synthetic prerequisites need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
+            { id: 'synthetic_recommendations', status: 'ready', label: 'Synthetic Recommendations', target_tab: 'synthetic', message: 'Recommendations are ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
+            { id: 'review_queue', status: 'blocked', label: 'Review Queue', target_tab: 'annotate', message: 'Review is blocking prepare.', blocker_count: 1, warning_count: 0, info_count: 0 },
+            { id: 'prepare_dataset', status: 'attention', label: 'Prepare Dataset', target_tab: 'dataprep', message: 'Splits need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
+            { id: 'dataset_versions', status: 'ready', label: 'Dataset Versions', target_tab: 'training', message: 'A prepared version is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
+        ],
+        issues: [],
+        entry_points: [],
+        power_details: {},
     },
 }));
 
@@ -40,16 +83,30 @@ vi.mock('../stores/projectStore', () => ({
     }),
 }));
 
-vi.mock('../components/data/DataStudioCoachRailPanel', () => ({
-    default: ({ onOpenTarget }: { onOpenTarget: (target: string, sectionId?: string) => void }) => (
-        <section data-testid="panel-coach">
-            Coach
-            <button type="button" onClick={() => onOpenTarget('data', 'review_queue')}>
-                Open review from coach
-            </button>
-        </section>
-    ),
-}));
+vi.mock('../components/data/DataStudioCoachRailPanel', async () => {
+    const React = await vi.importActual<typeof import('react')>('react');
+    return {
+        default: ({
+            onOpenTarget,
+            onCoachLoaded,
+        }: {
+            onOpenTarget: (target: string, sectionId?: string) => void;
+            onCoachLoaded?: (coach: typeof coachRailPayload) => void;
+        }) => {
+            React.useEffect(() => {
+                onCoachLoaded?.(coachRailPayload);
+            }, [onCoachLoaded]);
+            return (
+                <section data-testid="panel-coach">
+                    Coach
+                    <button type="button" onClick={() => onOpenTarget('data', 'review_queue')}>
+                        Open review from coach
+                    </button>
+                </section>
+            );
+        },
+    };
+});
 
 vi.mock('../components/data/DataStudioOverviewPanel', () => ({
     default: () => <section data-testid="panel-overview">Overview</section>,
@@ -222,34 +279,60 @@ describe('ProjectDataStudioPage', () => {
         const prepare = screen.getByTestId('data-studio-section-prepare-dataset');
         const versions = screen.getByTestId('data-studio-section-dataset-versions');
 
-        await user.click(within(sources).getByRole('button', { name: /^Source Ingestion$/i }));
+        const sourceChip = await within(sources).findByRole('button', { name: /^Source Ingestion\s+Blocker$/i });
+        expect(sourceChip).toHaveAttribute('data-status', 'blocker');
+        expect(within(sourceChip).getByText('Blocker')).toBeInTheDocument();
+
+        const domainChip = await within(domain).findByRole('button', { name: /^Domain Managers\s+Attention$/i });
+        expect(domainChip).toHaveAttribute('data-status', 'attention');
+        expect(within(domainChip).getByText('Attention')).toBeInTheDocument();
+
+        const goldChip = await within(gold).findByRole('button', { name: /^Gold Set\s+Ready$/i });
+        expect(goldChip).toHaveAttribute('data-status', 'ready');
+        expect(within(goldChip).getByText('Ready')).toBeInTheDocument();
+
+        const syntheticChip = await within(synthetic).findByRole('button', { name: /^Synthetic\s+Attention$/i });
+        expect(syntheticChip).toHaveAttribute('data-status', 'attention');
+
+        const reviewChip = await within(review).findByRole('button', { name: /^Review\s+Blocker$/i });
+        expect(reviewChip).toHaveAttribute('data-status', 'blocker');
+
+        const prepareChip = await within(prepare).findByRole('button', { name: /^Dataset Prep\s+Attention$/i });
+        expect(prepareChip).toHaveAttribute('data-status', 'attention');
+
+        const trainingChip = await within(versions).findByRole('button', { name: /^Training\s+Ready$/i });
+        expect(trainingChip).toHaveAttribute('data-status', 'ready');
+
+        await user.click(sourceChip);
         expect(setActiveTabMock).toHaveBeenLastCalledWith('data');
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/data');
         expect(screen.queryByTestId('panel-sources')).not.toBeInTheDocument();
 
-        await user.click(within(domain).getByRole('button', { name: /^Domain Managers$/i }));
+        await user.click(domainChip);
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/domain');
 
-        await user.click(within(gold).getByRole('button', { name: /^Gold Set$/i }));
+        await user.click(goldChip);
         expect(setActiveTabMock).toHaveBeenLastCalledWith('goldset');
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/goldset');
 
-        await user.click(within(synthetic).getByRole('button', { name: /^Synthetic$/i }));
+        await user.click(syntheticChip);
         expect(setActiveTabMock).toHaveBeenLastCalledWith('synthetic');
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/synthetic');
 
-        await user.click(within(review).getByRole('button', { name: /^Review$/i }));
+        await user.click(reviewChip);
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/annotate');
 
-        await user.click(within(prepare).getByRole('button', { name: /^Dataset Prep$/i }));
+        await user.click(prepareChip);
         expect(setActiveTabMock).toHaveBeenLastCalledWith('dataprep');
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/dataprep');
 
-        await user.click(within(versions).getByRole('button', { name: /^Training$/i }));
+        await user.click(trainingChip);
         expect(setActiveTabMock).toHaveBeenLastCalledWith('training');
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/training');
 
-        await user.click(within(versions).getByRole('button', { name: /^Eval$/i }));
+        const evalChip = await within(versions).findByRole('button', { name: /^Eval\s+Ready$/i });
+        expect(evalChip).toHaveAttribute('data-status', 'ready');
+        await user.click(evalChip);
         expect(setActiveTabMock).toHaveBeenLastCalledWith('eval');
         expect(navigateMock).toHaveBeenLastCalledWith('/project/77/pipeline/eval');
     });
