@@ -606,6 +606,77 @@ def list_supported_task_profiles_for_recipes() -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# task_family / task_profile → catalog recipe defaults
+#
+# Used by the brief-driven `POST /api/projects` and `/magic-create`
+# code paths to auto-apply a task-shape recipe at creation time so
+# `Project.selected_recipe` is never NULL on a freshly-created
+# non-templated project. Downstream consumers (synth playbook
+# runner, auto-RAG comparison, post-eval reroute analyzer, several
+# Coach Mode signals) read `recipe_id` off the selected_recipe
+# snapshot and hard-fail when it's missing.
+#
+# The brief analyzer (`domain_blueprint_service._infer_task_family`)
+# emits a `task_family` token; magic-create's recommendation carries
+# a `task_profile` token. The two vocabularies overlap but aren't
+# identical — keep two helpers so each call site uses the field it
+# already has on hand instead of remapping on the way in.
+#
+# Unknown / "instruction_sft" / catch-all → "generic-sft" rather
+# than NULL: the generic SFT recipe is the safest fallback and the
+# user can override via the DatasetImportWizard's recipe picker.
+# ─────────────────────────────────────────────────────────────────────
+
+
+_TASK_FAMILY_TO_RECIPE_ID: dict[str, str] = {
+    "qa": "qa-sft",
+    "rag_qa": "qa-sft",
+    "classification": "classification",
+    "structured_extraction": "span-extraction",
+    "summarization": "summarization",
+    "instruction_sft": "generic-sft",
+}
+
+
+_TASK_PROFILE_TO_RECIPE_ID: dict[str, str] = {
+    # Subset of the magic-create vocabulary that maps to a real
+    # catalog recipe. `tool_calling`, `preference`, `seq2seq`, and
+    # `chat_sft` don't have dedicated catalog recipes yet, so they
+    # all fall back to generic-sft below.
+    "qa": "qa-sft",
+    "rag_qa": "qa-sft",
+    "classification": "classification",
+    "structured_extraction": "span-extraction",
+    "summarization": "summarization",
+    "instruction_sft": "generic-sft",
+}
+
+
+_FALLBACK_RECIPE_ID = "generic-sft"
+
+
+def default_recipe_for_task_family(task_family: str | None) -> str:
+    """Map a brief-analyzer `task_family` token to a catalog recipe
+    id. Returns ``"generic-sft"`` for unknown / empty inputs so the
+    caller never has to special-case a NULL recipe.
+
+    The result is guaranteed to be a key in the recipe catalog —
+    any future renames to the catalog should update this map in
+    lockstep (see ``test_default_recipe_helpers`` for the guard)."""
+    token = (task_family or "").strip().lower()
+    return _TASK_FAMILY_TO_RECIPE_ID.get(token, _FALLBACK_RECIPE_ID)
+
+
+def default_recipe_for_task_profile(task_profile: str | None) -> str:
+    """Map a magic-create `task_profile` token to a catalog recipe
+    id. Mirrors ``default_recipe_for_task_family`` for the second
+    non-templated create path which carries `task_profile` strings
+    instead of `task_family`."""
+    token = (task_profile or "").strip().lower()
+    return _TASK_PROFILE_TO_RECIPE_ID.get(token, _FALLBACK_RECIPE_ID)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Shape sniffer
 #
 # Header-based recipe suggester. Given a list of column headers from a

@@ -43,6 +43,10 @@ from app.services.recipe_apply_service import (
     apply_recipe_to_project,
     clear_recipe_from_project,
 )
+from app.services.recipe_service import (
+    default_recipe_for_task_family,
+    default_recipe_for_task_profile,
+)
 from app.services.starter_pack_service import get_starter_pack_by_id
 from app.services.domain_blueprint_service import (
     DomainBlueprintValidationError,
@@ -277,6 +281,27 @@ async def create_project(
                 },
             )
 
+        # Auto-apply a task-shape recipe so `Project.selected_recipe`
+        # is populated for brief-driven (non-templated) projects.
+        # Without this, downstream surfaces that branch on
+        # `recipe_id` (synth playbook runner, auto-RAG comparison,
+        # post-eval reroute analyzer, several Coach Mode signals)
+        # silently degrade or hard-fail. The DatasetImportWizard's
+        # recipe picker remains the override path.
+        if project.selected_recipe is None:
+            task_family = getattr(blueprint, "task_family", None)
+            inferred_recipe_id = default_recipe_for_task_family(task_family)
+            try:
+                project = await apply_recipe_to_project(
+                    db, project.id, inferred_recipe_id,
+                )
+            except RecipeNotFoundError:
+                # Catalog rename / map drift — fall back to the
+                # generic-sft safety net rather than leaving NULL.
+                project = await apply_recipe_to_project(
+                    db, project.id, "generic-sft",
+                )
+
     return ProjectResponse.model_validate(project)
 
 
@@ -362,6 +387,24 @@ async def magic_create_project(
             adapter_config={},
             field_mapping={},
         )
+
+    # Apply a task-shape recipe so `Project.selected_recipe` is
+    # populated. This is independent of the pipeline-DAG recipe
+    # above (different concepts) — both coexist on the project.
+    # See `create_project` for the same call on the brief-driven
+    # path; the magic-create recommendation carries `task_profile`
+    # instead of `task_family`, so we use the matching helper.
+    if project_response.selected_recipe is None:
+        inferred_recipe_id = default_recipe_for_task_profile(task_profile)
+        try:
+            applied = await apply_recipe_to_project(
+                db, project_id, inferred_recipe_id,
+            )
+        except RecipeNotFoundError:
+            applied = await apply_recipe_to_project(
+                db, project_id, "generic-sft",
+            )
+        project_response = ProjectResponse.model_validate(applied)
 
     return project_response
 

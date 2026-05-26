@@ -205,5 +205,144 @@ class Phase48DomainBlueprintTests(unittest.TestCase):
         self.assertIn("DEPLOYMENT_CONSTRAINT_CONFLICT", codes)
 
 
+class BriefDrivenAutoApplyRecipeTests(unittest.TestCase):
+    """Brief-driven `POST /api/projects` and `/magic-create` must
+    leave `Project.selected_recipe` populated so downstream surfaces
+    that branch on `recipe_id` (synth playbook, auto-RAG comparison,
+    post-eval reroute analyzer, Coach Mode) don't silently degrade
+    or hard-fail. The fix maps the brief analyzer's task_family
+    (or magic-create's task_profile) to a catalog recipe id and
+    calls `apply_recipe_to_project` at create time.
+
+    Two task families are enough to lock the contract — mapping
+    coverage lives in the unit-level helper test below."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def test_brief_driven_create_with_qa_brief_applies_qa_sft_recipe(self):
+        resp = self.client.post(
+            "/api/projects",
+            json={
+                "name": "auto-apply-qa",
+                "description": "auto-apply",
+                "brief_text": (
+                    "Build a support assistant that answers FAQ "
+                    "questions from customer tickets."
+                ),
+                "sample_inputs": ["How do I reset my password?"],
+                "sample_outputs": [
+                    '{"answer":"Visit Settings > Security."}',
+                ],
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        project = resp.json()
+        selected = project.get("selected_recipe") or {}
+        self.assertEqual(selected.get("recipe_id"), "qa-sft", project)
+
+    def test_brief_driven_create_with_classification_brief_applies_classification_recipe(self):
+        resp = self.client.post(
+            "/api/projects",
+            json={
+                "name": "auto-apply-classification",
+                "description": "auto-apply",
+                "brief_text": (
+                    "Classify support tickets by urgency label "
+                    "(low, medium, high)."
+                ),
+                "sample_inputs": ["My account is locked, urgent help needed."],
+                "sample_outputs": ['{"label":"high"}'],
+            },
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        project = resp.json()
+        selected = project.get("selected_recipe") or {}
+        self.assertEqual(
+            selected.get("recipe_id"), "classification", project,
+        )
+
+    def test_magic_create_applies_a_task_shape_recipe(self):
+        resp = self.client.post(
+            "/api/projects/magic-create",
+            json={
+                "prompt": (
+                    "Extract liability clauses from contracts into "
+                    "JSON fields. 16gb GPU."
+                ),
+            },
+        )
+        # Magic-create depends on the teacher model; the fallback
+        # path (no API key configured) lands a recommendation
+        # deterministically. Both 201 paths must populate
+        # selected_recipe.
+        self.assertEqual(resp.status_code, 201, resp.text)
+        project = resp.json()
+        selected = project.get("selected_recipe") or {}
+        self.assertIsNotNone(selected.get("recipe_id"), project)
+        # The fallback recommender maps "extract...json" → structured_extraction
+        # which our helper maps to span-extraction. Accept any catalog
+        # id rather than pinning to one — magic-create's LLM
+        # recommendation can shift between revisions.
+        self.assertIn(
+            selected.get("recipe_id"),
+            {
+                "qa-sft", "classification", "span-extraction",
+                "summarization", "generic-sft",
+            },
+            project,
+        )
+
+    def test_default_recipe_helpers_map_known_tokens_and_fall_back(self):
+        # Direct unit test for the helper — guards against catalog
+        # rename / map drift without paying for an HTTP round-trip
+        # per case.
+        from app.services.recipe_service import (
+            default_recipe_for_task_family,
+            default_recipe_for_task_profile,
+            get_recipe,
+        )
+
+        cases_family = [
+            ("qa", "qa-sft"),
+            ("rag_qa", "qa-sft"),
+            ("classification", "classification"),
+            ("structured_extraction", "span-extraction"),
+            ("summarization", "summarization"),
+            ("instruction_sft", "generic-sft"),
+            ("unknown_family", "generic-sft"),
+            ("", "generic-sft"),
+            (None, "generic-sft"),
+        ]
+        for token, expected in cases_family:
+            with self.subTest(token=token, helper="task_family"):
+                resolved = default_recipe_for_task_family(token)
+                self.assertEqual(resolved, expected)
+                # Resolved id MUST exist in the catalog — otherwise
+                # the auto-apply would 404 on the next user POST.
+                self.assertIsNotNone(
+                    get_recipe(resolved),
+                    f"Recipe {resolved!r} not in catalog",
+                )
+
+        cases_profile = [
+            ("qa", "qa-sft"),
+            ("classification", "classification"),
+            ("tool_calling", "generic-sft"),
+            (None, "generic-sft"),
+        ]
+        for token, expected in cases_profile:
+            with self.subTest(token=token, helper="task_profile"):
+                self.assertEqual(
+                    default_recipe_for_task_profile(token), expected,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
