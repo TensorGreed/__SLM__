@@ -531,6 +531,62 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('600 steps');
     });
 
+    it('renders auto_rag_comparison summary with off→on F1 + lift% + val rows', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 40,
+                        kind: 'auto_rag_comparison',
+                        status: 'succeeded',
+                        title: 'Auto-RAG comparison · project #4',
+                        result: {
+                            project_id: 4,
+                            experiment_id: 15,
+                            off_mean_f1: 0.0416,
+                            on_mean_f1: 0.0640,
+                            absolute_lift: 0.0224,
+                            relative_lift_pct: 53.66,
+                            n_val_rows: 28,
+                        },
+                    }),
+                ],
+            },
+        });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 40,
+                        kind: 'auto_rag_comparison',
+                        status: 'succeeded',
+                        title: 'Auto-RAG comparison · project #4',
+                        result: {
+                            project_id: 4,
+                            experiment_id: 15,
+                            off_mean_f1: 0.0416,
+                            on_mean_f1: 0.0640,
+                            absolute_lift: 0.0224,
+                            relative_lift_pct: 53.66,
+                            n_val_rows: 28,
+                        },
+                    }),
+                ],
+            },
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        const summary = screen.getByTestId('notification-bell-row-40-summary');
+        expect(summary).toHaveTextContent('off F1 0.04 → on F1 0.06');
+        expect(summary).toHaveTextContent('+53.66% lift');
+        expect(summary).toHaveTextContent('28 val rows');
+    });
+
     it('renders an empty-state message when no jobs are in the bell', async () => {
         apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
         render(<NotificationBell />);

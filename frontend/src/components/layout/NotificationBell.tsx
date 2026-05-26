@@ -131,6 +131,27 @@ function jobOutcomeSummary(job: Job): string | null {
         return parts.length ? parts.join(' · ') : null;
     }
 
+    if (job.kind === 'auto_rag_comparison') {
+        const offF1 = typeof r.off_mean_f1 === 'number' ? r.off_mean_f1 : null;
+        const onF1 = typeof r.on_mean_f1 === 'number' ? r.on_mean_f1 : null;
+        const lift = typeof r.relative_lift_pct === 'number' ? r.relative_lift_pct : null;
+        const nVal = typeof r.n_val_rows === 'number' ? r.n_val_rows : null;
+        const parts: string[] = [];
+        if (offF1 !== null && onF1 !== null) {
+            parts.push(`off F1 ${offF1.toFixed(2)} → on F1 ${onF1.toFixed(2)}`);
+        } else if (onF1 !== null) {
+            parts.push(`on F1 ${onF1.toFixed(2)}`);
+        }
+        if (lift !== null) {
+            const sign = lift >= 0 ? '+' : '';
+            parts.push(`${sign}${lift.toFixed(2)}% lift`);
+        }
+        if (nVal !== null) {
+            parts.push(`${nVal} val row${nVal === 1 ? '' : 's'}`);
+        }
+        return parts.length ? parts.join(' · ') : null;
+    }
+
     return null;
 }
 
