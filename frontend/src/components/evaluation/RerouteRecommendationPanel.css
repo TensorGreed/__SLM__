@@ -1,0 +1,177 @@
+/* RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c. */
+
+.reroute-card {
+    border: 1px solid var(--border-default);
+    border-left-width: 3px;
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    padding: var(--space-lg);
+    margin-bottom: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+/* Flavor tints — amber for try_rag, blue for prompt, gray for data. */
+.reroute-card--try-rag {
+    border-left-color: var(--warning, #d97706);
+    background: var(--warning-bg, rgba(217, 119, 6, 0.06));
+}
+
+.reroute-card--try-prompt {
+    border-left-color: var(--accent, #3b82f6);
+    background: var(--accent-bg, rgba(59, 130, 246, 0.06));
+}
+
+.reroute-card--expand-data {
+    border-left-color: var(--text-tertiary, #6b7280);
+    background: var(--bg-secondary);
+}
+
+.reroute-card__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-md);
+}
+
+.reroute-card__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.reroute-card__subtitle {
+    margin: 4px 0 0 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.reroute-card__confidence {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    background: var(--bg-tertiary, rgba(0, 0, 0, 0.04));
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.reroute-card__signals {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.reroute-card__signal {
+    display: flex;
+    gap: 8px;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.reroute-card__signal-bullet {
+    color: var(--text-tertiary);
+    font-weight: bold;
+}
+
+.reroute-card__rationale {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.reroute-card__rationale summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.reroute-card__rationale p {
+    margin: var(--space-sm) 0 0 0;
+    padding-left: var(--space-md);
+    border-left: 2px solid var(--border-muted);
+    color: var(--text-secondary);
+}
+
+.reroute-card__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}
+
+.reroute-card__cta {
+    font-size: var(--font-size-sm);
+}
+
+/* Modal — mirrors PreRunConfirmModal structure so the visual */
+/* language stays consistent across confirmation surfaces. */
+
+.reroute-modal__backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.reroute-modal {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    width: min(92vw, 540px);
+    max-height: 90vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.reroute-modal__head {
+    padding: var(--space-lg);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.reroute-modal__head h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.reroute-modal__body {
+    padding: var(--space-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.reroute-modal__body ul {
+    margin: var(--space-sm) 0;
+    padding-left: var(--space-lg);
+}
+
+.reroute-modal__body li {
+    margin-bottom: 4px;
+}
+
+.reroute-modal__note {
+    margin: var(--space-md) 0 0 0;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-tertiary, rgba(0, 0, 0, 0.03));
+    border-radius: var(--radius-sm);
+    font-style: italic;
+    color: var(--text-tertiary);
+}
+
+.reroute-modal__footer {
+    padding: var(--space-md) var(--space-lg);
+    border-top: 1px solid var(--border-muted);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}

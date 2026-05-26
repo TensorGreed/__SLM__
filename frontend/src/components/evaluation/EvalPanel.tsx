@@ -10,6 +10,7 @@ import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
 import SftLiftPanel from './SftLiftPanel';
 import AutoRagComparisonPanel from './AutoRagComparisonPanel';
+import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import CoachStrip from '../coach/CoachStrip';
 import './EvalPanel.css';
 
@@ -1590,6 +1591,15 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     refreshToken={evalResults.length}
                 />
             )}
+
+            {/* Phase 7c — post-eval reroute recommendation. Self-hides */}
+            {/* on stay_the_course / 404 / 400. Sits above the */}
+            {/* AutoRagComparisonPanel so the approach-pivot signal is */}
+            {/* the first thing the user reads on a failing eval. */}
+            <RerouteRecommendationPanel
+                projectId={projectId}
+                evalResultId={evalResults[0]?.id ?? null}
+            />
 
             {/* Phase 9d — auto-RAG with-vs-without comparison. Renders */}
             {/* only for QA-SFT projects (the panel itself self-hides */}
