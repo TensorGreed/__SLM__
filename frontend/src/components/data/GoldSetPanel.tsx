@@ -7,6 +7,7 @@ import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import CoachStrip from '../coach/CoachStrip';
+import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import './GoldSetPanel.css';
 
 interface GoldSetPanelProps {
@@ -21,6 +22,10 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     const [difficulty, setDifficulty] = useState('medium');
     const [isHallucTrap, setIsHallucTrap] = useState(false);
     const [datasetType, setDatasetType] = useState('gold_dev');
+    // Recipe id powers the qa-sft-only gate on the LLM generation
+    // panel. v1 supports qa-sft; other recipes will get their own
+    // generation paths in follow-up phases.
+    const [recipeId, setRecipeId] = useState<string | null>(null);
 
     const fetchEntries = useCallback(async () => {
         const res = await api.get(`/projects/${projectId}/gold/entries?dataset_type=${datasetType}`);
@@ -28,6 +33,24 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     }, [projectId, datasetType]);
 
     useEffect(() => { fetchEntries(); }, [fetchEntries]);
+
+    // One-shot fetch of the project's selected_recipe so we can
+    // gate the LLM-generate panel without changing this component's
+    // prop contract.
+    useEffect(() => {
+        let cancelled = false;
+        api.get(`/projects/${projectId}`)
+            .then((res) => {
+                if (cancelled) return;
+                const sr = (res.data as { selected_recipe?: { recipe_id?: string } })
+                    ?.selected_recipe;
+                setRecipeId((sr && sr.recipe_id) || null);
+            })
+            .catch(() => {
+                if (!cancelled) setRecipeId(null);
+            });
+        return () => { cancelled = true; };
+    }, [projectId]);
 
     const handleAdd = async () => {
         if (!question.trim() || !answer.trim()) return;
@@ -58,6 +81,14 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                 </div>
 
                 <CoachStrip projectId={projectId} stage="gold_set" />
+
+                {recipeId === 'qa-sft' && (
+                    <LlmGoldGeneratePanel
+                        projectId={projectId}
+                        datasetType={datasetType}
+                        onRowsSaved={fetchEntries}
+                    />
+                )}
 
                 <div className="qa-form">
                     <div className="form-group">

@@ -88,6 +88,7 @@ session-start guidance.
 - `backend/app/services/checkpoint_service.py` — P16 — Checkpoint browser backend (priority.md, RM3).
 - `backend/app/services/cleaning_service.py` — Data Cleaning service — deduplication, PII detection, quality scoring, chunking.
 - `backend/app/services/cloud_burst_service.py` — Cloud GPU burst planning: provider catalog, quote estimation, and launch plans.
+- `backend/app/services/cloud_llm_service.py` — Thin client wrappers for flagship cloud LLM providers (OpenAI +
 - `backend/app/services/cluster_explanation_service.py` — Per-cluster failure explanations (Theme 8 Epic 3).
 - `backend/app/services/coach_service.py` — Coach Mode service (USER-SUCCESS Epic 4).
 - `backend/app/services/compression_service.py` — Compression engine service — quantization, LoRA merge, benchmarking.
@@ -139,6 +140,7 @@ session-start guidance.
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
 - `backend/app/services/gamification/achievements.py` — Declarative achievement catalog (Lab Journal).
 - `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
+- `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation for qa-sft projects.
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.
@@ -413,6 +415,7 @@ session-start guidance.
 - `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
+- `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
@@ -524,6 +527,7 @@ session-start guidance.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
+- `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
@@ -696,6 +700,7 @@ session-start guidance.
 - `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
+- `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
