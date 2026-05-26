@@ -192,6 +192,22 @@ cd frontend && npx vite build                           # production build
   in `<MemoryRouter>` OR (preferred for this repo) use
   `window.location.assign` so the component is mountable in isolation.
 
+### Real-browser E2E (Playwright)
+
+Playwright + chromium are installed at the repo root (NOT under
+`frontend/`). For ad-hoc E2E loops use the entry from the root
+`node_modules/`:
+
+```js
+import { chromium } from '/home/anuragj/Desktop/GitHub/__SLM__/node_modules/playwright/index.mjs';
+```
+
+Auth pattern: `POST /api/auth/local/login` with
+`{username:"admin", password:"sk-mock-admin-key"}`, then seed the
+token into `localStorage.slm_token` via `ctx.addInitScript` before
+`page.goto` — that's the key the frontend reads at
+`App.tsx:27`. Headless mode works on the dev box.
+
 ---
 
 ## Auth + dev env
