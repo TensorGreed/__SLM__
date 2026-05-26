@@ -325,6 +325,7 @@ session-start guidance.
 
 - `frontend/src/api/activeLearning.ts` — Typed wrapper for the Theme 8 Epic 2 active-learning recommender.
 - `frontend/src/api/annotation.ts` — Typed wrappers around the Story 1.1 annotation API.
+- `frontend/src/api/archetypeComparison.ts` — Typed client for the per-project archetype comparison
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
 - `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
@@ -467,6 +468,7 @@ session-start guidance.
 - `frontend/src/components/shared/TerminalConsole.tsx` — Console viewer with auto-scroll and error highlighting for streaming runner output.
 - `frontend/src/components/shared/Toast.tsx` — Toast notification renderer with achievement support and auto-dismiss capability.
 - `frontend/src/components/training/AlignmentScaffoldPanel.tsx` — DPO/alignment recipe resolver and dataset quality validator.
+- `frontend/src/components/training/ArchetypeComparisonPanel.tsx` — ArchetypeComparisonPanel — USER-SUCCESS Epic 8 Phase 8b.
 - `frontend/src/components/training/ChatPlaygroundPanel.tsx` — Interactive prompt session manager supporting multiple inference backends and providers.
 - `frontend/src/components/training/CheckpointsPanel.tsx` — CheckpointsPanel — P20 Checkpoints side panel.
 - `frontend/src/components/training/DatasetFitCard.tsx` — DatasetFitCard — "Why this dataset isn't ready for SFT" explainer

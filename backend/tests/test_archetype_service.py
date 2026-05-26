@@ -437,5 +437,271 @@ class EndpointStatusCodesTests(unittest.TestCase):
         self.assertIn("empty_cohort", resp.text)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase 8b — per-project comparison
+# ─────────────────────────────────────────────────────────────────────
+
+
+from app.services.archetype_service import (  # noqa: E402
+    _classify_feature_status,
+    _minority_label_for,
+    _suggestion_for,
+    _summarise,
+)
+
+
+class ClassifyFeatureStatusTests(unittest.TestCase):
+    def test_below_p25(self):
+        self.assertEqual(
+            _classify_feature_status(your_value=10, p25=20, p75=80),
+            "below",
+        )
+
+    def test_above_p75(self):
+        self.assertEqual(
+            _classify_feature_status(your_value=100, p25=20, p75=80),
+            "above",
+        )
+
+    def test_in_band(self):
+        self.assertEqual(
+            _classify_feature_status(your_value=50, p25=20, p75=80),
+            "ok",
+        )
+
+    def test_missing_when_value_none(self):
+        self.assertEqual(
+            _classify_feature_status(your_value=None, p25=20, p75=80),
+            "missing",
+        )
+
+    def test_missing_when_archetype_band_none(self):
+        # Single-contribution cohort — p25/p75 might be None.
+        self.assertEqual(
+            _classify_feature_status(your_value=42, p25=None, p75=None),
+            "missing",
+        )
+
+
+class SuggestionForTests(unittest.TestCase):
+    def test_row_count_below_emits_paraphrase_action(self):
+        suggestion, action = _suggestion_for(
+            feature_id="row_count",
+            status="below",
+            your_value=50,
+            p50=200,
+            minority_label=None,
+        )
+        self.assertIsNotNone(suggestion)
+        self.assertIsNotNone(action)
+        self.assertEqual(action["kind"], "run_playbook")
+        self.assertEqual(action["params"]["mode"], "positives_paraphrase")
+        self.assertEqual(action["params"]["target_count"], 150)
+
+    def test_row_count_paraphrase_capped_at_200(self):
+        # Cohort median way above current → cap delta at 200.
+        _suggestion, action = _suggestion_for(
+            feature_id="row_count",
+            status="below",
+            your_value=10,
+            p50=2000,
+            minority_label=None,
+        )
+        self.assertEqual(action["params"]["target_count"], 200)
+
+    def test_class_entropy_below_with_minority_emits_balance_fill(self):
+        suggestion, action = _suggestion_for(
+            feature_id="class_entropy",
+            status="below",
+            your_value=0.3,
+            p50=1.5,
+            minority_label="billing",
+        )
+        self.assertIn("billing", suggestion)
+        self.assertEqual(action["kind"], "run_playbook")
+        self.assertEqual(action["params"]["mode"], "class_balance_fill")
+        self.assertEqual(action["params"]["target_class"], "billing")
+
+    def test_class_entropy_below_without_minority_emits_text_only(self):
+        # No minority label known → suggestion exists, action is None.
+        suggestion, action = _suggestion_for(
+            feature_id="class_entropy",
+            status="below",
+            your_value=0.3,
+            p50=1.5,
+            minority_label=None,
+        )
+        self.assertIsNotNone(suggestion)
+        self.assertIsNone(action)
+
+    def test_hard_negative_below_emits_hard_negatives_playbook(self):
+        _s, action = _suggestion_for(
+            feature_id="hard_negative_ratio",
+            status="below",
+            your_value=0.02,
+            p50=0.1,
+            minority_label=None,
+        )
+        self.assertEqual(action["kind"], "run_playbook")
+        self.assertEqual(action["params"]["mode"], "hard_negatives")
+
+    def test_diversity_below_emits_navigate(self):
+        _s, action = _suggestion_for(
+            feature_id="goldset_diversity",
+            status="below",
+            your_value=0.1,
+            p50=0.8,
+            minority_label=None,
+        )
+        self.assertEqual(action["kind"], "navigate")
+        self.assertEqual(action["params"]["target"], "data-studio-diversity")
+
+    def test_length_features_emit_diagnostic_no_action(self):
+        for fid in ("input_length_chars", "output_length_chars"):
+            with self.subTest(fid=fid):
+                suggestion, action = _suggestion_for(
+                    feature_id=fid,
+                    status="below",
+                    your_value=10,
+                    p50=200,
+                    minority_label=None,
+                )
+                self.assertIsNotNone(suggestion)
+                self.assertIsNone(action)
+
+    def test_ok_or_missing_emits_nothing(self):
+        for status in ("ok", "missing"):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    _suggestion_for(
+                        feature_id="row_count",
+                        status=status,
+                        your_value=200,
+                        p50=200,
+                        minority_label=None,
+                    ),
+                    (None, None),
+                )
+
+
+class MinorityLabelTests(unittest.TestCase):
+    def test_returns_smallest_class(self):
+        rows = (
+            [{"expected": {"label": "billing"}}] * 1
+            + [{"expected": {"label": "tech"}}] * 10
+            + [{"expected": {"label": "shipping"}}] * 5
+        )
+        self.assertEqual(_minority_label_for(rows), "billing")
+
+    def test_returns_none_for_single_class(self):
+        rows = [{"expected": {"label": "tech"}}] * 5
+        self.assertIsNone(_minority_label_for(rows))
+
+    def test_returns_none_for_no_labels(self):
+        rows = [{"input": "x", "expected": {"answer": "y"}}] * 5
+        self.assertIsNone(_minority_label_for(rows))
+
+
+class SummariseTests(unittest.TestCase):
+    def _feature(self, status: str) -> dict:
+        return {
+            "feature_id": "x",
+            "label": "x",
+            "unit": "rows",
+            "your_value": None,
+            "archetype_p25": None,
+            "archetype_p50": None,
+            "archetype_p75": None,
+            "status": status,
+            "suggestion": None,
+            "suggested_action": None,
+        }
+
+    def test_all_ok_is_healthy(self):
+        self.assertEqual(
+            _summarise([self._feature("ok"), self._feature("ok")]),
+            "healthy",
+        )
+
+    def test_below_majority_is_below_cohort(self):
+        self.assertEqual(
+            _summarise([self._feature("below"), self._feature("below"), self._feature("ok")]),
+            "below_cohort",
+        )
+
+    def test_above_majority_is_above_cohort(self):
+        self.assertEqual(
+            _summarise([self._feature("above"), self._feature("above"), self._feature("ok")]),
+            "above_cohort",
+        )
+
+    def test_both_directions_is_mixed(self):
+        self.assertEqual(
+            _summarise([self._feature("below"), self._feature("above")]),
+            "mixed",
+        )
+
+    def test_only_missing_is_healthy(self):
+        # Nothing measurable → don't lecture the user.
+        self.assertEqual(
+            _summarise([self._feature("missing"), self._feature("missing")]),
+            "healthy",
+        )
+
+
+class ComparisonEndpointTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+        cls.client = _MODULE_CLIENT_CM
+
+    @classmethod
+    def tearDownClass(cls):
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def _instantiate_template(self, slug: str, name: str) -> int:
+        resp = self.client.post(
+            f"/api/project-templates/{slug}/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def setUp(self):
+        clear_archetype_cache()
+
+    def test_404_when_project_not_found(self):
+        resp = self.client.get(
+            "/api/projects/9999999/archetype-comparison",
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+        self.assertIn("project_not_found", resp.text)
+
+    def test_200_with_template_archetype_for_classification_project(self):
+        pid = self._instantiate_template(
+            "ticket-router", "Archetype Cmp endpoint happy",
+        )
+        resp = self.client.get(
+            f"/api/projects/{pid}/archetype-comparison",
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["project_id"], pid)
+        self.assertEqual(body["recipe_id"], "classification")
+        # Archetype was loaded — template seeds present.
+        self.assertGreaterEqual(body["archetype"]["n_passing_projects"], 1)
+        # Per-feature statuses are present for the applicable
+        # classification features.
+        feature_ids = {f["feature_id"] for f in body["features"]}
+        self.assertIn("class_entropy", feature_ids)
+        self.assertIn("row_count", feature_ids)
+        # Summary is one of the four known values.
+        self.assertIn(
+            body["summary"],
+            {"healthy", "below_cohort", "above_cohort", "mixed"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

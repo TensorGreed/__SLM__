@@ -562,3 +562,287 @@ async def compute_recipe_archetype(
     }
     _cache_put(recipe_id, payload)
     return payload
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-project comparison (USER-SUCCESS Epic 8 Phase 8b)
+# ─────────────────────────────────────────────────────────────────────
+
+
+FeatureStatus = Literal["ok", "below", "above", "missing"]
+ComparisonSummary = Literal["healthy", "below_cohort", "above_cohort", "mixed"]
+
+
+class FeatureComparison(TypedDict):
+    """One feature compared between the current project and the
+    recipe's archetype distribution. Status drives the UI badge;
+    ``suggested_action`` (when present) drives a one-click remediation
+    button that matches the existing Coach action shape so frontend
+    handlers can reuse them verbatim."""
+
+    feature_id: str
+    label: str
+    unit: str
+    your_value: float | None
+    archetype_p25: float | None
+    archetype_p50: float | None
+    archetype_p75: float | None
+    status: FeatureStatus
+    suggestion: str | None
+    suggested_action: dict | None        # {kind, params} shape used by Coach
+
+
+class ProjectArchetypeComparison(TypedDict):
+    project_id: int
+    recipe_id: str
+    archetype: RecipeArchetype           # full archetype for context (cohort, n_*, etc.)
+    features: list[FeatureComparison]
+    summary: ComparisonSummary
+
+
+def _classify_feature_status(
+    *,
+    your_value: float | None,
+    p25: float | None,
+    p75: float | None,
+) -> FeatureStatus:
+    """Status logic per the Phase 8b spec — below_p25 / above_p75 /
+    in-band / missing. Defensive on incomplete archetypes (e.g. a
+    1-project cohort might not yield meaningful percentiles)."""
+    if your_value is None:
+        return "missing"
+    if p25 is None or p75 is None:
+        # Archetype lacks a percentile band for this feature — can't
+        # classify; treat as missing rather than misleading "ok".
+        return "missing"
+    if your_value < p25:
+        return "below"
+    if your_value > p75:
+        return "above"
+    return "ok"
+
+
+def _suggestion_for(
+    *,
+    feature_id: str,
+    status: FeatureStatus,
+    your_value: float | None,
+    p50: float | None,
+    minority_label: str | None,
+) -> tuple[str | None, dict | None]:
+    """Map (feature, status) to a human-readable suggestion +
+    optional ``suggested_action`` payload. Action shapes match the
+    Coach Mode contract so the frontend reuses the existing
+    handlers (``run_playbook`` → fires runPlaybookAsync via the
+    Jobs framework; ``navigate`` → window.location.assign).
+
+    Returns ``(None, None)`` for ok / missing or for features
+    where there's no obvious one-click fix (length features)."""
+    if status not in ("below", "above"):
+        return (None, None)
+
+    # Row count below cohort → paraphrase more positives. Suggest
+    # filling the gap to the cohort median.
+    if feature_id == "row_count" and status == "below" and p50 is not None and your_value is not None:
+        delta = max(20, int(p50 - your_value))
+        delta = min(delta, 200)  # cap so the suggestion isn't a 500-row request
+        return (
+            f"Your project has {int(your_value)} rows; the cohort median is "
+            f"{int(p50)}. Generate {delta} more via the positives-paraphrase "
+            f"playbook.",
+            {
+                "kind": "run_playbook",
+                "params": {
+                    "mode": "positives_paraphrase",
+                    "target_count": delta,
+                },
+            },
+        )
+
+    # Class entropy below → fill the minority class via
+    # class_balance_fill. Only emits when we know the minority label.
+    if feature_id == "class_entropy" and status == "below":
+        if minority_label:
+            return (
+                f"Class distribution is more skewed than the cohort. Generate "
+                f"examples for the minority class ({minority_label}) via the "
+                f"class-balance-fill playbook.",
+                {
+                    "kind": "run_playbook",
+                    "params": {
+                        "mode": "class_balance_fill",
+                        "target_count": 30,
+                        "target_class": minority_label,
+                    },
+                },
+            )
+        return (
+            "Class distribution is more skewed than the cohort. Generate "
+            "examples for the minority class via the class-balance-fill "
+            "playbook.",
+            None,
+        )
+
+    # Class balance ratio below → same fix as entropy. The two
+    # signals usually fire together, so the Coach card collapses
+    # duplicates; here we still emit both for completeness.
+    if feature_id == "class_balance_ratio" and status == "below" and minority_label:
+        return (
+            f"One class dominates more than the cohort. Top up the minority "
+            f"class ({minority_label}) via class-balance-fill.",
+            {
+                "kind": "run_playbook",
+                "params": {
+                    "mode": "class_balance_fill",
+                    "target_count": 30,
+                    "target_class": minority_label,
+                },
+            },
+        )
+
+    # Hard-negative ratio below → run the hard-negatives playbook.
+    if feature_id == "hard_negative_ratio" and status == "below":
+        return (
+            "Your hard-negative share is below the cohort. The hard-negatives "
+            "playbook generates rows that look like one class but should be "
+            "labeled another — high-signal training data.",
+            {
+                "kind": "run_playbook",
+                "params": {
+                    "mode": "hard_negatives",
+                    "target_count": 30,
+                },
+            },
+        )
+
+    # Diversity below → navigate to Data Studio's diversity tools.
+    # No automatic playbook here yet; this is the manual path.
+    if feature_id == "goldset_diversity" and status == "below":
+        return (
+            "Your gold set is less diverse than the cohort — rows likely "
+            "repeat similar wording. Open Data Studio's diversity tools to "
+            "spot the clusters.",
+            {
+                "kind": "navigate",
+                "params": {"target": "data-studio-diversity"},
+            },
+        )
+
+    # Length features: diagnostic copy only. No automatic fix —
+    # input/output length mismatches usually signal a recipe / data
+    # mismatch the user has to investigate themselves.
+    if feature_id in ("input_length_chars", "output_length_chars"):
+        direction = "shorter" if status == "below" else "longer"
+        which = "input" if feature_id == "input_length_chars" else "output"
+        return (
+            f"Your {which} lengths are {direction} than the cohort. Worth "
+            f"reviewing a sample to confirm the recipe / dataset match.",
+            None,
+        )
+
+    return (None, None)
+
+
+def _summarise(features: list[FeatureComparison]) -> ComparisonSummary:
+    """Aggregate per-feature statuses into a single verdict. We
+    ignore 'missing' when counting majorities — they don't reflect
+    drift, just unmeasurable features."""
+    counted = [f["status"] for f in features if f["status"] != "missing"]
+    if not counted:
+        return "healthy"  # nothing measurable → don't lecture
+    n_below = sum(1 for s in counted if s == "below")
+    n_above = sum(1 for s in counted if s == "above")
+    n_ok = sum(1 for s in counted if s == "ok")
+    if n_below == 0 and n_above == 0:
+        return "healthy"
+    if n_below > 0 and n_above > 0:
+        return "mixed"
+    if n_below > n_ok:
+        return "below_cohort"
+    if n_above > n_ok:
+        return "above_cohort"
+    return "mixed"
+
+
+def _minority_label_for(rows: list[dict[str, Any]]) -> str | None:
+    """Return the smallest-count class label, or None when no
+    classes / single class. Used to populate
+    ``class_balance_fill`` actions with the right target_class."""
+    labels = _extract_classification_labels(rows)
+    if not labels:
+        return None
+    counter = Counter(labels)
+    if len(counter) < 2:
+        return None
+    minority = min(counter.items(), key=lambda kv: kv[1])
+    return minority[0]
+
+
+async def compare_project_to_archetype(
+    db: AsyncSession,
+    project_id: int,
+) -> ProjectArchetypeComparison:
+    """Compute the per-project comparison against the recipe's
+    archetype. Raises ``ValueError("project_not_found")`` on
+    missing project, ``ValueError("no_recipe_selected")`` when
+    the project hasn't picked a recipe yet."""
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError("project_not_found")
+    recipe_id = (
+        project.selected_recipe.get("recipe_id")
+        if isinstance(project.selected_recipe, dict)
+        else None
+    )
+    if not recipe_id:
+        raise ValueError("no_recipe_selected")
+
+    # 1. Compute the recipe's archetype (cached when warm).
+    archetype = await compute_recipe_archetype(db, recipe_id)
+
+    # 2. Load this project's rows + extract its feature values.
+    rows = await _load_project_rows(db, project_id)
+    your_values = extract_features_from_rows(rows, recipe_id=recipe_id)
+    minority_label = _minority_label_for(rows)
+
+    # 3. Build per-feature comparisons against the archetype's bands.
+    archetype_by_id: dict[str, FeatureDistribution] = {
+        f["feature_id"]: f for f in archetype["features"]
+    }
+    comparisons: list[FeatureComparison] = []
+    for fid in sorted(_applicable_features(recipe_id)):
+        archetype_feature = archetype_by_id.get(fid)
+        your_value = your_values.get(fid)
+        p25 = archetype_feature["p25"] if archetype_feature else None
+        p50 = archetype_feature["p50"] if archetype_feature else None
+        p75 = archetype_feature["p75"] if archetype_feature else None
+        status = _classify_feature_status(
+            your_value=your_value, p25=p25, p75=p75,
+        )
+        suggestion, action = _suggestion_for(
+            feature_id=fid,
+            status=status,
+            your_value=your_value,
+            p50=p50,
+            minority_label=minority_label,
+        )
+        comparisons.append({
+            "feature_id": fid,
+            "label": _FEATURE_LABELS[fid],
+            "unit": _FEATURE_UNITS[fid],
+            "your_value": your_value,
+            "archetype_p25": p25,
+            "archetype_p50": p50,
+            "archetype_p75": p75,
+            "status": status,
+            "suggestion": suggestion,
+            "suggested_action": action,
+        })
+
+    return {
+        "project_id": project_id,
+        "recipe_id": recipe_id,
+        "archetype": archetype,
+        "features": comparisons,
+        "summary": _summarise(comparisons),
+    }

@@ -11,14 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.services.archetype_service import (
+    compare_project_to_archetype,
     compute_recipe_archetype,
 )
 
 
-router = APIRouter(prefix="/archetypes", tags=["Archetypes"])
+router = APIRouter(tags=["Archetypes"])
 
 
-@router.get("/{recipe_id}")
+@router.get("/archetypes/{recipe_id}")
 async def get_recipe_archetype(
     recipe_id: str,
     refresh: bool = False,
@@ -50,4 +51,36 @@ async def get_recipe_archetype(
             raise HTTPException(400, detail) from exc
         if detail.startswith("empty_cohort"):
             raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
+@router.get("/projects/{project_id}/archetype-comparison")
+async def get_project_archetype_comparison(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """USER-SUCCESS Epic 8 Phase 8b — per-project comparison
+    against the recipe's archetype. Returns one row per applicable
+    feature with status (below / above / ok / missing) and an
+    optional ``suggested_action`` payload that matches the Coach
+    Mode contract so the frontend reuses the existing handlers
+    (``run_playbook`` fires through the Jobs framework;
+    ``navigate`` uses ``window.location.assign``).
+
+    Status codes:
+      * 200 — comparison computed.
+      * 400 — project has no selected recipe (can't compare to an
+        archetype without knowing the recipe) OR the recipe's
+        archetype cohort is empty (no user projects, no template
+        seed — only ``code-review`` today).
+      * 404 — project not found.
+    """
+    try:
+        return await compare_project_to_archetype(db, project_id)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "project_not_found":
+            raise HTTPException(404, detail) from exc
+        if detail.startswith("empty_cohort"):
+            raise HTTPException(400, detail) from exc
         raise HTTPException(400, detail) from exc

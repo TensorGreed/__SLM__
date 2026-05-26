@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 
 import AlignmentScaffoldPanel from '../components/training/AlignmentScaffoldPanel';
+import ArchetypeComparisonPanel from '../components/training/ArchetypeComparisonPanel';
 import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import CoachStrip from '../components/coach/CoachStrip';
@@ -63,6 +64,8 @@ export default function ProjectTrainingConfigPage() {
             </section>
 
             <CoachStrip projectId={projectId} stage="training" />
+
+            <ArchetypeComparisonPanel projectId={projectId} />
 
             <TrainabilityForecastPanel
                 projectId={projectId}
