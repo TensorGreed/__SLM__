@@ -571,7 +571,12 @@ export default function ProjectDataStudioPage() {
                 handoffs: [
                     { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'mapping' },
                 ],
-                content: <DataStudioMappingPreviewPanel projectId={projectId} />,
+                content: (
+                    <DataStudioMappingPreviewPanel
+                        projectId={projectId}
+                        onOpenTarget={openDataStudioTarget}
+                    />
+                ),
             },
             {
                 id: 'domain' as const,

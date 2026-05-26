@@ -3,6 +3,7 @@ import {
     AlertTriangle,
     CheckCircle2,
     Code2,
+    ExternalLink,
     GitBranch,
     RefreshCw,
 } from 'lucide-react';
@@ -12,12 +13,14 @@ import {
 } from '../../api/dataStudio';
 import type {
     DataStudioMappingPreview,
+    DataStudioMappingTemplate,
     DataStudioRequiredFieldCoverage,
 } from '../../api/dataStudio';
 import './DataStudioMappingPreviewPanel.css';
 
 interface DataStudioMappingPreviewPanelProps {
     projectId: number;
+    onOpenTarget?: (target: string) => void;
 }
 
 const DATASET_TYPE_LABELS: Record<string, string> = {
@@ -79,8 +82,100 @@ function requiredCoverageLabel(fields: DataStudioRequiredFieldCoverage[]): strin
     return formatPercent(minRatio);
 }
 
+function templateStatusLabel(status: string): string {
+    if (status === 'ready') return 'Ready';
+    if (status === 'missing') return 'Missing fields';
+    return 'Needs review';
+}
+
+function templateSourceLabel(source: string): string {
+    if (source === 'auto_fix') return 'Detected';
+    if (source === 'recipe') return 'Recipe';
+    if (source === 'adapter') return 'Adapter';
+    if (source === 'domain') return 'Domain';
+    return source.replace(/_/g, ' ');
+}
+
+function fieldStatusLabel(status: string): string {
+    if (status === 'applied') return 'Applied';
+    if (status === 'available') return 'Available';
+    if (status === 'missing') return 'Missing';
+    if (status === 'ambiguous') return 'Ambiguous';
+    return status.replace(/_/g, ' ');
+}
+
+function MappingTemplateCard({
+    template,
+    onOpenTarget,
+}: {
+    template: DataStudioMappingTemplate;
+    onOpenTarget?: (target: string) => void;
+}) {
+    const fieldSummary = [
+        `${formatNumber(template.summary.applied_count)} applied`,
+        `${formatNumber(template.summary.available_count)} available`,
+        `${formatNumber(template.summary.missing_count)} missing`,
+        `${formatNumber(template.summary.ambiguous_count)} ambiguous`,
+    ].join(' · ');
+
+    return (
+        <article className={`data-studio-mapping__template data-studio-mapping__template--${template.status}`}>
+            <div className="data-studio-mapping__template-head">
+                <div>
+                    <h5>{template.label}</h5>
+                    <p>{template.description}</p>
+                </div>
+                <div className="data-studio-mapping__template-badges">
+                    {template.recommended ? <span>Recommended</span> : null}
+                    <span>{templateSourceLabel(template.source)}</span>
+                    <span>{templateStatusLabel(template.status)}</span>
+                </div>
+            </div>
+            <div className="data-studio-mapping__template-summary">
+                <span>{fieldSummary}</span>
+                <b>{formatPercent(template.confidence)} match</b>
+            </div>
+            {template.fields.length > 0 ? (
+                <div className="data-studio-mapping__template-fields">
+                    {template.fields.map((field) => (
+                        <div
+                            className={`data-studio-mapping__template-field data-studio-mapping__template-field--${field.status}`}
+                            key={`${template.id}:${field.canonical_field}`}
+                        >
+                            <span>
+                                <strong>{field.canonical_field}</strong>
+                                <small>
+                                    {field.current_source ? `Current: ${field.current_source}` : 'No saved override'}
+                                </small>
+                            </span>
+                            <code>{field.recommended_source || 'No match'}</code>
+                            <em>{fieldStatusLabel(field.status)}</em>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <p className="data-studio-mapping__empty">No field-level template details are available yet.</p>
+            )}
+            <div className="data-studio-mapping__template-action">
+                <p>{template.apply_action.description}</p>
+                {onOpenTarget ? (
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => onOpenTarget(template.apply_action.target_tab)}
+                    >
+                        <ExternalLink size={15} aria-hidden="true" />
+                        {template.apply_action.label}
+                    </button>
+                ) : null}
+            </div>
+        </article>
+    );
+}
+
 export default function DataStudioMappingPreviewPanel({
     projectId,
+    onOpenTarget,
 }: DataStudioMappingPreviewPanelProps) {
     const [mapping, setMapping] = useState<DataStudioMappingPreview | null>(null);
     const [loading, setLoading] = useState(true);
@@ -112,6 +207,8 @@ export default function DataStudioMappingPreviewPanel({
         () => mapping?.issues.slice(0, 4) ?? [],
         [mapping],
     );
+    const templates = mapping?.mapping_templates;
+    const recommendedTemplate = templates?.templates.find((template) => template.recommended) ?? null;
 
     if (loading && !mapping) {
         return (
@@ -205,6 +302,63 @@ export default function DataStudioMappingPreviewPanel({
                 </small>
             </div>
 
+            <div className="data-studio-mapping__templates">
+                <div className="data-studio-mapping__templates-head">
+                    <div>
+                        <h4>Mapping templates</h4>
+                        <p>
+                            Compare recipe, adapter, domain, and detected templates before saving mapping changes in Data Prep.
+                        </p>
+                    </div>
+                    <div className="data-studio-mapping__template-metrics">
+                        <span>{formatNumber(templates?.template_count)} templates</span>
+                        <span>{formatNumber(templates?.detected_fields.length ?? 0)} detected fields</span>
+                        <span>{templates?.read_only ? 'Read-only' : 'Can mutate'}</span>
+                    </div>
+                </div>
+
+                {recommendedTemplate ? (
+                    <p className="data-studio-mapping__template-guidance">
+                        Recommended: <strong>{recommendedTemplate.label}</strong>
+                        {' · '}
+                        {formatNumber(recommendedTemplate.summary.missing_count)} missing
+                        {' · '}
+                        {formatNumber(recommendedTemplate.summary.ambiguous_count)} ambiguous
+                    </p>
+                ) : (
+                    <p className="data-studio-mapping__template-guidance">
+                        Template recommendations appear after a recipe, adapter, or domain contract is available.
+                    </p>
+                )}
+
+                {templates?.detected_fields.length ? (
+                    <div className="data-studio-mapping__detected-fields" aria-label="Detected source fields">
+                        {templates.detected_fields.slice(0, 10).map((field) => (
+                            <span key={field.field}>
+                                {field.field}
+                                <b>{formatNumber(field.count)}</b>
+                            </span>
+                        ))}
+                    </div>
+                ) : null}
+
+                {templates?.templates.length ? (
+                    <div className="data-studio-mapping__template-list">
+                        {templates.templates.slice(0, 4).map((template) => (
+                            <MappingTemplateCard
+                                key={template.id}
+                                template={template}
+                                onOpenTarget={onOpenTarget}
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <p className="data-studio-mapping__empty">
+                        No mapping templates are available for the current recipe and source sample yet.
+                    </p>
+                )}
+            </div>
+
             <div className="data-studio-mapping__body">
                 <div className="data-studio-mapping__coverage">
                     <h4>Required fields</h4>
@@ -274,6 +428,7 @@ export default function DataStudioMappingPreviewPanel({
                         effective_mapping: mapping.effective_mapping,
                         source: mapping.source,
                         diagnostics: mapping.diagnostics,
+                        mapping_templates: mapping.mapping_templates,
                     })}
                 </pre>
             </details>

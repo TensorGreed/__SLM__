@@ -35,6 +35,7 @@ from app.services.dataset_service import (
     preview_project_data_adapter,
     resolve_project_dataset_adapter_preference,
 )
+from app.services.data_adapter_service import resolve_data_adapter_contract
 from app.services.domain_pack_service import create_domain_pack, get_domain_pack
 from app.services.domain_profile_service import create_domain_profile, get_domain_profile
 from app.services.domain_runtime_service import resolve_project_domain_runtime
@@ -4561,6 +4562,402 @@ def _compact_preview_rows(preview_rows: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def _mapping_template_slug(value: Any) -> str:
+    token = str(value or "").strip().lower().replace("_", "-")
+    token = re.sub(r"[^a-z0-9-]+", "-", token)
+    token = re.sub(r"-{2,}", "-", token).strip("-")
+    return token or "mapping-template"
+
+
+def _mapping_detected_field_rows(raw_field_frequency: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = [
+        {"field": str(field), "count": int(count or 0)}
+        for field, count in raw_field_frequency.items()
+        if str(field).strip()
+    ]
+    rows.sort(key=lambda item: (-int(item["count"]), str(item["field"])))
+    return rows[:16]
+
+
+def _mapping_schema_hint(contract: dict[str, Any]) -> dict[str, Any]:
+    schema_hint = contract.get("schema_hint")
+    return schema_hint if isinstance(schema_hint, dict) else {}
+
+
+def _mapping_output_fields(schema_hint: dict[str, Any], recipe_payload: dict[str, Any] | None) -> list[str]:
+    output_shape = schema_hint.get("output_shape")
+    fields = [
+        str(field)
+        for field, required in (output_shape.items() if isinstance(output_shape, dict) else [])
+        if str(field).strip() and str(required or "").lower() == "required"
+    ]
+    task_profile = str((recipe_payload or {}).get("task_profile") or "").strip().lower()
+    if not fields:
+        if task_profile == "classification":
+            fields = ["text", "label"]
+        elif task_profile in {"rag_qa"}:
+            fields = ["question", "context", "answer"]
+        elif task_profile in {"summarization", "seq2seq"}:
+            fields = ["source_text", "target_text"]
+        else:
+            fields = ["question", "answer"]
+    if "source_text" in fields and "text" not in fields and task_profile == "classification":
+        fields.insert(0, "text")
+    deduped: list[str] = []
+    for field in fields:
+        if field not in deduped:
+            deduped.append(field)
+    return deduped
+
+
+def _mapping_field_role(field: str, recipe_payload: dict[str, Any] | None) -> str:
+    token = field.lower()
+    task_profile = str((recipe_payload or {}).get("task_profile") or "").strip().lower()
+    if token in {"answer", "target", "target_text", "output", "completion", "expected", "label", "class", "category"}:
+        return "output"
+    if token in {"context", "source", "source_text", "passage", "document"} and task_profile == "rag_qa":
+        return "context"
+    if token in {"context", "metadata"}:
+        return "context"
+    return "input"
+
+
+def _mapping_recipe_default_source(field: str, recipe_payload: dict[str, Any] | None) -> str:
+    if not recipe_payload:
+        return field
+    role = _mapping_field_role(field, recipe_payload)
+    if role == "output":
+        return str(recipe_payload.get("default_output_column") or field).strip() or field
+    if role == "context":
+        return "context"
+    return str(recipe_payload.get("default_input_column") or field).strip() or field
+
+
+def _mapping_aliases_for_field(
+    field: str,
+    schema_hint: dict[str, Any],
+    domain_aliases: dict[str, list[str]] | None = None,
+) -> list[str]:
+    aliases: list[str] = []
+
+    def add(value: Any) -> None:
+        token = str(value or "").strip()
+        if token and token not in aliases:
+            aliases.append(token)
+
+    input_candidates = schema_hint.get("input_candidates")
+    if isinstance(input_candidates, dict):
+        for value in list(input_candidates.get(field) or []):
+            add(value)
+    for value in (domain_aliases or {}).get(field, []):
+        add(value)
+    if field in {"text", "source_text", "question"}:
+        for value in (domain_aliases or {}).get("input_text", []):
+            add(value)
+    if field in {"answer", "target_text", "label"}:
+        for value in (domain_aliases or {}).get("target_text", []):
+            add(value)
+    if field == "context":
+        for value in (domain_aliases or {}).get("context", []):
+            add(value)
+    add(field)
+    return aliases
+
+
+def _mapping_domain_aliases(contract: dict[str, Any]) -> dict[str, list[str]]:
+    aliases: dict[str, list[str]] = {}
+
+    def add(field: Any, value: Any) -> None:
+        key = str(field or "").strip()
+        token = str(value or "").strip()
+        if not key or not token:
+            return
+        bucket = aliases.setdefault(key, [])
+        if token not in bucket:
+            bucket.append(token)
+
+    canonical_schema = contract.get("canonical_schema")
+    if isinstance(canonical_schema, dict):
+        raw_aliases = canonical_schema.get("aliases")
+        if isinstance(raw_aliases, dict):
+            for field, values in raw_aliases.items():
+                add(field, field)
+                for value in values if isinstance(values, list) else []:
+                    add(field, value)
+        for field in list(canonical_schema.get("required") or []):
+            add(field, field)
+    return aliases
+
+
+def _mapping_pick_source(
+    field: str,
+    *,
+    preferred: str,
+    schema_hint: dict[str, Any],
+    raw_field_frequency: dict[str, Any],
+    domain_aliases: dict[str, list[str]] | None = None,
+) -> tuple[str, list[str], list[str]]:
+    raw_fields = {str(field) for field in raw_field_frequency.keys()}
+    aliases = _mapping_aliases_for_field(field, schema_hint, domain_aliases)
+    candidates: list[str] = []
+    for value in [preferred, *aliases]:
+        token = str(value or "").strip()
+        if token and token not in candidates:
+            candidates.append(token)
+    detected = [candidate for candidate in candidates if candidate in raw_fields]
+    if detected:
+        detected.sort(key=lambda item: (-int(raw_field_frequency.get(item) or 0), candidates.index(item)))
+        return detected[0], detected, candidates
+    return str(preferred or (candidates[0] if candidates else field)).strip() or field, detected, candidates
+
+
+def _mapping_template_from_fields(
+    *,
+    template_id: str,
+    label: str,
+    description: str,
+    source: str,
+    fields: list[dict[str, Any]],
+    current_mapping: dict[str, str],
+    raw_field_frequency: dict[str, Any],
+    adapter_id: str,
+    task_profile: str | None,
+) -> dict[str, Any]:
+    field_rows: list[dict[str, Any]] = []
+    field_mapping: dict[str, str] = {}
+    status_counts: Counter[str] = Counter()
+    for field in fields:
+        canonical = str(field.get("canonical_field") or "").strip()
+        recommended = str(field.get("source_field") or "").strip()
+        required = bool(field.get("required", True))
+        candidates = [
+            str(item)
+            for item in list(field.get("candidates") or [])
+            if str(item).strip()
+        ]
+        detected_candidates = [
+            str(item)
+            for item in list(field.get("detected_candidates") or [])
+            if str(item).strip()
+        ]
+        current_source = str(current_mapping.get(canonical) or "").strip()
+        if recommended:
+            field_mapping[canonical] = recommended
+        if current_source and current_source == recommended:
+            status = "applied"
+        elif required and recommended not in raw_field_frequency and not detected_candidates:
+            status = "missing"
+        elif len(detected_candidates) > 1 and not current_source:
+            status = "ambiguous"
+        else:
+            status = "available"
+        status_counts[status] += 1
+        field_rows.append({
+            "canonical_field": canonical,
+            "recommended_source": recommended,
+            "current_source": current_source or None,
+            "status": status,
+            "required": required,
+            "detected_candidates": detected_candidates[:6],
+            "candidate_sources": candidates[:8],
+            "note": str(field.get("note") or ""),
+        })
+
+    total = max(1, len(field_rows))
+    ready_count = int(status_counts.get("applied", 0) + status_counts.get("available", 0))
+    score = max(
+        0.0,
+        min(
+            1.0,
+            (ready_count / total)
+            - (0.22 * int(status_counts.get("missing", 0)) / total)
+            - (0.12 * int(status_counts.get("ambiguous", 0)) / total),
+        ),
+    )
+    if int(status_counts.get("missing", 0)):
+        status = "missing"
+    elif int(status_counts.get("ambiguous", 0)):
+        status = "attention"
+    else:
+        status = "ready"
+    return {
+        "id": template_id,
+        "label": label,
+        "description": description,
+        "source": source,
+        "status": status,
+        "recommended": False,
+        "confidence": round(score, 4),
+        "adapter_id": adapter_id,
+        "task_profile": task_profile,
+        "field_mapping": field_mapping,
+        "fields": field_rows,
+        "summary": {
+            "total_fields": len(field_rows),
+            "applied_count": int(status_counts.get("applied", 0)),
+            "available_count": int(status_counts.get("available", 0)),
+            "missing_count": int(status_counts.get("missing", 0)),
+            "ambiguous_count": int(status_counts.get("ambiguous", 0)),
+        },
+        "apply_action": {
+            "label": "Open Data Prep to apply",
+            "target_tab": "dataprep",
+            "requires_confirmation": True,
+            "description": "Review and save/apply this mapping in Data Prep. Data Studio does not mutate project mapping.",
+        },
+    }
+
+
+def _mapping_build_templates(
+    *,
+    recipe_payload: dict[str, Any] | None,
+    effective_adapter_id: str,
+    effective_task_profile: str | None,
+    field_mapping: dict[str, str],
+    adapter_contract: dict[str, Any],
+    raw_field_frequency: dict[str, Any],
+    auto_apply: dict[str, Any] | None = None,
+    domain_contract: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    schema_hint = _mapping_schema_hint(adapter_contract)
+    domain_aliases = _mapping_domain_aliases(domain_contract or {}) if isinstance(domain_contract, dict) else {}
+    output_fields = _mapping_output_fields(schema_hint, recipe_payload)
+    templates: list[dict[str, Any]] = []
+
+    def build_fields(source_kind: str, aliases: dict[str, list[str]] | None = None) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for field in output_fields:
+            preferred = _mapping_recipe_default_source(field, recipe_payload)
+            source, detected, candidates = _mapping_pick_source(
+                field,
+                preferred=preferred,
+                schema_hint=schema_hint,
+                raw_field_frequency=raw_field_frequency,
+                domain_aliases=aliases,
+            )
+            rows.append({
+                "canonical_field": field,
+                "source_field": source,
+                "required": True,
+                "detected_candidates": detected,
+                "candidates": candidates,
+                "note": source_kind,
+            })
+        return rows
+
+    if recipe_payload:
+        templates.append(
+            _mapping_template_from_fields(
+                template_id=f"recipe-{_mapping_template_slug(recipe_payload.get('id'))}",
+                label=f"{recipe_payload.get('name') or recipe_payload.get('id')} recipe defaults",
+                description="Uses the selected recipe's expected input/output columns as the starter mapping.",
+                source="recipe",
+                fields=build_fields("recipe-defaults"),
+                current_mapping=field_mapping,
+                raw_field_frequency=raw_field_frequency,
+                adapter_id=effective_adapter_id,
+                task_profile=effective_task_profile,
+            )
+        )
+
+    if schema_hint:
+        templates.append(
+            _mapping_template_from_fields(
+                template_id=f"adapter-{_mapping_template_slug(effective_adapter_id)}",
+                label=f"{effective_adapter_id} adapter aliases",
+                description="Uses the adapter's built-in aliases and detected source fields to propose field mappings.",
+                source="adapter",
+                fields=build_fields("adapter-aliases"),
+                current_mapping=field_mapping,
+                raw_field_frequency=raw_field_frequency,
+                adapter_id=effective_adapter_id,
+                task_profile=effective_task_profile,
+            )
+        )
+
+    if domain_aliases:
+        templates.append(
+            _mapping_template_from_fields(
+                template_id="domain-applied-contract",
+                label="Applied domain contract",
+                description="Uses aliases from the applied Domain Profile/Pack contract when available.",
+                source="domain",
+                fields=build_fields("domain-contract", aliases=domain_aliases),
+                current_mapping=field_mapping,
+                raw_field_frequency=raw_field_frequency,
+                adapter_id=effective_adapter_id,
+                task_profile=effective_task_profile,
+            )
+        )
+
+    suggested_mapping = (
+        auto_apply.get("suggested_field_mapping")
+        if isinstance(auto_apply, dict) and isinstance(auto_apply.get("suggested_field_mapping"), dict)
+        else {}
+    )
+    if suggested_mapping:
+        fields = []
+        for canonical, source in suggested_mapping.items():
+            canonical_field = str(canonical or "").strip()
+            source_field = str(source or "").strip()
+            if not canonical_field or not source_field:
+                continue
+            fields.append({
+                "canonical_field": canonical_field,
+                "source_field": source_field,
+                "required": True,
+                "detected_candidates": [source_field] if source_field in raw_field_frequency else [],
+                "candidates": [source_field],
+                "note": "auto-fix",
+            })
+        if fields:
+            templates.append(
+                _mapping_template_from_fields(
+                    template_id="auto-fix-high-confidence",
+                    label="High-confidence detected mapping",
+                    description="Uses high-confidence field-mapping suggestions from the current adapter preview.",
+                    source="auto_fix",
+                    fields=fields,
+                    current_mapping=field_mapping,
+                    raw_field_frequency=raw_field_frequency,
+                    adapter_id=effective_adapter_id,
+                    task_profile=effective_task_profile,
+                )
+            )
+
+    if templates:
+        best = max(
+            templates,
+            key=lambda item: (
+                float(item.get("confidence") or 0.0),
+                -int(item.get("summary", {}).get("missing_count") or 0),
+                -int(item.get("summary", {}).get("ambiguous_count") or 0),
+            ),
+        )
+        best["recommended"] = True
+
+    missing_count = sum(int(item.get("summary", {}).get("missing_count") or 0) for item in templates)
+    ambiguous_count = sum(int(item.get("summary", {}).get("ambiguous_count") or 0) for item in templates)
+    recommended = next((item for item in templates if item.get("recommended")), None)
+    return {
+        "read_only": True,
+        "template_count": len(templates),
+        "recommended_template_id": recommended.get("id") if recommended else None,
+        "detected_fields": _mapping_detected_field_rows(raw_field_frequency),
+        "missing_field_count": missing_count,
+        "ambiguous_field_count": ambiguous_count,
+        "templates": templates,
+        "entry_points": [
+            {
+                "label": "Open Data Prep",
+                "target_tab": "dataprep",
+                "reason": "Save or apply mapping templates only after reviewing them in the existing Data Prep workflow.",
+                "requires_confirmation": True,
+            }
+        ],
+    }
+
+
 def _empty_mapping_payload(
     *,
     project_id: int,
@@ -4576,6 +4973,7 @@ def _empty_mapping_payload(
     effective_task_profile: str | None,
     source: dict[str, Any] | None,
     issues: list[dict[str, str]],
+    mapping_templates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "project_id": project_id,
@@ -4609,6 +5007,16 @@ def _empty_mapping_payload(
         },
         "preview_rows": [],
         "diagnostics": {},
+        "mapping_templates": mapping_templates or {
+            "read_only": True,
+            "template_count": 0,
+            "recommended_template_id": None,
+            "detected_fields": [],
+            "missing_field_count": 0,
+            "ambiguous_field_count": 0,
+            "templates": [],
+            "entry_points": [],
+        },
         "issues": issues,
     }
 
@@ -4642,6 +5050,27 @@ async def build_data_studio_mapping_preview(
         effective_adapter_id = recipe_adapter_id or preference_adapter_id or "default-canonical"
         effective_task_profile = recipe_task_profile or preference_task_profile or None
         effective_source = "recipe" if recipe_adapter_id else preference_source
+
+    try:
+        domain_runtime = await resolve_project_domain_runtime(db, project_id)
+    except ValueError:
+        domain_runtime = {}
+    domain_contract = (
+        domain_runtime.get("effective_contract")
+        if isinstance(domain_runtime.get("effective_contract"), dict)
+        else {}
+    )
+    base_adapter_contract = resolve_data_adapter_contract(effective_adapter_id)
+    empty_mapping_templates = _mapping_build_templates(
+        recipe_payload=recipe_payload,
+        effective_adapter_id=effective_adapter_id,
+        effective_task_profile=effective_task_profile,
+        field_mapping=field_mapping,
+        adapter_contract=base_adapter_contract,
+        raw_field_frequency={},
+        auto_apply={},
+        domain_contract=domain_contract,
+    )
 
     issues: list[dict[str, str]] = []
     if recipe_payload is None:
@@ -4682,6 +5111,7 @@ async def build_data_studio_mapping_preview(
             effective_task_profile=effective_task_profile,
             source=None,
             issues=issues,
+            mapping_templates=empty_mapping_templates,
         )
 
     dataset_type = source["dataset_type"]
@@ -4727,6 +5157,7 @@ async def build_data_studio_mapping_preview(
             effective_task_profile=effective_task_profile,
             source=source_payload,
             issues=issues,
+            mapping_templates=empty_mapping_templates,
         )
 
     conformance_report = (
@@ -4826,6 +5257,26 @@ async def build_data_studio_mapping_preview(
             )
         )
 
+    resolved_adapter_id = str(preview.get("resolved_adapter_id") or effective_adapter_id)
+    resolved_task_profile = str(preview.get("resolved_task_profile") or effective_task_profile or "")
+    resolved_contract = resolve_data_adapter_contract(resolved_adapter_id)
+    raw_field_frequency = (
+        preview.get("raw_field_frequency")
+        if isinstance(preview.get("raw_field_frequency"), dict)
+        else {}
+    )
+    auto_apply = preview.get("auto_apply") if isinstance(preview.get("auto_apply"), dict) else {}
+    mapping_templates = _mapping_build_templates(
+        recipe_payload=recipe_payload,
+        effective_adapter_id=resolved_adapter_id,
+        effective_task_profile=resolved_task_profile or effective_task_profile,
+        field_mapping=field_mapping,
+        adapter_contract=resolved_contract,
+        raw_field_frequency=raw_field_frequency,
+        auto_apply=auto_apply,
+        domain_contract=domain_contract,
+    )
+
     return {
         "project_id": project_id,
         "verdict": _issue_status(issues),
@@ -4839,13 +5290,13 @@ async def build_data_studio_mapping_preview(
         },
         "effective_mapping": {
             "source": effective_source,
-            "adapter_id": str(preview.get("resolved_adapter_id") or effective_adapter_id),
+            "adapter_id": resolved_adapter_id,
             "requested_adapter_id": str(preview.get("requested_adapter_id") or effective_adapter_id),
-            "task_profile": str(preview.get("resolved_task_profile") or effective_task_profile or ""),
+            "task_profile": resolved_task_profile,
             "requested_task_profile": preview.get("requested_task_profile"),
             "adapter_config": adapter_config,
             "field_mapping": field_mapping,
-            "auto_apply": preview.get("auto_apply") if isinstance(preview.get("auto_apply"), dict) else {},
+            "auto_apply": auto_apply,
         },
         "source": {
             **source,
@@ -4870,7 +5321,9 @@ async def build_data_studio_mapping_preview(
             "auto_fix_suggestions": preview.get("auto_fix_suggestions") if isinstance(preview.get("auto_fix_suggestions"), list) else [],
             "compatibility_warnings": preview.get("compatibility_warnings") if isinstance(preview.get("compatibility_warnings"), list) else [],
             "inferred_task_profiles": preview.get("inferred_task_profiles") if isinstance(preview.get("inferred_task_profiles"), list) else [],
+            "raw_field_frequency": raw_field_frequency,
         },
+        "mapping_templates": mapping_templates,
         "issues": issues,
     }
 

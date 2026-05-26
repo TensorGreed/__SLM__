@@ -261,6 +261,72 @@ export interface DataStudioMappingDiagnostics {
     auto_fix_suggestions?: Array<Record<string, unknown>>;
     compatibility_warnings?: string[];
     inferred_task_profiles?: string[];
+    raw_field_frequency?: Record<string, number>;
+}
+
+export interface DataStudioMappingTemplateDetectedField {
+    field: string;
+    count: number;
+}
+
+export interface DataStudioMappingTemplateField {
+    canonical_field: string;
+    recommended_source: string;
+    current_source?: string | null;
+    status: 'applied' | 'available' | 'missing' | 'ambiguous' | string;
+    required: boolean;
+    detected_candidates: string[];
+    candidate_sources: string[];
+    note?: string;
+}
+
+export interface DataStudioMappingTemplateSummary {
+    total_fields: number;
+    applied_count: number;
+    available_count: number;
+    missing_count: number;
+    ambiguous_count: number;
+}
+
+export interface DataStudioMappingTemplateAction {
+    label: string;
+    target_tab: string;
+    requires_confirmation: boolean;
+    description: string;
+}
+
+export interface DataStudioMappingTemplate {
+    id: string;
+    label: string;
+    description: string;
+    source: 'recipe' | 'adapter' | 'domain' | 'auto_fix' | string;
+    status: 'ready' | 'attention' | 'missing' | string;
+    recommended: boolean;
+    confidence: number;
+    adapter_id: string;
+    task_profile?: string | null;
+    field_mapping: Record<string, string>;
+    fields: DataStudioMappingTemplateField[];
+    summary: DataStudioMappingTemplateSummary;
+    apply_action: DataStudioMappingTemplateAction;
+}
+
+export interface DataStudioMappingTemplateEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+    requires_confirmation: boolean;
+}
+
+export interface DataStudioMappingTemplates {
+    read_only: boolean;
+    template_count: number;
+    recommended_template_id?: string | null;
+    detected_fields: DataStudioMappingTemplateDetectedField[];
+    missing_field_count: number;
+    ambiguous_field_count: number;
+    templates: DataStudioMappingTemplate[];
+    entry_points: DataStudioMappingTemplateEntryPoint[];
 }
 
 export interface DataStudioMappingPreview {
@@ -273,6 +339,7 @@ export interface DataStudioMappingPreview {
     summary: DataStudioMappingSummary;
     preview_rows: DataStudioMappingPreviewRow[];
     diagnostics: DataStudioMappingDiagnostics;
+    mapping_templates?: DataStudioMappingTemplates;
     issues: DataStudioIssue[];
 }
 

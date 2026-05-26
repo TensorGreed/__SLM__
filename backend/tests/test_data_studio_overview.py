@@ -275,6 +275,25 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         }
         self.assertEqual(fields["label"], 1.0)
         self.assertEqual(payload["preview_rows"][0]["mapped"]["label"], "billing")
+        templates = payload["mapping_templates"]
+        self.assertTrue(templates["read_only"])
+        self.assertGreaterEqual(templates["template_count"], 1)
+        self.assertEqual(
+            templates["entry_points"][0]["target_tab"],
+            "dataprep",
+        )
+        self.assertTrue(templates["entry_points"][0]["requires_confirmation"])
+        detected_fields = {item["field"] for item in templates["detected_fields"]}
+        self.assertIn("text", detected_fields)
+        self.assertIn("label", detected_fields)
+        recommended = next(item for item in templates["templates"] if item["recommended"])
+        self.assertIn(recommended["source"], {"recipe", "adapter", "auto_fix"})
+        self.assertEqual(recommended["apply_action"]["target_tab"], "dataprep")
+        self.assertTrue(recommended["apply_action"]["requires_confirmation"])
+        recommended_fields = {item["canonical_field"]: item for item in recommended["fields"]}
+        self.assertIn("text", recommended_fields)
+        self.assertIn("label", recommended_fields)
+        self.assertIn(recommended_fields["text"]["status"], {"available", "applied"})
 
     def test_mapping_preview_empty_without_previewable_rows(self):
         project_id = self._create_project("data-studio-mapping-empty")
@@ -288,6 +307,16 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("missing_recipe", issue_ids)
         self.assertIn("no_mapping_source", issue_ids)
+        self.assertTrue(payload["mapping_templates"]["read_only"])
+        self.assertEqual(payload["mapping_templates"]["detected_fields"], [])
+        if payload["mapping_templates"]["templates"]:
+            self.assertEqual(
+                payload["mapping_templates"]["templates"][0]["apply_action"]["target_tab"],
+                "dataprep",
+            )
+            self.assertTrue(
+                payload["mapping_templates"]["templates"][0]["apply_action"]["requires_confirmation"]
+            )
 
     def test_domain_detection_uses_source_evidence_and_runtime(self):
         project_id = self._create_project("data-studio-domain")
