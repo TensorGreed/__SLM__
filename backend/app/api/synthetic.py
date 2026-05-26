@@ -232,6 +232,91 @@ class GenerateSpanAsyncRequest(BaseModel):
     source_text: str = ""
 
 
+async def _autosave_legacy_synth_rows(
+    *,
+    project_id: int,
+    kind: str,
+    task_id: str,
+    rows: list[dict],
+) -> dict:
+    """Hardening fix — persist a legacy synthetic-task's accumulated
+    rows to ``data/projects/{id}/synthetic/synthetic.jsonl`` so the
+    user doesn't have to discover the in-page "Save" button. The
+    rows land in the same envelope playbook output uses
+    (``review_status="pending"`` + legacy ``status="accepted"``
+    compat field) so the existing SynthReviewQueue picks them up.
+
+    Why this matters: the legacy task framework was always
+    in-memory-only until the user clicked Save. After the H2
+    bridge made the bell show "Done" on task completion, users
+    reasonably read that as "rows are saved" — they weren't, and
+    a server restart wiped them. This auto-save closes that gap.
+
+    Returns a small report dict with ``rows_saved`` + ``file_path``
+    for the Job's result payload.
+    """
+    import json
+
+    from app.config import settings
+    from app.database import async_session_factory
+    from app.services.synthetic_service import (
+        get_or_create_synthetic_dataset,
+    )
+
+    if not rows:
+        return {"rows_saved": 0, "file_path": None}
+
+    synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+    synth_dir.mkdir(parents=True, exist_ok=True)
+    file_path = synth_dir / "synthetic.jsonl"
+
+    # Find the next id by reading the last id in the file. Cheap
+    # enough for any reasonable corpus size.
+    next_id = 1
+    if file_path.exists():
+        with file_path.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj.get("id"), int):
+                        next_id = max(next_id, int(obj["id"]) + 1)
+                except json.JSONDecodeError:
+                    continue
+
+    saved = 0
+    with file_path.open("a", encoding="utf-8") as f:
+        for row in rows:
+            confidence = row.get("confidence") if isinstance(row, dict) else None
+            if not isinstance(confidence, (int, float)):
+                confidence = 0.7  # neutral default for legacy rows
+            payload = {k: v for k, v in row.items() if k != "confidence"}
+            entry = {
+                "id": next_id,
+                **payload,
+                "synth_confidence": float(confidence),
+                "synth_source": f"legacy:{kind}:task={task_id[:8]}",
+                "review_status": "pending",
+                # Legacy field kept so old readers don't choke.
+                "status": "accepted",
+            }
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            next_id += 1
+            saved += 1
+
+    # Bump the Dataset.record_count + ensure file_path is stamped.
+    async with async_session_factory() as ds_db:
+        ds = await get_or_create_synthetic_dataset(ds_db, project_id)
+        ds.record_count = (ds.record_count or 0) + saved
+        if not ds.file_path:
+            ds.file_path = str(file_path)
+        await ds_db.commit()
+
+    return {"rows_saved": saved, "file_path": str(file_path)}
+
+
 async def _spawn_legacy_synth_shadow_job(
     *,
     project_id: int,
@@ -248,7 +333,10 @@ async def _spawn_legacy_synth_shadow_job(
     ``_SYNTHETIC_TASKS[task_id]`` registry every 2 seconds and
     mirrors ``batches_done / batches_total`` into ``Job.progress``,
     ``status`` into the Job's terminal transition, and
-    ``rows_so_far`` into the progress message.
+    ``rows_so_far`` into the progress message. **Auto-saves rows**
+    to ``synthetic.jsonl`` on completion (review_status=pending) so
+    the user doesn't have to find the in-page Save button — bell
+    saying "Done" now means rows are actually persisted.
 
     Best-effort — if the Jobs framework can't be reached (unlikely)
     the legacy task keeps running unaffected; the user just doesn't
@@ -317,9 +405,32 @@ async def _spawn_legacy_synth_shadow_job(
                         f"silently dropped between batches. Check the "
                         f"server logs for the backend's raw response."
                     )
+                # Auto-save the rows to synthetic.jsonl so the user
+                # doesn't have to find the in-page Save button. Bell
+                # saying "Done" now actually means the rows are on
+                # disk + queued for review.
+                task_rows = list(snapshot.get("rows") or [])
+                save_report = await _autosave_legacy_synth_rows(
+                    project_id=project_id,
+                    kind=kind,
+                    task_id=task_id,
+                    rows=task_rows,
+                )
+                # Final progress message reflects the persistent
+                # outcome rather than the heartbeat.
+                await handle.set_progress(
+                    fraction=1.0,
+                    message=(
+                        f"Saved {save_report['rows_saved']} rows to "
+                        f"synthetic.jsonl · {batches_done}/{batches_total} "
+                        f"batches"
+                    ),
+                )
                 return {
                     "task_id": task_id,
                     "rows_generated": rows_so_far,
+                    "rows_saved": save_report["rows_saved"],
+                    "file_path": save_report["file_path"],
                     "batches_done": batches_done,
                     "batches_total": batches_total,
                 }

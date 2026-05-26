@@ -90,11 +90,19 @@ function jobOutcomeSummary(job: Job): string | null {
     }
 
     if (job.kind.startsWith('synth_legacy')) {
-        const rows = typeof r.rows_generated === 'number' ? r.rows_generated : null;
+        const rowsSaved = typeof r.rows_saved === 'number' ? r.rows_saved : null;
+        const rowsGenerated = typeof r.rows_generated === 'number' ? r.rows_generated : null;
         const batches = typeof r.batches_done === 'number' ? r.batches_done : null;
         const total = typeof r.batches_total === 'number' ? r.batches_total : null;
         const parts: string[] = [];
-        if (rows !== null) parts.push(`${rows} row${rows === 1 ? '' : 's'} generated`);
+        // Prefer rows_saved (the persisted count) — that's the
+        // number the user actually cares about. Fall back to
+        // rows_generated for older jobs from before auto-save shipped.
+        if (rowsSaved !== null) {
+            parts.push(`${rowsSaved} row${rowsSaved === 1 ? '' : 's'} saved to dataset`);
+        } else if (rowsGenerated !== null) {
+            parts.push(`${rowsGenerated} row${rowsGenerated === 1 ? '' : 's'} generated`);
+        }
         if (batches !== null && total !== null) parts.push(`${batches}/${total} batches`);
         return parts.length ? parts.join(' · ') : null;
     }

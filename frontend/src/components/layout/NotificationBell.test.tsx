@@ -403,6 +403,87 @@ describe('NotificationBell', () => {
         expect(summary).toHaveTextContent('#88');
     });
 
+    it('renders legacy-synth summary preferring rows_saved over rows_generated', async () => {
+        // Auto-save fix: bell prefers "N rows saved to dataset"
+        // (the persisted count) over the older "rows generated"
+        // wording. Falls back when rows_saved is absent (older
+        // jobs from before the fix).
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                count: 2,
+                jobs: [
+                    jobFixture({
+                        id: 30,
+                        kind: 'synth_legacy_qa',
+                        status: 'succeeded',
+                        title: 'Synth (legacy QA) · 100 rows',
+                        result: {
+                            rows_generated: 100,
+                            rows_saved: 100,
+                            batches_done: 5,
+                            batches_total: 5,
+                        },
+                    }),
+                    jobFixture({
+                        id: 31,
+                        kind: 'synth_legacy_spans',
+                        status: 'succeeded',
+                        title: 'Synth (legacy spans) · 50 rows',
+                        // No rows_saved field — older job.
+                        result: {
+                            rows_generated: 48,
+                            batches_done: 3,
+                            batches_total: 3,
+                        },
+                    }),
+                ],
+            },
+        });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                count: 2,
+                jobs: [
+                    jobFixture({
+                        id: 30,
+                        kind: 'synth_legacy_qa',
+                        status: 'succeeded',
+                        title: 'Synth (legacy QA) · 100 rows',
+                        result: {
+                            rows_generated: 100,
+                            rows_saved: 100,
+                            batches_done: 5,
+                            batches_total: 5,
+                        },
+                    }),
+                    jobFixture({
+                        id: 31,
+                        kind: 'synth_legacy_spans',
+                        status: 'succeeded',
+                        title: 'Synth (legacy spans) · 50 rows',
+                        result: {
+                            rows_generated: 48,
+                            batches_done: 3,
+                            batches_total: 3,
+                        },
+                    }),
+                ],
+            },
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        // New format: "100 rows saved to dataset"
+        expect(
+            screen.getByTestId('notification-bell-row-30-summary'),
+        ).toHaveTextContent('100 rows saved to dataset');
+        // Fallback for older jobs: "48 rows generated"
+        expect(
+            screen.getByTestId('notification-bell-row-31-summary'),
+        ).toHaveTextContent('48 rows generated');
+    });
+
     it('renders training-start summary with final loss + total steps', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {
