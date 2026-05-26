@@ -181,6 +181,83 @@
     gap: var(--space-xs);
 }
 
+.data-studio-quality__triage {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.data-studio-quality__triage-lane {
+    min-width: 0;
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.data-studio-quality__triage-lane--fix-now {
+    border-top: 4px solid var(--color-error);
+}
+
+.data-studio-quality__triage-lane--review-soon {
+    border-top: 4px solid var(--color-warning);
+}
+
+.data-studio-quality__triage-lane--looks-good {
+    border-top: 4px solid var(--color-success);
+}
+
+.data-studio-quality__triage-head {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: var(--space-sm);
+    align-items: start;
+}
+
+.data-studio-quality__triage-head > span {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.data-studio-quality__triage-lane--fix-now .data-studio-quality__triage-head > span {
+    color: var(--color-error);
+}
+
+.data-studio-quality__triage-lane--review-soon .data-studio-quality__triage-head > span {
+    color: var(--color-warning);
+}
+
+.data-studio-quality__triage-lane--looks-good .data-studio-quality__triage-head > span {
+    color: var(--color-success);
+}
+
+.data-studio-quality__triage-head h4,
+.data-studio-quality__triage-head p {
+    margin: 0;
+}
+
+.data-studio-quality__triage-head h4 {
+    font-size: var(--font-size-sm);
+}
+
+.data-studio-quality__triage-head p,
+.data-studio-quality__section-note {
+    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.data-studio-quality__triage-head b {
+    color: var(--text-primary);
+}
+
 .data-studio-quality__body {
     display: grid;
     grid-template-columns: minmax(0, 0.58fr) minmax(0, 0.42fr);
@@ -208,6 +285,10 @@
 .data-studio-quality__domain-authored h4 {
     margin: 0 0 var(--space-sm);
     font-size: var(--font-size-sm);
+}
+
+.data-studio-quality__section-note {
+    margin: calc(-1 * var(--space-xs)) 0 var(--space-sm);
 }
 
 .data-studio-quality__domain-authored {
@@ -256,6 +337,19 @@
     border-left: 4px solid var(--color-success);
 }
 
+.data-studio-quality__check--domain-authored {
+    background: color-mix(in srgb, var(--color-info-bg) 60%, var(--bg-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-info) 18%, transparent);
+}
+
+.data-studio-quality__check--domain-authored.data-studio-quality__check--blocked {
+    border-left-color: var(--color-error);
+}
+
+.data-studio-quality__check--domain-authored.data-studio-quality__check--attention {
+    border-left-color: var(--color-info);
+}
+
 .data-studio-quality__check-head {
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr) auto;
@@ -302,6 +396,51 @@
 
 .data-studio-quality__check p {
     margin: var(--space-sm) 0 0;
+}
+
+.data-studio-quality__check-meta {
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+}
+
+.data-studio-quality__check-meta em {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 700;
+}
+
+.data-studio-quality__check--domain-authored .data-studio-quality__check-meta em:first-of-type {
+    border-color: color-mix(in srgb, var(--color-info) 35%, var(--border-default));
+    color: var(--color-info);
+}
+
+.data-studio-quality__why {
+    display: grid;
+    gap: 2px;
+    padding: var(--space-sm);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    background: var(--bg-primary);
+}
+
+.data-studio-quality__why strong {
+    color: var(--text-primary);
+    font-size: var(--font-size-xs);
+}
+
+.data-studio-quality__why span {
+    color: var(--text-secondary);
 }
 
 .data-studio-quality__check ul {
@@ -366,6 +505,7 @@
 
 @media (max-width: 900px) {
     .data-studio-quality__metrics,
+    .data-studio-quality__triage,
     .data-studio-quality__body {
         grid-template-columns: 1fr;
     }

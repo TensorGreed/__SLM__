@@ -229,17 +229,26 @@ describe('DataStudioQualitySafetyPanel', () => {
         expect(screen.getByText('Blocked')).toBeInTheDocument();
         expect(screen.getByText('Policy Q&A')).toBeInTheDocument();
         expect(screen.getByText('86% domain confidence')).toBeInTheDocument();
-        expect(screen.getByText('PII/PCI patterns detected')).toBeInTheDocument();
-        expect(screen.getByText('Train/validation/test leakage risk')).toBeInTheDocument();
+        expect(screen.getAllByText('PII/PCI patterns detected').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Train/validation/test leakage risk').length).toBeGreaterThan(0);
+        expect(screen.getByText('Fix now')).toBeInTheDocument();
+        expect(screen.getByText('Review soon')).toBeInTheDocument();
+        expect(screen.getByText('Looks good')).toBeInTheDocument();
+        expect(screen.getAllByText('Why before SFT').length).toBeGreaterThan(0);
+        expect(screen.getAllByText(/Sensitive values can be memorized by a fine-tuned model/i).length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Built-in deterministic').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Domain-authored').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Domain review gate').length).toBeGreaterThan(0);
         expect(screen.getByText('By workflow owner')).toBeInTheDocument();
-        expect(screen.getByText('Source Ingestion')).toBeInTheDocument();
+        expect(screen.getAllByText('Source Ingestion').length).toBeGreaterThan(0);
         expect(screen.getByText('By source')).toBeInTheDocument();
         expect(screen.getByText('policy.csv')).toBeInTheDocument();
         expect(screen.getByText('Domain-authored previews')).toBeInTheDocument();
         expect(screen.getByText(/2 checks from policy-qa-profile-v1/i)).toBeInTheDocument();
-        expect(screen.getByText('Domain-required field coverage')).toBeInTheDocument();
+        expect(screen.getByText(/visually tagged as Domain-authored/i)).toBeInTheDocument();
+        expect(screen.getAllByText('Domain-required field coverage').length).toBeGreaterThan(0);
 
-        fireEvent.click(screen.getByRole('button', { name: /Inspect sources/i }));
+        fireEvent.click(screen.getAllByRole('button', { name: /Inspect sources/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('data');
 
         fireEvent.click(screen.getByRole('button', { name: /Explain with Ollama/i }));

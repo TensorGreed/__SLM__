@@ -4936,7 +4936,7 @@ async def reset(
     db: AsyncSession = Depends(get_db),
 ):
     """Flip a FAILED experiment back to PENDING and clear stale state
-    (archive the output dir to .bak.<ts>, drop its checkpoint rows).
+    (archive the output dir to a .bak.TIMESTAMP sibling, drop its checkpoint rows).
     Idempotent. Refuses RUNNING experiments — cancel first."""
     from app.services.experiment_recovery_service import reset_experiment
 

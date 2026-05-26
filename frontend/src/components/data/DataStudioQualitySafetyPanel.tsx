@@ -61,11 +61,57 @@ function statusClass(status: string): string {
     return 'ready';
 }
 
+function triageForCheck(check: DataStudioQualitySafetyCheck): 'fix-now' | 'review-soon' | 'looks-good' {
+    if (check.status === 'blocked' || check.severity === 'blocker') {
+        return 'fix-now';
+    }
+    if (check.status === 'attention' || check.severity === 'warning') {
+        return 'review-soon';
+    }
+    return 'looks-good';
+}
+
 function checkIcon(check: DataStudioQualitySafetyCheck) {
     if (check.status === 'ready') {
         return <CheckCircle2 size={16} aria-hidden="true" />;
     }
     return <AlertTriangle size={16} aria-hidden="true" />;
+}
+
+function whyBeforeSft(check: DataStudioQualitySafetyCheck): string {
+    const fingerprint = `${check.id} ${check.category} ${check.label}`.toLowerCase();
+
+    if (check.status === 'ready') {
+        if (check.domain_authored) {
+            return 'This domain rule is currently satisfied, so it does not add risk to the next SFT handoff.';
+        }
+        return 'This built-in check is clear in the scanned sample, so it does not block SFT readiness right now.';
+    }
+    if (fingerprint.includes('pii') || fingerprint.includes('pci') || fingerprint.includes('privacy') || fingerprint.includes('redaction')) {
+        return 'Sensitive values can be memorized by a fine-tuned model, so they should be removed, masked, or reviewed before training.';
+    }
+    if (fingerprint.includes('leakage') || fingerprint.includes('split')) {
+        return 'Leakage across train, validation, and test splits makes evaluation look stronger than the model really is.';
+    }
+    if (fingerprint.includes('duplicate')) {
+        return 'Repeated rows can overweight a few examples and make the SLM less reliable on real user inputs.';
+    }
+    if (fingerprint.includes('required') || fingerprint.includes('field') || fingerprint.includes('mapping') || fingerprint.includes('coverage')) {
+        return 'Missing contract fields can create malformed instruction pairs that teach the adapter the wrong shape.';
+    }
+    if (fingerprint.includes('synthetic') || fingerprint.includes('review') || fingerprint.includes('gate')) {
+        return 'Unreviewed rows should stay out of SFT until a person or trusted workflow confirms they are trainable.';
+    }
+    if (fingerprint.includes('citation') || fingerprint.includes('context')) {
+        return 'Grounding gaps can train answers that sound confident without the context your domain expects.';
+    }
+    if (fingerprint.includes('forbidden') || fingerprint.includes('policy') || fingerprint.includes('domain-authored')) {
+        return 'Domain-authored rules capture local risks and style requirements that generic checks may miss.';
+    }
+    if (fingerprint.includes('quality') || fingerprint.includes('empty') || fingerprint.includes('low')) {
+        return 'Low-quality examples add noise to SFT and can make the model copy weak formatting or incomplete answers.';
+    }
+    return 'Fixing this before SFT improves trust in the prepared dataset and reduces avoidable training noise.';
 }
 
 function CheckCard({
@@ -75,21 +121,37 @@ function CheckCard({
     check: DataStudioQualitySafetyCheck;
     onOpenTarget: (target: string) => void;
 }) {
+    const ruleType = check.domain_authored ? 'Domain-authored' : 'Built-in deterministic';
+
     return (
-        <article className={`data-studio-quality__check data-studio-quality__check--${statusClass(check.status)}`}>
+        <article
+            className={[
+                'data-studio-quality__check',
+                `data-studio-quality__check--${statusClass(check.status)}`,
+                check.domain_authored ? 'data-studio-quality__check--domain-authored' : 'data-studio-quality__check--built-in',
+            ].join(' ')}
+        >
             <div className="data-studio-quality__check-head">
                 <span>{checkIcon(check)}</span>
                 <div>
                     <strong>{check.label}</strong>
-                    <small>
-                        {check.workflow_owner}
-                        {' · '}
-                        {labelForToken(check.category)}
-                    </small>
+                    <div className="data-studio-quality__check-meta">
+                        <small>
+                            {check.workflow_owner}
+                            {' · '}
+                            {labelForToken(check.category)}
+                        </small>
+                        <em>{ruleType}</em>
+                        {check.read_only_preview ? <em>Preview only</em> : null}
+                    </div>
                 </div>
                 <b>{formatNumber(check.count)}</b>
             </div>
             <p>{check.message}</p>
+            <p className="data-studio-quality__why">
+                <strong>Why before SFT</strong>
+                <span>{whyBeforeSft(check)}</span>
+            </p>
             {check.evidence.length > 0 ? (
                 <ul>
                     {check.evidence.slice(0, 3).map((item) => (
@@ -102,6 +164,48 @@ function CheckCard({
                 {check.action_label}
             </button>
         </article>
+    );
+}
+
+function TriageLane({
+    id,
+    title,
+    description,
+    emptyMessage,
+    checks,
+    onOpenTarget,
+}: {
+    id: 'fix-now' | 'review-soon' | 'looks-good';
+    title: string;
+    description: string;
+    emptyMessage: string;
+    checks: DataStudioQualitySafetyCheck[];
+    onOpenTarget: (target: string) => void;
+}) {
+    const Icon = id === 'looks-good' ? CheckCircle2 : id === 'fix-now' ? ShieldAlert : AlertTriangle;
+
+    return (
+        <section className={`data-studio-quality__triage-lane data-studio-quality__triage-lane--${id}`}>
+            <div className="data-studio-quality__triage-head">
+                <span>
+                    <Icon size={16} aria-hidden="true" />
+                </span>
+                <div>
+                    <h4>{title}</h4>
+                    <p>{description}</p>
+                </div>
+                <b>{formatNumber(checks.length)}</b>
+            </div>
+            {checks.length > 0 ? (
+                <div className="data-studio-quality__check-list">
+                    {checks.slice(0, 4).map((check) => (
+                        <CheckCard check={check} key={check.id} onOpenTarget={onOpenTarget} />
+                    ))}
+                </div>
+            ) : (
+                <p className="data-studio-quality__empty">{emptyMessage}</p>
+            )}
+        </section>
     );
 }
 
@@ -184,6 +288,32 @@ export default function DataStudioQualitySafetyPanel({
         () => (quality?.checks ?? []).filter((check) => check.domain_authored).slice(0, 6),
         [quality],
     );
+    const triageLanes = useMemo(() => {
+        const checks = quality?.checks ?? [];
+        return [
+            {
+                id: 'fix-now' as const,
+                title: 'Fix now',
+                description: 'Blockers that can leak private data, contaminate splits, or break trainable examples.',
+                emptyMessage: 'No blockers found in the scanned sample.',
+                checks: checks.filter((check) => triageForCheck(check) === 'fix-now'),
+            },
+            {
+                id: 'review-soon' as const,
+                title: 'Review soon',
+                description: 'Warnings that may still train, but deserve review before the next prepare run.',
+                emptyMessage: 'No warning-level findings need review right now.',
+                checks: checks.filter((check) => triageForCheck(check) === 'review-soon'),
+            },
+            {
+                id: 'looks-good' as const,
+                title: 'Looks good',
+                description: 'Checks that are clear for the scanned sample and can support SFT readiness.',
+                emptyMessage: 'No passing checks have been reported yet.',
+                checks: checks.filter((check) => triageForCheck(check) === 'looks-good'),
+            },
+        ];
+    }, [quality]);
 
     if (loading && !quality) {
         return (
@@ -295,9 +425,26 @@ export default function DataStudioQualitySafetyPanel({
                 ) : null}
             </div>
 
+            <div className="data-studio-quality__triage" aria-label="Quality and safety triage">
+                {triageLanes.map((lane) => (
+                    <TriageLane
+                        key={lane.id}
+                        id={lane.id}
+                        title={lane.title}
+                        description={lane.description}
+                        emptyMessage={lane.emptyMessage}
+                        checks={lane.checks}
+                        onOpenTarget={onOpenTarget}
+                    />
+                ))}
+            </div>
+
             <div className="data-studio-quality__body">
                 <div className="data-studio-quality__checks">
-                    <h4>Deterministic scan results</h4>
+                    <h4>Built-in deterministic checks</h4>
+                    <p className="data-studio-quality__section-note">
+                        Built-in checks run first and catch common SFT risks before any domain-specific rules are layered on.
+                    </p>
                     {topChecks.length > 0 ? (
                         <div className="data-studio-quality__check-list">
                             {topChecks.map((check) => (
@@ -318,6 +465,9 @@ export default function DataStudioQualitySafetyPanel({
                                     {formatNumber(quality.domain_authored.check_count)}
                                     {' checks from '}
                                     {quality.domain_authored.applied_profile_id || quality.domain_authored.applied_pack_id || 'applied domain setup'}
+                                </p>
+                                <p>
+                                    These checks are visually tagged as Domain-authored and remain read-only previews until a destination workflow confirms changes.
                                 </p>
                             </div>
                             {domainAuthoredChecks.length > 0 ? (
