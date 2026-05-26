@@ -844,6 +844,47 @@ export interface DataStudioQualitySafetyCheck {
     action_label: string;
     domain_authored?: boolean;
     read_only_preview?: boolean;
+    drilldown?: DataStudioQualitySafetyDrilldown;
+}
+
+export interface DataStudioQualitySafetySourceCount {
+    source: string;
+    count: number;
+    target_tab: string;
+}
+
+export interface DataStudioQualitySafetyPreviewField {
+    field: string;
+    value: string;
+}
+
+export interface DataStudioQualitySafetyPreviewRow {
+    source: string;
+    source_type: string;
+    target_tab: string;
+    row_index: number;
+    file_name?: string | null;
+    redacted_text: string;
+    fields: DataStudioQualitySafetyPreviewField[];
+    reason: string;
+}
+
+export interface DataStudioQualitySafetyDrilldownAction {
+    label: string;
+    target_tab: string;
+    workflow_owner: string;
+    requires_confirmation: boolean;
+    description: string;
+}
+
+export interface DataStudioQualitySafetyDrilldown {
+    read_only: boolean;
+    redacted: boolean;
+    total_affected: number;
+    source_counts: DataStudioQualitySafetySourceCount[];
+    rows: DataStudioQualitySafetyPreviewRow[];
+    action: DataStudioQualitySafetyDrilldownAction;
+    empty_message: string;
 }
 
 export interface DataStudioQualitySafetyGroup {

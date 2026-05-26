@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import {
     AlertTriangle,
+    ChevronDown,
+    ChevronUp,
     CheckCircle2,
+    Eye,
     ExternalLink,
     RefreshCw,
     ScanSearch,
@@ -114,6 +117,97 @@ function whyBeforeSft(check: DataStudioQualitySafetyCheck): string {
     return 'Fixing this before SFT improves trust in the prepared dataset and reduces avoidable training noise.';
 }
 
+function DrilldownPreview({
+    check,
+    onOpenTarget,
+}: {
+    check: DataStudioQualitySafetyCheck;
+    onOpenTarget: (target: string) => void;
+}) {
+    const drilldown = check.drilldown;
+    if (!drilldown) {
+        return null;
+    }
+
+    return (
+        <div className="data-studio-quality__drilldown">
+            <div className="data-studio-quality__drilldown-head">
+                <div>
+                    <strong>Affected-row preview</strong>
+                    <span>
+                        {drilldown.read_only ? 'Read-only' : 'Editable'}
+                        {' · '}
+                        {drilldown.redacted ? 'Redacted sample context' : 'Sample context'}
+                    </span>
+                </div>
+                <b>{formatNumber(drilldown.total_affected)} affected</b>
+            </div>
+
+            <p className="data-studio-quality__drilldown-action">
+                <strong>Destination action</strong>
+                <span>{drilldown.action.description}</span>
+            </p>
+
+            {drilldown.source_counts.length > 0 ? (
+                <div className="data-studio-quality__source-counts" aria-label={`${check.label} source counts`}>
+                    {drilldown.source_counts.map((source) => (
+                        <button
+                            type="button"
+                            key={`${check.id}:${source.source}:${source.target_tab}`}
+                            onClick={() => onOpenTarget(source.target_tab)}
+                        >
+                            <span>{source.source}</span>
+                            <b>{formatNumber(source.count)}</b>
+                        </button>
+                    ))}
+                </div>
+            ) : null}
+
+            {drilldown.rows.length > 0 ? (
+                <div className="data-studio-quality__preview-rows">
+                    {drilldown.rows.map((row) => (
+                        <article
+                            className="data-studio-quality__preview-row"
+                            key={`${check.id}:${row.source}:${row.source_type}:${row.row_index}`}
+                        >
+                            <small>
+                                {row.source}
+                                {' · '}
+                                {labelForToken(row.source_type)}
+                                {' · row '}
+                                {formatNumber(row.row_index + 1)}
+                                {row.file_name ? ` · ${row.file_name}` : ''}
+                            </small>
+                            <p>{row.redacted_text || drilldown.empty_message}</p>
+                            {row.fields.length > 0 ? (
+                                <dl>
+                                    {row.fields.map((field) => (
+                                        <div key={`${row.source}:${row.row_index}:${field.field}`}>
+                                            <dt>{field.field}</dt>
+                                            <dd>{field.value}</dd>
+                                        </div>
+                                    ))}
+                                </dl>
+                            ) : null}
+                        </article>
+                    ))}
+                </div>
+            ) : (
+                <p className="data-studio-quality__empty">{drilldown.empty_message}</p>
+            )}
+
+            <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onOpenTarget(drilldown.action.target_tab)}
+            >
+                <ExternalLink size={15} aria-hidden="true" />
+                {drilldown.action.label}
+            </button>
+        </div>
+    );
+}
+
 function CheckCard({
     check,
     onOpenTarget,
@@ -122,6 +216,8 @@ function CheckCard({
     onOpenTarget: (target: string) => void;
 }) {
     const ruleType = check.domain_authored ? 'Domain-authored' : 'Built-in deterministic';
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const previewId = useId();
 
     return (
         <article
@@ -159,10 +255,30 @@ function CheckCard({
                     ))}
                 </ul>
             ) : null}
-            <button type="button" className="btn btn-secondary" onClick={() => onOpenTarget(check.target_tab)}>
-                <ExternalLink size={15} aria-hidden="true" />
-                {check.action_label}
-            </button>
+            <div className="data-studio-quality__check-actions">
+                {check.drilldown ? (
+                    <button
+                        type="button"
+                        className="btn btn-ghost"
+                        aria-expanded={previewOpen}
+                        aria-controls={previewId}
+                        onClick={() => setPreviewOpen((current) => !current)}
+                    >
+                        <Eye size={15} aria-hidden="true" />
+                        {previewOpen ? 'Hide preview' : 'Preview rows'}
+                        {previewOpen ? <ChevronUp size={15} aria-hidden="true" /> : <ChevronDown size={15} aria-hidden="true" />}
+                    </button>
+                ) : null}
+                <button type="button" className="btn btn-secondary" onClick={() => onOpenTarget(check.target_tab)}>
+                    <ExternalLink size={15} aria-hidden="true" />
+                    {check.action_label}
+                </button>
+            </div>
+            {previewOpen && check.drilldown ? (
+                <div id={previewId}>
+                    <DrilldownPreview check={check} onOpenTarget={onOpenTarget} />
+                </div>
+            ) : null}
         </article>
     );
 }

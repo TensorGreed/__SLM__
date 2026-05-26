@@ -55,6 +55,37 @@ const qualityPayload = {
             domain_label: 'Policy Q&A',
             evidence: ['Regex checks cover common PII/PCI patterns.'],
             action_label: 'Inspect sources',
+            drilldown: {
+                read_only: true,
+                redacted: true,
+                total_affected: 3,
+                source_counts: [
+                    { source: 'policy.csv', count: 3, target_tab: 'data' },
+                ],
+                rows: [
+                    {
+                        source: 'policy.csv',
+                        source_type: 'raw',
+                        target_tab: 'data',
+                        row_index: 1,
+                        file_name: 'policy.csv',
+                        redacted_text: 'Contact [EMAIL] and use card [CARD].',
+                        fields: [
+                            { field: 'text', value: 'Contact [EMAIL] and use card [CARD].' },
+                            { field: 'label', value: 'covered' },
+                        ],
+                        reason: 'PII/PCI patterns detected',
+                    },
+                ],
+                action: {
+                    label: 'Inspect sources',
+                    target_tab: 'data',
+                    workflow_owner: 'Source Ingestion',
+                    requires_confirmation: true,
+                    description: "Open Source Ingestion for 'Inspect sources'. Data Studio only previews this finding.",
+                },
+                empty_message: 'No affected row sample is available for this check yet.',
+            },
         },
         {
             id: 'train_validation_test_leakage',
@@ -247,6 +278,15 @@ describe('DataStudioQualitySafetyPanel', () => {
         expect(screen.getByText(/2 checks from policy-qa-profile-v1/i)).toBeInTheDocument();
         expect(screen.getByText(/visually tagged as Domain-authored/i)).toBeInTheDocument();
         expect(screen.getAllByText('Domain-required field coverage').length).toBeGreaterThan(0);
+
+        fireEvent.click(screen.getAllByRole('button', { name: /Preview rows/i })[0]);
+        expect(screen.getByText('Affected-row preview')).toBeInTheDocument();
+        expect(screen.getByText('3 affected')).toBeInTheDocument();
+        expect(screen.getByText(/Redacted sample context/i)).toBeInTheDocument();
+        expect(screen.getAllByText(/Contact \[EMAIL\] and use card \[CARD\]/i).length).toBeGreaterThan(0);
+        expect(screen.queryByText(/jane@example.com/i)).not.toBeInTheDocument();
+        expect(screen.getByText('Destination action')).toBeInTheDocument();
+        expect(screen.getAllByText(/Data Studio only previews this finding/i).length).toBeGreaterThan(0);
 
         fireEvent.click(screen.getAllByRole('button', { name: /Inspect sources/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('data');

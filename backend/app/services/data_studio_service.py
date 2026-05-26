@@ -1577,6 +1577,135 @@ def _pii_pci_signal_counts(text: str) -> Counter[str]:
     return counts
 
 
+def _quality_redact_text(text: Any, *, limit: int = 260) -> str:
+    value = str(text or "")
+    value = _PII_EMAIL_RE.sub("[EMAIL]", value)
+    value = _PII_SSN_RE.sub("[SSN]", value)
+    value = _PCI_CVV_RE.sub("[CVV]", value)
+
+    def _redact_card(match: re.Match[str]) -> str:
+        token = match.group(0)
+        digits = re.sub(r"\D", "", token)
+        return "[CARD]" if _luhn_valid(digits) else token
+
+    value = _PCI_CARD_RE.sub(_redact_card, value)
+    value = _PII_PHONE_RE.sub("[PHONE]", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    if len(value) > limit:
+        return f"{value[:limit].rstrip()}..."
+    return value
+
+
+def _quality_redacted_field_value(field: str, value: Any) -> str:
+    lowered = field.lower()
+    if any(token in lowered for token in ("password", "secret", "token", "ssn", "credit", "card", "cvv", "cvc")):
+        return "[REDACTED]"
+    if isinstance(value, (dict, list, tuple, set)):
+        try:
+            serialized = json.dumps(value, ensure_ascii=False, default=str)
+        except TypeError:
+            serialized = str(value)
+    else:
+        serialized = "" if value is None else str(value)
+    redacted = _quality_redact_text(serialized, limit=140)
+    return redacted if redacted else "(empty)"
+
+
+def _quality_row_preview(
+    item: dict[str, Any],
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    row = item.get("row") if isinstance(item.get("row"), dict) else {}
+    file_path = str(item.get("file_path") or "").strip()
+    fields: list[dict[str, str]] = []
+    for key, value in list(row.items())[:8]:
+        field = str(key or "").strip()
+        if not field:
+            continue
+        fields.append({
+            "field": field,
+            "value": _quality_redacted_field_value(field, value),
+        })
+        if len(fields) >= 5:
+            break
+    return {
+        "source": str(item.get("source") or "Project sample"),
+        "source_type": str(item.get("source_type") or "sample"),
+        "target_tab": str(item.get("target_tab") or "data"),
+        "row_index": int(item.get("row_index") or 0),
+        "file_name": Path(file_path).name if file_path else None,
+        "redacted_text": _quality_redact_text(_quality_scan_text(row)),
+        "fields": fields,
+        "reason": reason,
+    }
+
+
+def _quality_source_count_rows(
+    counts: Counter[str] | None,
+    *,
+    fallback_source: str,
+    fallback_count: int,
+    target_tab: str,
+) -> list[dict[str, Any]]:
+    source_counts = Counter(counts or {})
+    if not source_counts and fallback_source:
+        source_counts[fallback_source] = max(0, int(fallback_count or 0))
+    rows = [
+        {
+            "source": str(source),
+            "count": int(count),
+            "target_tab": target_tab,
+        }
+        for source, count in source_counts.items()
+        if int(count or 0) > 0
+    ]
+    rows.sort(key=lambda item: (-int(item["count"]), str(item["source"])))
+    return rows[:8]
+
+
+def _quality_check_drilldown(
+    check: dict[str, Any],
+    *,
+    rows: list[dict[str, Any]] | None = None,
+    source_counts: Counter[str] | None = None,
+    empty_message: str | None = None,
+) -> dict[str, Any]:
+    target_tab = str(check.get("target_tab") or "data")
+    action_label = str(check.get("action_label") or "Open workflow")
+    count = int(check.get("count") or 0)
+    preview_rows = rows or []
+    if not source_counts and preview_rows:
+        source_counts = Counter(str(item.get("source") or "Project sample") for item in preview_rows)
+    source_count_rows = _quality_source_count_rows(
+        source_counts,
+        fallback_source=str(check.get("source") or "Project sample"),
+        fallback_count=count,
+        target_tab=target_tab,
+    )
+    return {
+        "read_only": True,
+        "redacted": True,
+        "total_affected": count,
+        "source_counts": source_count_rows,
+        "rows": [
+            _quality_row_preview(item, reason=str(check.get("label") or "Quality and safety finding"))
+            for item in preview_rows[:5]
+        ],
+        "action": {
+            "label": action_label,
+            "target_tab": target_tab,
+            "workflow_owner": str(check.get("workflow_owner") or "Data Studio"),
+            "requires_confirmation": True,
+            "description": (
+                f"Open {check.get('workflow_owner') or 'the destination workflow'} for "
+                f"'{action_label}'. Data Studio only previews this finding."
+            ),
+        },
+        "empty_message": empty_message or "No affected row sample is available for this check yet.",
+    }
+
+
 def _low_quality_reason(text: str) -> str | None:
     normalized = _quality_text_fingerprint(text)
     if not normalized:
@@ -6311,11 +6440,16 @@ async def build_data_studio_quality_safety(
     row_sources: list[str] = []
     row_targets: list[str] = []
     row_token_sets: list[set[str]] = []
+    row_items: list[dict[str, Any]] = []
     field_counter: Counter[str] = Counter()
     pii_counts: Counter[str] = Counter()
     pii_by_source: Counter[str] = Counter()
+    pii_preview_items: list[dict[str, Any]] = []
     low_quality_reasons: Counter[str] = Counter()
     low_quality_by_source: Counter[str] = Counter()
+    low_quality_preview_items: list[dict[str, Any]] = []
+    synthetic_pending_preview_items: list[dict[str, Any]] = []
+    prepared_pending_synthetic_preview_items: list[dict[str, Any]] = []
     prepared_pending_synthetic = 0
 
     for item in scan_rows:
@@ -6331,6 +6465,7 @@ async def build_data_studio_quality_safety(
             row_sources.append(source)
             row_targets.append(target_tab)
             row_token_sets.append(_quality_tokens(text))
+            row_items.append(item)
         for field in row.keys():
             field_counter[str(field)] += 1
 
@@ -6338,19 +6473,24 @@ async def build_data_studio_quality_safety(
         if row_pii_counts:
             pii_counts.update(row_pii_counts)
             pii_by_source[source] += sum(row_pii_counts.values())
+            pii_preview_items.append(item)
 
         low_quality_reason = _low_quality_reason(text)
         if low_quality_reason is not None:
             low_quality_reasons[low_quality_reason] += 1
             low_quality_by_source[source] += 1
+            low_quality_preview_items.append(item)
 
         status = str(row.get("review_status") or row.get("status") or "").strip().lower()
+        if source_type == DatasetType.SYNTHETIC.value and status == "pending":
+            synthetic_pending_preview_items.append(item)
         if (
             source_type in {DatasetType.TRAIN.value, DatasetType.VALIDATION.value, DatasetType.TEST.value}
             and str(row.get("synth_source") or "").strip()
             and status == "pending"
         ):
             prepared_pending_synthetic += 1
+            prepared_pending_synthetic_preview_items.append(item)
 
     low_quality_docs_result = await db.execute(
         select(func.count(RawDocument.id))
@@ -6366,13 +6506,19 @@ async def build_data_studio_quality_safety(
     exact_counter: Counter[str] = Counter(
         fingerprint for fingerprint in row_fingerprints if fingerprint
     )
+    exact_indices: dict[str, list[int]] = {}
+    for index, fingerprint in enumerate(row_fingerprints):
+        if fingerprint:
+            exact_indices.setdefault(fingerprint, []).append(index)
     duplicate_count = sum(count - 1 for count in exact_counter.values() if count > 1)
     duplicate_by_source: Counter[str] = Counter()
+    duplicate_preview_indices: set[int] = set()
     seen_exact: set[str] = set()
     for fingerprint, source in zip(row_fingerprints, row_sources, strict=False):
         if not fingerprint:
             continue
         if exact_counter[fingerprint] > 1:
+            duplicate_preview_indices.update(exact_indices.get(fingerprint, [])[:4])
             if fingerprint in seen_exact:
                 duplicate_by_source[source] += 1
             else:
@@ -6398,6 +6544,12 @@ async def build_data_studio_quality_safety(
             if similarity >= 0.88:
                 near_duplicate_pairs += 1
                 near_duplicate_by_source[row_sources[right]] += 1
+                duplicate_preview_indices.update({left, right})
+    duplicate_preview_items = [
+        row_items[index]
+        for index in sorted(duplicate_preview_indices)
+        if 0 <= index < len(row_items)
+    ][:5]
 
     mapping_summary = mapping.get("summary") if isinstance(mapping.get("summary"), dict) else {}
     mapping_preview_rows = mapping.get("preview_rows") if isinstance(mapping.get("preview_rows"), list) else []
@@ -6420,11 +6572,23 @@ async def build_data_studio_quality_safety(
         if str(item).strip()
     ]
     required_missing_count = 0
+    required_missing_preview_items: list[dict[str, Any]] = []
     for preview_row in mapping_preview_rows:
         if not isinstance(preview_row, dict):
             continue
         mapped = preview_row.get("mapped") if isinstance(preview_row.get("mapped"), dict) else {}
-        required_missing_count += _quality_required_missing_count(mapped, required_fields)
+        missing_in_row = _quality_required_missing_count(mapped, required_fields)
+        required_missing_count += missing_in_row
+        if missing_in_row:
+            raw = preview_row.get("raw") if isinstance(preview_row.get("raw"), dict) else {}
+            required_missing_preview_items.append({
+                "row": {**raw, **mapped},
+                "source": "Mapping preview",
+                "source_type": "preview",
+                "target_tab": "dataprep",
+                "file_path": "",
+                "row_index": int(preview_row.get("index") or len(required_missing_preview_items)),
+            })
     for coverage in list(mapping_summary.get("required_field_coverage") or []):
         if isinstance(coverage, dict):
             required_missing_count += int(coverage.get("missing") or 0)
@@ -6432,15 +6596,20 @@ async def build_data_studio_quality_safety(
         if str(item.get("source_type") or "") not in {DatasetType.RAW.value, "preview"}:
             continue
         row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        missing_in_source_row = 0
         for field in required_fields:
             source_field = str(field_mapping.get(field) or field)
             if not _field_has_value(row.get(source_field)):
                 required_missing_count += 1
+                missing_in_source_row += 1
+        if missing_in_source_row:
+            required_missing_preview_items.append(item)
 
     prepare_splits = prepare_dataset.get("splits") if isinstance(prepare_dataset.get("splits"), dict) else {}
     split_items = prepare_splits.get("items") if isinstance(prepare_splits.get("items"), list) else []
     split_fingerprints: dict[str, set[str]] = {}
     split_row_counts: dict[str, int] = {}
+    split_preview_by_fingerprint: dict[str, dict[str, dict[str, Any]]] = {}
     for split in split_items:
         if not isinstance(split, dict):
             continue
@@ -6448,14 +6617,37 @@ async def build_data_studio_quality_safety(
         rows = _load_jsonl_dicts(str(split.get("file_path") or ""), limit=2000)
         split_fingerprints[split_key] = _quality_split_fingerprints(rows)
         split_row_counts[split_key] = len(rows)
+        split_preview_by_fingerprint.setdefault(split_key, {})
+        for row_index, row in enumerate(rows):
+            fingerprint = _quality_text_fingerprint(_quality_scan_text(row))
+            if not fingerprint or fingerprint in split_preview_by_fingerprint[split_key]:
+                continue
+            split_preview_by_fingerprint[split_key][fingerprint] = {
+                "row": row,
+                "source": f"{split_key or 'prepared'} split",
+                "source_type": split_key or "prepared",
+                "target_tab": "dataprep",
+                "file_path": str(split.get("file_path") or ""),
+                "row_index": row_index,
+            }
 
     leakage_pairs: list[str] = []
     leakage_overlap_count = 0
+    leakage_by_source: Counter[str] = Counter()
+    leakage_preview_items: list[dict[str, Any]] = []
     for left_key, right_key in (("train", "validation"), ("train", "test"), ("validation", "test")):
         overlap = split_fingerprints.get(left_key, set()) & split_fingerprints.get(right_key, set())
         if overlap:
             leakage_overlap_count += len(overlap)
             leakage_pairs.append(f"{left_key}/{right_key}: {len(overlap)} overlapping row(s)")
+            leakage_by_source[f"{left_key} split"] += len(overlap)
+            leakage_by_source[f"{right_key} split"] += len(overlap)
+            for fingerprint in list(overlap)[:3]:
+                for split_key in (left_key, right_key):
+                    preview_item = split_preview_by_fingerprint.get(split_key, {}).get(fingerprint)
+                    if preview_item:
+                        leakage_preview_items.append(preview_item)
+    leakage_preview_items = leakage_preview_items[:5]
 
     review_totals = review_queue.get("totals") if isinstance(review_queue.get("totals"), dict) else {}
     synthetic_pending = int(review_totals.get("synthetic_pending") or 0)
@@ -6471,7 +6663,37 @@ async def build_data_studio_quality_safety(
     owner_targets: dict[str, str] = {}
     domain_targets: dict[str, str] = {}
 
+    def preview_items_for_check(check: dict[str, Any]) -> list[dict[str, Any]]:
+        fingerprint = " ".join([
+            str(check.get("id") or ""),
+            str(check.get("category") or ""),
+            str(check.get("label") or ""),
+        ]).lower()
+        if "pii" in fingerprint or "pci" in fingerprint or "privacy" in fingerprint or "redaction" in fingerprint:
+            return pii_preview_items[:5]
+        if "duplicate" in fingerprint:
+            return duplicate_preview_items[:5]
+        if "leakage" in fingerprint or "split" in fingerprint:
+            return leakage_preview_items[:5]
+        if "required" in fingerprint or "field" in fingerprint or "mapping" in fingerprint or "context" in fingerprint or "citation" in fingerprint:
+            return (required_missing_preview_items or scan_rows)[:5]
+        if "low-quality" in fingerprint or "low_quality" in fingerprint or "quality row" in fingerprint:
+            return low_quality_preview_items[:5]
+        if "synthetic" in fingerprint or "review" in fingerprint or "gate" in fingerprint:
+            return (synthetic_pending_preview_items + prepared_pending_synthetic_preview_items)[:5]
+        if "domain" in fingerprint:
+            return scan_rows[:5]
+        if str(check.get("status") or "") == "ready":
+            return scan_rows[:3]
+        return scan_rows[:5]
+
     def add_check(check: dict[str, Any], source_counts: Counter[str] | None = None) -> None:
+        if not isinstance(check.get("drilldown"), dict):
+            check["drilldown"] = _quality_check_drilldown(
+                check,
+                rows=preview_items_for_check(check),
+                source_counts=source_counts,
+            )
         checks.append(check)
         severity = str(check.get("severity") or "info")
         severity_count = int(check.get("count") or 0)
@@ -6642,7 +6864,8 @@ async def build_data_studio_quality_safety(
                 domain_label=domain_label,
                 evidence=leakage_pairs[:4],
                 action_label="Refresh splits",
-            )
+            ),
+            leakage_by_source,
         )
     elif any(split_row_counts.values()):
         add_check(
@@ -6731,6 +6954,11 @@ async def build_data_studio_quality_safety(
     synthetic_contamination_count = synthetic_pending + prepared_pending_synthetic
     if synthetic_contamination_count:
         severity = "blocker" if prepared_pending_synthetic else "warning"
+        synthetic_contamination_sources: Counter[str] = Counter()
+        if synthetic_pending:
+            synthetic_contamination_sources["Synthetic review queue"] = synthetic_pending
+        for item in synthetic_pending_preview_items + prepared_pending_synthetic_preview_items:
+            synthetic_contamination_sources[str(item.get("source") or "Synthetic review queue")] += 1
         add_check(
             _quality_check(
                 "synthetic_review_contamination",
@@ -6750,7 +6978,8 @@ async def build_data_studio_quality_safety(
                 domain_label=domain_label,
                 evidence=["Accepted synthetic rows can be used downstream; pending rows should stay gated."],
                 action_label="Review synthetic rows",
-            )
+            ),
+            synthetic_contamination_sources,
         )
     else:
         add_check(

@@ -515,6 +515,28 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         source_labels = {item["label"] for item in payload["findings_by_source"]}
         self.assertIn("policy_rows.jsonl", source_labels)
 
+        checks_by_id = {check["id"]: check for check in payload["checks"]}
+        pii_drilldown = checks_by_id["pii_pci_sensitive_values"]["drilldown"]
+        self.assertTrue(pii_drilldown["read_only"])
+        self.assertTrue(pii_drilldown["redacted"])
+        self.assertEqual(pii_drilldown["action"]["target_tab"], "data")
+        self.assertEqual(pii_drilldown["action"]["label"], "Inspect sources")
+        self.assertTrue(pii_drilldown["action"]["requires_confirmation"])
+        self.assertGreaterEqual(pii_drilldown["total_affected"], 3)
+        self.assertTrue(pii_drilldown["source_counts"])
+        self.assertTrue(pii_drilldown["rows"])
+        redacted_preview = json.dumps(pii_drilldown["rows"])
+        self.assertIn("[EMAIL]", redacted_preview)
+        self.assertIn("[CARD]", redacted_preview)
+        self.assertNotIn("jane@example.com", redacted_preview)
+        self.assertNotIn("4111 1111 1111 1111", redacted_preview)
+
+        leakage_drilldown = checks_by_id["train_validation_test_leakage"]["drilldown"]
+        leakage_sources = {item["source"] for item in leakage_drilldown["source_counts"]}
+        self.assertIn("train split", leakage_sources)
+        self.assertIn("validation split", leakage_sources)
+        self.assertEqual(leakage_drilldown["action"]["target_tab"], "dataprep")
+
     def test_quality_safety_applies_domain_authored_profile_and_pack_checks(self):
         project_id = self._create_project("data-studio-domain-authored-quality")
 
