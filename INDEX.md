@@ -20,6 +20,7 @@ session-start guidance.
 
 - `backend/app/api/adapter_studio.py` — API routes for Dataset Structure Explorer + Adapter Studio.
 - `backend/app/api/annotation.py` — Annotation foundation API (Story 1.1).
+- `backend/app/api/archetypes.py` — Archetype API routes (USER-SUCCESS Epic 8 Phase 8a).
 - `backend/app/api/artifacts.py` — Typed artifact registry API routes.
 - `backend/app/api/audit.py` — Audit log query routes.
 - `backend/app/api/auth.py` — Authentication, user management, and project membership routes.
@@ -74,6 +75,8 @@ session-start guidance.
 - `backend/app/services/alignment_service.py` — Preference alignment scaffolding: DPO/ORPO contracts and judge scoring.
 - `backend/app/services/annotation/promotion.py` — Annotation → training dataset bridge (Story 1.6).
 - `backend/app/services/annotation_service.py` — Annotation foundation service (Story 1.1).
+- `backend/app/services/archetype_seeds.py` — Template-derived seed contributions for the archetype cohort
+- `backend/app/services/archetype_service.py` — Cross-project gold-set archetypes (USER-SUCCESS Epic 8 Phase 8a).
 - `backend/app/services/artifact_registry_service.py` — Typed artifact registry service.
 - `backend/app/services/auto_rag_service.py` — Auto-RAG retrieval index + lookup (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/app/services/autopilot_decision_service.py` — Autopilot decision-log persistence and query service.
