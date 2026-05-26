@@ -268,9 +268,14 @@ async def _spawn_legacy_synth_shadow_job(
         started = time.monotonic()
         last_status: str = "pending"
         while True:
-            snapshot = get_synth_task_status(task_id)
-            if snapshot is None:
+            task_obj = get_synth_task_status(task_id)
+            if task_obj is None:
                 raise RuntimeError(f"legacy synth task {task_id} disappeared")
+            # get_synth_task_status returns the task object itself
+            # (SyntheticQaTask / SyntheticSpanTask / SyntheticConver-
+            # sationTask), not a dict. Use ``.to_dict()`` to get the
+            # uniform shape — each task class implements it.
+            snapshot = task_obj.to_dict()
             last_status = str(snapshot.get("status") or "pending")
             batches_done = int(snapshot.get("batches_done") or 0)
             batches_total = int(snapshot.get("batches_total") or 0)
@@ -711,6 +716,28 @@ async def run_synth_playbook(
             row_count = len(result.get("rows") or [])
             backend_used = result.get("backend_used") or "auto"
             elapsed_sec = result.get("elapsed_sec") or 0
+            prompt_snippet = result.get("prompt_snippet") or ""
+
+            # 0-rows-generated is almost always a silent failure —
+            # the LLM returned output that didn't parse, or every
+            # parsed row failed the playbook's validate() pass. Raise
+            # so the Job lands as FAILED with an actionable message
+            # rather than a misleading "Done". Captures the backend
+            # used + prompt snippet in the error so a power user can
+            # investigate without re-running.
+            if row_count == 0:
+                raise RuntimeError(
+                    f"Playbook {req.mode} produced 0 accepted rows via "
+                    f"{backend_used} in {elapsed_sec:.1f}s. "
+                    f"Likely causes: (1) LLM backend returned text that "
+                    f"didn't match the playbook's expected JSON shape, "
+                    f"(2) every generated row failed validation (e.g. "
+                    f"label outside the target class for hard-negatives), "
+                    f"(3) backend timeout / network error swallowed by "
+                    f"the runner. Check the server logs for the backend's "
+                    f"raw response. Prompt sent (first 200 chars): "
+                    f"{prompt_snippet[:200]!r}"
+                )
             await handle.set_progress(
                 fraction=1.0,
                 message=(
