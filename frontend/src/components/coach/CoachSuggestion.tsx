@@ -157,6 +157,17 @@ const NAVIGATE_TARGET_URLS: Record<
                 : '';
         return `/project/${projectId}/pipeline/synthetic${query}#synth-review-queue`;
     },
+    // The recipe picker has its own page at /project/{id}/recipes —
+    // the data + gold_set + training Coach surfaces all emit this
+    // target when a project has no recipe yet, so the action needs
+    // to actually navigate rather than show a toast hint. (The
+    // toast-only behavior dating back to Phase 1 was wrong on
+    // standalone-page targets like this one.)
+    'recipe-picker': (projectId) => `/project/${projectId}/recipes`,
+    // Training Config is its own page too (separate from the
+    // pipeline tab) — same fix as recipe-picker. The Phase 6d
+    // curriculum nudge + Phase 9d auto-RAG nudge both emit this.
+    'training-config': (projectId) => `/project/${projectId}/training-config`,
 };
 
 export default function CoachSuggestionCard({

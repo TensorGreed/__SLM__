@@ -394,10 +394,12 @@ describe('CoachStrip', () => {
         });
     });
 
-    it('unknown navigate targets fall back to the toast hint (Phase 1 backwards-compat)', async () => {
-        // Targets without an entry in NAVIGATE_TARGET_URLS keep the
-        // Phase 1 toast-hint behavior — we don't break the recipe-
-        // picker navigate or any other in-page targets.
+    it('navigates to the recipe-picker page on the recipe-picker target', async () => {
+        // The recipe-picker is a standalone page (/project/{id}/recipes)
+        // — emitted by every "Pick a recipe before doing X" Coach
+        // suggestion on data / gold_set / training stages. Prior to
+        // this fix it fell back to a toast-only hint, leaving users
+        // who clicked the action with nothing happening.
         installGetRouter({
             data: {
                 project_id: 1,
@@ -412,7 +414,7 @@ describe('CoachStrip', () => {
                         action: {
                             kind: 'navigate',
                             label: 'Open recipe picker',
-                            params: { target: 'recipe-picker' },  // not in the URL map
+                            params: { target: 'recipe-picker' },
                         },
                     },
                 ],
@@ -426,6 +428,84 @@ describe('CoachStrip', () => {
         });
         await userEvent.click(
             screen.getByTestId('coach-suggestion-action-data:no-recipe'),
+        );
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith('/project/1/recipes');
+        });
+    });
+
+    it('navigates to the training-config page on the training-config target', async () => {
+        // Phase 6d's curriculum nudge + Phase 9d's auto-RAG nudge both
+        // emit ``target: 'training-config'`` — same standalone-page
+        // problem the recipe-picker had (toast-only on a route that
+        // really exists). Maps to /project/{id}/training-config, the
+        // same path ProjectSidebar uses.
+        installGetRouter({
+            data: {
+                project_id: 7,
+                stage: 'training',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'training:curriculum-learning-available',
+                        title: 'Curriculum recommended',
+                        body: 'Body.',
+                        severity: 'info',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Open Training Config',
+                            params: { target: 'training-config' },
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={7} stage="training" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-training:curriculum-learning-available'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-training:curriculum-learning-available'),
+        );
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith('/project/7/training-config');
+        });
+    });
+
+    it('unknown navigate targets still fall back to the toast hint (Phase 1 backwards-compat)', async () => {
+        // Any target that isn't in NAVIGATE_TARGET_URLS keeps the
+        // toast-hint behavior — so partial / future / unwired targets
+        // don't crash the click.
+        installGetRouter({
+            data: {
+                project_id: 1,
+                stage: 'data',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'data:future-target',
+                        title: 'Imaginary future suggestion',
+                        body: 'Some body.',
+                        severity: 'info',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Do the thing',
+                            params: { target: 'this-target-isnt-wired-yet' },
+                        },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={1} stage="data" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-data:future-target'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-data:future-target'),
         );
         // Did NOT navigate — the toast-hint path ran instead.
         expect(navigateMock).not.toHaveBeenCalled();
