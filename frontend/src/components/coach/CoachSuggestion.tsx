@@ -16,11 +16,12 @@ import { useNavigate } from 'react-router-dom';
 
 import type { CoachSuggestion } from '../../api/coach';
 import {
-    augmentFromCluster,
-    runPlaybook,
+    augmentFromClusterAsync,
+    runPlaybookAsync,
     type SynthMode,
 } from '../../api/synthPlaybook';
 import { Term } from '../shared/Term';
+import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 
 // Dictionary of plain-text phrases → glossary term IDs that
@@ -228,24 +229,21 @@ export default function CoachSuggestionCard({
             }
             setIsExecuting(true);
             try {
-                const result = await runPlaybook(projectId, {
+                // Hardening — fire as a background Job (matches the
+                // SyntheticPanel pattern). The bell takes over progress
+                // + outcome; clicking the action no longer blocks for
+                // the 30-180s LLM call.
+                const job = await runPlaybookAsync(projectId, {
                     mode,
                     targetCount,
                     targetClass: targetClass ?? null,
                     backend: backend ?? null,
                 });
-                // Generated rows land in the project's synth review
-                // queue with review_status="pending" — gated out of
-                // training until the user accepts them on the
-                // Synthetic tab. The toast must say where they went,
-                // otherwise users assume the action wrote into the
-                // gold set and report the rows as "lost".
-                const n = result.rows.length;
-                toast.success(
-                    n === 0
-                        ? `${mode} generation succeeded but produced 0 rows after validation. Try a different mode or check the Synthetic tab.`
-                        : `Generated ${n} row${n === 1 ? '' : 's'} via ${mode} — pending review on the Synthetic tab.`,
+                toast.info(
+                    `Synth ${mode} queued — track in the bell (job #${job.id})`,
+                    4000,
                 );
+                void useJobsStore.getState().refreshAfterLocalChange();
                 onActionCompleted?.();
             } catch (err) {
                 const detail =
@@ -280,19 +278,20 @@ export default function CoachSuggestionCard({
             }
             setIsExecuting(true);
             try {
-                const result = await augmentFromCluster(projectId, {
+                // Hardening — fire as a background Job. Cluster-augment
+                // is an LLM call that can take 30-180s; blocking the
+                // request was the original "nothing happens" pain
+                // point. The bell now surfaces progress + outcome.
+                const job = await augmentFromClusterAsync(projectId, {
                     evalResultId,
                     clusterId,
                     targetCount,
                 });
-                // Cluster-augment writes into the same synth review
-                // queue as run_playbook — pending until accepted.
-                const n = result.rows.length;
-                toast.success(
-                    n === 0
-                        ? `Cluster-augment for ${clusterId} succeeded but produced 0 rows after validation. Try a different cluster.`
-                        : `Generated ${n} row${n === 1 ? '' : 's'} targeting cluster ${clusterId} — pending review on the Synthetic tab.`,
+                toast.info(
+                    `Cluster-augment queued — track in the bell (job #${job.id})`,
+                    4000,
                 );
+                void useJobsStore.getState().refreshAfterLocalChange();
                 onActionCompleted?.();
             } catch (err) {
                 const detail =

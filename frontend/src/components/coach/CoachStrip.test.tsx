@@ -153,8 +153,11 @@ describe('CoachStrip', () => {
         });
         await userEvent.click(screen.getByTestId('coach-suggestion-action-data:gold-row-count'));
         await waitFor(() => {
+            // Hardening — Coach run_playbook actions fire the
+            // async-job variant of the synth endpoint, not the
+            // blocking sync one. The bell takes over progress.
             expect(apiMock.post).toHaveBeenCalledWith(
-                '/projects/1/synthetic/run-playbook',
+                '/projects/1/synthetic/run-playbook?async_job=true',
                 expect.objectContaining({
                     mode: 'positives_paraphrase',
                     target_count: 50,
@@ -542,12 +545,25 @@ describe('CoachStrip', () => {
                 ],
             },
         });
+        // Async-job variant returns a Job stub (202), not a
+        // PlaybookResult — the bell takes over progress + outcome.
         apiMock.post.mockResolvedValue({
             data: {
-                rows: [{ payload: {} }],
-                backend_used: 'vllm:meta-llama/Meta-Llama-3.1-8B-Instruct',
-                elapsed_sec: 1.2,
-                prompt_snippet: '...',
+                id: 99,
+                kind: 'synth_playbook',
+                title: 'Synth · class_balance_fill · 50 rows',
+                status: 'queued',
+                progress: null,
+                progress_message: null,
+                project_id: 1,
+                user_id: null,
+                params: {},
+                result: null,
+                error: null,
+                queued_at: '2026-05-26T12:00:00Z',
+                started_at: null,
+                completed_at: null,
+                dismissed_at: null,
             },
         });
 
@@ -561,8 +577,10 @@ describe('CoachStrip', () => {
             screen.getByTestId('coach-suggestion-action-gold_set:class-imbalance'),
         );
         await waitFor(() => {
+            // Hardening — async-job variant of the synth endpoint;
+            // the backend pin still flows through verbatim.
             expect(apiMock.post).toHaveBeenCalledWith(
-                '/projects/1/synthetic/run-playbook',
+                '/projects/1/synthetic/run-playbook?async_job=true',
                 expect.objectContaining({
                     mode: 'class_balance_fill',
                     target_count: 50,
@@ -598,7 +616,27 @@ describe('CoachStrip', () => {
                 ],
             },
         });
-        apiMock.post.mockResolvedValue({ data: { rows: [{ payload: {} }], backend_used: 'ollama', elapsed_sec: 0.5, prompt_snippet: '...' } });
+        // Async-job variant returns a Job stub (202) — bell takes
+        // over progress + the 0-rows-as-FAILED guard.
+        apiMock.post.mockResolvedValue({
+            data: {
+                id: 101,
+                kind: 'synth_augment_from_cluster',
+                title: 'Augment cluster cluster-1 · 30 rows',
+                status: 'queued',
+                progress: null,
+                progress_message: null,
+                project_id: 1,
+                user_id: null,
+                params: {},
+                result: null,
+                error: null,
+                queued_at: '2026-05-26T12:00:00Z',
+                started_at: null,
+                completed_at: null,
+                dismissed_at: null,
+            },
+        });
 
         render(<CoachStrip projectId={1} stage="eval" />);
         await waitFor(() => {
@@ -606,11 +644,17 @@ describe('CoachStrip', () => {
         });
         await userEvent.click(screen.getByTestId('coach-suggestion-action-eval:top-failure-cluster'));
         await waitFor(() => {
+            // Hardening — same endpoint, with the async_job param
+            // flipped on so it spawns a Job and returns 202 instead
+            // of blocking for 30-180s on the LLM call.
             expect(apiMock.post).toHaveBeenCalledWith(
                 '/projects/1/evaluation/42/clusters/cluster-1/augment',
                 null,
                 expect.objectContaining({
-                    params: expect.objectContaining({ target_count: 30 }),
+                    params: expect.objectContaining({
+                        target_count: 30,
+                        async_job: true,
+                    }),
                 }),
             );
         });

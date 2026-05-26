@@ -688,6 +688,7 @@ async def augment_failure_cluster_endpoint(
     cluster_id: str,
     target_count: int = 30,
     backend: str | None = None,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Generate cluster-targeted synthetic training data for a
@@ -703,6 +704,11 @@ async def augment_failure_cluster_endpoint(
     Returns the PlaybookResult dict (rows + backend_used +
     elapsed_sec + prompt_snippet).
 
+    Hardening — pass ``?async_job=true`` to fire the generation as a
+    background Job. Endpoint returns 202 + Job stub immediately; the
+    bell tracks progress with an elapsed-time heartbeat and flips to
+    FAILED when 0 rows are produced (silent-failure guard).
+
     503 when no synth backend is reachable. 404 when the eval /
     cluster / project isn't found. 400 for everything else.
     """
@@ -711,6 +717,125 @@ async def augment_failure_cluster_endpoint(
 
     if target_count < 1 or target_count > 500:
         raise HTTPException(400, "target_count must be between 1 and 500")
+
+    if async_job:
+        import asyncio
+        import time
+
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import (
+            JobProgressHandle,
+            serialize_job,
+            start_job,
+        )
+
+        async def _runner(handle: JobProgressHandle) -> dict:
+            # Elapsed-time heartbeat — matches the synth-playbook
+            # pattern so the bell never sits on a stale message
+            # while Ollama / the teacher backend is mid-call.
+            started = time.monotonic()
+            stop_heartbeat = asyncio.Event()
+
+            async def _heartbeat() -> None:
+                while not stop_heartbeat.is_set():
+                    try:
+                        await asyncio.wait_for(
+                            stop_heartbeat.wait(), timeout=5.0,
+                        )
+                        return
+                    except asyncio.TimeoutError:
+                        elapsed = int(time.monotonic() - started)
+                        await handle.set_progress(
+                            message=(
+                                f"Augmenting cluster {cluster_id} "
+                                f"({target_count} rows) · {elapsed}s elapsed"
+                            ),
+                        )
+
+            heartbeat_task = asyncio.create_task(_heartbeat())
+            try:
+                await handle.set_progress(
+                    message=(
+                        f"Augmenting cluster {cluster_id} · "
+                        f"{target_count} rows requested"
+                    ),
+                )
+                from app.database import async_session_factory
+
+                async with async_session_factory() as runner_db:
+                    result = await augment_from_cluster(
+                        runner_db,
+                        project_id=project_id,
+                        eval_result_id=eval_result_id,
+                        cluster_id=cluster_id,
+                        target_count=target_count,
+                        backend=backend,
+                    )
+                    await runner_db.commit()
+            finally:
+                stop_heartbeat.set()
+                try:
+                    await heartbeat_task
+                except Exception:  # noqa: BLE001 — heartbeat best-effort
+                    pass
+
+            row_count = len(result.get("rows") or [])
+            backend_used = result.get("backend_used") or "auto"
+            elapsed_sec = result.get("elapsed_sec") or 0
+            prompt_snippet = result.get("prompt_snippet") or ""
+
+            # 0-rows-succeeded is a silent failure (parse / validate
+            # rejected everything). Raise so the Job lands as FAILED
+            # with an actionable diagnostic — matches the synth
+            # playbook guard from earlier.
+            if row_count == 0:
+                raise RuntimeError(
+                    f"Cluster-augment produced 0 accepted rows via "
+                    f"{backend_used} in {elapsed_sec:.1f}s. The LLM "
+                    f"returned output that didn't parse OR every "
+                    f"generated row failed cluster validation (e.g. "
+                    f"hard-negative emitted with the target class "
+                    f"again). Check the server logs for the backend's "
+                    f"raw response. Prompt (first 200 chars): "
+                    f"{prompt_snippet[:200]!r}"
+                )
+            await handle.set_progress(
+                fraction=1.0,
+                message=(
+                    f"Generated {row_count} rows via {backend_used} "
+                    f"in {elapsed_sec:.1f}s · queued for review"
+                ),
+            )
+            return {
+                "rows_generated": row_count,
+                "backend_used": backend_used,
+                "elapsed_sec": elapsed_sec,
+                "cluster_id": cluster_id,
+                "eval_result_id": eval_result_id,
+                "target_count": target_count,
+            }
+
+        job = await start_job(
+            db,
+            kind="synth_augment_from_cluster",
+            title=(
+                f"Augment cluster {cluster_id[:16]} · "
+                f"{target_count} rows"
+            ),
+            runner=_runner,
+            project_id=project_id,
+            params={
+                "eval_result_id": eval_result_id,
+                "cluster_id": cluster_id,
+                "target_count": target_count,
+                "backend": backend,
+            },
+        )
+        return JSONResponse(
+            status_code=202,
+            content=serialize_job(job),
+        )
 
     try:
         return await augment_from_cluster(

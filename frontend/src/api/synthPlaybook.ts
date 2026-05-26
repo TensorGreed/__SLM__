@@ -143,6 +143,30 @@ export async function augmentFromCluster(
 }
 
 
+// Hardening — async-job variant. Returns the Job stub (202).
+// Caller starts polling via useJobsStore and shows progress in
+// the top-bar notification bell instead of blocking on the LLM
+// call for 30-180s.
+export async function augmentFromClusterAsync(
+    projectId: number,
+    args: AugmentFromClusterArgs,
+): Promise<Job> {
+    const params: Record<string, unknown> = {
+        target_count: args.targetCount ?? 30,
+        async_job: true,
+    };
+    if (args.backend) {
+        params.backend = args.backend;
+    }
+    const resp = await api.post(
+        `/projects/${projectId}/evaluation/${args.evalResultId}/clusters/${args.clusterId}/augment`,
+        null,
+        { params },
+    );
+    return resp.data as Job;
+}
+
+
 export interface ReviewQueueEntry {
     id: number;
     synth_confidence: number;

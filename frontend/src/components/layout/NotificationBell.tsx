@@ -39,6 +39,9 @@ function jobDeepLink(job: Job): string | null {
     if (job.kind === 'synth_playbook' && job.project_id) {
         return `/project/${job.project_id}/pipeline/synthetic#synth-review-queue`;
     }
+    if (job.kind === 'synth_augment_from_cluster' && job.project_id) {
+        return `/project/${job.project_id}/pipeline/synthetic#synth-review-queue`;
+    }
     // Legacy synth (QA / spans / conversations) all land on the
     // Synthetic tab where the inline review UI lives — the user
     // reviews the generated rows + saves from there.
@@ -78,12 +81,17 @@ function jobOutcomeSummary(job: Job): string | null {
     if (job.status !== 'succeeded') return null;
     const r = (job.result || {}) as Record<string, unknown>;
 
-    if (job.kind === 'synth_playbook') {
+    if (job.kind === 'synth_playbook' || job.kind === 'synth_augment_from_cluster') {
         const rows = typeof r.rows_generated === 'number' ? r.rows_generated : null;
         const backend = typeof r.backend_used === 'string' ? r.backend_used : null;
         const elapsed = typeof r.elapsed_sec === 'number' ? r.elapsed_sec : null;
+        const clusterId =
+            typeof r.cluster_id === 'string' && r.cluster_id.length > 0
+                ? r.cluster_id
+                : null;
         const parts: string[] = [];
         if (rows !== null) parts.push(`${rows} row${rows === 1 ? '' : 's'} generated`);
+        if (clusterId) parts.push(`cluster ${clusterId.slice(0, 16)}`);
         if (backend) parts.push(`via ${backend}`);
         if (elapsed !== null) parts.push(`${elapsed.toFixed(1)}s`);
         return parts.length ? parts.join(' · ') : null;
