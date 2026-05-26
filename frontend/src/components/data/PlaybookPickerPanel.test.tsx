@@ -58,7 +58,12 @@ describe('PlaybookPickerPanel', () => {
         expect(screen.getByText(/Select a recipe/)).toBeInTheDocument();
     });
 
-    it('runs a playbook and renders the result preview', async () => {
+    it('runs a playbook via the async-job endpoint and shows a queued confirmation', async () => {
+        // Hardening Phase H1 — runs now go through the background-
+        // job framework instead of blocking on the LLM call. The
+        // panel renders a tiny "job #N queued" confirmation; actual
+        // rows surface in the notification bell when the job
+        // completes.
         apiMock.get.mockResolvedValue({
             data: {
                 project_id: 5,
@@ -68,21 +73,21 @@ describe('PlaybookPickerPanel', () => {
         });
         apiMock.post.mockResolvedValue({
             data: {
-                rows: [
-                    {
-                        payload: { question: 'How do I reset?', answer: 'Visit settings.' },
-                        synth_confidence: 0.9,
-                        synth_source: 'playbook:qa-sft:positives_paraphrase',
-                    },
-                    {
-                        payload: { question: 'Where to reset?', answer: 'Visit settings.' },
-                        synth_confidence: 0.85,
-                        synth_source: 'playbook:qa-sft:positives_paraphrase',
-                    },
-                ],
-                backend_used: 'ollama:llama3.1:8b',
-                elapsed_sec: 1.42,
-                prompt_snippet: 'You are generating training data…',
+                id: 11,
+                kind: 'synth_playbook',
+                title: 'Synth · positives_paraphrase · 30 rows',
+                status: 'queued',
+                progress: null,
+                progress_message: null,
+                project_id: 5,
+                user_id: null,
+                params: { mode: 'positives_paraphrase', target_count: 30 },
+                result: null,
+                error: null,
+                queued_at: '2026-05-26T12:00:00Z',
+                started_at: null,
+                completed_at: null,
+                dismissed_at: null,
             },
         });
 
@@ -96,12 +101,11 @@ describe('PlaybookPickerPanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-result')).toBeInTheDocument();
         });
-        // Result headline + backend.
-        expect(screen.getByText(/Generated/)).toBeInTheDocument();
-        expect(screen.getByText(/ollama:llama3.1:8b/)).toBeInTheDocument();
-        // POST hit the right path with the right body.
+        // Confirmation preview shows the queued job marker.
+        expect(screen.getByText(/job #11 queued/)).toBeInTheDocument();
+        // POST hit the async-job variant of the endpoint.
         expect(apiMock.post).toHaveBeenCalledWith(
-            '/projects/5/synthetic/run-playbook',
+            '/projects/5/synthetic/run-playbook?async_job=true',
             {
                 mode: 'positives_paraphrase',
                 target_count: 30,
@@ -338,12 +342,26 @@ describe('PlaybookPickerPanel', () => {
                 ],
             },
         });
+        // Hardening Phase H1 — async-job POST returns a Job stub
+        // (202). The pinned backend still flows through verbatim in
+        // the request body.
         apiMock.post.mockResolvedValue({
             data: {
-                rows: [{ payload: {}, synth_confidence: 0.9, synth_source: 'playbook:classification:positives_paraphrase' }],
-                backend_used: 'nemo:meta/llama-3.1-70b-instruct',
-                elapsed_sec: 0.5,
-                prompt_snippet: '...',
+                id: 22,
+                kind: 'synth_playbook',
+                title: 'Synth · positives_paraphrase · 30 rows',
+                status: 'queued',
+                progress: null,
+                progress_message: null,
+                project_id: 3,
+                user_id: null,
+                params: {},
+                result: null,
+                error: null,
+                queued_at: '2026-05-26T12:00:00Z',
+                started_at: null,
+                completed_at: null,
+                dismissed_at: null,
             },
         });
 
@@ -361,7 +379,7 @@ describe('PlaybookPickerPanel', () => {
         await userEvent.click(screen.getByTestId('playbook-picker-run'));
         await waitFor(() => {
             expect(apiMock.post).toHaveBeenCalledWith(
-                '/projects/3/synthetic/run-playbook',
+                '/projects/3/synthetic/run-playbook?async_job=true',
                 expect.objectContaining({
                     mode: 'positives_paraphrase',
                     backend: 'nemo:meta/llama-3.1-70b-instruct',

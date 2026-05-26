@@ -21,13 +21,14 @@ import type {
 import {
     listPlaybooks,
     listSynthBackends,
-    runPlaybook,
+    runPlaybookAsync,
 } from '../../api/synthPlaybook';
+import { useJobsStore } from '../../stores/jobsStore';
+import { toast } from '../../stores/toastStore';
 import './PlaybookPickerPanel.css';
 
 interface Props {
     projectId: number;
-    onRowsAccepted?: (result: PlaybookResult) => void;
 }
 
 const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
@@ -37,31 +38,31 @@ const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
     },
     hard_negatives: {
         label: 'Hard negatives',
-        hint: 'Generate examples that look like one class but should be labeled another. (Epic 2b)',
+        hint: 'Generate examples that look like one class but should be labeled another.',
     },
     class_balance_fill: {
         label: 'Balance class distribution',
-        hint: 'Generate more examples for under-represented classes. (Epic 2b)',
+        hint: 'Generate more examples for under-represented classes.',
     },
     edge_cases: {
         label: 'Edge cases',
-        hint: 'Generate examples that stress test boundary conditions. (Epic 2b)',
+        hint: 'Generate examples that stress test boundary conditions.',
     },
     refusals: {
         label: 'Refusals',
-        hint: 'Generate examples the model should decline. (Epic 2b)',
+        hint: 'Generate examples the model should decline.',
     },
     format_robustness: {
         label: 'Format robustness',
-        hint: 'Generate inputs in varied formats to make the model resilient. (Epic 2b)',
+        hint: 'Generate inputs in varied formats to make the model resilient.',
     },
     cluster_targeted: {
         label: 'Target a failure cluster',
-        hint: 'Generate examples mirroring a specific eval failure pattern. (Epic 2b)',
+        hint: 'Generate examples mirroring a specific eval failure pattern.',
     },
 };
 
-export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props) {
+export default function PlaybookPickerPanel({ projectId }: Props) {
     const [available, setAvailable] = useState<PlaybookCatalogEntry[]>([]);
     const [recipeId, setRecipeId] = useState<string | null>(null);
     const [selectedMode, setSelectedMode] = useState<SynthMode | null>(null);
@@ -129,14 +130,33 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
         setRunning(true);
         setRunError(null);
         setResult(null);
+        // Hardening Phase H1 — always fire the async-job variant.
+        // Synth runs are LLM-bound and can take 30-180s; blocking
+        // the request was the root cause of the "network error"
+        // class the user reported. The notification bell takes
+        // over progress + completion reporting.
         try {
-            const r = await runPlaybook(projectId, {
+            const job = await runPlaybookAsync(projectId, {
                 mode: selectedMode,
                 targetCount,
                 backend: selectedBackend,
             });
-            setResult(r);
-            onRowsAccepted?.(r);
+            toast.info(
+                `Synth started — track in the notification bell (↑ top-right)`,
+                4000,
+            );
+            // Kick the polling loop so the new job surfaces in the
+            // bell on the very next tick.
+            void useJobsStore.getState().refreshAfterLocalChange();
+            // Stash a tiny "submitted" status into the result slot
+            // so the panel renders an inline confirmation instead
+            // of a blank state.
+            setResult({
+                rows: [],
+                backend_used: `job #${job.id} queued`,
+                elapsed_sec: 0,
+                prompt_snippet: '',
+            } as PlaybookResult);
         } catch (err: any) {
             const status = err?.response?.status;
             const detail = err?.response?.data?.detail;
@@ -150,7 +170,7 @@ export default function PlaybookPickerPanel({ projectId, onRowsAccepted }: Props
         } finally {
             setRunning(false);
         }
-    }, [projectId, selectedMode, targetCount, selectedBackend, onRowsAccepted]);
+    }, [projectId, selectedMode, targetCount, selectedBackend]);
 
     // Build picker option list from available backends. Hidden when
     // fewer than 2 are available (single-backend installs see no UI

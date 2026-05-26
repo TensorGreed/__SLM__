@@ -189,14 +189,28 @@ describe('RerouteRecommendationPanel', () => {
         expect(apiMock.post).not.toHaveBeenCalled();
     });
 
-    it('confirms the modal → POSTs reroute-to-rag → navigates to the new project', async () => {
+    it('confirms the modal → POSTs async reroute-to-rag → fires info toast (Hardening Phase H1)', async () => {
         apiMock.get.mockResolvedValueOnce({ data: makeAnalysis({ kind: 'try_rag' }) });
+        // Async path returns a Job stub (202) — no direct navigate
+        // since the work runs in the background. The notification
+        // bell takes over once the job completes.
         apiMock.post.mockResolvedValueOnce({
             data: {
-                new_project_id: 42,
-                new_project_name: 'Policy QA (RAG)',
-                source_project_id: 4,
-                clone_report: null,
+                id: 7,
+                kind: 'reroute_to_rag',
+                title: 'Clone to RAG · project #4',
+                status: 'queued',
+                progress: null,
+                progress_message: null,
+                project_id: 4,
+                user_id: null,
+                params: {},
+                result: null,
+                error: null,
+                queued_at: '2026-05-26T12:00:00Z',
+                started_at: null,
+                completed_at: null,
+                dismissed_at: null,
             },
         });
         renderPanel();
@@ -206,15 +220,20 @@ describe('RerouteRecommendationPanel', () => {
         await userEvent.click(screen.getByTestId('reroute-card-cta'));
         await userEvent.click(screen.getByTestId('reroute-modal-confirm'));
         await waitFor(() => {
-            expect(apiMock.post).toHaveBeenCalledWith('/projects/4/reroute-to-rag', {});
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/4/reroute-to-rag?async_job=true',
+                {},
+            );
         });
+        // Async flow uses an info toast, not success — and no direct
+        // navigate (the bell does it when the job completes).
         await waitFor(() => {
-            expect(locationAssignMock).toHaveBeenCalledWith('/project/42');
+            expect(toastMock.info).toHaveBeenCalledWith(
+                expect.stringContaining('Cloning started'),
+                4000,
+            );
         });
-        expect(toastMock.success).toHaveBeenCalledWith(
-            expect.stringContaining('Policy QA (RAG)'),
-            4000,
-        );
+        expect(locationAssignMock).not.toHaveBeenCalled();
     });
 
     it('surfaces a toast.error when the clone POST fails', async () => {

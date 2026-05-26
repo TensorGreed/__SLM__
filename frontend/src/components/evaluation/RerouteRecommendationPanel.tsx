@@ -19,10 +19,11 @@
 import { useEffect, useState } from 'react';
 import {
     fetchRerouteAnalysis,
-    rerouteToRag,
+    rerouteToRagAsync,
     type RerouteAnalysis,
     type RerouteSignal,
 } from '../../api/rerouteAnalysis';
+import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './RerouteRecommendationPanel.css';
 
@@ -112,14 +113,24 @@ export default function RerouteRecommendationPanel({ projectId, evalResultId }: 
                         cloning={cloning}
                         onCancel={() => setConfirming(false)}
                         onConfirm={async () => {
+                            // Hardening Phase H1 — fire the async-job
+                            // variant. The clone (file copy + BM25
+                            // index build) runs in the background; the
+                            // user is freed up immediately. Notification
+                            // bell surfaces progress + the "Open" link
+                            // when the new project is ready.
                             setCloning(true);
                             try {
-                                const result = await rerouteToRag(projectId);
-                                toast.success(
-                                    `Created "${result.new_project_name}" — opening now`,
+                                const job = await rerouteToRagAsync(projectId);
+                                toast.info(
+                                    `Cloning started — bell will notify when ready (job #${job.id})`,
                                     4000,
                                 );
-                                navigateTo(`/project/${result.new_project_id}`);
+                                void useJobsStore
+                                    .getState()
+                                    .refreshAfterLocalChange();
+                                setCloning(false);
+                                setConfirming(false);
                             } catch (err) {
                                 const detail =
                                     (err as { response?: { data?: { detail?: string } } })

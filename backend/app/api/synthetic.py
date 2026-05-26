@@ -481,6 +481,7 @@ async def bulk_update_synth_review_queue(
 async def run_synth_playbook(
     project_id: int,
     req: RunPlaybookRequest,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Run a playbook against the project's gold rows, generate
@@ -489,6 +490,13 @@ async def run_synth_playbook(
 
     Returns a PlaybookResult: rows + backend_used + elapsed_sec +
     prompt_snippet.
+
+    Hardening Phase H1 — pass ``?async_job=true`` to enqueue the
+    playbook as a background Job. The endpoint returns 202 +
+    ``{job_id: ...}`` immediately and the user tracks progress in
+    the notification bell. The synchronous path is preserved for
+    backward compatibility and for short, low-volume runs where a
+    spinner is fine.
     """
     from app.services.synth_backends import SynthBackendError
     from app.services.synth_playbook_service import run_playbook
@@ -498,6 +506,68 @@ async def run_synth_playbook(
         mode = SynthMode(req.mode)
     except ValueError:
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
+
+    if async_job:
+        from fastapi import Response
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import (
+            JobProgressHandle,
+            serialize_job,
+            start_job,
+        )
+
+        target_class_label = (
+            f" (target: {req.target_class})" if req.target_class else ""
+        )
+        title = (
+            f"Synth · {req.mode}{target_class_label} · {req.target_count} rows"
+        )
+
+        async def _runner(handle: JobProgressHandle) -> dict:
+            await handle.set_progress(
+                message=f"Calling LLM backend for {req.target_count} rows…"
+            )
+            # New session — runner doesn't share the request's session.
+            from app.database import async_session_factory
+
+            async with async_session_factory() as runner_db:
+                result = await run_playbook(
+                    runner_db,
+                    project_id,
+                    mode,
+                    target_count=req.target_count,
+                    target_class=req.target_class,
+                    backend=req.backend,
+                )
+                await runner_db.commit()
+            # Result payload is a pointers-only summary — keep it
+            # small so the Job row stays cheap to fetch.
+            return {
+                "rows_generated": len(result.get("rows") or []),
+                "backend_used": result.get("backend_used"),
+                "elapsed_sec": result.get("elapsed_sec"),
+                "mode": req.mode,
+                "target_class": req.target_class,
+            }
+
+        job = await start_job(
+            db,
+            kind="synth_playbook",
+            title=title,
+            runner=_runner,
+            project_id=project_id,
+            params={
+                "mode": req.mode,
+                "target_count": req.target_count,
+                "target_class": req.target_class,
+                "backend": req.backend,
+            },
+        )
+        return JSONResponse(
+            status_code=202,
+            content=serialize_job(job),
+        )
 
     try:
         result = await run_playbook(

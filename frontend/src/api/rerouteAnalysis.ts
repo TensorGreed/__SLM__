@@ -83,3 +83,24 @@ export async function rerouteToRag(
     );
     return resp.data;
 }
+
+
+// Hardening Phase H1 — async-job variant. Returns the Job stub
+// (HTTP 202). The user keeps working; the notification bell shows
+// progress and surfaces the "Open" deep-link when the clone is done.
+import type { Job } from './jobs';
+
+export async function rerouteToRagAsync(
+    projectId: number,
+    nameSuffix?: string,
+): Promise<Job> {
+    const body: Record<string, unknown> = {};
+    if (nameSuffix !== undefined) {
+        body.name_suffix = nameSuffix;
+    }
+    const resp = await api.post<Job>(
+        `/projects/${projectId}/reroute-to-rag?async_job=true`,
+        body,
+    );
+    return resp.data;
+}

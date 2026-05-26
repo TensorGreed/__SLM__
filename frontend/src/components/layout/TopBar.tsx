@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bell, CircleHelp } from 'lucide-react';
+import { CircleHelp } from 'lucide-react';
 
 import api from '../../api/client';
+import NotificationBell from './NotificationBell';
 import './TopBar.css';
 
 interface TopBarProps {
@@ -183,9 +184,8 @@ export default function TopBar({ title, subtitle, actions, withSidebar = false }
                     >
                         <CircleHelp size={16} />
                     </a>
-                    <button className="topbar-icon-btn" title="Notifications">
-                        <Bell size={16} />
-                    </button>
+                    <NotificationBell />
+
                     <div className="topbar-user" ref={menuRef}>
                         <button
                             className="topbar-user-btn"

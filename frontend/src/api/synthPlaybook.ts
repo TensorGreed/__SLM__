@@ -91,6 +91,28 @@ export async function runPlaybook(
 }
 
 
+// Hardening Phase H1 — async-job variant. Returns the Job stub (202).
+// Caller starts polling via useJobsStore and shows progress in the
+// top-bar notification bell instead of blocking on the LLM call.
+import type { Job } from './jobs';
+
+export async function runPlaybookAsync(
+    projectId: number,
+    args: RunPlaybookArgs,
+): Promise<Job> {
+    const resp = await api.post(
+        `/projects/${projectId}/synthetic/run-playbook?async_job=true`,
+        {
+            mode: args.mode,
+            target_count: args.targetCount,
+            target_class: args.targetClass ?? null,
+            backend: args.backend ?? null,
+        },
+    );
+    return resp.data as Job;
+}
+
+
 // ─────────────────────────────────────────────────────────────────────
 // USER-SUCCESS Epic 2b — cluster-augment + review queue.
 // ─────────────────────────────────────────────────────────────────────

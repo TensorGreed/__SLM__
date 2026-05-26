@@ -39,6 +39,7 @@ from app.models.label_job import LabelJob, LabelRow
 from app.models.run_event import RunEvent
 from app.models.failure_cluster import FailureCluster
 from app.models.support_bundle import SupportBundle
+from app.models.job import Job, JobStatus
 
 __all__ = [
     "Project",
@@ -87,4 +88,6 @@ __all__ = [
     "SupportBundle",
     "LabelJob",
     "LabelRow",
+    "Job",
+    "JobStatus",
 ]

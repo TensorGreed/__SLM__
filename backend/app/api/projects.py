@@ -376,12 +376,12 @@ _REROUTE_IDEMPOTENCY_WINDOW_SECONDS: int = 3600
 
 @router.post(
     "/{project_id}/reroute-to-rag",
-    response_model=ProjectRerouteToRagResponse,
     status_code=201,
 )
 async def reroute_to_rag(
     project_id: int,
     data: ProjectRerouteToRagRequest,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """USER-SUCCESS Epic 7 Phase 7b — clone a qa-sft project into a
@@ -447,6 +447,69 @@ async def reroute_to_rag(
                     "window_seconds": _REROUTE_IDEMPOTENCY_WINDOW_SECONDS,
                 },
             },
+        )
+
+    if async_job:
+        # Hardening Phase H1 — enqueue the clone as a background job
+        # so the user isn't blocked on the file-copy + BM25 index
+        # build (~5-30s for a 200-row gold set). The notification
+        # bell surfaces progress; clicking the completed job opens
+        # the new project.
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import (
+            JobProgressHandle,
+            serialize_job,
+            start_job,
+        )
+
+        async def _runner(handle: JobProgressHandle) -> dict:
+            await handle.set_progress(
+                message="Copying gold set + raw + prepared files…"
+            )
+            from app.database import async_session_factory
+
+            async with async_session_factory() as runner_db:
+                try:
+                    new_project = await clone_project_for_rag(
+                        runner_db,
+                        source_project_id=project_id,
+                        name_suffix=data.name_suffix,
+                    )
+                except RagCloneError as inner:
+                    # Re-raise as a plain error string the wrapper
+                    # captures into Job.error. Status code mapping
+                    # only matters for the sync endpoint.
+                    raise RuntimeError(str(inner)) from inner
+                await handle.set_progress(
+                    fraction=0.85, message="Building BM25 retrieval index…"
+                )
+                await runner_db.commit()
+                # Re-read to get persisted state for the result.
+                await runner_db.refresh(new_project)
+                return {
+                    "new_project_id": new_project.id,
+                    "new_project_name": new_project.name,
+                    "source_project_id": project_id,
+                    "clone_report": (new_project.runtime_config or {}).get(
+                        "clone_report"
+                    ),
+                }
+
+        job = await start_job(
+            db,
+            kind="reroute_to_rag",
+            title=f"Clone to RAG · project #{project_id}",
+            runner=_runner,
+            project_id=project_id,
+            params={
+                "source_project_id": project_id,
+                "name_suffix": data.name_suffix,
+            },
+        )
+        return JSONResponse(
+            status_code=202,
+            content=serialize_job(job),
         )
 
     try:
