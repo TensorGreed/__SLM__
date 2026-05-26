@@ -1396,6 +1396,34 @@ export default function TrainingPanel({
       typeof value === 'string' && value.trim() ? value : fallback;
 
     if (typeof config.base_model === 'string' && config.base_model.trim()) setBaseModel(config.base_model);
+    // Hardening — when the Coach Mode "Consider <model>" suggestion
+    // navigates here, it appends ?recommended_base_model=<name> to
+    // the URL. Override the config-loaded base model with the
+    // recommended one and surface a toast so the user knows the
+    // swap was applied. Param is cleared on first read so the
+    // override doesn't keep firing on tab switches.
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      const recommended = params.get('recommended_base_model');
+      if (recommended && recommended.trim()) {
+        setBaseModel(recommended);
+        params.delete('recommended_base_model');
+        const cleaned = params.toString();
+        const newUrl =
+          window.location.pathname
+          + (cleaned ? `?${cleaned}` : '')
+          + window.location.hash;
+        window.history.replaceState(null, '', newUrl);
+        // Defer the toast so React has time to commit the state
+        // change before the user sees the confirmation.
+        setTimeout(() => {
+          toast.success(
+            `Base model set to ${recommended} (Coach recommendation applied)`,
+            5000,
+          );
+        }, 50);
+      }
+    }
     setTrainingMode(parseString(config.training_mode, trainingMode));
     setTrainingRuntimeId(parseString(config.training_runtime_id, trainingRuntimeId));
     setTaskType(parseString(config.task_type, taskType));

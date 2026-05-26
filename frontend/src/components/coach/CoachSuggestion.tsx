@@ -168,6 +168,19 @@ const NAVIGATE_TARGET_URLS: Record<
     // pipeline tab) — same fix as recipe-picker. The Phase 6d
     // curriculum nudge + Phase 9d auto-RAG nudge both emit this.
     'training-config': (projectId) => `/project/${projectId}/training-config`,
+    // Base-model swap target emitted by the trainability-forecast
+    // coach suggestion ("Consider Qwen/..."). The params carry
+    // `recommended_base_model`; we forward it as a URL query so
+    // TrainingPanel can read it on mount + auto-apply via
+    // setBaseModel, plus a hash so the page scrolls to the picker.
+    'training-base-model-picker': (projectId, params) => {
+        const recommended = params['recommended_base_model'];
+        const query =
+            typeof recommended === 'string' && recommended.length > 0
+                ? `?recommended_base_model=${encodeURIComponent(recommended)}`
+                : '';
+        return `/project/${projectId}/training-config${query}#base-model`;
+    },
     // Phase 7d — Coach Mode's reroute nudge sends the user to the
     // Eval tab + scrolls to the RerouteRecommendationPanel via the
     // hash anchor. The panel reads `evalResults[0]?.id` from
