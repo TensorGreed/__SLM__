@@ -459,6 +459,50 @@ async def failure_clusters(
         raise HTTPException(400, detail) from exc
 
 
+@router.get("/{eval_result_id}/reroute-analysis")
+async def get_reroute_analysis(
+    project_id: int,
+    eval_result_id: int,
+    refresh: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """USER-SUCCESS Epic 7 Phase 7a — post-eval decision-engine analysis.
+
+    Inspects the eval, the project brief, and the gold-set shape and
+    returns a categorical reroute recommendation
+    (try_rag / try_prompt_engineering / expand_data / stay_the_course)
+    plus the three signal verdicts that drove it.
+
+    Result is cached on ``EvalResult.details["reroute_analysis"]``.
+    Pass ``?refresh=true`` to recompute and overwrite the cache.
+    """
+    from app.models.experiment import EvalResult, Experiment
+    from app.services.post_eval_decision_engine_service import (
+        analyze_eval_for_reroute,
+    )
+
+    eval_result = await db.get(EvalResult, eval_result_id)
+    if eval_result is None:
+        raise HTTPException(404, f"EvalResult {eval_result_id} not found")
+    experiment = await db.get(Experiment, eval_result.experiment_id)
+    if experiment is None:
+        raise HTTPException(404, "experiment_not_found")
+    if experiment.project_id != project_id:
+        raise HTTPException(400, "eval_result_not_in_project")
+
+    try:
+        return await analyze_eval_for_reroute(
+            db,
+            eval_result_id=eval_result_id,
+            use_cache=not refresh,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail in {"eval_result_not_found", "project_not_found", "experiment_not_found"}:
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+
 @router.post("/remediation-plans/generate", status_code=201)
 async def generate_eval_remediation_plan(
     project_id: int,
