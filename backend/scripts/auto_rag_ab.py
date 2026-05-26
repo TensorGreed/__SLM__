@@ -368,16 +368,28 @@ def evaluate_with_inference(
     train_rows: list[dict[str, Any]],
     with_rag: bool,
     rag_k: int = RAG_K,
+    index_dir_override: Path | None = None,
 ) -> tuple[list[float], list[dict[str, Any]]]:
     """Load the trained model (base + LoRA), generate an answer for
     each val row, score via ``evaluation_service.f1_score``. Returns
     (per-row F1s, per-row record dicts for debugging).
 
-    When ``with_rag`` is True, the harness builds a BM25 index over
-    ``train_rows`` (using ``auto_rag_service.build_bm25_index``) and
-    prepends the top-K retrievals to each prompt — exactly the shape
-    Phase 9b's playground path uses, so the A/B is faithful to what
-    the user will see if Phase 9d ships."""
+    When ``with_rag`` is True, the harness needs a BM25 index to
+    retrieve from. Two modes:
+
+    * ``index_dir_override=None`` (Phase 9c gate path) — build a
+      **transient** BM25 over ``train_rows`` next to ``model_dir``.
+      Each seed gets its own index because each seed's training
+      corpus may differ.
+    * ``index_dir_override=<path>`` (Phase 9d per-project path) —
+      use an **existing** BM25 index at the given path. The
+      ``train_rows`` argument is ignored in this mode. Use this when
+      you want the comparison to predict what the project's actual
+      playground will do (the playground reads
+      ``data/projects/{id}/auto_rag/bm25_index.json`` which is built
+      from the full Dataset corpus, not just the prepared train
+      split).
+    """
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -389,20 +401,35 @@ def evaluate_with_inference(
     )
     from app.services.evaluation_service import f1_score
 
-    # Build a transient BM25 index for the with-RAG condition. Lives
-    # in a sibling dir of the model output so each seed's index is
-    # isolated (mirrors what training-completion would do at the
-    # project level).
-    index_dir = model_dir.parent / "auto_rag"
-    if with_rag:
-        try:
-            build_bm25_index(
-                train_rows,
-                recipe_id="qa-sft",
-                output_dir=index_dir,
+    if index_dir_override is not None:
+        # Phase 9d path — use the existing project-deployed index.
+        # Refuse to silently fall back to building a transient one;
+        # if the override points at a missing index we want a loud
+        # error so the caller can either build it first or drop the
+        # override.
+        index_dir = index_dir_override
+        if with_rag and not (index_dir / "bm25_index.json").exists():
+            raise RuntimeError(
+                f"index_dir_override={index_dir} has no bm25_index.json — "
+                f"build the project's BM25 index first via "
+                f"``auto_rag_service.build_index_for_project`` (normally "
+                f"fired automatically at training completion)."
             )
-        except AutoRagUnavailable as e:
-            raise RuntimeError(f"failed to build BM25 index for with-RAG eval: {e}") from e
+    else:
+        # Phase 9c gate path — build a transient BM25 next to the
+        # model dir so each seed's index is isolated.
+        index_dir = model_dir.parent / "auto_rag"
+        if with_rag:
+            try:
+                build_bm25_index(
+                    train_rows,
+                    recipe_id="qa-sft",
+                    output_dir=index_dir,
+                )
+            except AutoRagUnavailable as e:
+                raise RuntimeError(
+                    f"failed to build BM25 index for with-RAG eval: {e}"
+                ) from e
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     if tokenizer.pad_token_id is None:
@@ -790,13 +817,26 @@ def run_project_comparison(project_id: int, *, seed: int = 0) -> dict[str, Any]:
     print(f"[harness] project={project_id} model={model_dir}")
     print(f"[harness] train_rows={len(train_rows)} val_rows={len(val_rows)}")
 
+    # Use the project's DEPLOYED BM25 index (built at training-
+    # completion by Phase 9b's hook over the full Dataset corpus, not
+    # just the prepared train split). This is what the playground
+    # actually reads at inference time — so the comparison's lift
+    # numbers predict real playground behavior. Falls through to the
+    # Phase 9c transient-build path only when this project hasn't
+    # had the index built yet (rare; loud error tells the user to
+    # train + let the hook fire).
+    project_index_dir = (
+        settings.DATA_DIR / "projects" / str(project_id) / "auto_rag"
+    )
     off_f1s, off_records = evaluate_with_inference(
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=False,
+        index_dir_override=project_index_dir,
     )
     on_f1s, on_records = evaluate_with_inference(
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=True,
+        index_dir_override=project_index_dir,
     )
 
     off_mean = statistics.mean(off_f1s) if off_f1s else 0.0
