@@ -35,7 +35,14 @@ export default function CoachStrip({ projectId, stage }: CoachStripProps) {
             try {
                 const res = await fetchCoachSuggestions(projectId, stage);
                 if (cancelled) return;
-                setSuggestions(res.suggestions);
+                // Defensive: a test mock or a malformed server response
+                // can leave ``res`` without ``.suggestions``. Default to
+                // an empty array so the render path treats it as the
+                // healthy/no-suggestions case rather than crashing on
+                // ``suggestions.length``.
+                setSuggestions(
+                    Array.isArray(res?.suggestions) ? res.suggestions : [],
+                );
             } catch (err) {
                 if (cancelled) return;
                 const detail =

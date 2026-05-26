@@ -85,6 +85,12 @@ export default function RerouteRecommendationPanel({ projectId, evalResultId }: 
         return null;
     }
 
+    // Defensive: a partial / mocked response can omit the
+    // `recommendation` object; treat that as "nothing to surface"
+    // instead of crashing on the `.kind` read.
+    if (!analysis.recommendation) {
+        return null;
+    }
     const kind = analysis.recommendation.kind;
     if (kind === 'stay_the_course') {
         // Passing eval → no reroute needed → no panel.

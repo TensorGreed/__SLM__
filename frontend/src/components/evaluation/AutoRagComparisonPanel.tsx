@@ -192,6 +192,12 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         );
     }
 
+    // Defensive: tests / partial responses can hand back a `data`
+    // without a `summary` field; treat that as "comparison unavailable"
+    // rather than crashing on the read below.
+    if (!data.summary) {
+        return null;
+    }
     const lift = data.summary.relative_lift_pct;
     const liftStr = lift !== null ? `${lift >= 0 ? '+' : ''}${lift.toFixed(1)}%` : '—';
     const liftIsPositive = lift !== null && lift > 0;
