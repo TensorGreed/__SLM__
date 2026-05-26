@@ -2429,6 +2429,420 @@ def _prerequisite(
     }
 
 
+def _domain_definition(domain_id: str) -> dict[str, Any] | None:
+    normalized = str(domain_id or "").strip()
+    for definition in _DOMAIN_DEFINITIONS:
+        if str(definition.get("id") or "") == normalized:
+            return definition
+    return None
+
+
+def _domain_id_from_applied(applied: dict[str, Any]) -> str | None:
+    applied_text = " ".join(
+        str(value or "").lower()
+        for value in (
+            applied.get("profile_id"),
+            applied.get("profile_display_name"),
+            applied.get("pack_id"),
+            applied.get("pack_display_name"),
+            applied.get("pack_default_profile_id"),
+        )
+    )
+    if not applied_text.strip():
+        return None
+    for definition in _DOMAIN_DEFINITIONS:
+        domain_id = str(definition.get("id") or "")
+        aliases = [domain_id.replace("_", "-"), domain_id, *list(definition.get("aliases") or [])]
+        if any(str(alias).lower().replace("_", "-") in applied_text.replace("_", "-") for alias in aliases):
+            return domain_id
+    return None
+
+
+def _synthetic_library_domain_candidates(domain_detection: dict[str, Any]) -> list[dict[str, Any]]:
+    detected = (
+        domain_detection.get("detected_domain")
+        if isinstance(domain_detection.get("detected_domain"), dict)
+        else {}
+    )
+    applied = (
+        domain_detection.get("applied")
+        if isinstance(domain_detection.get("applied"), dict)
+        else {}
+    )
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    detected_id = str(detected.get("id") or "").strip()
+    detected_confidence = float(detected.get("confidence") or 0.0)
+    if detected_id and detected_id != "generic_domain" and detected_confidence >= 0.3:
+        candidates.append({
+            "domain_id": detected_id,
+            "domain_label": str(detected.get("label") or detected_id.replace("_", " ").title()),
+            "source": "detected",
+            "confidence": round(detected_confidence, 4),
+        })
+        seen.add(detected_id)
+
+    applied_id = _domain_id_from_applied(applied)
+    if applied_id and applied_id not in seen:
+        definition = _domain_definition(applied_id) or {}
+        candidates.append({
+            "domain_id": applied_id,
+            "domain_label": str(definition.get("label") or applied_id.replace("_", " ").title()),
+            "source": "applied",
+            "confidence": 0.78,
+        })
+        seen.add(applied_id)
+
+    if not candidates:
+        candidates.append({
+            "domain_id": "generic_domain",
+            "domain_label": "Generic Domain",
+            "source": "fallback",
+            "confidence": max(0.0, min(1.0, detected_confidence)),
+        })
+    return candidates[:2]
+
+
+def _synthetic_required_fields(recipe_payload: dict[str, Any] | None, domain_id: str) -> list[str]:
+    if recipe_payload:
+        input_column = str(recipe_payload.get("default_input_column") or "input").strip() or "input"
+        output_column = str(recipe_payload.get("default_output_column") or "output").strip() or "output"
+        fields = [input_column, output_column]
+        recipe_id = str(recipe_payload.get("id") or "")
+        if recipe_id == "qa-sft" and domain_id in {"policy_qa", "legal_contracts", "finance_support"}:
+            fields.append("context")
+        deduped: list[str] = []
+        for field in fields:
+            if field not in deduped:
+                deduped.append(field)
+        return deduped
+    return ["input", "expected"]
+
+
+def _synthetic_expected_output_shape(recipe_payload: dict[str, Any] | None, required_fields: list[str]) -> dict[str, Any]:
+    recipe_id = str((recipe_payload or {}).get("id") or "unknown")
+    payload_fields = list(required_fields)
+    for field in ("synth_source", "synth_confidence", "review_status"):
+        if field not in payload_fields:
+            payload_fields.append(field)
+    return {
+        "format": "jsonl",
+        "recipe_id": recipe_id,
+        "payload_fields": payload_fields,
+        "review_status": "pending",
+        "notes": [
+            "Rows are generated in the existing Synthetic workflow, not in Data Studio.",
+            "Generated rows enter review before they can affect prepared datasets.",
+        ],
+    }
+
+
+def _synthetic_prompt_focus(domain_id: str, strategy: dict[str, Any]) -> list[str]:
+    focus = [
+        str(strategy.get("domain_reason") or ""),
+        "Preserve the active recipe's canonical input/output fields.",
+        "Prefer local Ollama generation unless the user explicitly selects another backend.",
+    ]
+    if domain_id == "pii_pci_detection":
+        focus.append("Use synthetic sensitive-looking examples; avoid leaking real secrets.")
+    elif domain_id in {"policy_qa", "legal_contracts", "finance_support"}:
+        focus.append("Keep citations, policy boundaries, and insufficient-information cases reviewable.")
+    elif domain_id == "support_faq":
+        focus.append("Vary customer wording while keeping the answer intent and escalation boundary stable.")
+    return [item for item in focus if item][:5]
+
+
+def _synthetic_review_gates(domain_id: str, pending_synth: int) -> list[str]:
+    gates = [
+        "Human review is required before generated rows enter prepared datasets.",
+        "Reject rows that do not match the active recipe shape.",
+    ]
+    if pending_synth > 0:
+        gates.append("Clear the current synthetic review queue before generating a large new batch.")
+    if domain_id == "pii_pci_detection":
+        gates.append("Review synthetic sensitive values and false-negative coverage before SFT.")
+    elif domain_id in {"policy_qa", "legal_contracts", "finance_support"}:
+        gates.append("Review answers for overconfidence, missing context, and stale policy language.")
+    elif domain_id == "support_faq":
+        gates.append("Review account, billing, and cancellation answers for escalation boundaries.")
+    return gates[:5]
+
+
+def _synthetic_library_prerequisites(
+    *,
+    recipe_payload: dict[str, Any] | None,
+    recipe_compatible: bool,
+    mode_available: bool,
+    mapping_verdict: str,
+    missing_fields: list[str],
+    file_backed_gold_rows: int,
+    gold_rows: int,
+    ollama_backend: dict[str, Any] | None,
+    pending_synth: int,
+) -> list[dict[str, str]]:
+    recipe_id = str((recipe_payload or {}).get("id") or "")
+    if not recipe_payload:
+        recipe_status = "missing"
+        recipe_message = "Choose a recipe before using a domain-specific synthetic library."
+    elif recipe_compatible:
+        recipe_status = "met"
+        recipe_message = f"{recipe_id} matches this domain library."
+    else:
+        recipe_status = "attention"
+        recipe_message = f"{recipe_id} can still generate rows, but this domain usually fits another recipe."
+
+    if not recipe_payload:
+        mode_status = "missing"
+        mode_message = "Compatible playbook modes appear after a recipe is selected."
+    elif mode_available:
+        mode_status = "met"
+        mode_message = "At least one curated playbook mode is registered for the active recipe."
+    else:
+        mode_status = "missing"
+        mode_message = "No registered playbook mode currently matches this domain strategy and recipe."
+
+    if not recipe_payload or mapping_verdict == "empty":
+        mapping_status = "attention"
+        mapping_message = "Run mapping preview with source rows before generating at scale."
+    elif missing_fields:
+        mapping_status = "missing"
+        mapping_message = f"Required mapping fields need review: {', '.join(missing_fields[:4])}."
+    else:
+        mapping_status = "met"
+        mapping_message = "Required recipe fields look ready in the current mapping preview."
+
+    if file_backed_gold_rows > 0:
+        gold_status = "met"
+        gold_message = f"{file_backed_gold_rows} file-backed Gold Set row(s) can anchor generation."
+    elif gold_rows > 0:
+        gold_status = "attention"
+        gold_message = "Gold examples exist, but current playbooks need file-backed Gold Set rows."
+    else:
+        gold_status = "missing"
+        gold_message = "Add trusted Gold Set examples before running this library."
+
+    if bool((ollama_backend or {}).get("available")):
+        ollama_status = "met"
+        ollama_message = f"Local Ollama is ready: {(ollama_backend or {}).get('describe') or 'ollama'}."
+    else:
+        ollama_status = "attention"
+        ollama_message = "Ollama is the free local default; start it before generating."
+
+    review_status = "met" if pending_synth <= 0 else "attention"
+    review_message = (
+        "No pending synthetic review gate is active."
+        if pending_synth <= 0
+        else f"{pending_synth} synthetic row(s) are already pending review."
+    )
+
+    return [
+        _prerequisite("recipe", "Recipe compatibility", recipe_status, recipe_message, target_tab="data"),
+        _prerequisite("playbook_mode", "Playbook mode", mode_status, mode_message, target_tab="synthetic"),
+        _prerequisite("mapping", "Required fields", mapping_status, mapping_message, target_tab="dataprep"),
+        _prerequisite("gold_examples", "Gold anchors", gold_status, gold_message, target_tab="goldset"),
+        _prerequisite("local_ollama", "Local Ollama", ollama_status, ollama_message, target_tab="synthetic"),
+        _prerequisite("review_gate", "Review gate", review_status, review_message, target_tab="synthetic"),
+    ]
+
+
+def _synthetic_domain_playbook_libraries(
+    *,
+    domain_detection: dict[str, Any],
+    mapping_preview: dict[str, Any],
+    recipe_payload: dict[str, Any] | None,
+    compatible_modes: set[str],
+    ollama_backend: dict[str, Any] | None,
+    gold_rows: int,
+    file_backed_gold_rows: int,
+    pending_synth: int,
+) -> dict[str, Any]:
+    mapping_summary = (
+        mapping_preview.get("summary")
+        if isinstance(mapping_preview.get("summary"), dict)
+        else {}
+    )
+    mapping_gaps = [
+        str(item)
+        for item in list(mapping_summary.get("required_fields_below_100") or [])
+        if str(item).strip()
+    ]
+    mapping_verdict = str(mapping_preview.get("verdict") or "empty")
+    recipe_id = str((recipe_payload or {}).get("id") or "")
+    recipe_label = str((recipe_payload or {}).get("name") or recipe_id or "No recipe")
+    libraries: list[dict[str, Any]] = []
+
+    for candidate in _synthetic_library_domain_candidates(domain_detection):
+        domain_id = str(candidate["domain_id"])
+        definition = _domain_definition(domain_id) or {}
+        strategies = _DOMAIN_SYNTHETIC_STRATEGIES.get(domain_id) or [
+            {
+                "id": "baseline_variants",
+                "title": "Generate baseline variants after domain confirmation",
+                "strategy": "positive paraphrase",
+                "desired_modes": ("positives_paraphrase",),
+                "domain_reason": "Synthetic rows are safer when the domain and recipe are confirmed first.",
+            }
+        ]
+        recommended_recipes = [str(item) for item in list(definition.get("recipes") or []) if str(item).strip()]
+        recipe_compatible = bool(recipe_id and (not recommended_recipes or recipe_id in recommended_recipes))
+        playbooks: list[dict[str, Any]] = []
+        desired_modes_seen: set[str] = set()
+        missing_modes_seen: set[str] = set()
+        compatible_desired_seen: set[str] = set()
+
+        for strategy in strategies[:4]:
+            desired_modes = tuple(str(mode) for mode in strategy.get("desired_modes") or ())
+            desired_modes_seen.update(mode for mode in desired_modes if mode)
+            mode, mode_available = _pick_playbook_mode(desired_modes, compatible_modes)
+            if not mode:
+                mode = desired_modes[0] if desired_modes else "positives_paraphrase"
+            if mode_available:
+                compatible_desired_seen.add(mode)
+            else:
+                missing_modes_seen.update(mode for mode in desired_modes if mode and mode not in compatible_modes)
+
+            required_fields = _synthetic_required_fields(recipe_payload, domain_id)
+            missing_fields = [field for field in required_fields if field in mapping_gaps]
+            if mapping_gaps and not missing_fields:
+                missing_fields = mapping_gaps[:4]
+            expected_shape = _synthetic_expected_output_shape(recipe_payload, required_fields)
+            review_gates = _synthetic_review_gates(domain_id, pending_synth)
+            prerequisites = _synthetic_library_prerequisites(
+                recipe_payload=recipe_payload,
+                recipe_compatible=recipe_compatible,
+                mode_available=mode_available,
+                mapping_verdict=mapping_verdict,
+                missing_fields=missing_fields,
+                file_backed_gold_rows=file_backed_gold_rows,
+                gold_rows=gold_rows,
+                ollama_backend=ollama_backend,
+                pending_synth=pending_synth,
+            )
+            blocker_count = sum(1 for item in prerequisites if item["status"] == "missing")
+            warning_count = sum(1 for item in prerequisites if item["status"] == "attention")
+            if blocker_count:
+                readiness = "blocked"
+                readiness_reason = "Recipe, playbook mode, or Gold Set prerequisites need setup first."
+            elif warning_count:
+                readiness = "attention"
+                readiness_reason = "The library can be reviewed, but setup or review gates need attention."
+            else:
+                readiness = "ready"
+                readiness_reason = "Recipe, local backend, Gold anchors, mapping, and review gates look ready."
+
+            playbooks.append({
+                "id": f"{domain_id}:{strategy.get('id') or mode}",
+                "title": str(strategy.get("title") or _playbook_mode_label(mode)),
+                "strategy": str(strategy.get("strategy") or mode.replace("_", " ")),
+                "mode": mode,
+                "mode_label": _playbook_mode_label(mode),
+                "mode_available": mode_available,
+                "recipe_id": recipe_id or None,
+                "recipe_compatible": recipe_compatible,
+                "required_fields": required_fields,
+                "missing_fields": missing_fields,
+                "expected_output_shape": expected_shape,
+                "prompt_focus": _synthetic_prompt_focus(domain_id, strategy),
+                "review_gates": review_gates,
+                "prerequisites": prerequisites,
+                "readiness": readiness,
+                "readiness_reason": readiness_reason,
+                "generation_path": {
+                    "backend": "ollama",
+                    "available": bool((ollama_backend or {}).get("available")),
+                    "describe": str((ollama_backend or {}).get("describe") or "ollama"),
+                    "local_default": True,
+                    "paid_required": False,
+                },
+                "generation_action": {
+                    "label": "Open Synthetic workflow",
+                    "target_tab": "synthetic",
+                    "requires_confirmation": True,
+                    "description": "Run this library from the existing Synthetic workflow; Data Studio only previews the plan.",
+                },
+            })
+
+        library_blocked = any(item["readiness"] == "blocked" for item in playbooks)
+        library_attention = any(item["readiness"] == "attention" for item in playbooks)
+        if library_blocked:
+            status = "blocked"
+        elif library_attention:
+            status = "attention"
+        else:
+            status = "ready"
+        summary = (
+            f"{candidate['domain_label']} library uses local Ollama by default and keeps generated rows behind review."
+        )
+        if recommended_recipes and recipe_id and recipe_id not in recommended_recipes:
+            summary = (
+                f"{candidate['domain_label']} usually pairs with {', '.join(recommended_recipes)}; "
+                f"review compatibility before using {recipe_id}."
+            )
+
+        libraries.append({
+            "id": f"{domain_id}-{candidate['source']}",
+            "domain_id": domain_id,
+            "domain_label": candidate["domain_label"],
+            "source": candidate["source"],
+            "confidence": candidate["confidence"],
+            "status": status,
+            "summary": summary,
+            "local_first": True,
+            "active_recipe_id": recipe_id or None,
+            "active_recipe_label": recipe_label,
+            "recommended_recipes": recommended_recipes,
+            "recipe_compatible": recipe_compatible,
+            "desired_modes": sorted(desired_modes_seen),
+            "compatible_modes": sorted(compatible_desired_seen),
+            "missing_modes": sorted(missing_modes_seen),
+            "review_gates": _synthetic_review_gates(domain_id, pending_synth),
+            "playbooks": playbooks,
+        })
+
+    ready_count = sum(1 for item in libraries if item["status"] == "ready")
+    attention_count = sum(1 for item in libraries if item["status"] == "attention")
+    blocked_count = sum(1 for item in libraries if item["status"] == "blocked")
+    detected = (
+        domain_detection.get("detected_domain")
+        if isinstance(domain_detection.get("detected_domain"), dict)
+        else {}
+    )
+    applied = (
+        domain_detection.get("applied")
+        if isinstance(domain_detection.get("applied"), dict)
+        else {}
+    )
+    return {
+        "read_only": True,
+        "local_first": True,
+        "default_backend": "ollama",
+        "ollama_ready": bool((ollama_backend or {}).get("available")),
+        "library_count": len(libraries),
+        "ready_count": ready_count,
+        "attention_count": attention_count,
+        "blocked_count": blocked_count,
+        "detected_domain": {
+            "id": detected.get("id"),
+            "label": detected.get("label"),
+            "confidence": detected.get("confidence"),
+            "source": detected.get("source"),
+        },
+        "applied_domain": {
+            "profile_id": applied.get("profile_id"),
+            "pack_id": applied.get("pack_id"),
+            "display_name": applied.get("profile_display_name") or applied.get("pack_display_name"),
+        },
+        "libraries": libraries,
+        "entry_point": {
+            "label": "Open Synthetic workflow",
+            "target_tab": "synthetic",
+            "reason": "Run domain-specific playbooks in the existing Synthetic tab; generation requires user confirmation there.",
+            "requires_confirmation": True,
+        },
+    }
+
+
 async def build_data_studio_synthetic_playbook_center(
     db: AsyncSession,
     project_id: int,
@@ -2448,6 +2862,8 @@ async def build_data_studio_synthetic_playbook_center(
         else []
     )
     preview_catalog = compatible_catalog if recipe_id else full_catalog
+    domain_detection = await build_data_studio_domain_detection(db, project_id)
+    mapping_preview = await build_data_studio_mapping_preview(db, project_id)
 
     datasets_result = await db.execute(
         select(Dataset).where(Dataset.project_id == project_id)
@@ -2633,6 +3049,16 @@ async def build_data_studio_synthetic_playbook_center(
 
     supported_recipes = sorted({item["recipe_id"] for item in full_catalog})
     compatible_modes = sorted({item["mode"] for item in compatible_catalog})
+    domain_libraries = _synthetic_domain_playbook_libraries(
+        domain_detection=domain_detection,
+        mapping_preview=mapping_preview,
+        recipe_payload=recipe_payload,
+        compatible_modes=set(compatible_modes),
+        ollama_backend=ollama_backend,
+        gold_rows=gold_rows,
+        file_backed_gold_rows=file_backed_gold_rows,
+        pending_synth=int(queue["total_pending"]),
+    )
 
     return {
         "project_id": project_id,
@@ -2654,6 +3080,7 @@ async def build_data_studio_synthetic_playbook_center(
             "local_default": True,
             "paid_required": False,
         },
+        "domain_libraries": domain_libraries,
         "prerequisites": prerequisites,
         "review_queue": queue,
         "issues": issues,

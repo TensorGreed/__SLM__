@@ -14,6 +14,8 @@ import {
     getDataStudioSyntheticPlaybookCenter,
 } from '../../api/dataStudio';
 import type {
+    DataStudioSyntheticDomainLibrary,
+    DataStudioSyntheticDomainPlaybook,
     DataStudioSyntheticPlaybookCenter,
     DataStudioSyntheticPrerequisite,
 } from '../../api/dataStudio';
@@ -43,9 +45,28 @@ function formatNumber(value: number | undefined): string {
     return new Intl.NumberFormat().format(Number(value || 0));
 }
 
+function formatPercent(value: number | undefined): string {
+    const normalized = Number.isFinite(Number(value)) ? Number(value) : 0;
+    return `${Math.round(normalized * 100)}%`;
+}
+
 function labelForStatus(status: string | undefined): string {
     if (!status) return 'Unknown';
     return status.replace(/_/g, ' ');
+}
+
+function readinessLabel(status: string | undefined): string {
+    if (status === 'ready') return 'Ready';
+    if (status === 'blocked') return 'Blocked';
+    if (status === 'attention') return 'Needs review';
+    return labelForStatus(status);
+}
+
+function librarySourceLabel(source: string | undefined): string {
+    if (source === 'detected') return 'Detected domain';
+    if (source === 'applied') return 'Applied domain';
+    if (source === 'fallback') return 'Fallback';
+    return labelForStatus(source);
 }
 
 function compactJson(value: unknown): string {
@@ -64,6 +85,123 @@ function issueIcon(severity: string) {
         return <CheckCircle2 size={15} aria-hidden="true" />;
     }
     return <AlertTriangle size={15} aria-hidden="true" />;
+}
+
+function DomainPlaybookCard({
+    playbook,
+    onOpenSynthetic,
+}: {
+    playbook: DataStudioSyntheticDomainPlaybook;
+    onOpenSynthetic: () => void;
+}) {
+    return (
+        <article className={`data-studio-synth__domain-playbook data-studio-synth__domain-playbook--${playbook.readiness}`}>
+            <div className="data-studio-synth__domain-playbook-head">
+                <div>
+                    <strong>{playbook.title}</strong>
+                    <small>
+                        {labelForStatus(playbook.strategy)}
+                        {' · '}
+                        {playbook.mode_label}
+                    </small>
+                </div>
+                <span>{readinessLabel(playbook.readiness)}</span>
+            </div>
+            <p>{playbook.readiness_reason}</p>
+            <div className="data-studio-synth__domain-chips">
+                <span>{playbook.generation_path.available ? playbook.generation_path.describe : 'Ollama setup'}</span>
+                <span>{playbook.generation_path.paid_required ? 'paid backend' : 'local default'}</span>
+                <span>{playbook.mode_available ? 'mode available' : 'mode missing'}</span>
+                <span>{playbook.recipe_compatible ? 'recipe fit' : 'recipe review'}</span>
+            </div>
+            <div className="data-studio-synth__domain-details">
+                <div>
+                    <b>Required fields</b>
+                    <small>{playbook.required_fields.join(', ') || 'n/a'}</small>
+                </div>
+                <div>
+                    <b>Output shape</b>
+                    <small>
+                        {playbook.expected_output_shape.format}
+                        {' · '}
+                        {playbook.expected_output_shape.payload_fields.slice(0, 5).join(', ')}
+                    </small>
+                </div>
+            </div>
+            {playbook.missing_fields.length > 0 ? (
+                <p className="data-studio-synth__domain-warning">
+                    Missing or ambiguous mapping fields: {playbook.missing_fields.join(', ')}
+                </p>
+            ) : null}
+            <ul className="data-studio-synth__domain-gates">
+                {playbook.review_gates.slice(0, 3).map((gate) => (
+                    <li key={gate}>{gate}</li>
+                ))}
+            </ul>
+            <button type="button" className="btn btn-secondary" onClick={onOpenSynthetic}>
+                <ExternalLink size={15} aria-hidden="true" />
+                {playbook.generation_action.label}
+            </button>
+        </article>
+    );
+}
+
+function DomainLibraryCard({
+    library,
+    onOpenSynthetic,
+}: {
+    library: DataStudioSyntheticDomainLibrary;
+    onOpenSynthetic: () => void;
+}) {
+    const primaryPlaybooks = library.playbooks.slice(0, 2);
+    return (
+        <article className={`data-studio-synth__domain-library data-studio-synth__domain-library--${library.status}`}>
+            <div className="data-studio-synth__domain-library-head">
+                <div>
+                    <h5>{library.domain_label}</h5>
+                    <p>{library.summary}</p>
+                </div>
+                <div className="data-studio-synth__domain-library-badges">
+                    <span>{librarySourceLabel(library.source)}</span>
+                    <span>{formatPercent(library.confidence)}</span>
+                    <span>{readinessLabel(library.status)}</span>
+                </div>
+            </div>
+            <div className="data-studio-synth__domain-chips">
+                <span>{library.active_recipe_label}</span>
+                <span>{library.local_first ? 'local-first' : 'remote capable'}</span>
+                <span>
+                    {library.compatible_modes.length}
+                    {' compatible mode'}
+                    {library.compatible_modes.length === 1 ? '' : 's'}
+                </span>
+                <span>
+                    {library.recommended_recipes.length
+                        ? `Recommended: ${library.recommended_recipes.join(', ')}`
+                        : 'Any recipe'}
+                </span>
+            </div>
+            <div className="data-studio-synth__domain-prereqs">
+                {primaryPlaybooks[0]?.prerequisites.slice(0, 6).map((item) => (
+                    <span
+                        className={`data-studio-synth__domain-prereq data-studio-synth__domain-prereq--${item.status}`}
+                        key={`${library.id}:${item.id}`}
+                    >
+                        {item.label}
+                    </span>
+                ))}
+            </div>
+            <div className="data-studio-synth__domain-playbooks">
+                {primaryPlaybooks.map((playbook) => (
+                    <DomainPlaybookCard
+                        key={playbook.id}
+                        playbook={playbook}
+                        onOpenSynthetic={onOpenSynthetic}
+                    />
+                ))}
+            </div>
+        </article>
+    );
 }
 
 export default function DataStudioSyntheticPlaybookCenterPanel({
@@ -102,6 +240,10 @@ export default function DataStudioSyntheticPlaybookCenterPanel({
     );
     const topPendingGroups = useMemo(
         () => center?.review_queue.top_pending_groups.slice(0, 3) ?? [],
+        [center],
+    );
+    const domainLibraries = useMemo(
+        () => center?.domain_libraries?.libraries.slice(0, 2) ?? [],
         [center],
     );
 
@@ -202,6 +344,37 @@ export default function DataStudioSyntheticPlaybookCenterPanel({
                     <ExternalLink size={16} aria-hidden="true" />
                     Open Synthetic workflow
                 </button>
+            </div>
+
+            <div className="data-studio-synth__domain-libraries">
+                <div className="data-studio-synth__domain-libraries-head">
+                    <div>
+                        <h4>Domain playbook libraries</h4>
+                        <p>
+                            Curated local-first generation plans for the detected or applied domain.
+                        </p>
+                    </div>
+                    <div className="data-studio-synth__domain-library-metrics">
+                        <span>{formatNumber(center.domain_libraries?.library_count)} libraries</span>
+                        <span>{center.domain_libraries?.ollama_ready ? 'Ollama ready' : 'Ollama setup'}</span>
+                        <span>{center.domain_libraries?.read_only === false ? 'Can mutate' : 'Read-only'}</span>
+                    </div>
+                </div>
+                {domainLibraries.length > 0 ? (
+                    <div className="data-studio-synth__domain-library-list">
+                        {domainLibraries.map((library) => (
+                            <DomainLibraryCard
+                                key={library.id}
+                                library={library}
+                                onOpenSynthetic={onOpenSynthetic}
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <p className="data-studio-synth__empty">
+                        Domain-specific libraries appear after BrewSLM can infer or apply a training domain.
+                    </p>
+                )}
             </div>
 
             <div className="data-studio-synth__body">

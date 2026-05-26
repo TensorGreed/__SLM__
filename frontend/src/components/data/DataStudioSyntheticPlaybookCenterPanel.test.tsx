@@ -64,6 +64,147 @@ const syntheticPayload = {
         local_default: true,
         paid_required: false,
     },
+    domain_libraries: {
+        read_only: true,
+        local_first: true,
+        default_backend: 'ollama',
+        ollama_ready: true,
+        library_count: 1,
+        ready_count: 0,
+        attention_count: 1,
+        blocked_count: 0,
+        detected_domain: {
+            id: 'support_faq',
+            label: 'Support FAQ',
+            confidence: 0.86,
+            source: 'sampled_data',
+        },
+        applied_domain: {
+            profile_id: 'generic-domain-v1',
+            pack_id: 'generic-pack-v1',
+            display_name: 'Generic Domain',
+        },
+        libraries: [
+            {
+                id: 'support_faq-detected',
+                domain_id: 'support_faq',
+                domain_label: 'Support FAQ',
+                source: 'detected',
+                confidence: 0.86,
+                status: 'attention',
+                summary: 'Support FAQ library uses local Ollama by default and keeps generated rows behind review.',
+                local_first: true,
+                active_recipe_id: 'classification',
+                active_recipe_label: 'Classification',
+                recommended_recipes: ['qa-sft', 'classification'],
+                recipe_compatible: true,
+                desired_modes: ['hard_negatives', 'positives_paraphrase'],
+                compatible_modes: ['positives_paraphrase'],
+                missing_modes: ['hard_negatives'],
+                review_gates: [
+                    'Human review is required before generated rows enter prepared datasets.',
+                    'Review account, billing, and cancellation answers for escalation boundaries.',
+                ],
+                playbooks: [
+                    {
+                        id: 'support_faq:customer_phrasing',
+                        title: 'Generate customer phrasing variants',
+                        strategy: 'positive paraphrase',
+                        mode: 'positives_paraphrase',
+                        mode_label: 'Paraphrase positives',
+                        mode_available: true,
+                        recipe_id: 'classification',
+                        recipe_compatible: true,
+                        required_fields: ['text', 'label'],
+                        missing_fields: [],
+                        expected_output_shape: {
+                            format: 'jsonl',
+                            recipe_id: 'classification',
+                            payload_fields: ['text', 'label', 'synth_source', 'synth_confidence', 'review_status'],
+                            review_status: 'pending',
+                            notes: [
+                                'Rows are generated in the existing Synthetic workflow, not in Data Studio.',
+                            ],
+                        },
+                        prompt_focus: [
+                            'Support assistants need to recognize the same intent across messy customer wording.',
+                            'Vary customer wording while keeping the answer intent and escalation boundary stable.',
+                        ],
+                        review_gates: [
+                            'Human review is required before generated rows enter prepared datasets.',
+                            'Review account, billing, and cancellation answers for escalation boundaries.',
+                        ],
+                        prerequisites: [
+                            {
+                                id: 'recipe',
+                                label: 'Recipe compatibility',
+                                status: 'met',
+                                message: 'classification matches this domain library.',
+                                target_tab: 'data',
+                            },
+                            {
+                                id: 'playbook_mode',
+                                label: 'Playbook mode',
+                                status: 'met',
+                                message: 'At least one curated playbook mode is registered.',
+                                target_tab: 'synthetic',
+                            },
+                            {
+                                id: 'mapping',
+                                label: 'Required fields',
+                                status: 'met',
+                                message: 'Required recipe fields look ready.',
+                                target_tab: 'dataprep',
+                            },
+                            {
+                                id: 'gold_examples',
+                                label: 'Gold anchors',
+                                status: 'met',
+                                message: '2 file-backed Gold Set rows can anchor generation.',
+                                target_tab: 'goldset',
+                            },
+                            {
+                                id: 'local_ollama',
+                                label: 'Local Ollama',
+                                status: 'met',
+                                message: 'Local Ollama is ready.',
+                                target_tab: 'synthetic',
+                            },
+                            {
+                                id: 'review_gate',
+                                label: 'Review gate',
+                                status: 'attention',
+                                message: '2 synthetic rows are already pending review.',
+                                target_tab: 'synthetic',
+                            },
+                        ],
+                        readiness: 'attention',
+                        readiness_reason: 'The library can be reviewed, but setup or review gates need attention.',
+                        generation_path: {
+                            backend: 'ollama',
+                            available: true,
+                            describe: 'ollama:llama3',
+                            local_default: true,
+                            paid_required: false,
+                        },
+                        generation_action: {
+                            label: 'Open Synthetic workflow',
+                            target_tab: 'synthetic',
+                            requires_confirmation: true,
+                            description: 'Run this library from the existing Synthetic workflow.',
+                        },
+                    },
+                ],
+            },
+        ],
+        entry_point: {
+            label: 'Open Synthetic workflow',
+            target_tab: 'synthetic',
+            reason: 'Run domain-specific playbooks in the existing Synthetic tab.',
+            requires_confirmation: true,
+            description: 'Run domain-specific playbooks in the existing Synthetic tab.',
+        },
+    },
     prerequisites: [
         {
             id: 'recipe',
@@ -145,11 +286,17 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         expect(screen.getByText('3 / 18')).toBeInTheDocument();
         expect(screen.getAllByText('ollama:llama3').length).toBeGreaterThan(0);
         expect(screen.getByText('Paraphrase positives')).toBeInTheDocument();
+        expect(screen.getByText('Domain playbook libraries')).toBeInTheDocument();
+        expect(screen.getAllByText('Support FAQ').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Generate customer phrasing variants').length).toBeGreaterThan(0);
+        expect(screen.getAllByText('Required fields').length).toBeGreaterThan(0);
+        expect(screen.getByText('jsonl · text, label, synth_source, synth_confidence, review_status')).toBeInTheDocument();
+        expect(screen.getAllByText(/local default/i).length).toBeGreaterThan(0);
         expect(screen.getByText('Gold examples')).toBeInTheDocument();
         expect(screen.getByText('Synthetic rows pending review')).toBeInTheDocument();
         expect(screen.getAllByText(/playbook:classification:positives_paraphrase/i).length).toBeGreaterThan(0);
 
-        fireEvent.click(screen.getByRole('button', { name: /Open Synthetic workflow/i }));
+        fireEvent.click(screen.getAllByRole('button', { name: /Open Synthetic workflow/i })[0]);
         expect(onOpenSynthetic).toHaveBeenCalledTimes(1);
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/synthetic-playbooks');
     });
@@ -169,6 +316,61 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
                     ...syntheticPayload.recommended_backend,
                     available: false,
                     describe: 'ollama',
+                },
+                domain_libraries: {
+                    ...syntheticPayload.domain_libraries,
+                    ollama_ready: false,
+                    library_count: 1,
+                    ready_count: 0,
+                    attention_count: 0,
+                    blocked_count: 1,
+                    detected_domain: {
+                        id: 'generic_domain',
+                        label: 'Generic Domain',
+                        confidence: 0.25,
+                        source: 'runtime_default',
+                    },
+                    libraries: [
+                        {
+                            ...syntheticPayload.domain_libraries.libraries[0],
+                            id: 'generic_domain-fallback',
+                            domain_id: 'generic_domain',
+                            domain_label: 'Generic Domain',
+                            source: 'fallback',
+                            confidence: 0.25,
+                            status: 'blocked',
+                            summary: 'Synthetic rows are safer when the domain and recipe are confirmed first.',
+                            active_recipe_id: null,
+                            active_recipe_label: 'No recipe',
+                            recommended_recipes: [],
+                            recipe_compatible: false,
+                            compatible_modes: [],
+                            playbooks: [
+                                {
+                                    ...syntheticPayload.domain_libraries.libraries[0].playbooks[0],
+                                    id: 'generic_domain:baseline_variants',
+                                    readiness: 'blocked',
+                                    readiness_reason: 'Recipe, playbook mode, or Gold Set prerequisites need setup first.',
+                                    generation_path: {
+                                        backend: 'ollama',
+                                        available: false,
+                                        describe: 'ollama',
+                                        local_default: true,
+                                        paid_required: false,
+                                    },
+                                    prerequisites: [
+                                        {
+                                            id: 'recipe',
+                                            label: 'Recipe compatibility',
+                                            status: 'missing',
+                                            message: 'Choose a recipe before using a domain-specific synthetic library.',
+                                            target_tab: 'data',
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
                 },
                 review_queue: {
                     ...syntheticPayload.review_queue,
@@ -208,7 +410,7 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         render(<DataStudioSyntheticPlaybookCenterPanel projectId={1} onOpenSynthetic={vi.fn()} />);
 
         await waitFor(() => {
-            expect(screen.getByText(/No recipe/i)).toBeInTheDocument();
+            expect(screen.getAllByText(/No recipe/i).length).toBeGreaterThan(0);
         });
         expect(screen.getByText('Ollama not ready')).toBeInTheDocument();
         expect(screen.getAllByText('Recipe not selected').length).toBeGreaterThan(0);

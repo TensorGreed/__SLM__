@@ -1000,6 +1000,23 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
 
         async def _seed_synth_state():
             async with async_session_factory() as db:
+                raw_dir = settings.DATA_DIR / "projects" / str(project_id) / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "support_tickets.jsonl"
+                raw_rows = [
+                    {
+                        "text": "Customer asks for a renewal refund after subscription billing.",
+                        "label": "billing",
+                    },
+                    {
+                        "text": "Login code never arrives during password reset.",
+                        "label": "account_access",
+                    },
+                ]
+                with raw_path.open("w", encoding="utf-8") as handle:
+                    for row in raw_rows:
+                        handle.write(json.dumps(row) + "\n")
+
                 gold_dir = settings.DATA_DIR / "projects" / str(project_id) / "gold"
                 gold_dir.mkdir(parents=True, exist_ok=True)
                 gold_path = gold_dir / "gold_dev.jsonl"
@@ -1044,6 +1061,27 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
                     for row in synth_rows:
                         handle.write(json.dumps(row) + "\n")
 
+                raw_ds = Dataset(
+                    project_id=project_id,
+                    name="Support tickets",
+                    dataset_type=DatasetType.RAW,
+                    record_count=len(raw_rows),
+                    file_path=str(raw_path),
+                )
+                db.add(raw_ds)
+                await db.flush()
+                db.add(
+                    RawDocument(
+                        dataset_id=raw_ds.id,
+                        filename="support_tickets.jsonl",
+                        file_type="jsonl",
+                        file_path=str(raw_path),
+                        file_size_bytes=raw_path.stat().st_size,
+                        source="upload",
+                        status=DocumentStatus.ACCEPTED,
+                        chunk_count=len(raw_rows),
+                    )
+                )
                 db.add_all([
                     Dataset(
                         project_id=project_id,
@@ -1106,6 +1144,25 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("synthetic_rows_pending_review", issue_ids)
         self.assertEqual(payload["entry_point"]["target_tab"], "synthetic")
+        libraries = payload["domain_libraries"]
+        self.assertTrue(libraries["read_only"])
+        self.assertTrue(libraries["local_first"])
+        self.assertEqual(libraries["default_backend"], "ollama")
+        self.assertTrue(libraries["ollama_ready"])
+        self.assertGreaterEqual(libraries["library_count"], 1)
+        library = libraries["libraries"][0]
+        self.assertEqual(library["domain_id"], "support_faq")
+        self.assertEqual(library["source"], "detected")
+        self.assertTrue(library["recipe_compatible"])
+        self.assertIn("positives_paraphrase", library["desired_modes"])
+        self.assertGreaterEqual(len(library["playbooks"]), 1)
+        playbook = library["playbooks"][0]
+        self.assertEqual(playbook["generation_action"]["target_tab"], "synthetic")
+        self.assertTrue(playbook["generation_action"]["requires_confirmation"])
+        self.assertEqual(playbook["generation_path"]["backend"], "ollama")
+        self.assertFalse(playbook["generation_path"]["paid_required"])
+        self.assertIn("text", playbook["required_fields"])
+        self.assertIn("review_status", playbook["expected_output_shape"]["payload_fields"])
 
     def test_synthetic_playbook_center_no_recipe_keeps_free_local_default(self):
         project_id = self._create_project("data-studio-synth-empty")
@@ -1137,6 +1194,13 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
         issue_ids = {item["id"] for item in payload["issues"]}
         self.assertIn("synthetic_recipe_missing", issue_ids)
         self.assertIn("synthetic_ollama_unavailable", issue_ids)
+        self.assertTrue(payload["domain_libraries"]["read_only"])
+        self.assertEqual(payload["domain_libraries"]["default_backend"], "ollama")
+        self.assertEqual(payload["domain_libraries"]["libraries"][0]["status"], "blocked")
+        self.assertEqual(
+            payload["domain_libraries"]["libraries"][0]["playbooks"][0]["generation_action"]["target_tab"],
+            "synthetic",
+        )
 
     def test_synthetic_recommendations_use_domain_mapping_gold_and_queue(self):
         project_id = self._create_project("data-studio-synth-recs")

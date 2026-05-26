@@ -660,6 +660,94 @@ export interface DataStudioSyntheticEntryPoint {
     reason: string;
 }
 
+export interface DataStudioSyntheticDomainLibraryPath {
+    backend: string;
+    available: boolean;
+    describe: string;
+    local_default: boolean;
+    paid_required: boolean;
+}
+
+export interface DataStudioSyntheticDomainLibraryAction {
+    label: string;
+    target_tab: string;
+    requires_confirmation: boolean;
+    description: string;
+}
+
+export interface DataStudioSyntheticExpectedOutputShape {
+    format: string;
+    recipe_id: string;
+    payload_fields: string[];
+    review_status: string;
+    notes: string[];
+}
+
+export interface DataStudioSyntheticDomainPlaybook {
+    id: string;
+    title: string;
+    strategy: string;
+    mode: string;
+    mode_label: string;
+    mode_available: boolean;
+    recipe_id?: string | null;
+    recipe_compatible: boolean;
+    required_fields: string[];
+    missing_fields: string[];
+    expected_output_shape: DataStudioSyntheticExpectedOutputShape;
+    prompt_focus: string[];
+    review_gates: string[];
+    prerequisites: DataStudioSyntheticPrerequisite[];
+    readiness: 'ready' | 'attention' | 'blocked' | string;
+    readiness_reason: string;
+    generation_path: DataStudioSyntheticDomainLibraryPath;
+    generation_action: DataStudioSyntheticDomainLibraryAction;
+}
+
+export interface DataStudioSyntheticDomainLibrary {
+    id: string;
+    domain_id: string;
+    domain_label: string;
+    source: 'detected' | 'applied' | 'fallback' | string;
+    confidence: number;
+    status: 'ready' | 'attention' | 'blocked' | string;
+    summary: string;
+    local_first: boolean;
+    active_recipe_id?: string | null;
+    active_recipe_label: string;
+    recommended_recipes: string[];
+    recipe_compatible: boolean;
+    desired_modes: string[];
+    compatible_modes: string[];
+    missing_modes: string[];
+    review_gates: string[];
+    playbooks: DataStudioSyntheticDomainPlaybook[];
+}
+
+export interface DataStudioSyntheticDomainLibraries {
+    read_only: boolean;
+    local_first: boolean;
+    default_backend: string;
+    ollama_ready: boolean;
+    library_count: number;
+    ready_count: number;
+    attention_count: number;
+    blocked_count: number;
+    detected_domain: {
+        id?: string | null;
+        label?: string | null;
+        confidence?: number | null;
+        source?: string | null;
+    };
+    applied_domain: {
+        profile_id?: string | null;
+        pack_id?: string | null;
+        display_name?: string | null;
+    };
+    libraries: DataStudioSyntheticDomainLibrary[];
+    entry_point: DataStudioSyntheticDomainLibraryAction;
+}
+
 export interface DataStudioSyntheticPlaybookCenter {
     project_id: number;
     verdict: DataStudioSyntheticPlaybookVerdict;
@@ -668,6 +756,7 @@ export interface DataStudioSyntheticPlaybookCenter {
     catalog: DataStudioSyntheticCatalog;
     backends: DataStudioSyntheticBackend[];
     recommended_backend: DataStudioSyntheticRecommendedBackend;
+    domain_libraries?: DataStudioSyntheticDomainLibraries;
     prerequisites: DataStudioSyntheticPrerequisite[];
     review_queue: DataStudioSyntheticReviewQueue;
     issues: DataStudioIssue[];
