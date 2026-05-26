@@ -1202,6 +1202,121 @@ class DataStudioOverviewEndpointTests(unittest.TestCase):
             "synthetic",
         )
 
+    def test_synthetic_quality_analytics_groups_sources_confidence_and_review_gates(self):
+        project_id = self._create_project("data-studio-synth-quality")
+        recipe_resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": "classification"},
+        )
+        self.assertEqual(recipe_resp.status_code, 200, recipe_resp.text)
+
+        async def _seed_quality_rows():
+            async with async_session_factory() as db:
+                gold_dir = settings.DATA_DIR / "projects" / str(project_id) / "gold"
+                gold_dir.mkdir(parents=True, exist_ok=True)
+                gold_path = gold_dir / "gold_dev.jsonl"
+                gold_rows = [
+                    {"text": "Refund requested after subscription renewal", "label": "billing"},
+                    {"text": "Login code never arrived during password reset", "label": "account"},
+                ]
+                with gold_path.open("w", encoding="utf-8") as handle:
+                    for row in gold_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                synth_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
+                synth_dir.mkdir(parents=True, exist_ok=True)
+                synth_path = synth_dir / "synthetic.jsonl"
+                synth_rows = [
+                    {
+                        "id": 1,
+                        "text": "Refund requested after subscription renewal",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "synth_confidence": 0.55,
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 2,
+                        "text": "Refund requested after subscription renewal",
+                        "label": "billing",
+                        "synth_source": "playbook:classification:hard_negatives",
+                        "synth_confidence": 0.91,
+                        "review_status": "accepted",
+                    },
+                    {
+                        "id": 3,
+                        "text": "Login code never arrived during password reset",
+                        "synth_source": "playbook:classification:positives_paraphrase",
+                        "synth_confidence": 0.88,
+                        "review_status": "pending",
+                    },
+                    {
+                        "id": 4,
+                        "text": "lorem ipsum",
+                        "label": "placeholder",
+                        "synth_source": "manual_synthetic",
+                        "review_status": "accepted",
+                    },
+                ]
+                with synth_path.open("w", encoding="utf-8") as handle:
+                    for row in synth_rows:
+                        handle.write(json.dumps(row) + "\n")
+
+                db.add_all([
+                    Dataset(
+                        project_id=project_id,
+                        name="Gold Dev",
+                        dataset_type=DatasetType.GOLD_DEV,
+                        record_count=len(gold_rows),
+                        file_path=str(gold_path),
+                    ),
+                    Dataset(
+                        project_id=project_id,
+                        name="Synthetic",
+                        dataset_type=DatasetType.SYNTHETIC,
+                        record_count=len(synth_rows),
+                        file_path=str(synth_path),
+                    ),
+                ])
+                await db.commit()
+
+        asyncio.run(_seed_quality_rows())
+
+        resp = self.client.get(f"/api/projects/{project_id}/data-studio/synthetic-quality")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+
+        self.assertEqual(payload["verdict"], "attention")
+        self.assertTrue(payload["read_only"])
+        self.assertFalse(payload["auto_apply"])
+        self.assertEqual(payload["source_of_truth"], "deterministic_synthetic_quality_checks")
+        self.assertEqual(payload["summary"]["total_rows"], 4)
+        self.assertEqual(payload["summary"]["pending_rows"], 2)
+        self.assertEqual(payload["summary"]["accepted_rows"], 2)
+        self.assertEqual(payload["summary"]["low_confidence_rows"], 1)
+        self.assertEqual(payload["summary"]["unknown_confidence_rows"], 1)
+        self.assertEqual(payload["summary"]["missing_required_rows"], 1)
+        self.assertGreaterEqual(payload["summary"]["duplicate_signal_rows"], 2)
+        self.assertEqual(payload["summary"]["low_quality_rows"], 1)
+        self.assertEqual(payload["summary"]["gold_anchor_rows"], 2)
+        self.assertEqual(payload["quality_bands"]["confidence"]["low"], 1)
+        self.assertIn("text", payload["quality_bands"]["required_fields"]["required_fields"])
+        self.assertIn("label", payload["quality_bands"]["required_fields"]["required_fields"])
+        source_labels = {item["source"] for item in payload["source_groups"]}
+        self.assertIn("playbook:classification:positives_paraphrase", source_labels)
+        self.assertIn("playbook:classification:hard_negatives", source_labels)
+        status_counts = {item["status"]: item["count"] for item in payload["status_groups"]}
+        self.assertEqual(status_counts["pending"], 2)
+        self.assertEqual(status_counts["accepted"], 2)
+        finding_ids = {item["id"] for item in payload["findings"]}
+        self.assertIn("synthetic_quality_pending_review", finding_ids)
+        self.assertIn("synthetic_quality_missing_required_fields", finding_ids)
+        self.assertIn("synthetic_quality_duplicates", finding_ids)
+        self.assertIn("synthetic_quality_low_quality_text", finding_ids)
+        self.assertEqual(payload["entry_points"][0]["target_tab"], "synthetic")
+        self.assertTrue(payload["assist"]["read_only"])
+        self.assertEqual(payload["assist"]["default_provider"], "ollama")
+
     def test_synthetic_recommendations_use_domain_mapping_gold_and_queue(self):
         project_id = self._create_project("data-studio-synth-recs")
         recipe_resp = self.client.put(

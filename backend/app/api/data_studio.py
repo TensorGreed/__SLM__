@@ -25,6 +25,7 @@ from app.services.data_studio_service import (
     build_data_studio_review_queue,
     build_data_studio_sources,
     build_data_studio_synthetic_playbook_center,
+    build_data_studio_synthetic_quality_analytics,
     build_data_studio_synthetic_recommendations,
     create_data_studio_domain_setup_from_detection,
 )
@@ -197,6 +198,22 @@ async def get_data_studio_synthetic_recommendations(
 
     try:
         return await build_data_studio_synthetic_recommendations(db, project_id)
+    except ValueError as e:
+        detail = str(e)
+        if "not found" in detail.lower():
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.get("/synthetic-quality")
+async def get_data_studio_synthetic_quality(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return read-only deterministic synthetic quality analytics."""
+
+    try:
+        return await build_data_studio_synthetic_quality_analytics(db, project_id)
     except ValueError as e:
         detail = str(e)
         if "not found" in detail.lower():

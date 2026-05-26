@@ -8,6 +8,7 @@ export type DataStudioDomainVerdict = 'unknown' | 'attention' | 'confirmed';
 export type DataStudioGoldSetVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticPlaybookVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioSyntheticRecommendationVerdict = 'empty' | 'attention' | 'ready';
+export type DataStudioSyntheticQualityVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioReviewQueueVerdict = 'empty' | 'attention' | 'ready';
 export type DataStudioPrepareDatasetVerdict = 'blocked' | 'attention' | 'ready';
 export type DataStudioDatasetVersionVerdict = 'empty' | 'attention' | 'ready';
@@ -840,6 +841,175 @@ export async function getDataStudioSyntheticRecommendations(
 ): Promise<DataStudioSyntheticRecommendations> {
     const resp = await api.get(`/projects/${projectId}/data-studio/synthetic-recommendations`);
     return resp.data as DataStudioSyntheticRecommendations;
+}
+
+export interface DataStudioSyntheticQualityDomain {
+    id: string;
+    label: string;
+    confidence: number;
+    source?: string | null;
+}
+
+export interface DataStudioSyntheticQualitySummary {
+    total_rows: number;
+    pending_rows: number;
+    accepted_rows: number;
+    rejected_rows: number;
+    source_count: number;
+    avg_confidence?: number | null;
+    low_confidence_rows: number;
+    unknown_confidence_rows: number;
+    missing_required_rows: number;
+    duplicate_signal_rows: number;
+    low_quality_rows: number;
+    avg_gold_similarity: number;
+    high_gold_similarity_rows: number;
+    low_gold_similarity_rows: number;
+    gold_anchor_rows: number;
+}
+
+export interface DataStudioSyntheticQualityBands {
+    confidence: {
+        high: number;
+        medium: number;
+        low: number;
+        unknown: number;
+        average?: number | null;
+    };
+    duplicates: {
+        exact_duplicate_rows: number;
+        near_duplicate_pairs: number;
+        affected_rows: number;
+        ratio: number;
+    };
+    required_fields: {
+        required_fields: string[];
+        missing_rows: number;
+        ratio: number;
+    };
+    gold_similarity: {
+        average: number;
+        high_overlap_rows: number;
+        low_similarity_rows: number;
+        gold_anchor_rows: number;
+    };
+}
+
+export interface DataStudioSyntheticQualityReviewGroup {
+    synth_source: string;
+    count: number;
+    truncated: boolean;
+}
+
+export interface DataStudioSyntheticQualityReviewOutcomes {
+    total_pending: number;
+    total_accepted: number;
+    top_pending_groups: DataStudioSyntheticQualityReviewGroup[];
+    top_accepted_groups: DataStudioSyntheticQualityReviewGroup[];
+}
+
+export interface DataStudioSyntheticQualitySourceGroup {
+    key: string;
+    source: string;
+    count: number;
+    pending: number;
+    accepted: number;
+    rejected: number;
+    other_status: number;
+    low_confidence: number;
+    unknown_confidence: number;
+    missing_required: number;
+    duplicate_signal_count: number;
+    avg_confidence?: number | null;
+    avg_gold_similarity: number;
+    target_tab: string;
+}
+
+export interface DataStudioSyntheticQualityStatusGroup {
+    status: string;
+    label: string;
+    count: number;
+    target_tab: string;
+}
+
+export interface DataStudioSyntheticQualityDomainGroup {
+    domain_id: string;
+    domain_label: string;
+    confidence: number;
+    synthetic_rows: number;
+    pending_rows: number;
+    accepted_rows: number;
+    source?: string | null;
+    target_tab: string;
+}
+
+export interface DataStudioSyntheticQualityFinding {
+    id: string;
+    label: string;
+    severity: DataStudioIssueSeverity;
+    status: 'ready' | 'attention' | 'blocked' | string;
+    message: string;
+    count: number;
+    target_tab: string;
+    workflow_owner: string;
+    evidence: string[];
+    action_label: string;
+}
+
+export interface DataStudioSyntheticQualityPreviewRow {
+    source: string;
+    source_type: string;
+    target_tab: string;
+    row_index: number;
+    file_name?: string | null;
+    redacted_text: string;
+    fields: DataStudioQualitySafetyPreviewField[];
+    reason: string;
+}
+
+export interface DataStudioSyntheticQualityEntryPoint {
+    label: string;
+    target_tab: string;
+    reason: string;
+}
+
+export interface DataStudioSyntheticQualityAssist {
+    available: boolean;
+    read_only: boolean;
+    status: string;
+    default_provider: string;
+    supported_providers: string[];
+    purpose: string;
+    message: string;
+}
+
+export interface DataStudioSyntheticQualityAnalytics {
+    project_id: number;
+    verdict: DataStudioSyntheticQualityVerdict;
+    read_only: boolean;
+    auto_apply: boolean;
+    source_of_truth: string;
+    domain: DataStudioSyntheticQualityDomain;
+    recipe: DataStudioRecipeSummary | null;
+    summary: DataStudioSyntheticQualitySummary;
+    quality_bands: DataStudioSyntheticQualityBands;
+    review_outcomes: DataStudioSyntheticQualityReviewOutcomes;
+    source_groups: DataStudioSyntheticQualitySourceGroup[];
+    status_groups: DataStudioSyntheticQualityStatusGroup[];
+    domain_groups: DataStudioSyntheticQualityDomainGroup[];
+    findings: DataStudioSyntheticQualityFinding[];
+    preview_rows: DataStudioSyntheticQualityPreviewRow[];
+    issues: DataStudioIssue[];
+    entry_points: DataStudioSyntheticQualityEntryPoint[];
+    assist: DataStudioSyntheticQualityAssist;
+    power_details: Record<string, unknown>;
+}
+
+export async function getDataStudioSyntheticQualityAnalytics(
+    projectId: number,
+): Promise<DataStudioSyntheticQualityAnalytics> {
+    const resp = await api.get(`/projects/${projectId}/data-studio/synthetic-quality`);
+    return resp.data as DataStudioSyntheticQualityAnalytics;
 }
 
 export interface DataStudioReviewQueueDomain {

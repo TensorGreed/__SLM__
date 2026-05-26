@@ -21,7 +21,7 @@ const { navigateMock, setActiveTabMock, routeState, contextState, coachRailPaylo
             blocker_count: 2,
             warning_count: 3,
             info_count: 0,
-            section_count: 12,
+            section_count: 13,
             ready_section_count: 4,
             empty_section_count: 1,
             next_action_target: 'annotate',
@@ -47,6 +47,7 @@ const { navigateMock, setActiveTabMock, routeState, contextState, coachRailPaylo
             { id: 'gold_set', status: 'ready', label: 'Gold Set', target_tab: 'goldset', message: 'Gold Set is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
             { id: 'synthetic_playbooks', status: 'attention', label: 'Synthetic Playbooks', target_tab: 'synthetic', message: 'Synthetic prerequisites need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'synthetic_recommendations', status: 'ready', label: 'Synthetic Recommendations', target_tab: 'synthetic', message: 'Recommendations are ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
+            { id: 'synthetic_quality', status: 'attention', label: 'Synthetic Quality', target_tab: 'synthetic', message: 'Synthetic quality needs review.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'review_queue', status: 'blocked', label: 'Review Queue', target_tab: 'annotate', message: 'Review is blocking prepare.', blocker_count: 1, warning_count: 0, info_count: 0 },
             { id: 'prepare_dataset', status: 'attention', label: 'Prepare Dataset', target_tab: 'dataprep', message: 'Splits need review.', blocker_count: 0, warning_count: 1, info_count: 0 },
             { id: 'dataset_versions', status: 'ready', label: 'Dataset Versions', target_tab: 'training', message: 'A prepared version is ready.', blocker_count: 0, warning_count: 0, info_count: 0 },
@@ -143,6 +144,10 @@ vi.mock('../components/data/DataStudioSyntheticPlaybookCenterPanel', () => ({
 
 vi.mock('../components/data/DataStudioSyntheticRecommendationsPanel', () => ({
     default: () => <section data-testid="panel-synthetic-recommendations">Synthetic Recommendations</section>,
+}));
+
+vi.mock('../components/data/DataStudioSyntheticQualityPanel', () => ({
+    default: () => <section data-testid="panel-synthetic-quality">Synthetic Quality</section>,
 }));
 
 vi.mock('../components/data/DataStudioReviewQueuePanel', () => ({
@@ -281,7 +286,7 @@ describe('ProjectDataStudioPage', () => {
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        const blockerFilter = await within(filters).findByRole('button', { name: /^Blockers\s+6$/i });
+        const blockerFilter = await within(filters).findByRole('button', { name: /^Blockers\s+7$/i });
 
         await user.click(screen.getByRole('button', { name: /Collapse all/i }));
         await user.click(blockerFilter);
@@ -312,11 +317,11 @@ describe('ProjectDataStudioPage', () => {
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+6$/i }));
+        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+7$/i }));
 
         const explanation = within(index).getByRole('status');
         expect(within(explanation).getByText('Blocker view')).toBeInTheDocument();
-        expect(within(explanation).getByText(/6 sections match current search and filter/i)).toBeInTheDocument();
+        expect(within(explanation).getByText(/7 sections match current search and filter/i)).toBeInTheDocument();
         expect(within(explanation).getByText('Overview readiness')).toBeInTheDocument();
         expect(within(explanation).getAllByText(/Source Ingestion: Sources need attention/i).length).toBeGreaterThan(0);
         expect(within(explanation).getByText(/Additional matching sections are listed below/i)).toBeInTheDocument();
@@ -343,22 +348,22 @@ describe('ProjectDataStudioPage', () => {
         expect(within(legend).getByText('Ready')).toBeInTheDocument();
 
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        const readyFilter = await within(filters).findByRole('button', { name: /^Ready\s+8$/i });
+        const readyFilter = await within(filters).findByRole('button', { name: /^Ready\s+9$/i });
         await user.click(readyFilter);
         expect(readyFilter).toHaveAttribute('aria-pressed', 'true');
 
         await user.click(readyFilter);
         expect(readyFilter).toHaveAttribute('aria-pressed', 'false');
-        expect(within(filters).getByRole('button', { name: /^All\s+12$/i })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(filters).getByRole('button', { name: /^All\s+13$/i })).toHaveAttribute('aria-pressed', 'true');
 
-        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+6$/i }));
+        await user.click(await within(filters).findByRole('button', { name: /^Blockers\s+7$/i }));
         const search = within(index).getByRole('searchbox', { name: /Search Data Studio sections/i });
         await user.type(search, 'no-match');
         expect(within(index).getByText('No matching sections.')).toBeInTheDocument();
 
         await user.keyboard('{Escape}');
         expect(search).toHaveValue('');
-        expect(within(filters).getByRole('button', { name: /^All\s+12$/i })).toHaveAttribute('aria-pressed', 'true');
+        expect(within(filters).getByRole('button', { name: /^All\s+13$/i })).toHaveAttribute('aria-pressed', 'true');
         expect(within(index).queryByText('No matching sections.')).not.toBeInTheDocument();
         expect(within(index).queryByRole('status')).not.toBeInTheDocument();
     });
@@ -369,7 +374,7 @@ describe('ProjectDataStudioPage', () => {
 
         const index = screen.getByRole('region', { name: /Data Studio section index/i });
         const filters = within(index).getByRole('group', { name: /Data Studio triage filters/i });
-        await user.click(await within(filters).findByRole('button', { name: /^Ready\s+8$/i }));
+        await user.click(await within(filters).findByRole('button', { name: /^Ready\s+9$/i }));
 
         const review = screen.getByTestId('data-studio-section-review-queue');
         const readyGoldChip = await within(review).findByRole('button', { name: /^Gold Set\s+Ready$/i });
@@ -394,6 +399,7 @@ describe('ProjectDataStudioPage', () => {
         const domain = screen.getByTestId('data-studio-section-domain');
         const gold = screen.getByTestId('data-studio-section-gold-set');
         const synthetic = screen.getByTestId('data-studio-section-synthetic-playbooks');
+        const syntheticQuality = screen.getByTestId('data-studio-section-synthetic-quality');
         const review = screen.getByTestId('data-studio-section-review-queue');
         const prepare = screen.getByTestId('data-studio-section-prepare-dataset');
         const versions = screen.getByTestId('data-studio-section-dataset-versions');
@@ -412,6 +418,9 @@ describe('ProjectDataStudioPage', () => {
 
         const syntheticChip = await within(synthetic).findByRole('button', { name: /^Synthetic\s+Attention$/i });
         expect(syntheticChip).toHaveAttribute('data-status', 'attention');
+
+        const syntheticQualityChip = await within(syntheticQuality).findByRole('button', { name: /^Synthetic\s+Attention$/i });
+        expect(syntheticQualityChip).toHaveAttribute('data-status', 'attention');
 
         const reviewChip = await within(review).findByRole('button', { name: /^Review\s+Blocker$/i });
         expect(reviewChip).toHaveAttribute('data-status', 'blocker');

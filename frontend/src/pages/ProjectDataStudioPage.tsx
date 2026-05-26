@@ -12,6 +12,7 @@ import DataStudioAssistPanel from '../components/data/DataStudioAssistPanel';
 import DataStudioGoldSetWorkbenchPanel from '../components/data/DataStudioGoldSetWorkbenchPanel';
 import DataStudioSyntheticPlaybookCenterPanel from '../components/data/DataStudioSyntheticPlaybookCenterPanel';
 import DataStudioSyntheticRecommendationsPanel from '../components/data/DataStudioSyntheticRecommendationsPanel';
+import DataStudioSyntheticQualityPanel from '../components/data/DataStudioSyntheticQualityPanel';
 import DataStudioReviewQueuePanel from '../components/data/DataStudioReviewQueuePanel';
 import DataStudioPrepareDatasetPanel from '../components/data/DataStudioPrepareDatasetPanel';
 import DataStudioDatasetVersionsPanel from '../components/data/DataStudioDatasetVersionsPanel';
@@ -44,6 +45,7 @@ const DATA_STUDIO_SECTION_IDS = [
     'gold-set',
     'synthetic-playbooks',
     'synthetic-recommendations',
+    'synthetic-quality',
     'review-queue',
     'prepare-dataset',
     'dataset-versions',
@@ -125,6 +127,9 @@ const SECTION_TOKEN_ALIASES: Record<string, DataStudioSectionId> = {
     synthetic: 'synthetic-playbooks',
     'synthetic-recommendations': 'synthetic-recommendations',
     recommendations: 'synthetic-recommendations',
+    'synthetic-quality': 'synthetic-quality',
+    'synthetic-analytics': 'synthetic-quality',
+    'quality-analytics': 'synthetic-quality',
     'review-queue': 'review-queue',
     review: 'review-queue',
     'prepare-dataset': 'prepare-dataset',
@@ -675,6 +680,26 @@ export default function ProjectDataStudioPage() {
                         onOpenTab={(targetTab) => {
                             openDataStudioTarget(targetTab);
                         }}
+                    />
+                ),
+            },
+            {
+                id: 'synthetic-quality' as const,
+                title: 'Synthetic quality',
+                summary: 'Synthetic row quality by playbook/source, status, confidence, duplicates, required fields, and Gold Set similarity.',
+                group: 'examples' as const,
+                keywords: ['synthetic', 'quality', 'analytics', 'confidence', 'duplicates', 'gold similarity'],
+                handoffs: [
+                    { label: 'Synthetic', target: 'synthetic', signalSectionId: 'synthetic-playbooks' },
+                    { label: 'Review', target: 'annotate', signalSectionId: 'review-queue' },
+                    { label: 'Gold Set', target: 'goldset', signalSectionId: 'gold-set' },
+                    { label: 'Dataset Prep', target: 'dataprep', signalSectionId: 'prepare-dataset' },
+                    { label: 'Quality & Safety', target: 'quality-safety', signalSectionId: 'quality-safety' },
+                ],
+                content: (
+                    <DataStudioSyntheticQualityPanel
+                        projectId={projectId}
+                        onOpenTarget={openDataStudioTarget}
                     />
                 ),
             },

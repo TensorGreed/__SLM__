@@ -55,6 +55,7 @@ DomainVerdict = Literal["unknown", "attention", "confirmed"]
 GoldSetVerdict = Literal["empty", "attention", "ready"]
 SyntheticPlaybookVerdict = Literal["empty", "attention", "ready"]
 SyntheticRecommendationVerdict = Literal["empty", "attention", "ready"]
+SyntheticQualityVerdict = Literal["empty", "attention", "ready"]
 ReviewQueueVerdict = Literal["empty", "attention", "ready"]
 PrepareDatasetVerdict = Literal["blocked", "attention", "ready"]
 DatasetVersionVerdict = Literal["empty", "attention", "ready"]
@@ -3607,6 +3608,756 @@ async def build_data_studio_synthetic_recommendations(
                 "review_queue": playbooks.get("review_queue"),
                 "issues": playbooks.get("issues", []),
             },
+        },
+    }
+
+
+def _synthetic_quality_status(row: dict[str, Any]) -> str:
+    review_status = str(row.get("review_status") or "").strip().lower()
+    if review_status:
+        return review_status
+    legacy_status = str(row.get("status") or "").strip().lower()
+    if legacy_status in {"pending", "accepted", "rejected"}:
+        return legacy_status
+    return "accepted"
+
+
+def _synthetic_quality_source(row: dict[str, Any]) -> str:
+    source = str(row.get("synth_source") or "").strip()
+    if source:
+        return source
+    generator = str(row.get("generator") or row.get("source") or "").strip()
+    return generator or "manual_synthetic"
+
+
+def _synthetic_quality_confidence(row: dict[str, Any]) -> float | None:
+    value = row.get("synth_confidence")
+    if value is None:
+        return None
+    try:
+        return round(max(0.0, min(1.0, float(value))), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+_SYNTHETIC_QUALITY_METADATA_FIELDS = {
+    "id",
+    "row_id",
+    "uuid",
+    "source",
+    "synth_source",
+    "generator",
+    "provider",
+    "model",
+    "synth_confidence",
+    "confidence",
+    "score",
+    "review_status",
+    "status",
+    "created_at",
+    "updated_at",
+    "metadata",
+}
+
+
+_SYNTHETIC_QUALITY_CONTENT_FIELDS = (
+    "instruction",
+    "input",
+    "question",
+    "prompt",
+    "query",
+    "context",
+    "answer",
+    "response",
+    "output",
+    "completion",
+    "expected_answer",
+    "policy_answer",
+    "text",
+    "label",
+    "category",
+    "class",
+)
+
+
+_SYNTHETIC_QUALITY_PRIMARY_TEXT_FIELDS = (
+    "instruction",
+    "input",
+    "question",
+    "prompt",
+    "query",
+    "context",
+    "answer",
+    "response",
+    "output",
+    "completion",
+    "expected_answer",
+    "policy_answer",
+    "text",
+)
+
+
+def _synthetic_quality_trainable_text(row: dict[str, Any], required_fields: list[str]) -> str:
+    values: list[str] = []
+
+    for field in required_fields:
+        value = row.get(field)
+        if _field_has_value(value):
+            _flatten_text_values(value, values, limit=20)
+
+    if not values:
+        for field in _SYNTHETIC_QUALITY_CONTENT_FIELDS:
+            value = row.get(field)
+            if _field_has_value(value):
+                _flatten_text_values(value, values, limit=20)
+
+    if not values:
+        for field, value in row.items():
+            if field in _SYNTHETIC_QUALITY_METADATA_FIELDS or not _field_has_value(value):
+                continue
+            _flatten_text_values(value, values, limit=20)
+
+    return " ".join(values).strip()
+
+
+def _synthetic_quality_primary_text(row: dict[str, Any]) -> str:
+    values: list[str] = []
+    for field in _SYNTHETIC_QUALITY_PRIMARY_TEXT_FIELDS:
+        value = row.get(field)
+        if _field_has_value(value):
+            _flatten_text_values(value, values, limit=20)
+    return " ".join(values).strip()
+
+
+def _synthetic_quality_rows_from_datasets(datasets: list[Dataset], project_id: int, *, limit: int = 1200) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    candidate_paths: list[tuple[str, str]] = []
+    for dataset in datasets:
+        token = str(dataset.file_path or "").strip()
+        if token:
+            candidate_paths.append((token, dataset.name or "Synthetic"))
+    canonical_path = settings.DATA_DIR / "projects" / str(project_id) / "synthetic" / "synthetic.jsonl"
+    candidate_paths.append((str(canonical_path), "Synthetic"))
+
+    for file_path, dataset_name in candidate_paths:
+        if len(rows) >= limit or not file_path or file_path in seen_paths:
+            continue
+        seen_paths.add(file_path)
+        for row_index, row in enumerate(_load_jsonl_dicts(file_path, limit=max(1, limit - len(rows)))):
+            rows.append({
+                "row": row,
+                "source": _synthetic_quality_source(row),
+                "dataset_name": dataset_name,
+                "status": _synthetic_quality_status(row),
+                "confidence": _synthetic_quality_confidence(row),
+                "file_path": file_path,
+                "row_index": row_index,
+                "text": _quality_scan_text(row),
+            })
+            if len(rows) >= limit:
+                break
+    return rows
+
+
+def _synthetic_quality_gold_texts(gold: dict[str, Any], datasets: list[Dataset]) -> list[str]:
+    texts: list[str] = []
+    for sample in list(gold.get("trusted_examples") or []):
+        if not isinstance(sample, dict):
+            continue
+        for key in ("input_preview", "expected_preview"):
+            token = str(sample.get(key) or "").strip()
+            if token:
+                texts.append(token)
+    for dataset in datasets:
+        if dataset.dataset_type not in _GOLD_SET_DATASET_TYPES:
+            continue
+        for row in _load_jsonl_dicts(dataset.file_path, limit=1000):
+            text = _quality_scan_text(row)
+            if text:
+                texts.append(text)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        fingerprint = _quality_text_fingerprint(text)
+        if not fingerprint or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        deduped.append(text)
+        if len(deduped) >= 1000:
+            break
+    return deduped
+
+
+def _synthetic_quality_similarity(left: str, right: str) -> float:
+    left_tokens = _quality_tokens(left)
+    right_tokens = _quality_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    union = left_tokens | right_tokens
+    if not union:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(union)
+
+
+def _synthetic_quality_best_gold_similarity(text: str, gold_texts: list[str]) -> float:
+    if not text or not gold_texts:
+        return 0.0
+    best = 0.0
+    for gold_text in gold_texts[:500]:
+        score = _synthetic_quality_similarity(text, gold_text)
+        if score > best:
+            best = score
+        if best >= 0.98:
+            break
+    return round(best, 4)
+
+
+def _synthetic_quality_finding(
+    finding_id: str,
+    label: str,
+    severity: IssueSeverity,
+    status: str,
+    message: str,
+    *,
+    count: int,
+    target_tab: str,
+    owner: str,
+    evidence: list[str] | None = None,
+    action_label: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": finding_id,
+        "label": label,
+        "severity": severity,
+        "status": status,
+        "message": message,
+        "count": int(count),
+        "target_tab": target_tab,
+        "workflow_owner": owner,
+        "evidence": list(evidence or [])[:6],
+        "action_label": action_label or "Open workflow",
+    }
+
+
+def _synthetic_quality_source_groups(
+    rows: list[dict[str, Any]],
+    *,
+    duplicate_indices: set[int],
+    missing_by_index: dict[int, list[str]],
+    gold_similarity_by_index: dict[int, float],
+) -> list[dict[str, Any]]:
+    buckets: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(rows):
+        source = str(item.get("source") or "manual_synthetic")
+        bucket = buckets.setdefault(source, {
+            "key": _domain_setup_slug(source),
+            "source": source,
+            "count": 0,
+            "pending": 0,
+            "accepted": 0,
+            "rejected": 0,
+            "other_status": 0,
+            "low_confidence": 0,
+            "unknown_confidence": 0,
+            "missing_required": 0,
+            "duplicate_signal_count": 0,
+            "confidence_total": 0.0,
+            "confidence_count": 0,
+            "gold_similarity_total": 0.0,
+            "target_tab": "synthetic",
+        })
+        bucket["count"] += 1
+        status = str(item.get("status") or "accepted")
+        if status in {"pending", "accepted", "rejected"}:
+            bucket[status] += 1
+        else:
+            bucket["other_status"] += 1
+        confidence = item.get("confidence")
+        if confidence is None:
+            bucket["unknown_confidence"] += 1
+        else:
+            bucket["confidence_total"] += float(confidence)
+            bucket["confidence_count"] += 1
+            if float(confidence) < 0.65:
+                bucket["low_confidence"] += 1
+        if missing_by_index.get(index):
+            bucket["missing_required"] += 1
+        if index in duplicate_indices:
+            bucket["duplicate_signal_count"] += 1
+        bucket["gold_similarity_total"] += float(gold_similarity_by_index.get(index) or 0.0)
+
+    groups: list[dict[str, Any]] = []
+    for bucket in buckets.values():
+        confidence_count = int(bucket.pop("confidence_count") or 0)
+        confidence_total = float(bucket.pop("confidence_total") or 0.0)
+        gold_similarity_total = float(bucket.pop("gold_similarity_total") or 0.0)
+        count = max(1, int(bucket.get("count") or 0))
+        bucket["avg_confidence"] = round(confidence_total / confidence_count, 4) if confidence_count else None
+        bucket["avg_gold_similarity"] = round(gold_similarity_total / count, 4)
+        groups.append(bucket)
+    groups.sort(
+        key=lambda item: (
+            -int(item.get("pending") or 0),
+            -int(item.get("missing_required") or 0),
+            -int(item.get("low_confidence") or 0),
+            -int(item.get("count") or 0),
+            str(item.get("source") or ""),
+        )
+    )
+    return groups[:12]
+
+
+async def build_data_studio_synthetic_quality_analytics(
+    db: AsyncSession,
+    project_id: int,
+) -> dict[str, Any]:
+    """Return read-only deterministic synthetic quality analytics."""
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError(f"Project {project_id} not found")
+
+    domain = await build_data_studio_domain_detection(db, project_id)
+    mapping = await build_data_studio_mapping_preview(db, project_id)
+    gold = await build_data_studio_gold_set_workbench(db, project_id)
+    review_queue = _review_queue_summary(await list_review_queue(db, project_id))
+
+    datasets_result = await db.execute(
+        select(Dataset)
+        .where(Dataset.project_id == project_id)
+        .order_by(Dataset.updated_at.desc(), Dataset.id.asc())
+    )
+    datasets = list(datasets_result.scalars().all())
+    synthetic_datasets = [dataset for dataset in datasets if dataset.dataset_type == DatasetType.SYNTHETIC]
+    rows = _synthetic_quality_rows_from_datasets(synthetic_datasets, project_id)
+
+    detected = domain.get("detected_domain") if isinstance(domain.get("detected_domain"), dict) else {}
+    domain_id = str(detected.get("id") or "generic_domain")
+    domain_label = str(detected.get("label") or "Generic Domain")
+    domain_confidence = float(detected.get("confidence") or 0.0)
+    recipe_payload = _recipe_payload(project)
+    required_fields = _synthetic_required_fields(recipe_payload, domain_id) if recipe_payload else []
+    gold_texts = _synthetic_quality_gold_texts(gold, datasets)
+
+    status_counts: Counter[str] = Counter()
+    confidence_buckets: Counter[str] = Counter()
+    confidence_total = 0.0
+    confidence_count = 0
+    missing_by_index: dict[int, list[str]] = {}
+    low_quality_by_index: dict[int, str] = {}
+    fingerprints: dict[str, list[int]] = {}
+    gold_similarity_by_index: dict[int, float] = {}
+    high_gold_similarity = 0
+    low_gold_similarity = 0
+
+    for index, item in enumerate(rows):
+        row = item.get("row") if isinstance(item.get("row"), dict) else {}
+        status_counts[str(item.get("status") or "accepted")] += 1
+        confidence = item.get("confidence")
+        if confidence is None:
+            confidence_buckets["unknown"] += 1
+        else:
+            parsed_confidence = float(confidence)
+            confidence_total += parsed_confidence
+            confidence_count += 1
+            if parsed_confidence >= 0.85:
+                confidence_buckets["high"] += 1
+            elif parsed_confidence >= 0.65:
+                confidence_buckets["medium"] += 1
+            else:
+                confidence_buckets["low"] += 1
+
+        missing_fields = [
+            field
+            for field in required_fields
+            if not _field_has_value(row.get(field))
+        ]
+        if missing_fields:
+            missing_by_index[index] = missing_fields
+
+        text = _synthetic_quality_trainable_text(row, required_fields) or str(item.get("text") or "")
+        primary_text = _synthetic_quality_primary_text(row) or text
+        low_quality_reason = _low_quality_reason(primary_text)
+        if low_quality_reason:
+            low_quality_by_index[index] = low_quality_reason
+
+        fingerprint = _quality_text_fingerprint(text)
+        if fingerprint:
+            fingerprints.setdefault(fingerprint, []).append(index)
+
+        similarity = _synthetic_quality_best_gold_similarity(text, gold_texts)
+        gold_similarity_by_index[index] = similarity
+        if gold_texts and similarity >= 0.82:
+            high_gold_similarity += 1
+        elif gold_texts and similarity < 0.12:
+            low_gold_similarity += 1
+
+    duplicate_indices: set[int] = set()
+    exact_duplicate_count = 0
+    for indices in fingerprints.values():
+        if len(indices) <= 1:
+            continue
+        exact_duplicate_count += len(indices) - 1
+        duplicate_indices.update(indices)
+
+    near_duplicate_pairs = 0
+    comparable_limit = min(len(rows), 220)
+    for left in range(comparable_limit):
+        left_text = str(rows[left].get("text") or "")
+        if not left_text:
+            continue
+        for right in range(left + 1, comparable_limit):
+            if left in duplicate_indices and right in duplicate_indices:
+                continue
+            right_text = str(rows[right].get("text") or "")
+            if not right_text:
+                continue
+            similarity = _synthetic_quality_similarity(left_text, right_text)
+            if similarity >= 0.9:
+                near_duplicate_pairs += 1
+                duplicate_indices.update({left, right})
+
+    total_rows = len(rows)
+    pending_count = int(status_counts.get("pending", 0))
+    accepted_count = int(status_counts.get("accepted", 0))
+    rejected_count = int(status_counts.get("rejected", 0))
+    low_confidence_count = int(confidence_buckets.get("low", 0))
+    unknown_confidence_count = int(confidence_buckets.get("unknown", 0))
+    missing_required_count = len(missing_by_index)
+    low_quality_count = len(low_quality_by_index)
+    duplicate_signal_count = len(duplicate_indices)
+    avg_confidence = round(confidence_total / confidence_count, 4) if confidence_count else None
+    avg_gold_similarity = (
+        round(sum(gold_similarity_by_index.values()) / max(1, total_rows), 4)
+        if total_rows
+        else 0.0
+    )
+
+    findings: list[dict[str, Any]] = []
+    issues: list[dict[str, str]] = []
+
+    if total_rows <= 0:
+        issues.append(
+            _issue(
+                "synthetic_quality_no_rows",
+                "info",
+                "No synthetic rows yet",
+                "Generate synthetic rows before synthetic quality analytics can score sources and review outcomes.",
+                action_label="Open Synthetic",
+                target_tab="synthetic",
+            )
+        )
+    if pending_count > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_pending_review",
+            "Pending synthetic review",
+            "warning",
+            "attention",
+            f"{pending_count} synthetic row(s) are pending review before they can enter prepared datasets.",
+            count=pending_count,
+            target_tab="synthetic",
+            owner="Synthetic Review",
+            evidence=[
+                f"{review_queue.get('pending_group_count', 0)} pending source group(s).",
+                "Accept or reject rows in the existing Synthetic workflow.",
+            ],
+            action_label="Review synthetic rows",
+        ))
+    if missing_required_count > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_missing_required_fields",
+            "Missing required fields",
+            "blocker",
+            "blocked",
+            f"{missing_required_count} synthetic row(s) are missing required recipe fields.",
+            count=missing_required_count,
+            target_tab="dataprep",
+            owner="Data Prep",
+            evidence=[f"Required fields: {', '.join(required_fields) or 'recipe not selected'}."],
+            action_label="Review mapping",
+        ))
+    if duplicate_signal_count > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_duplicates",
+            "Duplicate or near-duplicate synthetic rows",
+            "warning",
+            "attention",
+            f"Found {exact_duplicate_count} exact duplicate row(s) and {near_duplicate_pairs} near-duplicate pair(s).",
+            count=duplicate_signal_count,
+            target_tab="quality-safety",
+            owner="Quality & Safety",
+            evidence=["Repeated synthetic rows can inflate training volume without adding learning signal."],
+            action_label="Open Quality & Safety",
+        ))
+    if low_confidence_count > 0 or unknown_confidence_count > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_confidence_needs_review",
+            "Synthetic confidence needs review",
+            "warning",
+            "attention",
+            f"{low_confidence_count} row(s) have low confidence and {unknown_confidence_count} row(s) have no confidence score.",
+            count=low_confidence_count + unknown_confidence_count,
+            target_tab="synthetic",
+            owner="Synthetic Review",
+            evidence=["Low-confidence synthetic rows should be reviewed before SFT."],
+            action_label="Review synthetic rows",
+        ))
+    if low_quality_count > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_low_quality_text",
+            "Low-quality synthetic text",
+            "warning",
+            "attention",
+            f"{low_quality_count} synthetic row(s) look empty, placeholder-like, or too short.",
+            count=low_quality_count,
+            target_tab="synthetic",
+            owner="Synthetic Review",
+            evidence=sorted(set(low_quality_by_index.values()))[:4],
+            action_label="Review synthetic rows",
+        ))
+    if total_rows > 0 and not gold_texts:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_gold_missing",
+            "Gold Set anchors missing",
+            "warning",
+            "attention",
+            "Synthetic rows cannot be compared with trusted Gold Set anchors yet.",
+            count=total_rows,
+            target_tab="goldset",
+            owner="Gold Set",
+            evidence=["Add trusted examples to estimate whether synthetic rows are close to the target domain."],
+            action_label="Open Gold Set",
+        ))
+    elif low_gold_similarity > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_gold_similarity_low",
+            "Low Gold Set similarity",
+            "warning",
+            "attention",
+            f"{low_gold_similarity} synthetic row(s) are far from trusted Gold Set wording.",
+            count=low_gold_similarity,
+            target_tab="goldset",
+            owner="Gold Set",
+            evidence=["Very low similarity can indicate domain drift or under-anchored generation."],
+            action_label="Review Gold Set",
+        ))
+    if high_gold_similarity > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_gold_similarity_high",
+            "High Gold Set overlap",
+            "info",
+            "attention",
+            f"{high_gold_similarity} synthetic row(s) are very close to trusted Gold Set examples.",
+            count=high_gold_similarity,
+            target_tab="synthetic",
+            owner="Synthetic Review",
+            evidence=["High overlap can be useful anchoring, but exact copies add less coverage."],
+            action_label="Review synthetic rows",
+        ))
+    if domain_confidence < 0.45 and total_rows > 0:
+        findings.append(_synthetic_quality_finding(
+            "synthetic_quality_domain_weak",
+            "Domain signal is weak",
+            "info",
+            "attention",
+            "Synthetic analytics are less useful until the training domain is confirmed.",
+            count=total_rows,
+            target_tab="domain",
+            owner="Domain Managers",
+            evidence=[f"Detected domain confidence is {round(domain_confidence * 100)}%."],
+            action_label="Review domain",
+        ))
+
+    for finding in findings:
+        if finding.get("severity") in {"blocker", "warning", "info"}:
+            issues.append(
+                _issue(
+                    str(finding["id"]),
+                    str(finding["severity"]),
+                    str(finding["label"]),
+                    str(finding["message"]),
+                    action_label=str(finding.get("action_label") or "Open workflow"),
+                    target_tab=str(finding.get("target_tab") or "synthetic"),
+                )
+            )
+
+    if total_rows <= 0:
+        verdict: SyntheticQualityVerdict = "empty"
+    elif any(item.get("severity") in {"blocker", "warning"} for item in findings):
+        verdict = "attention"
+    else:
+        verdict = "ready"
+
+    source_groups = _synthetic_quality_source_groups(
+        rows,
+        duplicate_indices=duplicate_indices,
+        missing_by_index=missing_by_index,
+        gold_similarity_by_index=gold_similarity_by_index,
+    )
+    status_groups = [
+        {
+            "status": status,
+            "label": label,
+            "count": int(status_counts.get(status, 0)),
+            "target_tab": "synthetic",
+        }
+        for status, label in [
+            ("pending", "Pending review"),
+            ("accepted", "Accepted"),
+            ("rejected", "Rejected"),
+        ]
+    ]
+    status_groups.extend(
+        {
+            "status": status,
+            "label": status.replace("_", " ").title(),
+            "count": int(count),
+            "target_tab": "synthetic",
+        }
+        for status, count in status_counts.items()
+        if status not in {"pending", "accepted", "rejected"}
+    )
+
+    preview_rows = []
+    for index in sorted(set(list(missing_by_index.keys()) + list(duplicate_indices) + list(low_quality_by_index.keys())))[:5]:
+        if 0 <= index < len(rows):
+            preview_rows.append(
+                _quality_row_preview(
+                    {
+                        "row": rows[index].get("row"),
+                        "source": rows[index].get("source"),
+                        "source_type": "synthetic",
+                        "target_tab": "synthetic",
+                        "file_path": rows[index].get("file_path"),
+                        "row_index": rows[index].get("row_index"),
+                    },
+                    reason="Synthetic quality analytics preview",
+                )
+            )
+
+    return {
+        "project_id": project_id,
+        "verdict": verdict,
+        "read_only": True,
+        "auto_apply": False,
+        "source_of_truth": "deterministic_synthetic_quality_checks",
+        "domain": {
+            "id": domain_id,
+            "label": domain_label,
+            "confidence": round(domain_confidence, 4),
+            "source": detected.get("source"),
+        },
+        "recipe": recipe_payload,
+        "summary": {
+            "total_rows": total_rows,
+            "pending_rows": pending_count,
+            "accepted_rows": accepted_count,
+            "rejected_rows": rejected_count,
+            "source_count": len(source_groups),
+            "avg_confidence": avg_confidence,
+            "low_confidence_rows": low_confidence_count,
+            "unknown_confidence_rows": unknown_confidence_count,
+            "missing_required_rows": missing_required_count,
+            "duplicate_signal_rows": duplicate_signal_count,
+            "low_quality_rows": low_quality_count,
+            "avg_gold_similarity": avg_gold_similarity,
+            "high_gold_similarity_rows": high_gold_similarity,
+            "low_gold_similarity_rows": low_gold_similarity,
+            "gold_anchor_rows": len(gold_texts),
+        },
+        "quality_bands": {
+            "confidence": {
+                "high": int(confidence_buckets.get("high", 0)),
+                "medium": int(confidence_buckets.get("medium", 0)),
+                "low": low_confidence_count,
+                "unknown": unknown_confidence_count,
+                "average": avg_confidence,
+            },
+            "duplicates": {
+                "exact_duplicate_rows": exact_duplicate_count,
+                "near_duplicate_pairs": near_duplicate_pairs,
+                "affected_rows": duplicate_signal_count,
+                "ratio": round(duplicate_signal_count / max(1, total_rows), 4) if total_rows else 0.0,
+            },
+            "required_fields": {
+                "required_fields": required_fields,
+                "missing_rows": missing_required_count,
+                "ratio": round(missing_required_count / max(1, total_rows), 4) if total_rows else 0.0,
+            },
+            "gold_similarity": {
+                "average": avg_gold_similarity,
+                "high_overlap_rows": high_gold_similarity,
+                "low_similarity_rows": low_gold_similarity,
+                "gold_anchor_rows": len(gold_texts),
+            },
+        },
+        "review_outcomes": {
+            "total_pending": int(review_queue.get("total_pending") or 0),
+            "total_accepted": int(review_queue.get("total_accepted") or 0),
+            "top_pending_groups": list(review_queue.get("top_pending_groups") or []),
+            "top_accepted_groups": list(review_queue.get("top_accepted_groups") or []),
+        },
+        "source_groups": source_groups,
+        "status_groups": status_groups,
+        "domain_groups": [
+            {
+                "domain_id": domain_id,
+                "domain_label": domain_label,
+                "confidence": round(domain_confidence, 4),
+                "synthetic_rows": total_rows,
+                "pending_rows": pending_count,
+                "accepted_rows": accepted_count,
+                "source": detected.get("source"),
+                "target_tab": "domain",
+            }
+        ],
+        "findings": findings,
+        "preview_rows": preview_rows,
+        "issues": issues,
+        "entry_points": [
+            {
+                "label": "Open Synthetic review",
+                "target_tab": "synthetic",
+                "reason": "Accept, reject, or inspect synthetic rows in the existing Synthetic workflow.",
+            },
+            {
+                "label": "Open Review Queue",
+                "target_tab": "review-queue",
+                "reason": "Use Data Studio review triage for synthetic, Gold Set, and annotation review work.",
+            },
+            {
+                "label": "Open Gold Set",
+                "target_tab": "goldset",
+                "reason": "Strengthen trusted anchors used for similarity and review decisions.",
+            },
+            {
+                "label": "Open Data Prep",
+                "target_tab": "dataprep",
+                "reason": "Fix missing required fields or mapping shape before preparing datasets.",
+            },
+            {
+                "label": "Open Quality & Safety",
+                "target_tab": "quality-safety",
+                "reason": "Inspect duplicate, missing-field, and low-quality deterministic checks.",
+            },
+        ],
+        "assist": {
+            "available": True,
+            "read_only": True,
+            "status": "not_invoked",
+            "default_provider": "ollama",
+            "supported_providers": ["ollama", "openai_compatible"],
+            "purpose": "explanations_only",
+            "message": "Synthetic quality analytics are deterministic by default; LLM assist may be used only to explain findings.",
+        },
+        "power_details": {
+            "required_fields": required_fields,
+            "status_counts": dict(status_counts),
+            "confidence_buckets": dict(confidence_buckets),
+            "mapping_verdict": mapping.get("verdict"),
+            "gold_validation": gold.get("validation"),
+            "synthetic_dataset_ids": [int(dataset.id) for dataset in synthetic_datasets],
         },
     }
 
@@ -8736,9 +9487,10 @@ _COACH_SECTION_ORDER: dict[str, int] = {
     "gold_set": 5,
     "synthetic_playbooks": 6,
     "synthetic_recommendations": 7,
-    "review_queue": 8,
-    "prepare_dataset": 9,
-    "dataset_versions": 10,
+    "synthetic_quality": 8,
+    "review_queue": 9,
+    "prepare_dataset": 10,
+    "dataset_versions": 11,
 }
 
 _COACH_CONFIRMATION_TARGETS = {
@@ -8905,6 +9657,7 @@ async def build_data_studio_coach_rail(
     gold = await build_data_studio_gold_set_workbench(db, project_id)
     synthetic_playbooks = await build_data_studio_synthetic_playbook_center(db, project_id)
     synthetic_recommendations = await build_data_studio_synthetic_recommendations(db, project_id)
+    synthetic_quality = await build_data_studio_synthetic_quality_analytics(db, project_id)
     review_queue = await build_data_studio_review_queue(db, project_id)
     prepare_dataset = await build_data_studio_prepare_dataset(db, project_id)
     dataset_versions = await build_data_studio_dataset_versions(db, project_id)
@@ -8981,6 +9734,15 @@ async def build_data_studio_coach_rail(
             "action_label": "Open Recommendations",
             "ready_message": "Synthetic recommendations are available.",
             "empty_message": "Synthetic recommendations need more setup.",
+        },
+        {
+            "id": "synthetic_quality",
+            "label": "Synthetic Quality",
+            "payload": synthetic_quality,
+            "target_tab": "synthetic",
+            "action_label": "Review Synthetic Quality",
+            "ready_message": "Synthetic quality analytics look clear.",
+            "empty_message": "Synthetic quality analytics need generated rows.",
         },
         {
             "id": "review_queue",
