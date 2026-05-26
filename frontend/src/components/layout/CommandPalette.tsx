@@ -140,7 +140,7 @@ function buildItems(
             },
             {
                 id: `${base}/recipes`,
-                label: 'Recipes',
+                label: 'Pipeline recipes',
                 hint: `${base}/recipes`,
                 section: 'Automation',
                 icon: <BookOpen size={14} />,

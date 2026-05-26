@@ -162,10 +162,16 @@ describe('ProjectSidebar beginner-mode hiding', () => {
     ).toBeInTheDocument();
   });
 
-  it('hides workflow + recipes panel entries even on deep-link', () => {
+  it('hides workflow + pipeline-recipes panel entries even on deep-link', () => {
     renderSidebar(['/project/1/workflow'], { beginnerMode: true });
     expect(screen.queryByRole('button', { name: 'Workflow Builder' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Recipes' })).not.toBeInTheDocument();
+    // The entry was relabeled from "Recipes" → "Pipeline recipes" to
+    // disambiguate from the task-shape recipe (qa-sft, classification,
+    // …) which is set via in-page CTAs + Coach Mode + the standalone
+    // /recipe-picker page. A user looking for "set my recipe" should
+    // NOT land on this pipeline-DAG page (it doesn't populate
+    // Project.selected_recipe).
+    expect(screen.queryByRole('button', { name: 'Pipeline recipes' })).not.toBeInTheDocument();
   });
 
   it('shows Pipeline as Code under Automation when beginner mode is off', () => {

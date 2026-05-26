@@ -489,10 +489,10 @@ export default function ProjectSidebar({ projectId, projectName, pipelineStatus,
                             <button
                                 className={`workspace-nav-item ${isRecipesRoute ? 'active' : ''}`}
                                 onClick={() => navigate(`/project/${projectId}/recipes`)}
-                                title="Recipes"
+                                title="Pipeline recipes — pipeline-DAG composition (recipe.pipeline.sft_default, lora_fast, …). Distinct from the task-shape recipe (qa-sft, classification, …) which is set via the in-page CTAs + Coach Mode."
                             >
                                 <BookOpen size={15} />
-                                <span className="nav-label">Recipes</span>
+                                <span className="nav-label">Pipeline recipes</span>
                             </button>
                             <button
                                 className={`workspace-nav-item ${isManifestRoute ? 'active' : ''}`}
