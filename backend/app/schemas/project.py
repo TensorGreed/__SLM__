@@ -74,10 +74,29 @@ class ProjectResponse(BaseModel):
     active_domain_blueprint_version: int | None = None
     selected_recipe: dict | None = None
     quickstart_tour_state: dict | None = None
+    # USER-SUCCESS Epic 7 Phase 7b — set when this project was created
+    # via the RAG-reroute flow. Frontend renders a "← cloned from"
+    # provenance chip.
+    parent_project_id: int | None = None
+    # Runtime feature flags. Carries `rag_first` (bool) + a
+    # mirrored `auto_rag.enabled` value. Frontend hides the Train
+    # button + shows a "RAG-first" badge when rag_first is true.
+    runtime_config: dict | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProjectRerouteToRagRequest(BaseModel):
+    name_suffix: str = Field(default=" (RAG)", max_length=64)
+
+
+class ProjectRerouteToRagResponse(BaseModel):
+    new_project_id: int
+    new_project_name: str
+    source_project_id: int
+    clone_report: dict | None = None
 
 
 class ProjectListResponse(BaseModel):

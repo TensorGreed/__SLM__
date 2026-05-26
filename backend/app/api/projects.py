@@ -21,6 +21,8 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectListResponse,
     ProjectRecipeApplyRequest,
+    ProjectRerouteToRagRequest,
+    ProjectRerouteToRagResponse,
     ProjectResponse,
     ProjectStatsResponse,
     ProjectUpdate,
@@ -362,6 +364,59 @@ async def magic_create_project(
         )
 
     return project_response
+
+
+@router.post(
+    "/{project_id}/reroute-to-rag",
+    response_model=ProjectRerouteToRagResponse,
+    status_code=201,
+)
+async def reroute_to_rag(
+    project_id: int,
+    data: ProjectRerouteToRagRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """USER-SUCCESS Epic 7 Phase 7b — clone a qa-sft project into a
+    RAG-first sibling.
+
+    The new project carries the source's gold set + raw + prepared
+    splits forward, has ``runtime_config.rag_first=true`` so the
+    playground answers via base model + retrieval (no training run
+    needed), and links back via ``parent_project_id`` for the UI's
+    provenance chip.
+
+    Status codes:
+      * 201 — clone succeeded; body carries the new project id.
+      * 400 — source recipe isn't eligible (only qa-sft today) OR
+        source has no recipe selected.
+      * 404 — source project doesn't exist.
+    """
+    from app.services.rag_project_service import (
+        RagCloneError,
+        clone_project_for_rag,
+    )
+
+    try:
+        new_project = await clone_project_for_rag(
+            db,
+            source_project_id=project_id,
+            name_suffix=data.name_suffix,
+        )
+    except RagCloneError as exc:
+        detail = str(exc)
+        if detail == "source_project_not_found":
+            raise HTTPException(404, detail) from exc
+        raise HTTPException(400, detail) from exc
+
+    await db.commit()
+    await db.refresh(new_project)
+
+    return ProjectRerouteToRagResponse(
+        new_project_id=new_project.id,
+        new_project_name=new_project.name,
+        source_project_id=project_id,
+        clone_report=(new_project.runtime_config or {}).get("clone_report"),
+    )
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)

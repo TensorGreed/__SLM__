@@ -3322,6 +3322,21 @@ async def playground_chat(
     """Run a chat completion request for the project playground."""
     project = await _get_project_or_404(db, project_id)
 
+    # USER-SUCCESS Epic 7 Phase 7b — RAG-first projects answer from
+    # base model + auto-RAG preamble (no LoRA adapter). Force the
+    # request's model + auto_rag flag here so the rest of the
+    # playground path treats it as any other auto-RAG request.
+    # Explicit caller-supplied model_name is overridden — the whole
+    # point of a rag_first clone is "base + retrieval," letting a
+    # caller swap models would silently defeat that.
+    from app.services.rag_project_service import is_rag_first
+
+    rag_first_active = is_rag_first(project)
+    if rag_first_active:
+        req.auto_rag = True
+        if project.base_model_name:
+            req.model_name = project.base_model_name
+
     requested_model_name = str(req.model_name or project.base_model_name or "").strip() or "HuggingFaceTB/SmolLM2-135M-Instruct"
     runtime_resolution = resolve_playground_model_runtime(
         model_name=requested_model_name,
@@ -3472,6 +3487,11 @@ async def playground_chat(
         # Absent entirely when the user didn't request auto_rag at all
         # (preserves the old response shape for non-auto-rag callers).
         **({"auto_rag": auto_rag_block} if req.auto_rag else {}),
+        # Phase 7b — surface that auto_rag was forced on by the
+        # rag_first runtime flag so the UI can render a "RAG-first
+        # project: retrieval forced" badge. Absent when the project
+        # isn't a rag_first clone.
+        **({"rag_first_active": True} if rag_first_active else {}),
         **result,
     }
 
@@ -4839,6 +4859,31 @@ async def start(
     project = project_result.scalar_one_or_none()
     if project is None:
         raise HTTPException(404, f"Project {project_id} not found")
+
+    # USER-SUCCESS Epic 7 Phase 7b — RAG-first projects are
+    # base-model + retrieval by design. Training would defeat the
+    # point and would produce a confusing artifact (a half-trained
+    # LoRA on a tiny gold set the user never intended to fine-tune
+    # on). Refuse loudly so the UI can render a "this project
+    # answers via retrieval; train a sibling SFT project instead"
+    # nudge — Phase 7d wires that affordance.
+    from app.services.rag_project_service import is_rag_first
+
+    if is_rag_first(project):
+        raise HTTPException(
+            400,
+            {
+                "error_code": "TRAINING_DISABLED_FOR_RAG_FIRST_PROJECT",
+                "message": (
+                    "This is a RAG-first project — it answers using the base "
+                    "model + retrieval from the gold set, no training run "
+                    "required. To train an SFT model on this gold set, open "
+                    "the parent project (provenance link) or create a new "
+                    "qa-sft project from the same data."
+                ),
+                "metadata": {"parent_project_id": project.parent_project_id},
+            },
+        )
 
     exp_result = await db.execute(
         select(Experiment).where(

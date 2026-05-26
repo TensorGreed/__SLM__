@@ -133,6 +133,29 @@ class Project(Base):
         default=None,
         nullable=True,
     )
+    # USER-SUCCESS Epic 7 Phase 7b — provenance back-link for RAG
+    # clone projects. When a project was created via
+    # ``rag_project_service.clone_project_for_rag``, this points at
+    # the source project's id so the UI can render a "← cloned from"
+    # chip and downstream comparisons can pair the two. Nullable
+    # (self-referential FK with no cascade) so non-clone projects
+    # round-trip unchanged.
+    parent_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id"),
+        default=None,
+        nullable=True,
+    )
+    # USER-SUCCESS Epic 7 Phase 7b — runtime feature flags that the
+    # playground inference path consults. Today carries
+    # ``rag_first`` (bool — when true, playground uses the base
+    # model + auto-RAG preamble and the training-start endpoint
+    # refuses requests) and a mirrored ``auto_rag.enabled`` value.
+    # Nullable so existing projects round-trip unchanged.
+    runtime_config: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
