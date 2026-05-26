@@ -303,6 +303,20 @@ async def _spawn_legacy_synth_shadow_job(
                     raise RuntimeError(
                         snapshot.get("error") or "legacy synth task failed"
                     )
+                # 0-rows-completed is a silent failure (Ollama
+                # returned junk, every batch parsed empty, etc.) —
+                # surface it as FAILED so the bell stops misleading
+                # the user with "Done" + 0 rows.
+                if rows_so_far == 0:
+                    raise RuntimeError(
+                        f"Legacy synth task completed but produced 0 rows "
+                        f"({batches_done}/{batches_total} batches reported "
+                        f"done). Likely causes: (1) LLM returned text that "
+                        f"didn't parse as JSON, (2) source text was empty / "
+                        f"too short for the model, (3) backend connection "
+                        f"silently dropped between batches. Check the "
+                        f"server logs for the backend's raw response."
+                    )
                 return {
                     "task_id": task_id,
                     "rows_generated": rows_so_far,

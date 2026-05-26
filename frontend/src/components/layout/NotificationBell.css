@@ -171,6 +171,13 @@
     word-break: break-word;
 }
 
+.notif-bell__row-summary {
+    font-size: 12px;
+    color: var(--text-primary);
+    margin-top: 2px;
+    font-weight: 500;
+}
+
 .notif-bell__progress {
     margin-top: 6px;
     height: 4px;

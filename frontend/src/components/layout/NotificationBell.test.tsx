@@ -310,6 +310,146 @@ describe('NotificationBell', () => {
         );
     });
 
+    it('renders a per-kind outcome summary for completed synth_playbook jobs', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 15,
+                        kind: 'synth_playbook',
+                        status: 'succeeded',
+                        title: 'Synth · positives_paraphrase · 30 rows',
+                        result: {
+                            rows_generated: 27,
+                            backend_used: 'ollama:llama3',
+                            elapsed_sec: 42.5,
+                        },
+                    }),
+                ],
+            },
+        });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 15,
+                        kind: 'synth_playbook',
+                        status: 'succeeded',
+                        title: 'Synth · positives_paraphrase · 30 rows',
+                        result: {
+                            rows_generated: 27,
+                            backend_used: 'ollama:llama3',
+                            elapsed_sec: 42.5,
+                        },
+                    }),
+                ],
+            },
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        const summary = screen.getByTestId('notification-bell-row-15-summary');
+        expect(summary).toHaveTextContent('27 rows generated');
+        expect(summary).toHaveTextContent('via ollama:llama3');
+        expect(summary).toHaveTextContent('42.5s');
+    });
+
+    it('renders a "Created project #N" summary for completed reroute jobs', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 16,
+                        kind: 'reroute_to_rag',
+                        status: 'succeeded',
+                        title: 'Clone to RAG · project #4',
+                        result: {
+                            new_project_id: 88,
+                            new_project_name: 'Policy QA (RAG)',
+                        },
+                    }),
+                ],
+            },
+        });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 16,
+                        kind: 'reroute_to_rag',
+                        status: 'succeeded',
+                        title: 'Clone to RAG · project #4',
+                        result: {
+                            new_project_id: 88,
+                            new_project_name: 'Policy QA (RAG)',
+                        },
+                    }),
+                ],
+            },
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        const summary = screen.getByTestId('notification-bell-row-16-summary');
+        expect(summary).toHaveTextContent('Policy QA (RAG)');
+        expect(summary).toHaveTextContent('#88');
+    });
+
+    it('renders training-start summary with final loss + total steps', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 17,
+                        kind: 'training_start',
+                        status: 'succeeded',
+                        title: 'Train · exp #12',
+                        result: {
+                            final_train_loss: 0.4218,
+                            total_steps: 600,
+                            terminal_status: 'completed',
+                        },
+                    }),
+                ],
+            },
+        });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 17,
+                        kind: 'training_start',
+                        status: 'succeeded',
+                        title: 'Train · exp #12',
+                        result: {
+                            final_train_loss: 0.4218,
+                            total_steps: 600,
+                            terminal_status: 'completed',
+                        },
+                    }),
+                ],
+            },
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        const summary = screen.getByTestId('notification-bell-row-17-summary');
+        expect(summary).toHaveTextContent('final loss 0.4218');
+        expect(summary).toHaveTextContent('600 steps');
+    });
+
     it('renders an empty-state message when no jobs are in the bell', async () => {
         apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
         render(<NotificationBell />);

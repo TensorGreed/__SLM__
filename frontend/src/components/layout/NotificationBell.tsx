@@ -67,6 +67,66 @@ function jobStatusLabel(job: Job): string {
 }
 
 
+/**
+ * Per-kind one-line outcome summary for a terminal job. Pulls
+ * fields out of ``job.result`` and formats them so the bell row
+ * tells the user WHAT happened, not just THAT it finished.
+ * Returns null when the job has no useful summary (caller hides
+ * the line entirely).
+ */
+function jobOutcomeSummary(job: Job): string | null {
+    if (job.status !== 'succeeded') return null;
+    const r = (job.result || {}) as Record<string, unknown>;
+
+    if (job.kind === 'synth_playbook') {
+        const rows = typeof r.rows_generated === 'number' ? r.rows_generated : null;
+        const backend = typeof r.backend_used === 'string' ? r.backend_used : null;
+        const elapsed = typeof r.elapsed_sec === 'number' ? r.elapsed_sec : null;
+        const parts: string[] = [];
+        if (rows !== null) parts.push(`${rows} row${rows === 1 ? '' : 's'} generated`);
+        if (backend) parts.push(`via ${backend}`);
+        if (elapsed !== null) parts.push(`${elapsed.toFixed(1)}s`);
+        return parts.length ? parts.join(' · ') : null;
+    }
+
+    if (job.kind.startsWith('synth_legacy')) {
+        const rows = typeof r.rows_generated === 'number' ? r.rows_generated : null;
+        const batches = typeof r.batches_done === 'number' ? r.batches_done : null;
+        const total = typeof r.batches_total === 'number' ? r.batches_total : null;
+        const parts: string[] = [];
+        if (rows !== null) parts.push(`${rows} row${rows === 1 ? '' : 's'} generated`);
+        if (batches !== null && total !== null) parts.push(`${batches}/${total} batches`);
+        return parts.length ? parts.join(' · ') : null;
+    }
+
+    if (job.kind === 'reroute_to_rag') {
+        const newId = typeof r.new_project_id === 'number' ? r.new_project_id : null;
+        const newName = typeof r.new_project_name === 'string' ? r.new_project_name : null;
+        if (newId !== null) {
+            return newName
+                ? `Created "${newName}" (project #${newId})`
+                : `Created project #${newId}`;
+        }
+        return null;
+    }
+
+    if (job.kind === 'training_start') {
+        const loss = typeof r.final_train_loss === 'number' ? r.final_train_loss : null;
+        const steps = typeof r.total_steps === 'number' ? r.total_steps : null;
+        const terminal = typeof r.terminal_status === 'string' ? r.terminal_status : null;
+        const parts: string[] = [];
+        if (terminal && terminal !== 'completed') {
+            parts.push(terminal);
+        }
+        if (loss !== null) parts.push(`final loss ${loss.toFixed(4)}`);
+        if (steps !== null) parts.push(`${steps} steps`);
+        return parts.length ? parts.join(' · ') : null;
+    }
+
+    return null;
+}
+
+
 export default function NotificationBell() {
     const { jobs, isPolling, bellOpen, setBellOpen, refreshAfterLocalChange } =
         useJobsStore();
@@ -273,6 +333,17 @@ function JobRow({ job, onOpen, onDismiss, onCancel }: JobRowProps) {
                 <div className="notif-bell__row-status">
                     {jobStatusLabel(job)}
                 </div>
+                {(() => {
+                    const summary = jobOutcomeSummary(job);
+                    return summary ? (
+                        <div
+                            className="notif-bell__row-summary"
+                            data-testid={`notification-bell-row-${job.id}-summary`}
+                        >
+                            {summary}
+                        </div>
+                    ) : null;
+                })()}
                 {job.status === 'failed' && job.error && (
                     <div
                         className="notif-bell__row-error"
