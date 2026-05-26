@@ -595,6 +595,15 @@ async def seed_demo_project(
         project_name=project_name,
         actor_user_id=actor_user_id,
     )
+    # Newly-seeded demo project — always assign the recipe from the
+    # slug map (force=True). Without this, the project ships with
+    # selected_recipe=None and every "Pick a recipe before X" surface
+    # (Coach, Synthetic playbooks, gold-set review) shows a no-op
+    # state until the user manually picks one. Best-effort; broken
+    # mapping records the skip but doesn't fail the seed.
+    summary["recipe_assignment"] = await _assign_recipe_from_slug_if_missing(
+        db, project, slug, force=True,
+    )
     return project, summary
 
 
@@ -613,6 +622,29 @@ RECIPE_TO_DEMO_SLUG: dict[str, str] = {
 }
 
 
+# Demo slug → canonical recipe id. Inverse of the recipe→slug map for
+# the three slugs that actually have bundles on disk under
+# ``data/demo_samples/``. Used by ``seed_demo_project`` +
+# ``apply_demo_bundle_to_project`` to assign a recipe at materialization
+# time so demo projects come out of the box ready for the Coach,
+# Synthetic, Eval, etc. surfaces that gate on recipe selection.
+# (Pre-this-fix, demos shipped without a recipe → multiple surfaces
+# fell through to "Pick a recipe before X" no-op states.)
+DEMO_SLUG_TO_RECIPE_ID: dict[str, str] = {
+    "support-faq": "qa-sft",
+    "sentiment-classifier": "classification",
+    "pii-detector": "span-extraction",
+}
+
+
+def derive_recipe_id_for_slug(slug: str) -> str | None:
+    """Return the canonical recipe id for a demo slug, or ``None`` if
+    the slug has no known recipe mapping (extensible — slugs without
+    a mapped recipe still seed; the project just doesn't get auto-
+    assigned a recipe)."""
+    return DEMO_SLUG_TO_RECIPE_ID.get(slug)
+
+
 def derive_demo_slug_for_project(project: Project) -> str:
     """Pick the best demo bundle slug for a project. Reads
     `project.selected_recipe.recipe_id` if present; otherwise
@@ -620,6 +652,55 @@ def derive_demo_slug_for_project(project: Project) -> str:
     snapshot = project.selected_recipe or {}
     recipe_id = str(snapshot.get("recipe_id") or "").strip()
     return RECIPE_TO_DEMO_SLUG.get(recipe_id, "support-faq")
+
+
+async def _assign_recipe_from_slug_if_missing(
+    db: AsyncSession,
+    project: Project,
+    slug: str,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Snapshot the recipe matching ``slug`` onto ``project`` via
+    ``recipe_apply_service.apply_recipe_to_project``. Returns an
+    observability dict {assigned, reason, recipe_id} so callers can
+    surface what happened.
+
+    No-op (no DB write) when:
+      - ``slug`` has no entry in DEMO_SLUG_TO_RECIPE_ID
+      - ``project.selected_recipe`` is already populated AND ``force``
+        is False (don't clobber a user's explicit choice on the
+        existing-project ``apply_demo_bundle_to_project`` path)
+    """
+    recipe_id = derive_recipe_id_for_slug(slug)
+    if recipe_id is None:
+        return {"assigned": False, "reason": f"slug_has_no_recipe:{slug}"}
+    if not force and (project.selected_recipe or {}).get("recipe_id"):
+        return {
+            "assigned": False,
+            "reason": "project_already_has_recipe",
+            "existing_recipe_id": (project.selected_recipe or {}).get("recipe_id"),
+        }
+    # Lazy import to avoid touching the recipe_apply_service import
+    # surface unless we actually assign — keeps the demo seeder's
+    # module-load light for code paths that don't materialize.
+    from app.services.recipe_apply_service import (
+        RecipeNotFoundError,
+        apply_recipe_to_project,
+    )
+
+    try:
+        await apply_recipe_to_project(db, project.id, recipe_id)
+    except RecipeNotFoundError as e:
+        # Catalog drift — the slug map says X but recipe X isn't
+        # registered. Surface as a recorded skip rather than failing
+        # the seed; the seeded project will lack a recipe and the
+        # user can pick one via the recipe picker.
+        return {
+            "assigned": False,
+            "reason": f"recipe_not_in_catalog:{recipe_id}:{e}",
+        }
+    return {"assigned": True, "recipe_id": recipe_id}
 
 
 async def apply_demo_bundle_to_project(
@@ -662,6 +743,12 @@ async def apply_demo_bundle_to_project(
         project_name=project_name,
         actor_user_id=actor_user_id,
     )
+    # Existing project — only assign the recipe when the project
+    # doesn't already have one set, so a user who picked a recipe
+    # before clicking "Import sample CSV" keeps their choice.
+    summary["recipe_assignment"] = await _assign_recipe_from_slug_if_missing(
+        db, project, resolved_slug, force=False,
+    )
     # Data is materialized + prepared splits exist: the project is
     # now ready to train. Advance the pipeline stage past INGESTION
     # so the guide-page checklist flips its "Ingest source data"
@@ -676,5 +763,7 @@ __all__ = [
     "seed_demo_project",
     "apply_demo_bundle_to_project",
     "derive_demo_slug_for_project",
+    "derive_recipe_id_for_slug",
     "RECIPE_TO_DEMO_SLUG",
+    "DEMO_SLUG_TO_RECIPE_ID",
 ]
