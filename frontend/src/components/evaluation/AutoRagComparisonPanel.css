@@ -41,6 +41,36 @@
     font-style: italic;
 }
 
+.auto-rag-comparison__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--space-md);
+}
+
+.auto-rag-comparison__rerun {
+    flex-shrink: 0;
+    font-size: 12px;
+    padding: 4px 12px;
+}
+
+.auto-rag-comparison__cta-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-md);
+    margin: var(--space-sm) 0;
+}
+
+.auto-rag-comparison__cli-fallback {
+    margin-top: var(--space-md);
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.auto-rag-comparison__cli-fallback summary {
+    cursor: pointer;
+}
+
 .auto-rag-comparison__head h3 {
     margin: 0;
     font-size: var(--font-size-md);

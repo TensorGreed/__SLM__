@@ -41,7 +41,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 # Phase 9c covers the one QA-SFT template that ships. When a second
@@ -369,6 +369,7 @@ def evaluate_with_inference(
     with_rag: bool,
     rag_k: int = RAG_K,
     index_dir_override: Path | None = None,
+    progress_callback: "Callable[[int, int, str], None] | None" = None,
 ) -> tuple[list[float], list[dict[str, Any]]]:
     """Load the trained model (base + LoRA), generate an answer for
     each val row, score via ``evaluation_service.f1_score``. Returns
@@ -444,6 +445,16 @@ def evaluate_with_inference(
 
     f1s: list[float] = []
     records: list[dict[str, Any]] = []
+    condition_label = "with-RAG" if with_rag else "without-RAG"
+    # Total = the number of val rows we'll actually score (skipping
+    # any malformed ones). Cheaper to pre-count than to publish a
+    # moving total.
+    scoreable_total = sum(
+        1
+        for r in val_rows
+        if str(r.get("question") or "").strip() and str(r.get("answer") or "").strip()
+    )
+    scored = 0
     for row in val_rows:
         question = str(row.get("question") or "").strip()
         reference = str(row.get("answer") or "").strip()
@@ -484,6 +495,15 @@ def evaluate_with_inference(
             "f1": score,
             "retrieved_row_count": len(retrieved_pairs),
         })
+        scored += 1
+        # Per-row progress hook — used by the API Job runner to
+        # publish "scoring row 12/28 (with-RAG)" into the bell.
+        # Best-effort; a buggy callback never blocks the scoring loop.
+        if progress_callback is not None:
+            try:
+                progress_callback(scored, scoreable_total, condition_label)
+            except Exception:  # noqa: BLE001 — observability is non-load-bearing
+                pass
 
     # Free GPU memory so the next seed can fresh-load.
     del model, base
@@ -758,7 +778,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def run_project_comparison(project_id: int, *, seed: int = 0) -> dict[str, Any]:
+def run_project_comparison(
+    project_id: int,
+    *,
+    seed: int = 0,
+    progress_callback: "Callable[[int, int, str], None] | None" = None,
+) -> dict[str, Any]:
     """Phase 9d — generate the per-project comparison the Eval-tab
     panel reads. Reuses the per-row eval inference loop with the
     project's latest COMPLETED experiment's model_dir. Writes
@@ -832,11 +857,13 @@ def run_project_comparison(project_id: int, *, seed: int = 0) -> dict[str, Any]:
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=False,
         index_dir_override=project_index_dir,
+        progress_callback=progress_callback,
     )
     on_f1s, on_records = evaluate_with_inference(
         base_model=base_model, model_dir=model_dir,
         val_rows=val_rows, train_rows=train_rows, with_rag=True,
         index_dir_override=project_index_dir,
+        progress_callback=progress_callback,
     )
 
     off_mean = statistics.mean(off_f1s) if off_f1s else 0.0

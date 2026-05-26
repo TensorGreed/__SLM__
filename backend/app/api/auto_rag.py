@@ -221,3 +221,205 @@ def _index_row_count(index_path: Path) -> int:
     except (json.JSONDecodeError, OSError):
         return -1
     return int(payload.get("doc_count") or 0)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# POST /comparison/run — UI-triggered Job that produces comparison.json
+# ─────────────────────────────────────────────────────────────────────
+
+
+@router.post("/comparison/run", status_code=202)
+async def run_auto_rag_comparison(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Hardening — spawn the auto-RAG comparison as a background Job
+    (previously CLI-only via ``python -m backend.scripts.auto_rag_ab
+    --project <id>``).
+
+    The Job runner loads the project's latest COMPLETED experiment's
+    LoRA, runs inference twice over the val split (with-RAG /
+    without-RAG), writes the per-row ``comparison.json`` the existing
+    ``GET /comparison`` endpoint reads, and publishes per-row progress
+    into the notification bell ("scoring row 12/28 (with-RAG)").
+
+    Status codes:
+      202 — Job queued; body carries the Job stub. Frontend polls the
+            bell + the comparison endpoint to pick up the result.
+      400 — project missing a recipe / recipe not RAG-eligible.
+      404 — project not found.
+      409 — comparison Job already in flight for this project
+            (idempotency: refuse rather than spawn a duplicate that
+            would race the output file).
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from app.models.job import Job, JobStatus
+    from app.services.jobs_service import (
+        JobProgressHandle,
+        serialize_job,
+        start_job,
+    )
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    selected_recipe = project.selected_recipe or {}
+    recipe_id = selected_recipe.get("recipe_id")
+    if not recipe_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Project has no selected recipe — auto-RAG comparison needs one.",
+        )
+    if recommended_text_keys_for_recipe(recipe_id) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Recipe {recipe_id!r} has no auto-RAG corpus shape yet "
+                f"(Phase 9a covers qa-sft only)."
+            ),
+        )
+
+    # Idempotency — refuse if there's already a comparison Job for
+    # this project in QUEUED or RUNNING. Two simultaneous runs would
+    # race the comparison.json write + double the GPU load.
+    in_flight_result = await db.execute(
+        select(Job)
+        .where(
+            Job.kind == "auto_rag_comparison",
+            Job.project_id == project_id,
+            Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        )
+        .order_by(Job.queued_at.desc())
+        .limit(1)
+    )
+    in_flight = in_flight_result.scalar_one_or_none()
+    if in_flight is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "AUTO_RAG_COMPARISON_ALREADY_RUNNING",
+                "message": (
+                    f"An auto-RAG comparison Job for project {project_id} "
+                    f"is already in flight. Watch the notification bell "
+                    f"for completion."
+                ),
+                "metadata": {
+                    "existing_job_id": in_flight.id,
+                    "existing_job_status": in_flight.status.value,
+                    "existing_job_queued_at": (
+                        in_flight.queued_at.isoformat() if in_flight.queued_at else None
+                    ),
+                },
+            },
+        )
+
+    async def _runner(handle: JobProgressHandle) -> dict[str, Any]:
+        import asyncio
+        import time
+
+        # The comparison work is GPU-heavy + uses sync code paths
+        # (torch model load, sqlite3 read inside the script). Run it
+        # on a worker thread; bridge the script's sync
+        # progress_callback into JobProgressHandle.set_progress via
+        # a shared mutable state + a polling drainer running on the
+        # event loop.
+        progress_state: dict[str, Any] = {
+            "scored": 0,
+            "total": 0,
+            "condition": "without-RAG",
+            "passes_done": 0,
+        }
+
+        def _sync_callback(scored: int, total: int, condition: str) -> None:
+            progress_state["scored"] = scored
+            progress_state["total"] = total
+            # The without-RAG pass finishes first; once we see scored
+            # reset back to 1 on the with-RAG pass, increment
+            # passes_done so the overall fraction reflects 2 passes.
+            if (
+                progress_state["condition"] != condition
+                and progress_state["condition"] == "without-RAG"
+                and condition == "with-RAG"
+            ):
+                progress_state["passes_done"] = 1
+            progress_state["condition"] = condition
+
+        async def _drainer(stop: asyncio.Event) -> None:
+            started = time.monotonic()
+            while not stop.is_set():
+                state = dict(progress_state)
+                total = state["total"]
+                scored = state["scored"]
+                passes_done = state["passes_done"]
+                condition = state["condition"]
+                elapsed = int(time.monotonic() - started)
+                if total > 0:
+                    completed = passes_done * total + scored
+                    overall_total = 2 * total
+                    fraction = max(0.0, min(1.0, completed / overall_total))
+                    msg = (
+                        f"scoring row {scored}/{total} ({condition}) · "
+                        f"pass {passes_done + 1}/2 · {elapsed}s elapsed"
+                    )
+                else:
+                    fraction = None
+                    msg = f"loading model · {elapsed}s elapsed"
+                await handle.set_progress(fraction=fraction, message=msg)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
+
+        # Import inside the runner so a missing torch / peft install
+        # (CPU-only dev box) fails inside the Job not at app boot.
+        import sys as _sys
+
+        backend_root = str(Path(__file__).resolve().parents[2])
+        if backend_root not in _sys.path:
+            _sys.path.insert(0, backend_root)
+        from scripts.auto_rag_ab import run_project_comparison
+
+        stop_event = asyncio.Event()
+        drain_task = asyncio.create_task(_drainer(stop_event))
+        try:
+            payload = await asyncio.to_thread(
+                run_project_comparison,
+                project_id,
+                progress_callback=_sync_callback,
+            )
+        finally:
+            stop_event.set()
+            try:
+                await drain_task
+            except Exception:  # noqa: BLE001 — drainer is best-effort
+                pass
+
+        summary = payload.get("summary") or {}
+        # Pointers-only result so the Job row stays cheap; the
+        # comparison.json on disk is the canonical full payload.
+        return {
+            "project_id": project_id,
+            "experiment_id": payload.get("experiment_id"),
+            "off_mean_f1": summary.get("off_mean_f1"),
+            "on_mean_f1": summary.get("on_mean_f1"),
+            "absolute_lift": summary.get("absolute_lift"),
+            "relative_lift_pct": summary.get("relative_lift_pct"),
+            "n_val_rows": summary.get("n_val_rows"),
+            "comparison_path": str(
+                settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
+            ),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    job = await start_job(
+        db,
+        kind="auto_rag_comparison",
+        title=f"Auto-RAG comparison · project #{project_id}",
+        runner=_runner,
+        project_id=project_id,
+        params={"project_id": project_id, "recipe_id": recipe_id},
+    )
+    return serialize_job(job)

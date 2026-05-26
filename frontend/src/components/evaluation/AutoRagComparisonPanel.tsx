@@ -16,6 +16,8 @@
 
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { useJobsStore } from '../../stores/jobsStore';
+import { toast } from '../../stores/toastStore';
 import './AutoRagComparisonPanel.css';
 
 interface AutoRagRow {
@@ -50,6 +52,50 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState<number | null>(null);
+    const [submitting, setSubmitting] = useState(false);
+
+    const handleRunComparison = async () => {
+        if (submitting) return;
+        setSubmitting(true);
+        try {
+            const resp = await api.post(
+                `/projects/${projectId}/auto-rag/comparison/run`,
+            );
+            const jobId = (resp.data as { id?: number })?.id;
+            toast.info(
+                jobId
+                    ? `Auto-RAG comparison queued — track in the bell (job #${jobId})`
+                    : 'Auto-RAG comparison queued — track in the bell',
+                4000,
+            );
+            void useJobsStore.getState().refreshAfterLocalChange();
+        } catch (err) {
+            const respErr = err as {
+                response?: { status?: number; data?: { detail?: unknown } };
+                message?: string;
+            };
+            const httpStatus = respErr?.response?.status;
+            const detail = respErr?.response?.data?.detail;
+            if (httpStatus === 409) {
+                // Idempotency — surface the existing-job hint that
+                // the backend put in metadata.
+                const message =
+                    typeof detail === 'object' && detail !== null
+                        ? (detail as { message?: string }).message
+                            || 'A comparison run is already in flight for this project.'
+                        : String(detail || 'A comparison is already running.');
+                toast.warning(message, 4000);
+            } else {
+                const message =
+                    typeof detail === 'string'
+                        ? detail
+                        : respErr?.message || 'Failed to start comparison run';
+                toast.error(message, 4000);
+            }
+        } finally {
+            setSubmitting(false);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -109,16 +155,29 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
                     inference time; Phase 9c measured <strong>+146% F1 lift</strong>{' '}
                     on the policy-qa-style template vs the SFT-only baseline.
                 </p>
-                <p>To generate this comparison for your project, run:</p>
-                <pre
-                    className="auto-rag-comparison__cmd"
-                    data-testid="auto-rag-comparison-empty-cmd"
-                >python -m backend.scripts.auto_rag_ab --project {projectId}</pre>
-                <p className="auto-rag-comparison__hint">
-                    The run is ~2 min on a GPU box; it loads your latest
-                    trained model and scores both with-RAG and without-RAG
-                    inference over the val split.
-                </p>
+                <div className="auto-rag-comparison__cta-row">
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleRunComparison}
+                        disabled={submitting}
+                        data-testid="auto-rag-comparison-run-btn"
+                    >
+                        {submitting ? 'Starting…' : 'Run comparison'}
+                    </button>
+                    <span className="auto-rag-comparison__hint">
+                        Runs ~2 min on a GPU. Loads your latest trained model
+                        and scores both with-RAG and without-RAG inference over
+                        the val split. Track progress in the notification bell.
+                    </span>
+                </div>
+                <details className="auto-rag-comparison__cli-fallback">
+                    <summary>Or run from the CLI</summary>
+                    <pre
+                        className="auto-rag-comparison__cmd"
+                        data-testid="auto-rag-comparison-empty-cmd"
+                    >python -m backend.scripts.auto_rag_ab --project {projectId}</pre>
+                </details>
             </section>
         );
     }
@@ -143,11 +202,23 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
             data-testid="auto-rag-comparison"
         >
             <header className="auto-rag-comparison__head">
-                <h3>Auto-RAG vs SFT-only</h3>
-                <p className="auto-rag-comparison__subtitle">
-                    {data.summary.n_val_rows} val rows · top-{data.summary.rag_k} retrieval ·
-                    cached {new Date(data.cached_at).toLocaleString()}
-                </p>
+                <div>
+                    <h3>Auto-RAG vs SFT-only</h3>
+                    <p className="auto-rag-comparison__subtitle">
+                        {data.summary.n_val_rows} val rows · top-{data.summary.rag_k} retrieval ·
+                        cached {new Date(data.cached_at).toLocaleString()}
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    className="btn btn-secondary auto-rag-comparison__rerun"
+                    onClick={handleRunComparison}
+                    disabled={submitting}
+                    data-testid="auto-rag-comparison-rerun-btn"
+                    title="Re-runs inference twice (with + without RAG) on the val split. Watch progress in the notification bell."
+                >
+                    {submitting ? 'Starting…' : 'Re-run comparison'}
+                </button>
             </header>
             <div className="auto-rag-comparison__totals">
                 <div className="auto-rag-comparison__totals-cell">
