@@ -23,6 +23,7 @@ import {
     listSynthBackends,
     runPlaybookAsync,
 } from '../../api/synthPlaybook';
+import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './PlaybookPickerPanel.css';
@@ -208,23 +209,16 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         // Legacy projects (pre-dating the auto-apply-on-create fix)
         // can hit ``recipe_required=true`` with an empty list — the
         // server stopped dumping the full cross-task-shape catalog
-        // because none of those playbooks would actually run. Surface
-        // a CTA pointing at the recipe picker instead of a one-liner.
+        // because none of those playbooks would actually run. Render
+        // the shared directive CTA so legacy users see the same
+        // prompt on every recipe-gated surface.
         if (recipeRequired) {
             return (
-                <section
-                    className="playbook-picker playbook-picker--empty"
-                    data-testid="playbook-picker-empty"
-                >
-                    <p data-testid="playbook-picker-empty-recipe-required">
-                        <strong>Pick a recipe first.</strong> Synthetic
-                        playbooks are recipe-scoped — each task shape
-                        (Q&A, classification, span extraction, …) ships
-                        its own modes. Open the Data tab → Dataset
-                        Import wizard to pick one; the playbook catalog
-                        will then surface the modes for your shape.
-                    </p>
-                </section>
+                <NoRecipeEmptyState
+                    projectId={projectId}
+                    surface="Synthetic playbooks"
+                    testId="playbook-picker-empty-recipe-required"
+                />
             );
         }
         return (

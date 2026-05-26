@@ -16,6 +16,7 @@
 
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './AutoRagComparisonPanel.css';
@@ -52,6 +53,11 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState<number | null>(null);
+    // Structured error_code from the 400 path — used to render the
+    // shared "pick a recipe first" CTA only when the project has no
+    // recipe, vs. the silent-hide path when the recipe is set but
+    // not RAG-eligible (e.g. classification).
+    const [errorCode, setErrorCode] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
 
     const handleRunComparison = async () => {
@@ -102,6 +108,7 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         setLoading(true);
         setError(null);
         setStatus(null);
+        setErrorCode(null);
         api.get<AutoRagComparisonResponse>(
             `/projects/${projectId}/auto-rag/comparison`,
         ).then((resp) => {
@@ -111,11 +118,21 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         }).catch((err) => {
             if (cancelled) return;
             setStatus(err?.response?.status ?? null);
-            setError(
-                err?.response?.data?.detail
-                || err?.message
-                || 'Failed to load auto-RAG comparison',
-            );
+            // Backend's structured 400 path returns
+            // ``{error_code, message}`` for RECIPE_REQUIRED; legacy
+            // 400s return a plain string. Normalize both into
+            // (errorCode, message) so the render path can branch.
+            const detail = err?.response?.data?.detail;
+            if (detail && typeof detail === 'object') {
+                setErrorCode(String(detail.error_code || '') || null);
+                setError(String(detail.message || '') || 'Failed to load auto-RAG comparison');
+            } else {
+                setError(
+                    (typeof detail === 'string' ? detail : '')
+                    || err?.message
+                    || 'Failed to load auto-RAG comparison',
+                );
+            }
         }).finally(() => {
             if (!cancelled) setLoading(false);
         });
@@ -135,11 +152,23 @@ export default function AutoRagComparisonPanel({ projectId }: Props) {
         );
     }
 
-    // 400 = recipe not RAG-eligible (classification, span, …). For
-    // those projects the panel just doesn't render — keeps the Eval
-    // tab clean for non-QA recipes. We surface a small message only
-    // for QA projects that haven't run the comparison yet (404).
+    // 400 splits two ways now that the backend returns a structured
+    // error_code: RECIPE_REQUIRED → render the shared "pick a recipe
+    // first" CTA so legacy NULL-recipe projects get a signal instead
+    // of a vanished panel; anything else (recipe set but not
+    // RAG-eligible, e.g. classification) keeps the silent-hide
+    // behavior since that's the correct signal for "doesn't apply
+    // to your task shape."
     if (status === 400) {
+        if (errorCode === 'RECIPE_REQUIRED') {
+            return (
+                <NoRecipeEmptyState
+                    projectId={projectId}
+                    surface="Auto-RAG comparison"
+                    testId="auto-rag-comparison-recipe-required"
+                />
+            );
+        }
         return null;
     }
     if (status === 404) {

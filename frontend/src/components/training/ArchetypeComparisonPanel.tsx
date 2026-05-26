@@ -27,6 +27,7 @@ import {
     type ProjectArchetypeComparison,
 } from '../../api/archetypeComparison';
 import { runPlaybookAsync } from '../../api/synthPlaybook';
+import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './ArchetypeComparisonPanel.css';
@@ -87,17 +88,39 @@ export default function ArchetypeComparisonPanel({ projectId }: Props) {
     const [data, setData] = useState<ProjectArchetypeComparison | null>(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
+    // RECIPE_REQUIRED is the one 4xx error code we surface — every
+    // other failure (empty cohort, network blip, etc.) stays in the
+    // silent-hide bucket. Legacy NULL-recipe projects deserve the
+    // same "pick a recipe first" CTA they'd see on every other
+    // recipe-gated surface.
+    const [recipeRequired, setRecipeRequired] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
+        setRecipeRequired(false);
         fetchProjectArchetypeComparison(projectId)
             .then((payload) => {
                 if (!cancelled) setData(payload);
             })
-            .catch(() => {
-                // Advisory panel — 4xx / network errors silently hide.
-                if (!cancelled) setData(null);
+            .catch((err) => {
+                if (cancelled) return;
+                const detail = (
+                    err as { response?: { data?: { detail?: unknown } } }
+                )?.response?.data?.detail;
+                const code =
+                    detail && typeof detail === 'object'
+                        ? String(
+                            (detail as { error_code?: unknown }).error_code
+                            || '',
+                        )
+                        : '';
+                if (code === 'RECIPE_REQUIRED') {
+                    setRecipeRequired(true);
+                }
+                // Anything else stays in the advisory silent-hide
+                // bucket — empty cohort, network blip, etc.
+                setData(null);
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -107,7 +130,17 @@ export default function ArchetypeComparisonPanel({ projectId }: Props) {
         };
     }, [projectId]);
 
-    if (loading || !data) return null;
+    if (loading) return null;
+    if (recipeRequired) {
+        return (
+            <NoRecipeEmptyState
+                projectId={projectId}
+                surface="Archetype comparison"
+                testId="archetype-comparison-recipe-required"
+            />
+        );
+    }
+    if (!data) return null;
 
     // Cold-start self-hide: nothing for the first user to compare against
     // their own work yet, and nothing about their data is drifting.

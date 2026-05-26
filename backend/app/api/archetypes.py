@@ -69,10 +69,10 @@ async def get_project_archetype_comparison(
 
     Status codes:
       * 200 — comparison computed.
-      * 400 — project has no selected recipe (can't compare to an
-        archetype without knowing the recipe) OR the recipe's
-        archetype cohort is empty (no user projects, no template
-        seed — only ``code-review`` today).
+      * 400 — project has no selected recipe (detail is a dict with
+        ``error_code="RECIPE_REQUIRED"``) OR the recipe's archetype
+        cohort is empty (no user projects, no template seed — only
+        ``code-review`` today; detail is a plain string).
       * 404 — project not found.
     """
     try:
@@ -81,6 +81,23 @@ async def get_project_archetype_comparison(
         detail = str(exc)
         if detail == "project_not_found":
             raise HTTPException(404, detail) from exc
+        if detail == "no_recipe_selected":
+            # Structured error so the panel can disambiguate "no
+            # recipe set" (render the shared "pick a recipe first"
+            # CTA) from "empty cohort" (silently hide — the panel
+            # has nothing to compare against, which is correct
+            # behavior on a cold-start cohort).
+            raise HTTPException(
+                400,
+                detail={
+                    "error_code": "RECIPE_REQUIRED",
+                    "message": (
+                        "Project has no selected recipe — can't "
+                        "compare to an archetype without knowing "
+                        "the task shape."
+                    ),
+                },
+            ) from exc
         if detail.startswith("empty_cohort"):
             raise HTTPException(400, detail) from exc
         raise HTTPException(400, detail) from exc

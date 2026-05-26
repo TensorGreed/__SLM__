@@ -161,7 +161,9 @@ async def get_auto_rag_comparison(
       200 — comparison cached on disk; payload includes aggregate F1
             (with / without RAG) + per-row records with retrieved
             chunks for the expandable cards.
-      400 — project missing a recipe / recipe not RAG-eligible.
+      400 — project missing a recipe (detail is a dict with
+            ``error_code="RECIPE_REQUIRED"``) OR recipe is set but
+            ineligible for auto-RAG (detail is a string).
       404 — project not found OR no comparison cached yet (the
             ``detail`` includes the exact harness command to run).
     """
@@ -171,9 +173,21 @@ async def get_auto_rag_comparison(
     selected_recipe = project.selected_recipe or {}
     recipe_id = selected_recipe.get("recipe_id")
     if not recipe_id:
+        # Structured error so the panel can disambiguate "no recipe
+        # set" (render the shared "pick a recipe first" CTA) from
+        # "recipe set but not RAG-eligible" (silently hide — the
+        # panel doesn't apply to this task shape, which is the
+        # right signal for e.g. a classification project).
         raise HTTPException(
             status_code=400,
-            detail="Project has no selected recipe — auto-RAG comparison needs the recipe.",
+            detail={
+                "error_code": "RECIPE_REQUIRED",
+                "message": (
+                    "Project has no selected recipe — auto-RAG "
+                    "comparison needs the recipe to pick the "
+                    "retrieval corpus shape."
+                ),
+            },
         )
     if recommended_text_keys_for_recipe(recipe_id) is None:
         raise HTTPException(

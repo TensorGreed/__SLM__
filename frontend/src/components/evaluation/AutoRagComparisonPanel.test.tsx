@@ -187,4 +187,59 @@ describe('AutoRagComparisonPanel — run-comparison button', () => {
         expect(toastMock.info).not.toHaveBeenCalled();
         expect(refreshSpy).not.toHaveBeenCalled();
     });
+
+    it('renders the shared "pick a recipe first" CTA on RECIPE_REQUIRED 400', async () => {
+        // Legacy NULL-recipe project: backend now returns a
+        // structured 400 with error_code=RECIPE_REQUIRED. Panel must
+        // mount the shared NoRecipeEmptyState (instead of silently
+        // hiding like it does for "recipe set but not RAG-eligible").
+        apiMock.get.mockRejectedValueOnce({
+            response: {
+                status: 400,
+                data: {
+                    detail: {
+                        error_code: 'RECIPE_REQUIRED',
+                        message:
+                            'Project has no selected recipe — auto-RAG '
+                            + 'comparison needs the recipe.',
+                    },
+                },
+            },
+        });
+        render(<AutoRagComparisonPanel projectId={4} />);
+        const cta = await screen.findByTestId(
+            'auto-rag-comparison-recipe-required',
+        );
+        expect(cta.textContent).toMatch(/Pick a recipe first/);
+        const link = cta.querySelector('a') as HTMLAnchorElement;
+        expect(link.getAttribute('href')).toBe('/project/4/recipes');
+    });
+
+    it('still silently hides on non-RECIPE_REQUIRED 400 (recipe ineligible)', async () => {
+        // Recipe IS set but isn't RAG-eligible (e.g. classification).
+        // Backend returns a plain-string detail; panel keeps the
+        // legacy silent-hide behavior — the user has explicit signal
+        // elsewhere (the project's selected recipe isn't QA).
+        apiMock.get.mockRejectedValueOnce({
+            response: {
+                status: 400,
+                data: { detail: "Recipe 'classification' has no auto-RAG corpus shape yet." },
+            },
+        });
+        const { container } = render(<AutoRagComparisonPanel projectId={4} />);
+        await waitFor(() => {
+            // Loading state has cleared.
+            expect(
+                screen.queryByTestId('auto-rag-comparison-loading'),
+            ).not.toBeInTheDocument();
+        });
+        // No CTA, no panel, no error banner.
+        expect(
+            screen.queryByTestId('auto-rag-comparison-recipe-required'),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByTestId('auto-rag-comparison-error'),
+        ).not.toBeInTheDocument();
+        expect(container.firstChild).toBeNull();
+    });
 });

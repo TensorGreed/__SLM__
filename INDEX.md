@@ -462,6 +462,7 @@ session-start guidance.
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
 - `frontend/src/components/shared/GettingStartedWizard.tsx` — Eight-step pipeline walkthrough modal introducing the data-to-deployment workflow.
+- `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
 - `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
 - `frontend/src/components/shared/Skeleton.tsx` — Configurable animated placeholder component for content loading states.
 - `frontend/src/components/shared/StepFooter.tsx` — Footer bar with completion badge and conditional next-step navigation button.

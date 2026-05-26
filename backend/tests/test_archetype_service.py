@@ -702,6 +702,35 @@ class ComparisonEndpointTests(unittest.TestCase):
             {"healthy", "below_cohort", "above_cohort", "mixed"},
         )
 
+    def test_null_recipe_project_returns_structured_recipe_required_error(self):
+        """Legacy NULL-recipe projects must receive a structured
+        ``error_code="RECIPE_REQUIRED"`` so the frontend
+        ArchetypeComparisonPanel can render the shared "pick a
+        recipe first" CTA (vs. silently hiding on other 4xx)."""
+        import asyncio
+        from app.database import async_session_factory
+        from app.services.recipe_apply_service import clear_recipe_from_project
+
+        pid = self._instantiate_template(
+            "ticket-router", "Archetype Cmp NULL Recipe",
+        )
+
+        async def _clear() -> None:
+            async with async_session_factory() as db:
+                await clear_recipe_from_project(db, int(pid))
+                await db.commit()
+
+        asyncio.run(_clear())
+
+        resp = self.client.get(
+            f"/api/projects/{pid}/archetype-comparison",
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json().get("detail")
+        self.assertIsInstance(detail, dict)
+        self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
+        self.assertIn("message", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -297,4 +297,53 @@ describe('ArchetypeComparisonPanel', () => {
         await new Promise((r) => setTimeout(r, 0));
         expect(container.querySelector('.archetype-cmp')).toBeNull();
     });
+
+    it('renders the shared "pick a recipe first" CTA on RECIPE_REQUIRED 400', async () => {
+        // Legacy NULL-recipe project: backend now returns a
+        // structured 400 with error_code=RECIPE_REQUIRED. Panel must
+        // mount the shared NoRecipeEmptyState (instead of silently
+        // hiding like it does for other 4xx — empty cohort, network
+        // failure, etc.).
+        apiMock.get.mockRejectedValueOnce({
+            response: {
+                status: 400,
+                data: {
+                    detail: {
+                        error_code: 'RECIPE_REQUIRED',
+                        message:
+                            'Project has no selected recipe — '
+                            + "can't compare to an archetype.",
+                    },
+                },
+            },
+        });
+        render(<ArchetypeComparisonPanel projectId={9} />);
+        const cta = await screen.findByTestId(
+            'archetype-comparison-recipe-required',
+        );
+        expect(cta.textContent).toMatch(/Pick a recipe first/);
+        const link = cta.querySelector('a') as HTMLAnchorElement;
+        expect(link.getAttribute('href')).toBe('/project/9/recipes');
+    });
+
+    it('keeps silent-hide on non-RECIPE_REQUIRED 400 (empty cohort)', async () => {
+        // Cohort empty for this recipe — backend returns plain-string
+        // detail like "empty_cohort:code-review". Panel keeps the
+        // legacy silent-hide behavior.
+        apiMock.get.mockRejectedValueOnce({
+            response: {
+                status: 400,
+                data: { detail: 'empty_cohort:code-review' },
+            },
+        });
+        const { container } = render(<ArchetypeComparisonPanel projectId={9} />);
+        await waitFor(() => {
+            expect(apiMock.get).toHaveBeenCalled();
+        });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(
+            screen.queryByTestId('archetype-comparison-recipe-required'),
+        ).not.toBeInTheDocument();
+        expect(container.querySelector('.archetype-cmp')).toBeNull();
+    });
 });

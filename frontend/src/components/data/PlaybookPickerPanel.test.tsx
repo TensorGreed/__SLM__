@@ -58,11 +58,15 @@ describe('PlaybookPickerPanel', () => {
         expect(screen.getByText(/Select a recipe/)).toBeInTheDocument();
     });
 
-    it('renders a "pick a recipe first" CTA when the server flags recipe_required', async () => {
+    it('renders the shared "pick a recipe first" CTA when the server flags recipe_required', async () => {
         // Legacy project (pre-dating the auto-apply-on-create fix):
         // server returns empty playbooks + recipe_required=true instead
         // of dumping the full cross-task-shape catalog. The panel must
-        // surface a directive CTA pointing at the Dataset Import wizard.
+        // surface the shared directive CTA pointing at the recipe
+        // picker. Three panels (synth playbooks, auto-RAG comparison,
+        // archetype comparison) share the same NoRecipeEmptyState
+        // component so the legacy user sees identical wording + button
+        // regardless of which tab they land on.
         apiMock.get.mockResolvedValue({
             data: {
                 project_id: 7,
@@ -79,7 +83,10 @@ describe('PlaybookPickerPanel', () => {
         });
         const cta = screen.getByTestId('playbook-picker-empty-recipe-required');
         expect(cta.textContent).toMatch(/Pick a recipe first/);
-        expect(cta.textContent).toMatch(/Dataset Import wizard/);
+        // CTA button points at the recipe-picker page (same target
+        // Coach Mode's recipe-picker action uses).
+        const button = cta.querySelector('a') as HTMLAnchorElement;
+        expect(button.getAttribute('href')).toBe('/project/7/recipes');
     });
 
     it('runs a playbook via the async-job endpoint and shows a queued confirmation', async () => {

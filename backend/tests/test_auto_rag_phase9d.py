@@ -334,6 +334,41 @@ class AutoRagComparisonApiTests(unittest.TestCase):
         resp = self.client.get(f"/api/projects/{project['id']}/auto-rag/comparison")
         self.assertEqual(resp.status_code, 400, resp.text)
         self.assertIn("classification", resp.text)
+        # Plain-string detail — NOT the RECIPE_REQUIRED structured
+        # path. The frontend treats this as silent-hide (recipe is
+        # set, just not RAG-eligible) instead of rendering the
+        # "pick a recipe first" CTA.
+        detail = resp.json().get("detail")
+        self.assertIsInstance(detail, str)
+
+    def test_null_recipe_project_returns_structured_recipe_required_error(self):
+        """Legacy NULL-recipe projects must receive a structured
+        ``error_code="RECIPE_REQUIRED"`` so the frontend panel can
+        disambiguate "no recipe set" (render the shared CTA) from
+        "recipe set but not RAG-eligible" (silent hide)."""
+        import asyncio
+        from app.database import async_session_factory
+        from app.services.recipe_apply_service import clear_recipe_from_project
+
+        project = self._instantiate_template(
+            "policy-qa-style", "AutoRAG Comparison NULL Recipe",
+        )
+
+        async def _clear() -> None:
+            async with async_session_factory() as db:
+                await clear_recipe_from_project(db, int(project["id"]))
+                await db.commit()
+
+        asyncio.run(_clear())
+
+        resp = self.client.get(
+            f"/api/projects/{project['id']}/auto-rag/comparison",
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json().get("detail")
+        self.assertIsInstance(detail, dict)
+        self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
+        self.assertIn("message", detail)
 
     def test_qa_sft_without_cached_comparison_returns_404_with_command(self):
         project = self._instantiate_template("policy-qa-style", "AutoRAG Comparison Not Yet Run")
