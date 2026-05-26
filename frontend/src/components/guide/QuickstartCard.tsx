@@ -25,13 +25,12 @@ import api from '../../api/client';
 import {
     quickstartImportSample,
     quickstartTrainDefault,
-    quickstartBaselineEval,
-    quickstartEvaluateLatest,
-    type BaselineEvalResponse,
+    quickstartBaselineEvalAsync,
+    quickstartEvaluateLatestAsync,
     type ImportSampleSummary,
     type TrainDefaultResponse,
-    type EvaluateLatestResponse,
 } from '../../api/quickstart';
+import { useJobsStore } from '../../stores/jobsStore';
 import { useToastStore } from '../../stores/toastStore';
 
 /**
@@ -49,36 +48,15 @@ type ButtonState<T> =
     | { status: 'error'; message: string };
 
 /**
- * Pick the headline metrics out of an EvalResult.metrics dict and
- * render them as a short comma-separated string. The eval handler
- * decides the metric shape per task profile (f1 / exact_match /
- * accuracy / macro_f1 / pass_rate / ...), so we surface the
- * familiar names first and fall back to whatever's in the dict.
+ * Result we store for async-launched eval tiles. The eval itself
+ * runs in the background and the bell surfaces the terminal status;
+ * here we just keep the Job id + experiment id so the tile can
+ * show "Eval #N queued · job #M — watch the bell."
  */
-function summarizeMetrics(metrics: Record<string, unknown> | undefined): string {
-    if (!metrics || typeof metrics !== 'object') return 'no metrics';
-    const priority = [
-        'f1', 'exact_match', 'accuracy', 'macro_f1', 'precision', 'recall',
-        'pass_rate', 'llm_judge_pass_rate', 'groundedness', 'tool_success_rate',
-    ];
-    const out: string[] = [];
-    for (const key of priority) {
-        if (out.length >= 2) break;
-        const value = metrics[key];
-        if (typeof value === 'number' && Number.isFinite(value)) {
-            out.push(`${key} ${value.toFixed(2)}`);
-        }
-    }
-    if (out.length === 0) {
-        // Fallback: pick the first two numeric entries in insertion order.
-        for (const [key, value] of Object.entries(metrics)) {
-            if (out.length >= 2) break;
-            if (typeof value === 'number' && Number.isFinite(value)) {
-                out.push(`${key} ${value.toFixed(2)}`);
-            }
-        }
-    }
-    return out.length ? out.join(' · ') : 'no metrics';
+interface AsyncEvalQueued {
+    job_id: number;
+    experiment_id: number | null;
+    base_model?: string | null;
 }
 
 function extractErrorMessage(err: unknown): string {
@@ -119,10 +97,10 @@ export default function QuickstartCard({
     const [trainState, setTrainState] = useState<ButtonState<TrainDefaultResponse>>({
         status: 'idle',
     });
-    const [evalState, setEvalState] = useState<ButtonState<EvaluateLatestResponse>>({
+    const [evalState, setEvalState] = useState<ButtonState<AsyncEvalQueued>>({
         status: 'idle',
     });
-    const [baselineState, setBaselineState] = useState<ButtonState<BaselineEvalResponse>>({
+    const [baselineState, setBaselineState] = useState<ButtonState<AsyncEvalQueued>>({
         status: 'idle',
     });
     const [dismissedNudges, setDismissedNudges] = useState<Set<string>>(
@@ -202,13 +180,25 @@ export default function QuickstartCard({
     const runEval = async () => {
         setEvalState({ status: 'running' });
         try {
-            const res = await quickstartEvaluateLatest(projectId);
-            setEvalState({ status: 'success', result: res });
+            const job = await quickstartEvaluateLatestAsync(projectId);
+            const experimentId =
+                typeof job.params?.experiment_id === 'number'
+                    ? job.params.experiment_id
+                    : null;
+            setEvalState({
+                status: 'success',
+                result: { job_id: job.id, experiment_id: experimentId },
+            });
             addToast(
-                `Eval finished · experiment #${res.experiment_id}`,
-                'success',
+                `Eval queued — bell will notify when ready (job #${job.id})`,
+                'info',
                 4000,
             );
+            void useJobsStore.getState().refreshAfterLocalChange();
+            // ``onRefresh`` re-polls pipeline status. The new EvalResult
+            // won't exist yet (Job is still running), but pipeline
+            // status itself is unaffected by the queued job — keep the
+            // call for parity with the import / train tiles.
             onRefresh?.();
         } catch (err) {
             const message = extractErrorMessage(err);
@@ -220,13 +210,29 @@ export default function QuickstartCard({
     const runBaseline = async () => {
         setBaselineState({ status: 'running' });
         try {
-            const res = await quickstartBaselineEval(projectId);
-            setBaselineState({ status: 'success', result: res });
+            const job = await quickstartBaselineEvalAsync(projectId);
+            const experimentId =
+                typeof job.params?.experiment_id === 'number'
+                    ? job.params.experiment_id
+                    : null;
+            const baseModel =
+                typeof job.params?.model_path === 'string'
+                    ? job.params.model_path
+                    : null;
+            setBaselineState({
+                status: 'success',
+                result: {
+                    job_id: job.id,
+                    experiment_id: experimentId,
+                    base_model: baseModel,
+                },
+            });
             addToast(
-                `Baseline established · ${summarizeMetrics(res.result.metrics)}`,
-                'success',
-                4500,
+                `Baseline queued — bell will notify when ready (job #${job.id})`,
+                'info',
+                4000,
             );
+            void useJobsStore.getState().refreshAfterLocalChange();
             onRefresh?.();
         } catch (err) {
             const message = extractErrorMessage(err);
@@ -288,7 +294,7 @@ export default function QuickstartCard({
                         !hasBaseModel
                             ? 'Pick a recipe first — baseline runs against the recipe\'s suggested model.'
                             : baselineState.status === 'success'
-                                ? `Untrained baseline · ${summarizeMetrics(baselineState.result.result.metrics)}`
+                                ? `Baseline queued (job #${baselineState.result.job_id}) — bell will notify when ready.`
                                 : 'Optional but recommended — gives your post-training numbers an anchor.'
                     }
                     state={baselineState}
@@ -337,15 +343,7 @@ export default function QuickstartCard({
                     title="Evaluate"
                     description={
                         evalState.status === 'success'
-                            ? (
-                                baselineState.status === 'success'
-                                    // Show baseline → trained side-by-side so the
-                                    // lift from SFT is the headline number, not
-                                    // an absolute score the user has to
-                                    // contextualize on their own.
-                                    ? `Baseline ${summarizeMetrics(baselineState.result.result.metrics)} → trained ${summarizeMetrics((evalState.result.result as Record<string, unknown>)?.metrics as Record<string, unknown> | undefined)}`
-                                    : `Eval on experiment #${evalState.result.experiment_id} — ${evalState.result.eval_type}`
-                            )
+                            ? `Eval queued (job #${evalState.result.job_id}) — bell will notify when ready.`
                             : 'Runs eval on the latest experiment against your gold/test split.'
                     }
                     state={evalState}

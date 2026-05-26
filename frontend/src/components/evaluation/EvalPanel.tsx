@@ -5,6 +5,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
+import { useJobsStore } from '../../stores/jobsStore';
+import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
@@ -662,6 +664,30 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         setSelectedRemediationEvalResultId(String(evalResults[0].id));
     }, [evalResults, selectedExp, selectedRemediationEvalResultId]);
 
+    // Auto-refresh the eval results when a heldout/llm-judge Job for
+    // the currently-selected experiment lands as succeeded. Without
+    // this the user has to manually re-click the experiment row to
+    // see the new EvalResult after the bell toast fires.
+    const jobs = useJobsStore((state) => state.jobs);
+    useEffect(() => {
+        if (!selectedExp) return;
+        const relevantTerminal = jobs.find((j) => {
+            if (j.status !== 'succeeded') return false;
+            if (j.kind !== 'heldout_evaluation' && j.kind !== 'llm_judge_evaluation') {
+                return false;
+            }
+            const jobExp = (j.params as { experiment_id?: unknown })?.experiment_id;
+            return typeof jobExp === 'number' && jobExp === selectedExp;
+        });
+        if (!relevantTerminal) return;
+        // Re-fetch in the background; ignore failures (the user can
+        // still see the bell toast even if the reload errors).
+        void listResults(selectedExp).catch(() => {});
+        void loadGateReport(selectedExp).catch(() => {});
+        // The dependency on the job's id prevents repeat reloads on
+        // subsequent polling ticks for the same terminal job.
+    }, [jobs, selectedExp]);  // eslint-disable-line react-hooks/exhaustive-deps
+
     const generateRemediationPlan = async () => {
         if (!selectedExp) {
             return;
@@ -755,19 +781,24 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
         try {
             // Held-out eval on a 200-row gold set typically takes
             // 10–20 min on local-GPU Qwen-1.5B (200 rows × ~5s/row
-            // for structured extraction). The default axios timeout
-            // is none, but the Vite dev proxy + browser idle
-            // detection cut around 10 min, surfacing as a "network
-            // error" while the backend was still processing. Setting
-            // explicit 30-min ceiling signals intent + keeps the
-            // request alive long enough. Same pattern as the synth /
-            // cleaning paths (see SyntheticPanel.tsx).
-            await api.post(
-                `/projects/${projectId}/evaluation/run-heldout`,
+            // for structured extraction). Route through the Jobs
+            // framework so the browser doesn't hold the connection
+            // open for the whole run — the notification bell tracks
+            // progress + fires a toast on terminal status. The
+            // run-heldout endpoint also handles eval_type=llm_judge
+            // (it generates predictions first, then judges them).
+            const res = await api.post<{ id: number }>(
+                `/projects/${projectId}/evaluation/run-heldout?async_job=true`,
                 payload,
-                { timeout: 30 * 60 * 1000 },
             );
-            await Promise.all([listResults(selectedExp), loadGateReport(selectedExp)]);
+            const jobId = res.data?.id;
+            toast.info(
+                jobId
+                    ? `Eval queued — bell will notify when ready (job #${jobId})`
+                    : 'Eval queued — bell will notify when ready',
+                4000,
+            );
+            void useJobsStore.getState().refreshAfterLocalChange();
             setShowRunForm(false);
         } catch (error) {
             setErrorMessage(getErrorMessage(error));

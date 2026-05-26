@@ -47,11 +47,51 @@ const SAMPLE_TRAIN_RESULT = {
     start_result: {},
 };
 
-const SAMPLE_EVAL_RESULT = {
-    status: 'evaluation_complete',
-    experiment_id: 7,
-    eval_type: 'exact_match',
-    result: { exact_match: 0.45, f1: 0.58 },
+/**
+ * Job stub mirror of ``serialize_job`` for an async eval kick-off.
+ * The evaluate-latest / baseline-eval tiles now POST with
+ * ``?async_job=true`` and receive a Job stub back instead of an
+ * inline EvalResult — the actual eval runs in the background and
+ * the notification bell surfaces its terminal status.
+ */
+const SAMPLE_EVAL_JOB = {
+    id: 901,
+    kind: 'quickstart_evaluate_latest',
+    title: 'Quickstart eval-latest · experiment #7',
+    status: 'queued',
+    progress: null,
+    progress_message: null,
+    project_id: 1,
+    user_id: null,
+    params: { experiment_id: 7, max_samples: 100, eval_type: 'exact_match' },
+    result: null,
+    error: null,
+    queued_at: '2026-05-26T00:00:00Z',
+    started_at: null,
+    completed_at: null,
+    dismissed_at: null,
+};
+
+const SAMPLE_BASELINE_JOB = {
+    id: 902,
+    kind: 'quickstart_baseline_eval',
+    title: 'Quickstart baseline-eval · SmolLM2-135M-Instruct',
+    status: 'queued',
+    progress: null,
+    progress_message: null,
+    project_id: 1,
+    user_id: null,
+    params: {
+        experiment_id: 42,
+        model_path: 'HuggingFaceTB/SmolLM2-135M-Instruct',
+        max_samples: 100,
+    },
+    result: null,
+    error: null,
+    queued_at: '2026-05-26T00:00:00Z',
+    started_at: null,
+    completed_at: null,
+    dismissed_at: null,
 };
 
 describe('QuickstartCard', () => {
@@ -148,8 +188,8 @@ describe('QuickstartCard', () => {
         );
     });
 
-    it('runs Evaluate and flips its badge to Done', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_EVAL_RESULT });
+    it('runs Evaluate as async Job, surfaces queued state + bell hint', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_EVAL_JOB });
         render(<QuickstartCard projectId={1} hasBaseModel={true} />);
 
         const user = userEvent.setup();
@@ -159,10 +199,10 @@ describe('QuickstartCard', () => {
             expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('✓ Done');
         });
         expect(apiMock.post).toHaveBeenCalledWith(
-            '/projects/1/quickstart/evaluate-latest',
+            '/projects/1/quickstart/evaluate-latest?async_job=true',
         );
         expect(screen.getByTestId('quickstart-eval-description')).toHaveTextContent(
-            /Eval on experiment #7/,
+            /Eval queued \(job #901\) — bell will notify when ready/,
         );
     });
 
@@ -252,22 +292,6 @@ describe('QuickstartCard', () => {
 
     // ── Baseline tile (Theme 8 Epic 1) ──────────────────────────
 
-    const SAMPLE_BASELINE_RESULT = {
-        status: 'baseline_complete',
-        experiment_id: 42,
-        experiment_name: 'Baseline · SmolLM2-135M-Instruct',
-        base_model: 'HuggingFaceTB/SmolLM2-135M-Instruct',
-        eval_type: 'exact_match',
-        result: {
-            experiment_id: 42,
-            dataset_name: 'test',
-            eval_type: 'exact_match',
-            metrics: { f1: 0.32, exact_match: 0.18 },
-            pass_rate: 0.18,
-            details: {},
-        },
-    };
-
     it('disables the Baseline tile when no recipe / base_model is set', () => {
         render(<QuickstartCard projectId={1} hasBaseModel={false} />);
         const btn = screen.getByTestId('quickstart-baseline-button') as HTMLButtonElement;
@@ -277,8 +301,8 @@ describe('QuickstartCard', () => {
         );
     });
 
-    it('runs the baseline action, flips to Done, surfaces the metrics in the tile', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_BASELINE_RESULT });
+    it('runs the baseline action as async Job, flips to queued state + bell hint', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_BASELINE_JOB });
         const onRefresh = vi.fn();
         render(
             <QuickstartCard projectId={1} hasBaseModel={true} onRefresh={onRefresh} />,
@@ -291,12 +315,10 @@ describe('QuickstartCard', () => {
             expect(screen.getByTestId('quickstart-baseline-badge')).toHaveTextContent('✓ Done');
         });
         expect(apiMock.post).toHaveBeenCalledWith(
-            '/projects/1/quickstart/baseline-eval',
+            '/projects/1/quickstart/baseline-eval?async_job=true',
         );
         const desc = screen.getByTestId('quickstart-baseline-description');
-        expect(desc).toHaveTextContent(/Untrained baseline/);
-        expect(desc).toHaveTextContent('f1 0.32');
-        expect(desc).toHaveTextContent('exact_match 0.18');
+        expect(desc).toHaveTextContent(/Baseline queued \(job #902\) — bell will notify when ready/);
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 
@@ -321,16 +343,13 @@ describe('QuickstartCard', () => {
         expect(onRefresh).not.toHaveBeenCalled();
     });
 
-    it('shows baseline → trained side-by-side on the Evaluate tile when both ran', async () => {
-        // Two sequential POSTs: baseline then eval. The mock returns
-        // each in the order they're called.
-        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_BASELINE_RESULT });
-        apiMock.post.mockResolvedValueOnce({
-            data: {
-                ...SAMPLE_EVAL_RESULT,
-                result: { metrics: { f1: 0.65, exact_match: 0.5 } },
-            },
-        });
+    it('queues both baseline + eval jobs independently when run back-to-back', async () => {
+        // The previous side-by-side metrics view collapsed when these
+        // tiles moved to the async-Job path — actual results land on
+        // the Eval tab once the bell signals completion. The two
+        // tiles just both flash queued + retain their job-id hint.
+        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_BASELINE_JOB });
+        apiMock.post.mockResolvedValueOnce({ data: SAMPLE_EVAL_JOB });
         render(<QuickstartCard projectId={1} hasBaseModel={true} />);
 
         const user = userEvent.setup();
@@ -344,9 +363,9 @@ describe('QuickstartCard', () => {
             expect(screen.getByTestId('quickstart-eval-badge')).toHaveTextContent('✓ Done');
         });
 
-        const evalDesc = screen.getByTestId('quickstart-eval-description');
-        expect(evalDesc).toHaveTextContent(/Baseline .* → trained/);
-        expect(evalDesc).toHaveTextContent('f1 0.32');
-        expect(evalDesc).toHaveTextContent('f1 0.65');
+        expect(screen.getByTestId('quickstart-baseline-description'))
+            .toHaveTextContent(/Baseline queued \(job #902\)/);
+        expect(screen.getByTestId('quickstart-eval-description'))
+            .toHaveTextContent(/Eval queued \(job #901\)/);
     });
 });

@@ -4,6 +4,7 @@
  */
 
 import api from './client';
+import type { Job } from './jobs';
 
 export interface ImportSampleSummary {
     slug: string;
@@ -76,6 +77,21 @@ export async function quickstartEvaluateLatest(
     return res.data;
 }
 
+
+/**
+ * Async-job variant — returns a Job stub immediately (202) while the
+ * heldout eval runs in the background. Caller toasts the stub and
+ * relies on the notification bell to surface the terminal status.
+ */
+export async function quickstartEvaluateLatestAsync(
+    projectId: number,
+): Promise<Job> {
+    const res = await api.post<Job>(
+        `/projects/${projectId}/quickstart/evaluate-latest?async_job=true`,
+    );
+    return res.data;
+}
+
 /**
  * Eval-result inner shape returned by run_heldout_evaluation. Carries
  * the scoring-mode-specific metrics + a pass_rate the UI can render
@@ -106,6 +122,22 @@ export async function quickstartBaselineEval(
 ): Promise<BaselineEvalResponse> {
     const res = await api.post<BaselineEvalResponse>(
         `/projects/${projectId}/quickstart/baseline-eval`,
+    );
+    return res.data;
+}
+
+
+/**
+ * Async-job variant — returns a Job stub immediately (202). Same
+ * rationale as ``quickstartEvaluateLatestAsync``: baseline eval
+ * loads the base HF model + runs per-row inference, which can take
+ * several minutes; holding the browser open isn't viable.
+ */
+export async function quickstartBaselineEvalAsync(
+    projectId: number,
+): Promise<Job> {
+    const res = await api.post<Job>(
+        `/projects/${projectId}/quickstart/baseline-eval?async_job=true`,
     );
     return res.data;
 }
