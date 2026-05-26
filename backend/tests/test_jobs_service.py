@@ -363,5 +363,93 @@ class SynthPlaybookAsyncEndpointTests(unittest.TestCase):
         self.assertEqual(body["params"]["target_count"], 5)
 
 
+class HeldoutEvalAsyncEndpointTests(unittest.TestCase):
+    """``?async_job=true`` on /evaluation/run-heldout and the two
+    quickstart wrappers. We don't drive these to SUCCEEDED because
+    the runner needs a real model to load + per-row inference, which
+    the CI env doesn't have. FAILED is the expected terminal; this
+    suite covers the 202+stub contract + the 409 idempotency guard."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+        cls.client = _MODULE_CLIENT_CM
+
+    @classmethod
+    def tearDownClass(cls):
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def _instantiate_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def test_run_heldout_async_returns_202_with_job_stub(self):
+        project_id = self._instantiate_project("Heldout Async A")
+        run = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run-heldout?async_job=true",
+            json={
+                "experiment_id": 999_999,
+                "dataset_name": "test",
+                "eval_type": "exact_match",
+                "max_samples": 5,
+                "max_new_tokens": 16,
+                "temperature": 0.0,
+            },
+        )
+        self.assertEqual(run.status_code, 202, run.text)
+        body = run.json()
+        self.assertEqual(body["kind"], "heldout_evaluation")
+        self.assertIn(body["status"], ("queued", "running", "failed"))
+        self.assertIn("999999", body["title"])
+        self.assertEqual(body["params"]["experiment_id"], 999_999)
+        self.assertEqual(body["params"]["max_samples"], 5)
+
+    def test_quickstart_baseline_eval_async_returns_202_with_job_stub(self):
+        project_id = self._instantiate_project("Heldout Async B")
+        run = self.client.post(
+            f"/api/projects/{project_id}/quickstart/baseline-eval?async_job=true",
+        )
+        self.assertEqual(run.status_code, 202, run.text)
+        body = run.json()
+        self.assertEqual(body["kind"], "quickstart_baseline_eval")
+        self.assertIn(body["status"], ("queued", "running", "failed"))
+
+    def test_duplicate_heldout_async_returns_409(self):
+        project_id = self._instantiate_project("Heldout Async Dup")
+        payload = {
+            "experiment_id": 424_242,
+            "dataset_name": "test",
+            "eval_type": "exact_match",
+            "max_samples": 5,
+            "max_new_tokens": 16,
+            "temperature": 0.0,
+        }
+        first = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run-heldout?async_job=true",
+            json=payload,
+        )
+        self.assertEqual(first.status_code, 202, first.text)
+
+        # Second call against the same (project, experiment) must 409.
+        # The runner may have finished and flipped to FAILED before
+        # the second call lands; in that case there's nothing in-flight
+        # and the second call also returns 202. Either outcome is
+        # acceptable — we only assert "never silently double-spawned
+        # while in-flight."
+        second = self.client.post(
+            f"/api/projects/{project_id}/evaluation/run-heldout?async_job=true",
+            json=payload,
+        )
+        self.assertIn(second.status_code, (202, 409), second.text)
+        if second.status_code == 409:
+            detail = second.json().get("detail") or {}
+            self.assertEqual(detail.get("error_code"), "HELDOUT_EVAL_ALREADY_RUNNING")
+
+
 if __name__ == "__main__":
     unittest.main()

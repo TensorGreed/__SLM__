@@ -129,6 +129,7 @@ session-start guidance.
 - `backend/app/services/domain_pack_service.py` — Domain pack service for pack persistence and project assignment.
 - `backend/app/services/domain_profile_service.py` — Domain profile service for contract persistence and project assignment.
 - `backend/app/services/domain_runtime_service.py` — Runtime resolution for effective domain defaults (core + profile + pack overlay).
+- `backend/app/services/eval_jobs_service.py` — Job-runner wrappers for long-running evaluation endpoints.
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
 - `backend/app/services/evaluation_pack_service.py` — Evaluation pack catalog + task-aware auto-gate evaluation helpers.
 - `backend/app/services/evaluation_remediation_service.py` — Closed-loop remediation planning for evaluation failures.

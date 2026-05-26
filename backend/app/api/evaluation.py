@@ -124,9 +124,46 @@ async def run_llm_judge_eval(
 async def run_eval_on_heldout(
     project_id: int,
     req: HeldoutEvalRunRequest,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    """Run end-to-end evaluation by generating predictions from held-out dataset rows."""
+    """Run end-to-end evaluation by generating predictions from held-out dataset rows.
+
+    Pass ``?async_job=true`` to fire the eval as a background Job —
+    the endpoint returns 202 + Job stub immediately and the
+    notification bell tracks progress via an elapsed-time heartbeat.
+    Held-out eval on a 200-row gold set typically takes 10–20 min on
+    a local GPU; in the sync path the browser holds the connection
+    open the whole time, in the async path it doesn't."""
+    if async_job:
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import serialize_job
+        from app.services.eval_jobs_service import (
+            ensure_no_in_flight_heldout_job,
+            start_heldout_eval_job,
+        )
+
+        await ensure_no_in_flight_heldout_job(db, project_id, req.experiment_id)
+        job = await start_heldout_eval_job(
+            db,
+            kind="heldout_evaluation",
+            title=f"Held-out eval · experiment #{req.experiment_id}",
+            project_id=project_id,
+            run_kwargs={
+                "project_id": project_id,
+                "experiment_id": req.experiment_id,
+                "dataset_name": req.dataset_name,
+                "eval_type": req.eval_type,
+                "max_samples": req.max_samples,
+                "max_new_tokens": req.max_new_tokens,
+                "temperature": req.temperature,
+                "model_path": req.model_path,
+                "judge_model": req.judge_model,
+            },
+        )
+        return JSONResponse(status_code=202, content=serialize_job(job))
+
     try:
         result = await run_heldout_evaluation(
             db=db,

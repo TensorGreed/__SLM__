@@ -258,11 +258,16 @@ async def quickstart_train_default(
 @router.post("/evaluate-latest", status_code=201)
 async def quickstart_evaluate_latest(
     project_id: int,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Find the most recent completed (or running) training experiment
     in the project and run a heldout evaluation against the gold/test
-    split."""
+    split.
+
+    Pass ``?async_job=true`` to fire the eval through the Jobs
+    framework — the endpoint returns 202 + Job stub and the
+    notification bell tracks progress."""
     project = await _get_project_or_404(db, project_id)
 
     # Prefer completed; fall back to running so users can see early
@@ -298,6 +303,35 @@ async def quickstart_evaluate_latest(
     if scoring_mode == "span_set":
         eval_type = "f1"
 
+    if async_job:
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import serialize_job
+        from app.services.eval_jobs_service import (
+            ensure_no_in_flight_heldout_job,
+            start_heldout_eval_job,
+        )
+
+        await ensure_no_in_flight_heldout_job(db, project_id, experiment.id)
+        job = await start_heldout_eval_job(
+            db,
+            kind="quickstart_evaluate_latest",
+            title=f"Quickstart eval-latest · experiment #{experiment.id}",
+            project_id=project_id,
+            run_kwargs={
+                "project_id": project_id,
+                "experiment_id": experiment.id,
+                "dataset_name": "test",
+                "eval_type": eval_type,
+                "max_samples": 100,
+                "max_new_tokens": 256,
+                "temperature": 0.0,
+                "model_path": None,
+                "judge_model": None,
+            },
+        )
+        return JSONResponse(status_code=202, content=serialize_job(job))
+
     try:
         result_dict = await run_heldout_evaluation(
             db=db,
@@ -325,6 +359,7 @@ async def quickstart_evaluate_latest(
 @router.post("/baseline-eval", status_code=201)
 async def quickstart_baseline_eval(
     project_id: int,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     """Run eval against the gold/test split using the project's
@@ -338,7 +373,11 @@ async def quickstart_baseline_eval(
       - imported / prepared data with a `test` split present
 
     Returns the synthetic experiment_id + the eval result dict so
-    the UI tile can show "Baseline F1: 0.32" immediately."""
+    the UI tile can show "Baseline F1: 0.32" immediately.
+
+    Pass ``?async_job=true`` to fire the eval through the Jobs
+    framework — endpoint returns 202 + Job stub; the notification
+    bell tracks progress."""
     project = await _get_project_or_404(db, project_id)
 
     base_model = str(project.base_model_name or "").strip()
@@ -355,6 +394,38 @@ async def quickstart_baseline_eval(
         db, project_id, base_model,
     )
     eval_type = _eval_type_for_project(project)
+
+    if async_job:
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import serialize_job
+        from app.services.eval_jobs_service import (
+            ensure_no_in_flight_heldout_job,
+            start_heldout_eval_job,
+        )
+
+        # Baseline experiment lives in the DB before the Job spawns;
+        # commit so the Job's fresh session sees it.
+        await db.commit()
+        await ensure_no_in_flight_heldout_job(db, project_id, baseline_exp.id)
+        job = await start_heldout_eval_job(
+            db,
+            kind="quickstart_baseline_eval",
+            title=f"Quickstart baseline-eval · {_short_model_name(base_model)}",
+            project_id=project_id,
+            run_kwargs={
+                "project_id": project_id,
+                "experiment_id": baseline_exp.id,
+                "dataset_name": "test",
+                "eval_type": eval_type,
+                "max_samples": 100,
+                "max_new_tokens": 256,
+                "temperature": 0.0,
+                "model_path": base_model,
+                "judge_model": None,
+            },
+        )
+        return JSONResponse(status_code=202, content=serialize_job(job))
 
     try:
         result_dict = await run_heldout_evaluation(
