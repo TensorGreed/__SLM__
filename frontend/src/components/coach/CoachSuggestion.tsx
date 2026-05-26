@@ -315,6 +315,25 @@ export default function CoachSuggestionCard({
             // the hash, which the Data Studio page reads on mount to
             // scroll + expand the matching section.
             const target = suggestion.action.params['target'];
+            // Hardening — base-model swap also dispatches a window
+            // CustomEvent so TrainingPanel can react when the user
+            // clicks from a Coach surface that's *already on the
+            // training-config page*. Without this, react-router's
+            // same-path navigate() doesn't re-mount the panel and
+            // the URL-param read on mount never re-fires.
+            if (
+                target === 'training-base-model-picker'
+                && typeof window !== 'undefined'
+            ) {
+                const recommended = suggestion.action.params['recommended_base_model'];
+                if (typeof recommended === 'string' && recommended.length > 0) {
+                    window.dispatchEvent(
+                        new CustomEvent('brewslm:apply-recommended-base-model', {
+                            detail: { recommendedBaseModel: recommended },
+                        }),
+                    );
+                }
+            }
             if (typeof target === 'string' && target in NAVIGATE_TARGET_URLS) {
                 navigate(
                     NAVIGATE_TARGET_URLS[target](
