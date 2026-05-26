@@ -25,6 +25,7 @@ import {
     type SniffResponse,
 } from '../../api/recipes';
 import { listRecipes } from '../../api/recipes';
+import RecipeTileFrame from '../shared/RecipeTileFrame';
 
 interface RecipePickerProps {
     /** Column headers from the introspected file. */
@@ -278,16 +279,9 @@ function RecipeCard({ suggestion, recipe, isTop, onSelect }: RecipeCardProps) {
     ) as Array<[string, string]>;
 
     return (
-        <div
-            data-testid={`recipe-card-${suggestion.recipe_id}`}
-            style={{
-                padding: 'var(--space-md)',
-                borderRadius: 'var(--radius-md)',
-                border: isTop
-                    ? '2px solid var(--accent-primary)'
-                    : '1px solid var(--border-color)',
-                background: 'var(--bg-card)',
-            }}
+        <RecipeTileFrame
+            testId={`recipe-card-${suggestion.recipe_id}`}
+            highlighted={isTop}
         >
             <div
                 style={{
@@ -396,6 +390,6 @@ function RecipeCard({ suggestion, recipe, isTop, onSelect }: RecipeCardProps) {
                     {isTop ? 'Use this recipe →' : 'Use this instead'}
                 </button>
             </div>
-        </div>
+        </RecipeTileFrame>
     );
 }

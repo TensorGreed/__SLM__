@@ -33,6 +33,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 
 import { applyRecipeToProject, listRecipes, type Recipe } from '../api/recipes';
+import RecipeTileFrame from '../components/shared/RecipeTileFrame';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import { toast } from '../stores/toastStore';
 
@@ -205,75 +206,73 @@ export default function ProjectRecipePickerPage() {
                         const isCurrent = recipe.id === currentRecipeId;
                         const isApplying = applyingId === recipe.id;
                         return (
-                            <article
+                            <RecipeTileFrame
                                 key={recipe.id}
-                                data-testid={`project-recipe-picker-card-${recipe.id}`}
-                                style={{
-                                    padding: 'var(--space-md)',
-                                    borderRadius: 'var(--radius-md)',
-                                    border: isCurrent
-                                        ? '2px solid var(--accent-primary)'
-                                        : '1px solid var(--border-color)',
-                                    background: 'var(--bg-card)',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: 'var(--space-sm)',
-                                }}
+                                testId={`project-recipe-picker-card-${recipe.id}`}
+                                highlighted={isCurrent}
                             >
-                                <header
+                                <div
                                     style={{
                                         display: 'flex',
-                                        alignItems: 'center',
+                                        flexDirection: 'column',
                                         gap: 'var(--space-sm)',
                                     }}
                                 >
-                                    <span
-                                        aria-hidden="true"
-                                        style={{ fontSize: '1.5rem' }}
+                                    <header
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 'var(--space-sm)',
+                                        }}
                                     >
-                                        {recipe.icon}
-                                    </span>
-                                    <h3 style={{ margin: 0, fontSize: '1rem' }}>
-                                        {recipe.name}
-                                    </h3>
-                                </header>
-                                <p
-                                    style={{
-                                        margin: 0,
-                                        fontSize: '0.9rem',
-                                        color: 'var(--text-secondary)',
-                                    }}
-                                >
-                                    {recipe.headline}
-                                </p>
-                                <p
-                                    style={{
-                                        margin: 0,
-                                        fontSize: '0.8rem',
-                                        color: 'var(--text-tertiary)',
-                                    }}
-                                >
-                                    Suggested base model:{' '}
-                                    <code>{recipe.suggested_base_model}</code>
-                                </p>
-                                <button
-                                    type="button"
-                                    className={
-                                        isCurrent
-                                            ? 'btn btn-secondary'
-                                            : 'btn btn-primary'
-                                    }
-                                    disabled={isApplying || isCurrent}
-                                    onClick={() => void handlePick(recipe)}
-                                    data-testid={`project-recipe-picker-apply-${recipe.id}`}
-                                >
-                                    {isCurrent
-                                        ? 'Currently applied'
-                                        : isApplying
-                                            ? 'Applying…'
-                                            : 'Use this recipe'}
-                                </button>
-                            </article>
+                                        <span
+                                            aria-hidden="true"
+                                            style={{ fontSize: '1.5rem' }}
+                                        >
+                                            {recipe.icon}
+                                        </span>
+                                        <h3 style={{ margin: 0, fontSize: '1rem' }}>
+                                            {recipe.name}
+                                        </h3>
+                                    </header>
+                                    <p
+                                        style={{
+                                            margin: 0,
+                                            fontSize: '0.9rem',
+                                            color: 'var(--text-secondary)',
+                                        }}
+                                    >
+                                        {recipe.headline}
+                                    </p>
+                                    <p
+                                        style={{
+                                            margin: 0,
+                                            fontSize: '0.8rem',
+                                            color: 'var(--text-tertiary)',
+                                        }}
+                                    >
+                                        Suggested base model:{' '}
+                                        <code>{recipe.suggested_base_model}</code>
+                                    </p>
+                                    <button
+                                        type="button"
+                                        className={
+                                            isCurrent
+                                                ? 'btn btn-secondary'
+                                                : 'btn btn-primary'
+                                        }
+                                        disabled={isApplying || isCurrent}
+                                        onClick={() => void handlePick(recipe)}
+                                        data-testid={`project-recipe-picker-apply-${recipe.id}`}
+                                    >
+                                        {isCurrent
+                                            ? 'Currently applied'
+                                            : isApplying
+                                                ? 'Applying…'
+                                                : 'Use this recipe'}
+                                    </button>
+                                </div>
+                            </RecipeTileFrame>
                         );
                     })}
                 </div>
