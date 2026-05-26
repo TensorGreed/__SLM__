@@ -65,6 +65,21 @@ export interface Project {
     quickstart_tour_state?: {
         dismissed_nudges?: string[];
     } | null;
+    /**
+     * USER-SUCCESS Epic 7 Phase 7b — set when this project was
+     * created via the RAG-reroute flow. The provenance back-link
+     * chip on ProjectWorkspaceLayout reads this to render
+     * "← cloned from {parent_name}".
+     */
+    parent_project_id?: number | null;
+    /**
+     * Runtime feature flags consulted by the playground + training
+     * gate. Carries `rag_first` (bool) + a mirrored
+     * `auto_rag.enabled` value. When `rag_first` is true the
+     * playground forces retrieval on and the training-start
+     * endpoint refuses requests.
+     */
+    runtime_config?: Record<string, unknown> | null;
     created_at: string;
     updated_at: string;
 }

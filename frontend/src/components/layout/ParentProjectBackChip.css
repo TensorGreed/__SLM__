@@ -1,0 +1,25 @@
+/* ParentProjectBackChip — USER-SUCCESS Epic 7 Phase 7d. */
+
+.parent-project-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary, rgba(59, 130, 246, 0.08));
+    border: 1px solid var(--border-muted);
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.parent-project-chip:hover {
+    background: var(--accent-bg, rgba(59, 130, 246, 0.16));
+    color: var(--text-primary);
+}

@@ -366,6 +366,14 @@ async def magic_create_project(
     return project_response
 
 
+# USER-SUCCESS Epic 7 Phase 7d — idempotency window for reroute-to-rag.
+# We refuse a second clone of the same source within this many seconds
+# so a frantic double-click (or a duplicate request from a UI rerender)
+# doesn't create two parallel RAG siblings. 3600s = 1 hour matches the
+# Phase 7d spec.
+_REROUTE_IDEMPOTENCY_WINDOW_SECONDS: int = 3600
+
+
 @router.post(
     "/{project_id}/reroute-to-rag",
     response_model=ProjectRerouteToRagResponse,
@@ -385,16 +393,61 @@ async def reroute_to_rag(
     needed), and links back via ``parent_project_id`` for the UI's
     provenance chip.
 
+    Phase 7d adds a 1-hour idempotency guard: a second clone of the
+    same source within the window returns 429 + the existing clone's
+    id so the UI can navigate to it instead of creating a duplicate.
+
     Status codes:
       * 201 — clone succeeded; body carries the new project id.
       * 400 — source recipe isn't eligible (only qa-sft today) OR
         source has no recipe selected.
       * 404 — source project doesn't exist.
+      * 429 — another RAG clone of this source was created within
+        the last hour; body carries the existing clone's id so the
+        UI can navigate there instead.
     """
+    from datetime import datetime, timedelta, timezone
+
     from app.services.rag_project_service import (
         RagCloneError,
         clone_project_for_rag,
     )
+
+    # Idempotency check — find any existing clone (parent_project_id
+    # == source) created within the cooldown window. We order by
+    # created_at DESC so the most recent clone wins (uncommon edge
+    # case where multiple legitimate clones exist).
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=_REROUTE_IDEMPOTENCY_WINDOW_SECONDS
+    )
+    existing_result = await db.execute(
+        select(Project)
+        .where(
+            Project.parent_project_id == project_id,
+            Project.created_at >= cutoff,
+        )
+        .order_by(Project.created_at.desc())
+        .limit(1)
+    )
+    existing_clone = existing_result.scalar_one_or_none()
+    if existing_clone is not None:
+        raise HTTPException(
+            429,
+            {
+                "error_code": "REROUTE_RECENTLY_CLONED",
+                "message": (
+                    f"A RAG clone of project {project_id} was created within "
+                    f"the last hour. Open the existing clone instead of "
+                    f"creating another."
+                ),
+                "metadata": {
+                    "existing_clone_id": existing_clone.id,
+                    "existing_clone_name": existing_clone.name,
+                    "existing_clone_created_at": existing_clone.created_at.isoformat(),
+                    "window_seconds": _REROUTE_IDEMPOTENCY_WINDOW_SECONDS,
+                },
+            },
+        )
 
     try:
         new_project = await clone_project_for_rag(

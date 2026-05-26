@@ -839,6 +839,102 @@ async def _read_latest_eval_result(
     return result.scalars().first()
 
 
+def _reroute_recommendation_nudge(
+    project_id: int,
+    reroute_analysis: dict[str, Any] | None,
+    *,
+    is_rag_first_project: bool,
+) -> dict[str, Any] | None:
+    """Phase 7d — info-severity nudge on the Eval tab that surfaces
+    Phase 7a's post-eval reroute recommendation as a Coach suggestion.
+
+    Fires only when:
+      * the latest eval's reroute analysis exists AND
+      * the recommendation kind is ``try_rag`` AND
+      * the project isn't already a RAG-first clone (don't recommend
+        what's already on; avoids an infinite reroute chain)
+
+    Cites the fired signal ``detail`` strings in the body so the
+    recommendation is auditable from inside the Coach card without
+    requiring the user to scroll to the EvalPanel surface.
+
+    Returns None on any skip condition. Pure function — caller is
+    responsible for loading the analysis from the cache /
+    recomputing.
+    """
+    if is_rag_first_project:
+        return None
+    if not isinstance(reroute_analysis, dict):
+        return None
+    recommendation = reroute_analysis.get("recommendation") or {}
+    if not isinstance(recommendation, dict):
+        return None
+    kind = recommendation.get("kind")
+    if kind != "try_rag":
+        return None
+
+    signals = reroute_analysis.get("signals") or []
+    if not isinstance(signals, list):
+        signals = []
+    fired = [s for s in signals if isinstance(s, dict) and s.get("fired")]
+    fired_ids = [str(s.get("id") or "") for s in fired if s.get("id")]
+
+    pass_rate = reroute_analysis.get("pass_rate")
+    pass_rate_str = (
+        f"{pass_rate * 100:.0f}%"
+        if isinstance(pass_rate, (int, float))
+        else "below the healthy threshold"
+    )
+
+    # Evidence lines — drop the analyzer's verbose detail strings
+    # into a bullet-style block so the Coach card is self-contained.
+    if fired:
+        evidence_lines = "\n".join(
+            f"• {str(s.get('detail') or '').strip()}"
+            for s in fired
+            if str(s.get("detail") or "").strip()
+        )
+    else:
+        evidence_lines = ""
+
+    body_parts = [
+        (
+            f"Your eval is at {pass_rate_str}. The post-eval analyzer "
+            f"thinks this task looks more like a RAG fit than SFT."
+        ),
+    ]
+    if evidence_lines:
+        body_parts.append("Signals that fired:\n" + evidence_lines)
+    body_parts.append(
+        "Switching creates a sibling project that uses the base model + "
+        "retrieval from your gold set — no training run required. Your "
+        "current SFT project stays intact for comparison."
+    )
+
+    return {
+        "id": "eval:reroute-to-rag-recommended",
+        "title": f"Reroute to RAG? Your eval is at {pass_rate_str}",
+        "body": "\n\n".join(body_parts),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open reroute panel",
+            "params": {"target": "reroute-recommendation-panel"},
+        },
+        "context": {
+            "project_id": project_id,
+            "pass_rate": (
+                round(float(pass_rate), 4)
+                if isinstance(pass_rate, (int, float))
+                else None
+            ),
+            "fired_signal_ids": fired_ids,
+            "recommendation_confidence": recommendation.get("confidence"),
+            "eval_result_id": reroute_analysis.get("eval_result_id"),
+        },
+    }
+
+
 def _auto_rag_eval_nudge(
     project_id: int,
     recipe_id: str | None,
@@ -964,6 +1060,45 @@ async def _eval_stage_suggestions(
     )
     if nudge:
         suggestions.append(nudge)
+
+    # Phase 7d — surface the post-eval reroute recommendation as a
+    # Coach suggestion. Pulls Phase 7a's RerouteAnalysis (cached on
+    # EvalResult.details["reroute_analysis"]). Skipped when the
+    # project is already a RAG-first clone — no point recommending
+    # what's already on; avoids an infinite reroute chain on
+    # rag_first siblings whose evals re-trigger the analyzer.
+    runtime_cfg = project.runtime_config if hasattr(project, "runtime_config") else None
+    is_rag_first_project = bool(
+        isinstance(runtime_cfg, dict) and runtime_cfg.get("rag_first") is True
+    )
+    reroute_analysis: dict[str, Any] | None = None
+    try:
+        # Read the cache directly from EvalResult.details first — the
+        # analyzer runs on Eval-tab mount via Phase 7c's panel, so the
+        # cache is almost always warm. Fall through to the analyzer
+        # only when no cache exists (first-time eval, fresh project).
+        latest_details = dict(latest.details or {}) if isinstance(latest.details, dict) else {}
+        cached = latest_details.get("reroute_analysis")
+        if isinstance(cached, dict) and cached.get("eval_result_id") == latest.id:
+            reroute_analysis = cached
+        else:
+            from app.services.post_eval_decision_engine_service import (
+                analyze_eval_for_reroute,
+            )
+
+            reroute_analysis = await analyze_eval_for_reroute(
+                db, eval_result_id=latest.id
+            )
+    except Exception:  # noqa: BLE001 — never block the eval strip on this
+        reroute_analysis = None
+
+    reroute_nudge = _reroute_recommendation_nudge(
+        project.id,
+        reroute_analysis,
+        is_rag_first_project=is_rag_first_project,
+    )
+    if reroute_nudge:
+        suggestions.append(reroute_nudge)
 
     if pass_rate is None or pass_rate >= EVAL_PASS_RATE_HEALTHY:
         return suggestions

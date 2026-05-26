@@ -197,6 +197,7 @@ function RerouteCard({
 }: RerouteCardProps) {
     return (
         <section
+            id="reroute-recommendation-panel"
             className={`reroute-card reroute-card--${flavor}`}
             data-testid={`reroute-card-${flavor}`}
         >

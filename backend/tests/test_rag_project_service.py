@@ -193,8 +193,15 @@ class RerouteToRagApiTests(unittest.TestCase):
         json.loads(lines[0])
 
     def test_collision_resolves_with_numeric_suffix(self):
-        # Clone twice — second clone's default name collides, picks
-        # "<name> (RAG) 2".
+        # Phase 7d added a 1-hour idempotency window on the endpoint
+        # so calling reroute-to-rag twice in quick succession now
+        # returns 429. To test the unique-name path, backdate the
+        # first clone past the cooldown then fire a second call.
+        from datetime import datetime, timedelta, timezone
+
+        from app.database import async_session_factory
+        from app.models.project import Project
+
         source = self._instantiate_template(
             "policy-qa-style", "Phase7b Collision"
         )
@@ -203,6 +210,16 @@ class RerouteToRagApiTests(unittest.TestCase):
             json={},
         )
         self.assertEqual(first.status_code, 201, first.text)
+        first_clone_id = first.json()["new_project_id"]
+
+        async def _backdate() -> None:
+            async with async_session_factory() as db:
+                row = await db.get(Project, first_clone_id)
+                row.created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+                await db.commit()
+
+        asyncio.run(_backdate())
+
         second = self.client.post(
             f"/api/projects/{source['id']}/reroute-to-rag",
             json={},
@@ -213,6 +230,31 @@ class RerouteToRagApiTests(unittest.TestCase):
         )
         # Second should carry the "2" suffix.
         self.assertTrue(second.json()["new_project_name"].endswith(" 2"))
+
+    def test_idempotency_returns_429_with_existing_clone_id_within_window(self):
+        source = self._instantiate_template(
+            "policy-qa-style", "Phase7d Idempotency"
+        )
+        first = self.client.post(
+            f"/api/projects/{source['id']}/reroute-to-rag",
+            json={},
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        first_clone_id = first.json()["new_project_id"]
+
+        # Second call within the 1-hour window — 429 with the
+        # existing clone id in metadata. The reroute path doesn't
+        # match any structured-error stage in app.main, so the dict
+        # detail is wrapped in {"detail": ...} (default FastAPI).
+        second = self.client.post(
+            f"/api/projects/{source['id']}/reroute-to-rag",
+            json={},
+        )
+        self.assertEqual(second.status_code, 429, second.text)
+        detail = second.json()["detail"]
+        self.assertEqual(detail["error_code"], "REROUTE_RECENTLY_CLONED")
+        self.assertEqual(detail["metadata"]["existing_clone_id"], first_clone_id)
+        self.assertEqual(detail["metadata"]["window_seconds"], 3600)
 
     def test_custom_name_suffix_respected(self):
         source = self._instantiate_template(

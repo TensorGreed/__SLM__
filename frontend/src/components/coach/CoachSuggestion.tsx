@@ -168,6 +168,13 @@ const NAVIGATE_TARGET_URLS: Record<
     // pipeline tab) — same fix as recipe-picker. The Phase 6d
     // curriculum nudge + Phase 9d auto-RAG nudge both emit this.
     'training-config': (projectId) => `/project/${projectId}/training-config`,
+    // Phase 7d — Coach Mode's reroute nudge sends the user to the
+    // Eval tab + scrolls to the RerouteRecommendationPanel via the
+    // hash anchor. The panel reads `evalResults[0]?.id` from
+    // EvalPanel so as long as an eval has run, the panel will be
+    // mounted by the time the user lands.
+    'reroute-recommendation-panel': (projectId) =>
+        `/project/${projectId}/pipeline/eval#reroute-recommendation-panel`,
 };
 
 export default function CoachSuggestionCard({

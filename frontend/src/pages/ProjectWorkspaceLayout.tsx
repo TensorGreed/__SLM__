@@ -9,6 +9,7 @@ import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import ProgressChip from '../components/gamification/ProgressChip';
 import CoachToggle from '../components/coach/CoachToggle';
+import ParentProjectBackChip from '../components/layout/ParentProjectBackChip';
 import { useGamificationPoller } from '../components/gamification/useProgressionPoll';
 import { useProjectStore } from '../stores/projectStore';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
@@ -89,6 +90,11 @@ export default function ProjectWorkspaceLayout() {
                     withSidebar
                     actions={
                         <>
+                            {activeProject.parent_project_id ? (
+                                <ParentProjectBackChip
+                                    parentProjectId={activeProject.parent_project_id}
+                                />
+                            ) : null}
                             <ProgressChip projectId={projectId} />
                             <CoachToggle projectId={projectId} />
                             <ManifestExportButton
