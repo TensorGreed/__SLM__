@@ -32,29 +32,44 @@ branch_labels = None
 depends_on = None
 
 
+def _existing_columns(table_name: str) -> set[str]:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    return {col["name"] for col in inspector.get_columns(table_name)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "projects",
-        sa.Column("parent_project_id", sa.Integer(), nullable=True),
-    )
-    op.create_foreign_key(
-        "fk_projects_parent_project_id",
-        source_table="projects",
-        referent_table="projects",
-        local_cols=["parent_project_id"],
-        remote_cols=["id"],
-    )
-    op.add_column(
-        "projects",
-        sa.Column("runtime_config", sa.JSON(), nullable=True),
-    )
+    # SQLite doesn't support adding a FK constraint via ALTER TABLE
+    # (only at CREATE TABLE time), and using alembic's batch_alter_table
+    # to recreate the projects table on every prod upgrade is heavier
+    # than the constraint is worth. SQLite also doesn't enforce FKs by
+    # default. We keep the ORM-level ForeignKey on Project.parent_project_id
+    # so SQLAlchemy relationships still resolve correctly; a follow-on
+    # migration can promote this to a real DB-level constraint when
+    # the project moves off SQLite.
+    #
+    # Idempotent: skip ``add_column`` for any column already present.
+    # An earlier draft of this migration added ``parent_project_id``
+    # successfully before failing on ``create_foreign_key`` (SQLite
+    # NotImplementedError), and the partial state survived the
+    # rollback. The guard below makes the migration safe to re-apply
+    # from that state.
+    existing = _existing_columns("projects")
+    if "parent_project_id" not in existing:
+        op.add_column(
+            "projects",
+            sa.Column("parent_project_id", sa.Integer(), nullable=True),
+        )
+    if "runtime_config" not in existing:
+        op.add_column(
+            "projects",
+            sa.Column("runtime_config", sa.JSON(), nullable=True),
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "fk_projects_parent_project_id",
-        "projects",
-        type_="foreignkey",
-    )
-    op.drop_column("projects", "parent_project_id")
-    op.drop_column("projects", "runtime_config")
+    existing = _existing_columns("projects")
+    if "parent_project_id" in existing:
+        op.drop_column("projects", "parent_project_id")
+    if "runtime_config" in existing:
+        op.drop_column("projects", "runtime_config")
