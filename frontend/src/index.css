@@ -611,6 +611,13 @@ textarea::placeholder {
   min-width: 400px;
   max-width: 600px;
   width: 90%;
+  /* Cap height so tall content (e.g. the project-create modal with
+   * Advanced expanded) doesn't spill past the viewport with no scroll
+   * affordance. Flex column + scrollable body keeps the header and
+   * footer pinned while the body scrolls. */
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
   box-shadow: var(--shadow-lg);
 }
 .modal-header {
@@ -618,16 +625,27 @@ textarea::placeholder {
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--space-lg);
+  /* Header is pinned at the top of the modal-flex container. */
+  flex-shrink: 0;
 }
 .modal-title {
   font-size: var(--font-size-lg);
   font-weight: 600;
 }
-.modal-body { margin-bottom: var(--space-lg); }
+.modal-body {
+  margin-bottom: var(--space-lg);
+  /* Take the leftover vertical space + scroll when content overflows.
+   * Short modals collapse naturally; tall modals get an inner
+   * scrollbar instead of spilling past the viewport. */
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
 .modal-footer {
   display: flex;
   gap: var(--space-sm);
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 /* ── Form ───────────────────────────────────────────────────────────── */
