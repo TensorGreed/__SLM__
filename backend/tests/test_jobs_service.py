@@ -419,6 +419,27 @@ class HeldoutEvalAsyncEndpointTests(unittest.TestCase):
         self.assertEqual(body["kind"], "quickstart_baseline_eval")
         self.assertIn(body["status"], ("queued", "running", "failed"))
 
+    def test_llm_judge_async_returns_202_with_job_stub(self):
+        project_id = self._instantiate_project("LLM-Judge Async A")
+        run = self.client.post(
+            f"/api/projects/{project_id}/evaluation/llm-judge?async_job=true",
+            json={
+                "experiment_id": 777_777,
+                "dataset_name": "test",
+                "judge_model": "heuristic",
+                "predictions": [
+                    {"prompt": "q1", "reference": "a1", "prediction": "a1"},
+                    {"prompt": "q2", "reference": "a2", "prediction": "wrong"},
+                ],
+            },
+        )
+        self.assertEqual(run.status_code, 202, run.text)
+        body = run.json()
+        self.assertEqual(body["kind"], "llm_judge_evaluation")
+        self.assertIn(body["status"], ("queued", "running", "failed", "succeeded"))
+        self.assertEqual(body["params"]["experiment_id"], 777_777)
+        self.assertEqual(body["params"]["row_count"], 2)
+
     def test_duplicate_heldout_async_returns_409(self):
         project_id = self._instantiate_project("Heldout Async Dup")
         payload = {

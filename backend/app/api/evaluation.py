@@ -103,9 +103,39 @@ async def run_eval(
 async def run_llm_judge_eval(
     project_id: int,
     req: LLMJudgeRequest,
+    async_job: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    """Run LLM-as-a-judge evaluation."""
+    """Run LLM-as-a-judge evaluation.
+
+    Pass ``?async_job=true`` to fire the eval as a background Job —
+    the endpoint returns 202 + Job stub immediately and the
+    notification bell tracks progress. LLM-judge calls the judge
+    model once per prediction, so a 100-row eval against a remote
+    judge can run multiple minutes."""
+    predictions = [p.model_dump() for p in req.predictions]
+
+    if async_job:
+        from fastapi.responses import JSONResponse
+
+        from app.services.jobs_service import serialize_job
+        from app.services.eval_jobs_service import (
+            ensure_no_in_flight_llm_judge_job,
+            start_llm_judge_eval_job,
+        )
+
+        await ensure_no_in_flight_llm_judge_job(db, project_id, req.experiment_id)
+        job = await start_llm_judge_eval_job(
+            db,
+            title=f"LLM-judge eval · experiment #{req.experiment_id}",
+            project_id=project_id,
+            experiment_id=req.experiment_id,
+            dataset_name=req.dataset_name,
+            judge_model=req.judge_model,
+            predictions=predictions,
+        )
+        return JSONResponse(status_code=202, content=serialize_job(job))
+
     try:
         result = await evaluate_with_llm_judge(
             db,
@@ -113,7 +143,7 @@ async def run_llm_judge_eval(
             req.experiment_id,
             req.dataset_name,
             req.judge_model,
-            [p.model_dump() for p in req.predictions],
+            predictions,
         )
         return EvalResultResponse.model_validate(result)
     except ValueError as e:
