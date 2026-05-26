@@ -667,11 +667,20 @@ async def list_synth_backends(project_id: int):
 
 @router.get("/playbooks")
 async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_db)):
-    """Catalog of registered playbooks; if the project has a selected
-    recipe, filter to playbooks compatible with that recipe."""
+    """Catalog of registered playbooks compatible with the project's
+    selected recipe.
+
+    When the project has no recipe selected (legacy projects pre-dating
+    the auto-apply-on-create fix), this returns an empty list plus
+    ``recipe_required=True`` so the UI can render a "pick a recipe
+    first" prompt instead of a confusing dump of every playbook
+    across every task shape — none of which would actually run, since
+    ``run_playbook`` requires ``selected_recipe`` to dispatch.
+    Brief-driven + magic-create projects always have a recipe applied
+    at creation time (see ``recipe_service.default_recipe_for_*``)
+    so this branch is now legacy-only."""
     from app.models.project import Project
     from app.services.synth_playbook_service import available_playbooks_for_recipe
-    from app.services.synth_playbooks import list_playbooks
 
     project = await db.get(Project, project_id)
     if project is None:
@@ -682,13 +691,14 @@ async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_d
         return {
             "project_id": project_id,
             "recipe_id": recipe,
+            "recipe_required": False,
             "playbooks": available_playbooks_for_recipe(recipe),
         }
-    # No recipe — return the full catalog so the user can preview.
     return {
         "project_id": project_id,
         "recipe_id": None,
-        "playbooks": list_playbooks(),
+        "recipe_required": True,
+        "playbooks": [],
     }
 
 

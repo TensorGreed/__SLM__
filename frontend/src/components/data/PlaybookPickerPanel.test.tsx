@@ -58,6 +58,30 @@ describe('PlaybookPickerPanel', () => {
         expect(screen.getByText(/Select a recipe/)).toBeInTheDocument();
     });
 
+    it('renders a "pick a recipe first" CTA when the server flags recipe_required', async () => {
+        // Legacy project (pre-dating the auto-apply-on-create fix):
+        // server returns empty playbooks + recipe_required=true instead
+        // of dumping the full cross-task-shape catalog. The panel must
+        // surface a directive CTA pointing at the Dataset Import wizard.
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 7,
+                recipe_id: null,
+                recipe_required: true,
+                playbooks: [],
+            },
+        });
+        render(<PlaybookPickerPanel projectId={7} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('playbook-picker-empty-recipe-required'),
+            ).toBeInTheDocument();
+        });
+        const cta = screen.getByTestId('playbook-picker-empty-recipe-required');
+        expect(cta.textContent).toMatch(/Pick a recipe first/);
+        expect(cta.textContent).toMatch(/Dataset Import wizard/);
+    });
+
     it('runs a playbook via the async-job endpoint and shows a queued confirmation', async () => {
         // Hardening Phase H1 — runs now go through the background-
         // job framework instead of blocking on the LLM call. The

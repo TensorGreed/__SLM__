@@ -22,6 +22,11 @@ export interface PlaybookCatalogEntry {
 export interface PlaybookCatalogResponse {
     project_id: number;
     recipe_id: string | null;
+    /** True when the project has no `selected_recipe` set yet —
+     *  legacy projects pre-dating the auto-apply-on-create fix.
+     *  Optional for backwards-compat with mocks that pre-date the
+     *  flag; treat missing as ``false``. */
+    recipe_required?: boolean;
     playbooks: PlaybookCatalogEntry[];
 }
 

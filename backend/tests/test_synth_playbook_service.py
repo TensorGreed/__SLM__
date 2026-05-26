@@ -439,6 +439,44 @@ class RunPlaybookIntegrationTests(unittest.TestCase):
         # Every entry should be scoped to the project's recipe.
         for pb in payload["playbooks"]:
             self.assertEqual(pb["recipe_id"], "classification")
+        # New contract: brief-driven + magic-create always populate
+        # selected_recipe at create time, so legacy NULL is no longer
+        # the common path. Flag is False when a recipe IS set.
+        self.assertFalse(payload.get("recipe_required", False))
+
+    def test_list_playbooks_endpoint_signals_recipe_required_on_legacy_null(self):
+        """Legacy projects without ``selected_recipe`` (pre-dating the
+        auto-apply-on-create fix) should land an empty playbook list +
+        ``recipe_required=True`` so the UI can render a 'pick a recipe'
+        CTA instead of a confusing dump of every playbook across every
+        task shape. Simulates the legacy state by clearing the recipe
+        from a freshly-instantiated template project."""
+        import asyncio
+
+        from app.database import async_session_factory
+        from app.services.recipe_apply_service import clear_recipe_from_project
+
+        project = self._instantiate_template(
+            "ticket-router", "Synth Catalog Legacy NULL",
+        )
+
+        async def _clear() -> None:
+            async with async_session_factory() as db:
+                await clear_recipe_from_project(db, int(project["id"]))
+                await db.commit()
+
+        asyncio.run(_clear())
+
+        resp = self.client.get(
+            f"/api/projects/{project['id']}/synthetic/playbooks",
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertIsNone(payload["recipe_id"])
+        self.assertTrue(payload.get("recipe_required"))
+        # Empty list — not the full cross-task-shape catalog, which
+        # was the pre-fix behavior that misled legacy-project users.
+        self.assertEqual(payload["playbooks"], [])
 
 
 if __name__ == "__main__":

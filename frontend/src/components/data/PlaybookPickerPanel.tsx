@@ -65,6 +65,7 @@ const MODE_LABELS: Record<SynthMode, { label: string; hint: string }> = {
 export default function PlaybookPickerPanel({ projectId }: Props) {
     const [available, setAvailable] = useState<PlaybookCatalogEntry[]>([]);
     const [recipeId, setRecipeId] = useState<string | null>(null);
+    const [recipeRequired, setRecipeRequired] = useState(false);
     const [selectedMode, setSelectedMode] = useState<SynthMode | null>(null);
     const [targetCount, setTargetCount] = useState(30);
     const [catalogLoading, setCatalogLoading] = useState(true);
@@ -108,6 +109,7 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 if (cancelled) return;
                 setAvailable(data.playbooks);
                 setRecipeId(data.recipe_id);
+                setRecipeRequired(Boolean(data.recipe_required));
                 if (data.playbooks.length > 0 && !selectedMode) {
                     setSelectedMode(data.playbooks[0].mode);
                 }
@@ -203,8 +205,33 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     }
 
     if (available.length === 0) {
+        // Legacy projects (pre-dating the auto-apply-on-create fix)
+        // can hit ``recipe_required=true`` with an empty list — the
+        // server stopped dumping the full cross-task-shape catalog
+        // because none of those playbooks would actually run. Surface
+        // a CTA pointing at the recipe picker instead of a one-liner.
+        if (recipeRequired) {
+            return (
+                <section
+                    className="playbook-picker playbook-picker--empty"
+                    data-testid="playbook-picker-empty"
+                >
+                    <p data-testid="playbook-picker-empty-recipe-required">
+                        <strong>Pick a recipe first.</strong> Synthetic
+                        playbooks are recipe-scoped — each task shape
+                        (Q&A, classification, span extraction, …) ships
+                        its own modes. Open the Data tab → Dataset
+                        Import wizard to pick one; the playbook catalog
+                        will then surface the modes for your shape.
+                    </p>
+                </section>
+            );
+        }
         return (
-            <section className="playbook-picker playbook-picker--empty" data-testid="playbook-picker-empty">
+            <section
+                className="playbook-picker playbook-picker--empty"
+                data-testid="playbook-picker-empty"
+            >
                 <p>
                     {recipeId
                         ? `No playbooks shipped for the '${recipeId}' recipe yet. Use the manual generators below.`
