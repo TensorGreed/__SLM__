@@ -397,12 +397,16 @@ describe('CoachStrip', () => {
         });
     });
 
-    it('navigates to the recipe-picker page on the recipe-picker target', async () => {
-        // The recipe-picker is a standalone page (/project/{id}/recipes)
-        // — emitted by every "Pick a recipe before doing X" Coach
-        // suggestion on data / gold_set / training stages. Prior to
-        // this fix it fell back to a toast-only hint, leaving users
-        // who clicked the action with nothing happening.
+    it('navigates to the task-shape recipe-picker page on the recipe-picker target', async () => {
+        // The recipe-picker maps to the standalone task-shape recipe
+        // picker (/project/{id}/recipe-picker) — distinct from
+        // /recipes, which is the pipeline-DAG recipes page. Emitted
+        // by every "Pick a recipe before doing X" Coach suggestion
+        // on data / gold_set / training stages. Pointing at /recipes
+        // (the prior URL) was a bug — users would land on the
+        // pipeline-DAG page, pick a pipeline recipe, and the
+        // "no recipe selected" signals would persist because
+        // Project.selected_recipe was never populated.
         installGetRouter({
             data: {
                 project_id: 1,
@@ -433,7 +437,7 @@ describe('CoachStrip', () => {
             screen.getByTestId('coach-suggestion-action-data:no-recipe'),
         );
         await waitFor(() => {
-            expect(navigateMock).toHaveBeenCalledWith('/project/1/recipes');
+            expect(navigateMock).toHaveBeenCalledWith('/project/1/recipe-picker');
         });
     });
 

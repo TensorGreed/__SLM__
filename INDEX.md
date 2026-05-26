@@ -368,6 +368,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectObservabilityPage.tsx` — ProjectObservabilityPage — Run Timeline + Failure Analysis +
 - `frontend/src/pages/ProjectPipelinePage.tsx` — Multi-tab workflow orchestrator page spanning data ingestion through model export.
 - `frontend/src/pages/ProjectPlaygroundPage.tsx` — Prompt testing page against local or runtime adapters with response feedback logging.
+- `frontend/src/pages/ProjectRecipePickerPage.tsx` — ProjectRecipePickerPage — standalone task-shape recipe picker.
 - `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
 - `frontend/src/pages/ProjectTrainingConfigPage.tsx` — Dedicated training configuration page with essentials and advanced toggle modes.
 - `frontend/src/pages/ProjectWizardPage.tsx` — Autopilot planning assistant page for configuration recommendations and intent clarification.
@@ -758,6 +759,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectModelsPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectObservabilityPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectPipelinePage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectWizardPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 

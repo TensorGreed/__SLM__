@@ -83,10 +83,14 @@ describe('PlaybookPickerPanel', () => {
         });
         const cta = screen.getByTestId('playbook-picker-empty-recipe-required');
         expect(cta.textContent).toMatch(/Pick a recipe first/);
-        // CTA button points at the recipe-picker page (same target
-        // Coach Mode's recipe-picker action uses).
+        // CTA button points at the standalone task-shape recipe-picker
+        // page (NOT /recipes — that's the pipeline-DAG recipes page,
+        // a different concept). Always includes a return_to so the
+        // user lands back on the same panel after applying.
         const button = cta.querySelector('a') as HTMLAnchorElement;
-        expect(button.getAttribute('href')).toBe('/project/7/recipes');
+        const href = button.getAttribute('href') || '';
+        expect(href.startsWith('/project/7/recipe-picker?')).toBe(true);
+        expect(href).toMatch(/return_to=/);
     });
 
     it('runs a playbook via the async-job endpoint and shows a queued confirmation', async () => {

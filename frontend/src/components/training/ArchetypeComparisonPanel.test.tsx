@@ -323,7 +323,9 @@ describe('ArchetypeComparisonPanel', () => {
         );
         expect(cta.textContent).toMatch(/Pick a recipe first/);
         const link = cta.querySelector('a') as HTMLAnchorElement;
-        expect(link.getAttribute('href')).toBe('/project/9/recipes');
+        const href = link.getAttribute('href') || '';
+        expect(href.startsWith('/project/9/recipe-picker?')).toBe(true);
+        expect(href).toMatch(/return_to=/);
     });
 
     it('keeps silent-hide on non-RECIPE_REQUIRED 400 (empty cohort)', async () => {
