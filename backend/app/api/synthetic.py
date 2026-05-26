@@ -232,6 +232,102 @@ class GenerateSpanAsyncRequest(BaseModel):
     source_text: str = ""
 
 
+async def _spawn_legacy_synth_shadow_job(
+    *,
+    project_id: int,
+    task_id: str,
+    kind: str,
+    title: str,
+    params: dict,
+) -> None:
+    """Hardening Phase H2 — bridge a legacy synthetic-task into the
+    new Jobs framework so the top-bar notification bell surfaces it
+    alongside playbook runs.
+
+    Spawns a Job whose runner polls the legacy
+    ``_SYNTHETIC_TASKS[task_id]`` registry every 2 seconds and
+    mirrors ``batches_done / batches_total`` into ``Job.progress``,
+    ``status`` into the Job's terminal transition, and
+    ``rows_so_far`` into the progress message.
+
+    Best-effort — if the Jobs framework can't be reached (unlikely)
+    the legacy task keeps running unaffected; the user just doesn't
+    see it in the bell.
+    """
+    import asyncio
+    import time
+
+    from app.database import async_session_factory
+    from app.services.jobs_service import (
+        JobProgressHandle,
+        start_job,
+    )
+    from app.services.synthetic_service import get_synth_task_status
+
+    async def _runner(handle: JobProgressHandle) -> dict:
+        started = time.monotonic()
+        last_status: str = "pending"
+        while True:
+            snapshot = get_synth_task_status(task_id)
+            if snapshot is None:
+                raise RuntimeError(f"legacy synth task {task_id} disappeared")
+            last_status = str(snapshot.get("status") or "pending")
+            batches_done = int(snapshot.get("batches_done") or 0)
+            batches_total = int(snapshot.get("batches_total") or 0)
+            rows_so_far = int(snapshot.get("rows_so_far") or 0)
+            target_rows = int(snapshot.get("target_rows") or 0)
+            elapsed = int(time.monotonic() - started)
+            if batches_total > 0:
+                fraction = max(0.0, min(1.0, batches_done / batches_total))
+            elif target_rows > 0:
+                fraction = max(0.0, min(1.0, rows_so_far / target_rows))
+            else:
+                fraction = None
+            msg_parts: list[str] = []
+            if batches_total > 0:
+                msg_parts.append(f"batch {batches_done}/{batches_total}")
+            if rows_so_far > 0:
+                msg_parts.append(f"{rows_so_far} rows so far")
+            msg_parts.append(f"{elapsed}s elapsed")
+            await handle.set_progress(
+                fraction=fraction,
+                message=" · ".join(msg_parts),
+            )
+            if last_status in ("completed", "failed"):
+                if last_status == "failed":
+                    raise RuntimeError(
+                        snapshot.get("error") or "legacy synth task failed"
+                    )
+                return {
+                    "task_id": task_id,
+                    "rows_generated": rows_so_far,
+                    "batches_done": batches_done,
+                    "batches_total": batches_total,
+                }
+            # Honor cooperative cancellation — flag the legacy task
+            # as we can't directly kill its background thread, but
+            # mark our shadow Job as cancelled.
+            if await handle.check_cancelled():
+                return {
+                    "task_id": task_id,
+                    "rows_generated": rows_so_far,
+                    "batches_done": batches_done,
+                    "batches_total": batches_total,
+                    "note": "cancelled_from_ui_legacy_task_may_continue",
+                }
+            await asyncio.sleep(2.0)
+
+    async with async_session_factory() as db:
+        await start_job(
+            db,
+            kind=kind,
+            title=title,
+            runner=_runner,
+            project_id=project_id,
+            params=params,
+        )
+
+
 @router.post("/generate-spans-async", status_code=202)
 async def generate_spans_async(
     project_id: int,
@@ -239,7 +335,11 @@ async def generate_spans_async(
 ):
     """Kick off a batched span-generation job. Returns immediately with
     a ``task_id``; clients poll ``GET /synthetic/tasks/{task_id}`` for
-    progress + accumulated rows."""
+    progress + accumulated rows.
+
+    Hardening Phase H2 — also spawns a shadow Job that mirrors the
+    legacy task's progress into the top-bar notification bell.
+    """
     try:
         task = start_span_generation_task(
             project_id=project_id,
@@ -253,6 +353,13 @@ async def generate_spans_async(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    await _spawn_legacy_synth_shadow_job(
+        project_id=project_id,
+        task_id=task.task_id,
+        kind="synth_legacy_spans",
+        title=f"Synth (legacy spans) · {req.target_rows} rows",
+        params={"target_rows": req.target_rows, "task_id": task.task_id},
+    )
     return {
         "task_id": task.task_id,
         "status": task.status,
@@ -272,7 +379,11 @@ async def generate_qa_async(
 
     Lifts the 50-pair cap that the sync ``/generate`` endpoint enforces:
     the server batches into ``PER_BATCH_ROW_CAP`` chunks and (when
-    ``use_all_chunks`` is set) samples fresh source text per batch."""
+    ``use_all_chunks`` is set) samples fresh source text per batch.
+
+    Hardening Phase H2 — also spawns a shadow Job mirroring progress
+    into the top-bar notification bell.
+    """
     try:
         task = start_qa_generation_task(
             project_id=project_id,
@@ -285,6 +396,13 @@ async def generate_qa_async(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    await _spawn_legacy_synth_shadow_job(
+        project_id=project_id,
+        task_id=task.task_id,
+        kind="synth_legacy_qa",
+        title=f"Synth (legacy QA) · {req.target_rows} rows",
+        params={"target_rows": req.target_rows, "task_id": task.task_id},
+    )
     return {
         "task_id": task.task_id,
         "status": task.status,
@@ -300,7 +418,11 @@ async def generate_conversations_async(
 ):
     """Kick off a batched multi-turn conversation generation job.
     Conversations are heavier than QA pairs, so the per-batch cap is
-    ``PER_BATCH_CONVERSATION_CAP`` rather than ``PER_BATCH_ROW_CAP``."""
+    ``PER_BATCH_CONVERSATION_CAP`` rather than ``PER_BATCH_ROW_CAP``.
+
+    Hardening Phase H2 — also spawns a shadow Job mirroring progress
+    into the top-bar notification bell.
+    """
     try:
         task = start_conversation_generation_task(
             project_id=project_id,
@@ -315,6 +437,13 @@ async def generate_conversations_async(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    await _spawn_legacy_synth_shadow_job(
+        project_id=project_id,
+        task_id=task.task_id,
+        kind="synth_legacy_conversations",
+        title=f"Synth (legacy conversations) · {req.target_rows} rows",
+        params={"target_rows": req.target_rows, "task_id": task.task_id},
+    )
     return {
         "task_id": task.task_id,
         "status": task.status,
@@ -508,7 +637,9 @@ async def run_synth_playbook(
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
 
     if async_job:
-        from fastapi import Response
+        import asyncio
+        import time
+
         from fastapi.responses import JSONResponse
 
         from app.services.jobs_service import (
@@ -525,28 +656,74 @@ async def run_synth_playbook(
         )
 
         async def _runner(handle: JobProgressHandle) -> dict:
-            await handle.set_progress(
-                message=f"Calling LLM backend for {req.target_count} rows…"
-            )
-            # New session — runner doesn't share the request's session.
-            from app.database import async_session_factory
+            # Hardening Phase H2 — publish a live elapsed-time heartbeat
+            # so the bell shows progress even when the underlying LLM
+            # call is opaque (we can't crack open Ollama / vLLM /
+            # NeMo to publish per-token progress, but we *can* tell
+            # the user "still working, 47s elapsed"). The heartbeat
+            # cancels as soon as the main work returns.
+            started = time.monotonic()
+            stop_heartbeat = asyncio.Event()
 
-            async with async_session_factory() as runner_db:
-                result = await run_playbook(
-                    runner_db,
-                    project_id,
-                    mode,
-                    target_count=req.target_count,
-                    target_class=req.target_class,
-                    backend=req.backend,
+            async def _heartbeat() -> None:
+                while not stop_heartbeat.is_set():
+                    try:
+                        await asyncio.wait_for(
+                            stop_heartbeat.wait(), timeout=5.0,
+                        )
+                        return
+                    except asyncio.TimeoutError:
+                        elapsed = int(time.monotonic() - started)
+                        await handle.set_progress(
+                            message=(
+                                f"Calling LLM backend for {req.target_count} "
+                                f"rows · {elapsed}s elapsed"
+                            ),
+                        )
+
+            heartbeat_task = asyncio.create_task(_heartbeat())
+            try:
+                await handle.set_progress(
+                    message=f"Calling LLM backend for {req.target_count} rows…"
                 )
-                await runner_db.commit()
+                # New session — runner doesn't share the request's session.
+                from app.database import async_session_factory
+
+                async with async_session_factory() as runner_db:
+                    result = await run_playbook(
+                        runner_db,
+                        project_id,
+                        mode,
+                        target_count=req.target_count,
+                        target_class=req.target_class,
+                        backend=req.backend,
+                    )
+                    await runner_db.commit()
+            finally:
+                stop_heartbeat.set()
+                try:
+                    await heartbeat_task
+                except Exception:  # noqa: BLE001 — heartbeat is best-effort
+                    pass
+
+            # Final progress message replaces the heartbeat noise with
+            # the actual outcome.
+            row_count = len(result.get("rows") or [])
+            backend_used = result.get("backend_used") or "auto"
+            elapsed_sec = result.get("elapsed_sec") or 0
+            await handle.set_progress(
+                fraction=1.0,
+                message=(
+                    f"Generated {row_count} rows via {backend_used} in "
+                    f"{elapsed_sec:.1f}s · queued for review"
+                ),
+            )
             # Result payload is a pointers-only summary — keep it
             # small so the Job row stays cheap to fetch.
             return {
-                "rows_generated": len(result.get("rows") or []),
-                "backend_used": result.get("backend_used"),
-                "elapsed_sec": result.get("elapsed_sec"),
+                "rows_generated": row_count,
+                "backend_used": backend_used,
+                "elapsed_sec": elapsed_sec,
                 "mode": req.mode,
                 "target_class": req.target_class,
             }

@@ -267,6 +267,44 @@ async def _runner_wrapper(job_id: int, runner: JobRunner) -> None:
 # ─────────────────────────────────────────────────────────────────────
 
 
+async def reconcile_orphaned_jobs(db: AsyncSession) -> dict[str, int]:
+    """Mark jobs left in QUEUED / RUNNING from a previous process
+    as FAILED. Called at server startup — those runners are gone
+    (the asyncio task didn't survive the restart) and leaving the
+    rows in RUNNING means the bell spins forever.
+
+    Returns a small report: ``{queued_swept: N, running_swept: N}``.
+    Best-effort; never raises.
+    """
+    from sqlalchemy import update
+
+    queued = await db.execute(
+        update(Job)
+        .where(Job.status == JobStatus.QUEUED)
+        .values(
+            status=JobStatus.FAILED,
+            error="lost_during_restart",
+            progress_message="The server restarted before this job started running.",
+            completed_at=_utcnow(),
+        )
+    )
+    running = await db.execute(
+        update(Job)
+        .where(Job.status == JobStatus.RUNNING)
+        .values(
+            status=JobStatus.FAILED,
+            error="lost_during_restart",
+            progress_message="The server restarted mid-run. Re-trigger the operation from the source surface.",
+            completed_at=_utcnow(),
+        )
+    )
+    await db.commit()
+    return {
+        "queued_swept": int(queued.rowcount or 0),
+        "running_swept": int(running.rowcount or 0),
+    }
+
+
 async def get_job(db: AsyncSession, job_id: int) -> Job | None:
     return await db.get(Job, job_id)
 

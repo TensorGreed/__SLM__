@@ -4932,7 +4932,7 @@ async def start(
         )
 
     try:
-        return await start_training(db, project_id, experiment_id)
+        result = await start_training(db, project_id, experiment_id)
     except ValueError as e:
         detail = str(e)
         if "already running" in detail or "already completed" in detail:
@@ -4940,6 +4940,159 @@ async def start(
         if "not found" in detail:
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+    # Hardening Phase H2 — spawn a watcher Job that mirrors the
+    # experiment's progress into the top-bar notification bell so
+    # the user can leave the page and still see training advance.
+    # Best-effort: the existing in-tab training panel keeps working
+    # if this fails. Always spawned (no opt-in) — training is
+    # always long enough to warrant the surface.
+    try:
+        await _spawn_training_watcher_job(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            base_model=exp.base_model,
+        )
+    except Exception as watcher_exc:  # noqa: BLE001 — never block start on this
+        import logging
+        logging.getLogger("training").warning(
+            "Failed to spawn training watcher Job for exp %s: %s",
+            experiment_id, watcher_exc,
+        )
+    return result
+
+
+async def _spawn_training_watcher_job(
+    db,
+    *,
+    project_id: int,
+    experiment_id: int,
+    base_model: str,
+) -> None:
+    """Hardening Phase H2 — bridge a training experiment into the
+    Jobs framework. The runner polls the Experiment row + the
+    latest Checkpoint every 3s and publishes:
+
+      * ``progress`` = latest_step / total_steps (when both known)
+      * ``progress_message`` = "step S/T · loss=L.LLL · Es elapsed"
+
+    Terminal transitions:
+      * exp.status=COMPLETED → Job=SUCCEEDED + result carries the
+        final loss + total steps.
+      * exp.status=FAILED    → Job=FAILED + error from exp metrics.
+      * exp.status=CANCELLED → Job=CANCELLED (cooperative path).
+      * exp.status=PAUSED    → Job=SUCCEEDED with a "paused" note;
+        a follow-on Resume would spawn a fresh watcher.
+
+    Cancellation is cooperative — clicking Cancel on the bell row
+    only stops the watcher's mirror updates; the underlying
+    training keeps running. Users wanting to actually stop
+    training use the existing /experiments/{id}/cancel surface.
+    """
+    import asyncio
+    import time
+
+    from app.database import async_session_factory
+    from app.models.experiment import (
+        Checkpoint,
+        Experiment,
+        ExperimentStatus,
+    )
+    from app.services.jobs_service import (
+        JobProgressHandle,
+        start_job,
+    )
+
+    async def _runner(handle: JobProgressHandle) -> dict:
+        started = time.monotonic()
+        # First poll happens immediately so the bell shows
+        # something other than "Running…" within the first tick.
+        while True:
+            async with async_session_factory() as runner_db:
+                exp = await runner_db.get(Experiment, experiment_id)
+                if exp is None:
+                    raise RuntimeError(
+                        f"Experiment {experiment_id} vanished mid-training"
+                    )
+                status = exp.status
+                total_steps = exp.total_steps or 0
+                final_loss = exp.final_train_loss
+                # Latest checkpoint = approximate current step.
+                ckpt_result = await runner_db.execute(
+                    select(Checkpoint)
+                    .where(Checkpoint.experiment_id == experiment_id)
+                    .order_by(Checkpoint.step.desc())
+                    .limit(1)
+                )
+                latest_ckpt = ckpt_result.scalar_one_or_none()
+            current_step = int(latest_ckpt.step) if latest_ckpt else 0
+            ckpt_loss = (
+                float(latest_ckpt.train_loss)
+                if latest_ckpt and latest_ckpt.train_loss is not None
+                else final_loss
+            )
+            elapsed = int(time.monotonic() - started)
+            # Build progress fraction + message.
+            if total_steps > 0 and current_step > 0:
+                fraction = max(0.0, min(1.0, current_step / total_steps))
+                bits = [f"step {current_step}/{total_steps}"]
+            else:
+                fraction = None
+                bits = ["initializing"]
+            if ckpt_loss is not None:
+                bits.append(f"loss={float(ckpt_loss):.4f}")
+            bits.append(f"{elapsed}s elapsed")
+            await handle.set_progress(
+                fraction=fraction,
+                message=" · ".join(bits),
+            )
+            # Honor terminal transitions.
+            if status == ExperimentStatus.COMPLETED:
+                return {
+                    "experiment_id": experiment_id,
+                    "final_train_loss": final_loss,
+                    "total_steps": total_steps,
+                    "base_model": base_model,
+                    "terminal_status": "completed",
+                }
+            if status == ExperimentStatus.FAILED:
+                raise RuntimeError(
+                    f"Experiment {experiment_id} failed (see Training tab for details)"
+                )
+            if status == ExperimentStatus.CANCELLED:
+                return {
+                    "experiment_id": experiment_id,
+                    "terminal_status": "cancelled",
+                    "note": "training cancelled via Training tab",
+                }
+            if status == ExperimentStatus.PAUSED:
+                return {
+                    "experiment_id": experiment_id,
+                    "terminal_status": "paused",
+                    "note": "training paused — resume from Training tab",
+                }
+            # Cooperative cancel of the watcher only (the user is
+            # done watching). The underlying training keeps running.
+            if await handle.check_cancelled():
+                return {
+                    "experiment_id": experiment_id,
+                    "terminal_status": "watcher_cancelled",
+                    "note": "bell-only cancel; training itself still running",
+                }
+            await asyncio.sleep(3.0)
+
+    await start_job(
+        db,
+        kind="training_start",
+        title=f"Train · exp #{experiment_id} · {base_model}",
+        runner=_runner,
+        project_id=project_id,
+        params={
+            "experiment_id": experiment_id,
+            "base_model": base_model,
+        },
+    )
 
 
 @router.post("/experiments/{experiment_id}/cancel")

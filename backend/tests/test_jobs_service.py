@@ -149,6 +149,82 @@ class JobsApiBasicTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 404, resp.text)
 
 
+class ReconcileOrphanedJobsTests(unittest.TestCase):
+    """Hardening Phase H2 — server restart leaves jobs in QUEUED /
+    RUNNING with no runner. reconcile_orphaned_jobs sweeps them to
+    FAILED on the next boot so the bell doesn't sit on dead work."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth_enabled = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+        cls.client = _MODULE_CLIENT_CM
+
+    @classmethod
+    def tearDownClass(cls):
+        settings.AUTH_ENABLED = cls._prev_auth_enabled
+
+    def test_marks_running_and_queued_as_failed(self):
+        import asyncio
+        from datetime import datetime, timezone
+
+        from app.database import async_session_factory
+        from app.services.jobs_service import reconcile_orphaned_jobs
+
+        async def _seed_and_sweep() -> tuple[int, int, list[int]]:
+            async with async_session_factory() as db:
+                # Insert one RUNNING and one QUEUED orphan + one
+                # already-terminal (which must be untouched).
+                running = Job(
+                    kind="orphan_test",
+                    title="orphan-running",
+                    status=JobStatus.RUNNING,
+                    queued_at=datetime.now(timezone.utc),
+                )
+                queued = Job(
+                    kind="orphan_test",
+                    title="orphan-queued",
+                    status=JobStatus.QUEUED,
+                    queued_at=datetime.now(timezone.utc),
+                )
+                done = Job(
+                    kind="orphan_test",
+                    title="already-done",
+                    status=JobStatus.SUCCEEDED,
+                    queued_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+                db.add_all([running, queued, done])
+                await db.commit()
+                ids = (running.id, queued.id, done.id)
+
+                report = await reconcile_orphaned_jobs(db)
+
+                # Re-read the three rows.
+                statuses: list[tuple[int, str]] = []
+                for jid in ids:
+                    j = await db.get(Job, jid)
+                    statuses.append((jid, j.status.value if j else "missing"))
+                return (
+                    report["queued_swept"],
+                    report["running_swept"],
+                    statuses,
+                )
+
+        queued_swept, running_swept, statuses = asyncio.run(_seed_and_sweep())
+        # Both orphans were swept (could be >= 1 — other tests may
+        # also have left orphans in shared DB; assert at least our
+        # two specifically transitioned).
+        self.assertGreaterEqual(running_swept, 1)
+        self.assertGreaterEqual(queued_swept, 1)
+        by_id = dict(statuses)
+        # Our orphans land FAILED; the already-done one is untouched.
+        running_id, queued_id, done_id = (s[0] for s in statuses)
+        self.assertEqual(by_id[running_id], "failed")
+        self.assertEqual(by_id[queued_id], "failed")
+        self.assertEqual(by_id[done_id], "succeeded")
+
+
 class RerouteAsyncEndpointTests(unittest.TestCase):
     """End-to-end: ?async_job=true on /reroute-to-rag returns 202 +
     a Job stub; polling the job via the API produces a real clone."""

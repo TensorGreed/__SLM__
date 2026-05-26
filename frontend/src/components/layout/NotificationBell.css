@@ -183,7 +183,26 @@
     height: 100%;
     background: var(--accent, #3b82f6);
     transition: width 0.3s ease;
+    width: 0%;
 }
+
+/* Bucketed-percent classes — keeps the bar dynamic without inline */
+/* styles (so the strict CSS-inline-style lint stays green). 11   */
+/* buckets is enough granularity for a small status indicator;    */
+/* the dynamic value still surfaces verbatim via aria-label.      */
+.notif-bell__progress-fill--w-0   { width: 0%; }
+.notif-bell__progress-fill--w-10  { width: 10%; }
+.notif-bell__progress-fill--w-20  { width: 20%; }
+.notif-bell__progress-fill--w-25  { width: 25%; }
+.notif-bell__progress-fill--w-30  { width: 30%; }
+.notif-bell__progress-fill--w-40  { width: 40%; }
+.notif-bell__progress-fill--w-50  { width: 50%; }
+.notif-bell__progress-fill--w-60  { width: 60%; }
+.notif-bell__progress-fill--w-70  { width: 70%; }
+.notif-bell__progress-fill--w-75  { width: 75%; }
+.notif-bell__progress-fill--w-80  { width: 80%; }
+.notif-bell__progress-fill--w-90  { width: 90%; }
+.notif-bell__progress-fill--w-100 { width: 100%; }
 
 .notif-bell__row-actions {
     display: flex;
@@ -210,4 +229,13 @@
 .notif-bell__row-btn--ghost {
     color: var(--text-tertiary);
     border-color: transparent;
+}
+
+.notif-bell__row-btn--danger {
+    color: var(--error, #dc2626);
+    border-color: var(--error, #dc2626);
+}
+
+.notif-bell__row-btn--danger:hover {
+    background: var(--error-bg, rgba(220, 38, 38, 0.08));
 }

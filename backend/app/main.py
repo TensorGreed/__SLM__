@@ -217,6 +217,28 @@ async def lifespan(app: FastAPI):
             f"[startup] stuck-RUNNING reconciliation skipped: {exc!r}",
             flush=True,
         )
+    # Hardening Phase H1 — sweep orphaned background-jobs from a
+    # previous process. The asyncio runner doesn't survive a restart,
+    # so leaving Job rows in QUEUED/RUNNING means the notification
+    # bell spins forever showing work that's actually dead. We mark
+    # them FAILED with a "lost_during_restart" error so the user can
+    # see what happened and re-trigger.
+    try:
+        from app.services.jobs_service import reconcile_orphaned_jobs
+
+        async with async_session_factory() as db:
+            report = await reconcile_orphaned_jobs(db)
+            if report["queued_swept"] or report["running_swept"]:
+                print(
+                    f"[startup] swept orphaned jobs: "
+                    f"queued={report['queued_swept']} running={report['running_swept']}",
+                    flush=True,
+                )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(
+            f"[startup] jobs reconciliation skipped: {exc!r}",
+            flush=True,
+        )
     yield
 
 

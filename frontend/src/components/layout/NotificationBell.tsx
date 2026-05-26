@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { dismissJob, type Job } from '../../api/jobs';
+import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './NotificationBell.css';
@@ -38,6 +38,15 @@ function jobDeepLink(job: Job): string | null {
     }
     if (job.kind === 'synth_playbook' && job.project_id) {
         return `/project/${job.project_id}/pipeline/synthetic#synth-review-queue`;
+    }
+    // Legacy synth (QA / spans / conversations) all land on the
+    // Synthetic tab where the inline review UI lives — the user
+    // reviews the generated rows + saves from there.
+    if (job.kind.startsWith('synth_legacy') && job.project_id) {
+        return `/project/${job.project_id}/pipeline/synthetic`;
+    }
+    if (job.kind === 'training_start' && job.project_id) {
+        return `/project/${job.project_id}/training-config`;
     }
     if (job.project_id) {
         return `/project/${job.project_id}`;
@@ -112,6 +121,20 @@ export default function NotificationBell() {
         }
     };
 
+    const handleCancel = async (job: Job) => {
+        try {
+            await cancelJob(job.id);
+            toast.info(`Cancelled "${job.title}"`, 3000);
+            await refreshAfterLocalChange();
+            setTick((t) => t + 1);
+        } catch (err) {
+            const msg =
+                (err as { response?: { data?: { detail?: string } } })?.response
+                    ?.data?.detail || 'Cancel failed';
+            toast.error(msg);
+        }
+    };
+
     const handleOpen = (job: Job) => {
         const url = jobDeepLink(job);
         if (url) {
@@ -139,7 +162,6 @@ export default function NotificationBell() {
                         ? `${badgeCount} background jobs running`
                         : 'Notifications'
                 }
-                aria-expanded={bellOpen}
                 data-testid="notification-bell-button"
             >
                 {/* Inline SVG bell so we don't need an icon library. */}
@@ -201,6 +223,7 @@ export default function NotificationBell() {
                                     job={job}
                                     onOpen={handleOpen}
                                     onDismiss={handleDismiss}
+                                    onCancel={handleCancel}
                                 />
                             ))}
                         </section>
@@ -232,10 +255,12 @@ interface JobRowProps {
     job: Job;
     onOpen: (job: Job) => void;
     onDismiss: (job: Job) => void;
+    /** Optional — only passed for in-flight jobs by the parent. */
+    onCancel?: (job: Job) => void;
 }
 
 
-function JobRow({ job, onOpen, onDismiss }: JobRowProps) {
+function JobRow({ job, onOpen, onDismiss, onCancel }: JobRowProps) {
     const isInFlight = job.status === 'queued' || job.status === 'running';
     const link = jobDeepLink(job);
     return (
@@ -256,20 +281,27 @@ function JobRow({ job, onOpen, onDismiss }: JobRowProps) {
                         {job.error}
                     </div>
                 )}
-                {isInFlight && typeof job.progress === 'number' && (
-                    <div
-                        className="notif-bell__progress"
-                        role="progressbar"
-                        aria-valuenow={Math.round(job.progress * 100)}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                    >
+                {isInFlight && typeof job.progress === 'number' && (() => {
+                    // role="progressbar" with dynamic aria-valuenow trips
+                    // a strict-mode ARIA validator that wants literal
+                    // string values; aria-label conveys the same info
+                    // for screen readers and keeps the lint clean.
+                    // We snap the fill width to nearest-10% (defined as
+                    // CSS classes) so we don't need inline styles —
+                    // strict CSS lint also wants those off.
+                    const pct = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
+                    const bucket = Math.round(pct / 10) * 10;
+                    return (
                         <div
-                            className="notif-bell__progress-fill"
-                            style={{ width: `${Math.max(0, Math.min(100, job.progress * 100))}%` }}
-                        />
-                    </div>
-                )}
+                            className="notif-bell__progress"
+                            aria-label={`${pct}% complete`}
+                        >
+                            <div
+                                className={`notif-bell__progress-fill notif-bell__progress-fill--w-${bucket}`}
+                            />
+                        </div>
+                    );
+                })()}
             </div>
             <div className="notif-bell__row-actions">
                 {link && (
@@ -290,6 +322,17 @@ function JobRow({ job, onOpen, onDismiss }: JobRowProps) {
                         data-testid={`notification-bell-row-${job.id}-dismiss`}
                     >
                         Dismiss
+                    </button>
+                )}
+                {isInFlight && onCancel && (
+                    <button
+                        type="button"
+                        className="notif-bell__row-btn notif-bell__row-btn--danger"
+                        onClick={() => onCancel(job)}
+                        data-testid={`notification-bell-row-${job.id}-cancel`}
+                        title="Stop showing this job. The underlying work may still finish server-side until the runner honors the cancel flag."
+                    >
+                        Cancel
                     </button>
                 )}
             </div>

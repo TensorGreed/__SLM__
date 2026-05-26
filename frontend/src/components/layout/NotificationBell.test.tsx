@@ -260,6 +260,56 @@ describe('NotificationBell', () => {
         });
     });
 
+    it('renders a Cancel button on in-flight jobs and POSTs /cancel on click', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 9,
+                        status: 'running',
+                        title: 'Long-running training',
+                    }),
+                ],
+            },
+        });
+        render(<NotificationBell />);
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-bell-button')).toBeInTheDocument();
+        });
+        apiMock.get.mockResolvedValue({
+            data: {
+                count: 1,
+                jobs: [
+                    jobFixture({
+                        id: 9,
+                        status: 'running',
+                        title: 'Long-running training',
+                    }),
+                ],
+            },
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-button'));
+        // In-flight rows have a Cancel button + NO Dismiss button.
+        expect(
+            screen.getByTestId('notification-bell-row-9-cancel'),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByTestId('notification-bell-row-9-dismiss'),
+        ).toBeNull();
+        apiMock.post.mockResolvedValueOnce({
+            data: jobFixture({ id: 9, status: 'cancelled' }),
+        });
+        await userEvent.click(screen.getByTestId('notification-bell-row-9-cancel'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith('/jobs/9/cancel');
+        });
+        expect(toastMock.info).toHaveBeenCalledWith(
+            expect.stringContaining('Cancelled'),
+            3000,
+        );
+    });
+
     it('renders an empty-state message when no jobs are in the bell', async () => {
         apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
         render(<NotificationBell />);
