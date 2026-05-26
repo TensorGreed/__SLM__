@@ -491,5 +491,273 @@ session-start guidance.
 - `scripts/pre-commit-hook.sh` — Auto-regenerate INDEX.md when staged changes touch source files.
 - `scripts/regenerate_index.py` — Regenerate INDEX.md — one-liner per backend/frontend module.
 
+## Backend · Tests
+
+- `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
+- `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
+- `backend/tests/test_annotation_promotion.py` — Story 1.6 — promote labeled rows → training dataset.
+- `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
+- `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint
+- `backend/tests/test_auto_rag_ab.py` — Tests for the Phase 9c A/B harness (pure-function pieces).
+- `backend/tests/test_auto_rag_api.py` — Tests for the auto-RAG preview API (USER-SUCCESS Epic 9 Phase 9a).
+- `backend/tests/test_auto_rag_comparison_run_endpoint.py` — Tests for POST /api/projects/{id}/auto-rag/comparison/run
+- `backend/tests/test_auto_rag_phase9b.py` — Tests for the Phase 9b inference + training-completion wiring.
+- `backend/tests/test_auto_rag_phase9d.py` — Tests for Phase 9d — auto-RAG default-on heuristic + target
+- `backend/tests/test_auto_rag_service.py` — Tests for the auto-RAG BM25 service (USER-SUCCESS Epic 9 Phase 9a).
+- `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
+- `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.
+- `backend/tests/test_cluster_explanation_service.py` — Tests for the per-cluster failure explanation service
+- `backend/tests/test_coach_reroute_nudge.py` — Tests for the Phase 7d Coach Mode reroute nudge.
+- `backend/tests/test_coach_service.py` — Tests for the Coach Mode service (USER-SUCCESS Epic 4 Phase 1).
+- `backend/tests/test_curriculum_ab.py` — Tests for the Phase 6c A/B harness (pure-function pieces).
+- `backend/tests/test_curriculum_api.py` — Tests for the curriculum-preview API (USER-SUCCESS Epic 6 Phase 6a).
+- `backend/tests/test_curriculum_phase6d_defaults.py` — Tests for the Phase 6d default-on heuristic + Coach Mode nudge.
+- `backend/tests/test_curriculum_service.py` — Tests for the curriculum-ranking service (USER-SUCCESS Epic 6 Phase 6a).
+- `backend/tests/test_curriculum_training_integration.py` — Tests for the curriculum training-pipeline integration
+- `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
+- `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
+- `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
+- `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
+- `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
+- `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
+- `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
+- `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
+- `backend/tests/test_phase100_handler_stop_sequences.py` — Phase 100 — handler stop sequences.
+- `backend/tests/test_phase101_dataset_import_cli.py` — Phase A — CLI surface for the dataset import pipeline.
+- `backend/tests/test_phase101_dataset_import_foundation.py` — Phase A of DATASET_IMPORT_PLAN.md — foundation.
+- `backend/tests/test_phase102_dataset_import_introspector.py` — Phase B — schema introspector + --auto / --force CLI gate.
+- `backend/tests/test_phase103_dataset_import_mapper_catalog.py` — Phase C — expanded mapper catalog + introspector detection rules.
+- `backend/tests/test_phase104_dataset_import_hf_source.py` — Phase D — HuggingFace source connector.
+- `backend/tests/test_phase105_dataset_import_kaggle_source.py` — Phase E — Kaggle source connector.
+- `backend/tests/test_phase106_dataset_import_configs.py` — Phase G — saved mapping configs + audit log.
+- `backend/tests/test_phase107_dataset_import_plugins_and_llm_assist.py` — Phase H — plugin mappers + optional LLM-assist.
+- `backend/tests/test_phase108_annotation_foundation.py` — Phase 108 — Annotation foundation (Story 1.1).
+- `backend/tests/test_phase109_contract_gates.py` — Story 1.5 — training-eval contract gates.
+- `backend/tests/test_phase10_registry_and_secrets.py` — Phase 10 tests: model registry lifecycle and project secrets.
+- `backend/tests/test_phase110_experiment_recovery.py` — Story 1.7 — experiment lifecycle recovery + checkpoint-compat gate.
+- `backend/tests/test_phase11_domain_profiles.py` — Phase 11 tests: domain profile contracts and project assignment.
+- `backend/tests/test_phase12_artifact_registry.py` — Phase 12 tests: typed artifact registry and workflow runtime wiring.
+- `backend/tests/test_phase13_workflow_runner.py` — Phase 13 tests: workflow DAG runner persistence, retries, and dependencies.
+- `backend/tests/test_phase14_data_adapters.py` — Phase 14 tests: data adapter SDK registry, auto-detect, and plugin loading.
+- `backend/tests/test_phase14_training_preflight.py` — Phase 14 tests: capability matrix + training preflight guardrails.
+- `backend/tests/test_phase15_evaluation_packs.py` — Phase 15 tests: evaluation packs and auto-gates.
+- `backend/tests/test_phase16_pipeline_recipes.py` — Phase 16 tests: end-to-end pipeline recipe blueprints.
+- `backend/tests/test_phase17_runtime_settings_api.py` — Phase 17 tests: runtime settings API and persistence.
+- `backend/tests/test_phase1_auth.py` — Phase 1 integration tests: auth, RBAC, membership, and audit logging.
+- `backend/tests/test_phase20_conformance_scale_matrix.py` — Phase 20 tests: conformance + scale matrix for general SLM workflows.
+- `backend/tests/test_phase21_model_selection_wizard.py` — Phase 21 tests: model selection wizard recommendation API.
+- `backend/tests/test_phase22_chat_playground.py` — Phase 22 tests: chat playground API scaffold.
+- `backend/tests/test_phase23_playground_sessions_streaming.py` — Phase 23 tests: playground sessions, model picker, and streaming chat.
+- `backend/tests/test_phase24_alignment_scaffold.py` — Phase 24 tests: alignment contract and judge scoring scaffolds.
+- `backend/tests/test_phase25_one_click_serve.py` — Phase 25 tests: one-click serve plans from export and registry.
+- `backend/tests/test_phase26_roadmap2.py` — Phase 26 tests: roadmap2 implementation slices (items 1-5).
+- `backend/tests/test_phase27_roadmap3.py` — Phase 27 tests: roadmap3 implementation slices (items 1-4).
+- `backend/tests/test_phase28_roadmap4.py` — Phase 28 tests: roadmap4 implementation slices (phases 1-5).
+- `backend/tests/test_phase29_capability_contract.py` — Phase 29 tests: shared training capability contract checks.
+- `backend/tests/test_phase2_record_normalization.py` — Phase 2 tests: generic record normalization and schema profiling.
+- `backend/tests/test_phase30_model_introspection.py` — Phase 30 tests: model introspection service foundations.
+- `backend/tests/test_phase31_model_abstraction_v2.py` — Phase 31 tests: model abstraction v2 preflight gates.
+- `backend/tests/test_phase32_multimodal_training_adapter.py` — Phase 32 tests: multimodal adapter behavior in training script.
+- `backend/tests/test_phase33_multimodal_collator_runtime.py` — Phase 33 tests: mocked multimodal runtime path through train.py collator.
+- `backend/tests/test_phase34_preflight_model_modality_contract.py` — Phase 34 tests: preflight model-vs-dataset modality contract gates.
+- `backend/tests/test_phase35_preflight_media_contract.py` — Phase 35 tests: multimodal media asset contract diagnostics in preflight.
+- `backend/tests/test_phase36_target_compatibility_introspection.py` — Phase 36 tests: target compatibility relies on model introspection metadata.
+- `backend/tests/test_phase37_export_optimizer_measured.py` — Phase 37 tests: export optimizer uses measured probes with estimated fallback.
+- `backend/tests/test_phase38_optimization_reproducibility.py` — Phase 38 tests: optimization evidence persistence and export manifest attachment.
+- `backend/tests/test_phase39_target_vram_blocker.py` — Phase 39 tests: target VRAM incompatibility hard-blocks training start.
+- `backend/tests/test_phase3_evaluation_judge.py` — Phase 3 tests: judge scoring and provider endpoint parsing.
+- `backend/tests/test_phase40_config_bootstrap_bool.py` — Phase 40 tests: config bootstrap is resilient to malformed DEBUG env values.
+- `backend/tests/test_phase41_autopilot_estimator_calibration.py` — Phase 41 tests: autopilot estimate uses telemetry calibration with sparse fallback.
+- `backend/tests/test_phase42_catalog_plugin_registries.py` — Phase 42 tests: dynamic target/model catalog registries with plugin fallback.
+- `backend/tests/test_phase43_mobile_sdk_reference_bundle.py` — Phase 43 tests: mobile SDK reference bundle generation and smoke validation.
+- `backend/tests/test_phase44_autopilot_v2_orchestration.py` — Phase 44 tests: autopilot v2 orchestration with auto-repair and strict-mode guardrails.
+- `backend/tests/test_phase45_optimization_matrix.py` — Phase 45 tests: optimization benchmark matrix APIs and reproducibility metadata.
+- `backend/tests/test_phase46_evaluation_remediation_plans.py` — Phase 46 tests: closed-loop remediation plans from evaluation failures.
+- `backend/tests/test_phase47_starter_pack_registry.py` — Phase 47 tests: starter-pack dynamic registry, plugin fallback, and project defaults.
+- `backend/tests/test_phase48_domain_blueprint_cli.py` — Phase 48 tests: brewslm CLI domain blueprint commands.
+- `backend/tests/test_phase48_domain_blueprints.py` — Phase 48 tests: domain blueprint analysis, versioning, and beginner-mode bootstrap.
+- `backend/tests/test_phase48_schema_compatibility.py` — Phase 48 regression: SQLite legacy project schema repair for beginner-mode columns.
+- `backend/tests/test_phase49_universal_model_registry.py` — Phase 49 tests: universal base model registry + compatibility engine.
+- `backend/tests/test_phase49_universal_model_registry_cli.py` — Phase 49 tests: brewslm models CLI commands.
+- `backend/tests/test_phase4_export_manifest.py` — Phase 4 tests: export artifact manifest helpers.
+- `backend/tests/test_phase50_adapter_studio.py` — Phase 50 tests: Dataset Structure Explorer + Adapter Studio.
+- `backend/tests/test_phase50_adapter_studio_cli.py` — Phase 50 tests: Adapter Studio CLI commands.
+- `backend/tests/test_phase51_autopilot_decision_persistence.py` — Phase 51 tests — autopilot decision-log persistence (priority.md P1).
+- `backend/tests/test_phase52_autopilot_rollback.py` — Phase 52 tests — autopilot snapshot + rollback (priority.md P2).
+- `backend/tests/test_phase53_autopilot_repair_preview_apply.py` — Phase 53 tests — autopilot repair preview / apply separation (priority.md P3).
+- `backend/tests/test_phase54_autopilot_cli.py` — Phase 54 tests — brewslm CLI autopilot subparser (priority.md P4).
+- `backend/tests/test_phase55_strict_mode_enforcement.py` — Phase 55 tests — strict-mode enforcement across autopilot auto-repairs (P5).
+- `backend/tests/test_phase56_glossary_product_concepts.py` — Phase 56 tests: the BUILTIN_GLOSSARY exposes product concept IDs for the frontend <Term> component.
+- `backend/tests/test_phase57_pack_generation.py` — Phase 57 tests — auto-generate starter eval pack from blueprint + dataset + adapter (P9).
+- `backend/tests/test_phase58_gold_set_workbench.py` — Phase 58 tests — gold-set annotation workbench backend (priority.md P10).
+- `backend/tests/test_phase59_ingestion_cache_refetch.py` — Phase 59 tests — remote-import idempotency check respects requested row count.
+- `backend/tests/test_phase5_strict_modes.py` — Phase 5 tests: strict runtime modes and fallback behavior.
+- `backend/tests/test_phase60_gold_dataset_duplicates.py` — Phase 60 regression test — gold service tolerates duplicate gold datasets.
+- `backend/tests/test_phase61_synthetic_teacher_parsing.py` — Phase 61 tests — teacher-model response parser tolerates Qwen3-style output.
+- `backend/tests/test_phase62_preflight_target_compatibility.py` — Phase 62 — training preflight surfaces target-profile incompatibility early.
+- `backend/tests/test_phase63_failure_clusters.py` — Phase 63 — P12 failure-cluster service + endpoint.
+- `backend/tests/test_phase64_eval_cli.py` — Phase 64 tests — `brewslm eval` CLI subparser (priority.md P13).
+- `backend/tests/test_phase65_training_manifest.py` — Phase 65 — immutable training-run manifest (priority.md P14).
+- `backend/tests/test_phase66_rerun_from_manifest.py` — Phase 66 — rerun-from-manifest + clone-from-run (priority.md P15).
+- `backend/tests/test_phase67_checkpoint_browser.py` — Phase 67 — Checkpoint browser backend (priority.md P16, RM3).
+- `backend/tests/test_phase68_pause_resume.py` — Phase 68 — Pause / resume training (priority.md P17, RM3).
+- `backend/tests/test_phase69_cost_estimator.py` — Phase 69 — Cost estimator with provenance (priority.md P18, RM3).
+- `backend/tests/test_phase6_api_runtime_modes.py` — Phase 6 integration tests: strict runtime API fail-fast behavior.
+- `backend/tests/test_phase70_train_cli.py` — Phase 70 — brewslm CLI training subparser additions (priority.md P19, RM3).
+- `backend/tests/test_phase71_brewslm_manifest.py` — Phase 71 — brewslm.yaml schema + serializer (priority.md P21).
+- `backend/tests/test_phase72_manifest_validate_apply.py` — Phase 72 — manifest validate / diff / apply (priority.md P22).
+- `backend/tests/test_phase73_manifest_cli.py` — Phase 73 — brewslm CLI manifest + pipeline subcommands (priority.md P23).
+- `backend/tests/test_phase74_deployment_versions.py` — Phase 74 — deployment versions + rollback (priority.md P25).
+- `backend/tests/test_phase75_deployment_telemetry.py` — Phase 75 — post-deploy telemetry ingest + aggregate (priority.md P26).
+- `backend/tests/test_phase76_deployment_drift_check.py` — Phase 76 — drift check on served endpoint (priority.md P27).
+- `backend/tests/test_phase77_deployment_score.py` — Phase 77 — deployability score (priority.md P28).
+- `backend/tests/test_phase78_deploy_cli.py` — Phase 78 — brewslm CLI ``deploy`` subparser (priority.md P29).
+- `backend/tests/test_phase79_run_events.py` — Phase 79 — canonical RunEvent schema (priority.md P31, Wave G).
+- `backend/tests/test_phase7_compression_status.py` — Phase 7 tests: compression job report status and path safety.
+- `backend/tests/test_phase7_pipeline_guards.py` — Phase 7 tests: pipeline advancement guardrails.
+- `backend/tests/test_phase7_reliability_envelope.py` — Phase 7 reliability tests: structured error envelope and guardrail reason codes.
+- `backend/tests/test_phase80_timeline.py` — Phase 80 — unified timeline service + endpoint (priority.md P32, Wave G).
+- `backend/tests/test_phase81_failure_clusters.py` — Phase 81 — reason-code taxonomy + failure clustering (priority.md P33).
+- `backend/tests/test_phase82_support_bundles.py` — Phase 82 — support-bundle service with redaction (priority.md P34).
+- `backend/tests/test_phase83_observability_cli.py` — Phase 83 — observability CLI (priority.md P35, Wave G).
+- `backend/tests/test_phase84_plugin_contracts.py` — Phase 84 — plugin contract validators (priority.md P37, Wave H).
+- `backend/tests/test_phase85_extension_scaffolds.py` — Phase 85 — extension scaffold generator (priority.md P38, Wave H).
+- `backend/tests/test_phase86_extension_cli.py` — Phase 86 — scaffold / extensions CLI (priority.md P39, Wave H).
+- `backend/tests/test_phase87_demo_projects.py` — Phase 87 — demo project seeder (newbie UX Phase 3).
+- `backend/tests/test_phase88_eval_template_and_normalization.py` — Phase 5.2 — eval-time prompt template + SQuAD-style scorer normalization.
+- `backend/tests/test_phase89_eval_dispatcher.py` — Phase 5.3.0 — task-aware eval dispatcher (foundation).
+- `backend/tests/test_phase8_export_and_heldout_eval.py` — Phase 8 tests: export artifacts + held-out end-to-end evaluation.
+- `backend/tests/test_phase8_ingestion_job_status.py` — Phase 8 tests: ingestion import job status and queue metadata.
+- `backend/tests/test_phase90_eval_classification_handler.py` — Phase 5.3.1 — ClassificationHandler.
+- `backend/tests/test_phase91_eval_seq2seq_handler.py` — Phase 5.3.3 — Seq2SeqHandler.
+- `backend/tests/test_phase92_eval_qa_handler.py` — Phase 5.3.2 — QAHandler.
+- `backend/tests/test_phase93_eval_structured_extraction_handler.py` — Phase 5.3.4 — StructuredExtractionHandler.
+- `backend/tests/test_phase94_eval_span_set_scoring.py` — Phase 5.3.4b — span_set scoring mode inside StructuredExtractionHandler.
+- `backend/tests/test_phase95_eval_rag_handler.py` — Phase 5.3.5 — RAGHandler.
+- `backend/tests/test_phase96_eval_alignment_handler.py` — Phase 5.3.6 — AlignmentHandler (DPO / ORPO / preference).
+- `backend/tests/test_phase97_eval_multimodal_handlers.py` — Phase 5.3.7 — Multimodal handlers (VisionLanguage + AudioTranscript).
+- `backend/tests/test_phase98_eval_safety_handler.py` — Phase 5.3.8 — SafetyHandler.
+- `backend/tests/test_phase99_synthetic_span_extraction.py` — Phase 99 — synthetic span-extraction generation.
+- `backend/tests/test_phase9_cleaning.py` — Tests for the data cleaning service — PII detection, quality scoring, dedup, chunking.
+- `backend/tests/test_phase9_gold.py` — Tests for the gold evaluation dataset service.
+- `backend/tests/test_phase9_synthetic.py` — Tests for the synthetic data generation service — demo/heuristic mode.
+- `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
+- `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
+- `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
+- `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
+- `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
+- `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
+- `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
+- `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
+- `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
+- `backend/tests/test_sprint1.py` — _(no docstring)_
+- `backend/tests/test_sprint2.py` — _(no docstring)_
+- `backend/tests/test_synth_backends_schema_aware.py` — Tests for the ``schema_aware`` backend flag (USER-SUCCESS Epic 5 Phase 5c).
+- `backend/tests/test_synth_nemo_backend.py` — Tests for the NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).
+- `backend/tests/test_synth_playbook_epic2b.py` — Tests for USER-SUCCESS Epic 2b — hard-negatives, class-balance,
+- `backend/tests/test_synth_playbook_service.py` — Tests for the synthetic-data playbook framework
+- `backend/tests/test_synth_schema_constrained.py` — Tests for USER-SUCCESS Epic 5 Phase 5b — schema-constrained synth generation.
+- `backend/tests/test_synth_vllm_backend.py` — Tests for the vLLM synth backend (USER-SUCCESS Epic 5 Phase 5c).
+- `backend/tests/test_synthetic_qa_conversation_async.py` — Batched synthetic QA + conversation generation (USER-SUCCESS Epic 2c).
+- `backend/tests/test_synthetic_span_async.py` — Batched synthetic-span generation (long-running) — Story PII-async.
+- `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
+- `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
+- `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
+
+## Frontend · Tests
+
+- `frontend/src/components/annotation/AnnotationProgress.test.tsx` — AnnotationProgress contract.
+- `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.
+- `frontend/src/components/annotation/PreferencePairLabeler.test.tsx` — PreferencePairLabeler contract.
+- `frontend/src/components/annotation/SpanLabeler.test.tsx` — SpanLabeler contract.
+- `frontend/src/components/coach/CoachStrip.test.tsx` — _(no docstring)_
+- `frontend/src/components/coach/CoachSuggestion.test.tsx` — _(no docstring)_
+- `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
+- `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
+- `frontend/src/components/dashboard/FirstRunCheatSheet.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioAssistPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioCoachRailPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioDatasetVersionsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioDomainDetectionPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioGoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioMappingPreviewPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioOverviewPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioPrepareDatasetPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioQualitySafetyPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioReviewQueuePanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioSourcesSummaryPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioSyntheticPlaybookCenterPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioSyntheticQualityPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
+- `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
+- `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SavedMappingsPanel.test.tsx` — Saved-mappings panel contract.
+- `frontend/src/components/data/SynthReviewQueue.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/SyntheticPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/deployment/DeployabilityScoreCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/deployment/DeployedVersionsList.test.tsx` — _(no docstring)_
+- `frontend/src/components/deployment/DriftPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/deployment/TelemetryPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/domain/DomainPackManager.test.tsx` — _(no docstring)_
+- `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
+- `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.
+- `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
+- `frontend/src/components/evaluation/EvalPanel.qa.test.tsx` — Phase 5.3.2 — Sample Predictions card with QA-style per-row enrichment.
+- `frontend/src/components/evaluation/EvalPanel.rag.test.tsx` — Phase 5.3.5 — Sample Predictions card with RAG (grounded QA) enrichment.
+- `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
+- `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.
+- `frontend/src/components/gamification/ProgressChip.test.tsx` — ProgressChip + LabJournalDrawer contract.
+- `frontend/src/components/guide/QuickstartCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/layout/CommandPalette.test.tsx` — _(no docstring)_
+- `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).
+- `frontend/src/components/layout/ParentProjectBackChip.test.tsx` — _(no docstring)_
+- `frontend/src/components/layout/ProjectSidebar.test.tsx` — _(no docstring)_
+- `frontend/src/components/manifest/ManifestExportButton.test.tsx` — _(no docstring)_
+- `frontend/src/components/observability/EventDrilldownDrawer.test.tsx` — _(no docstring)_
+- `frontend/src/components/observability/FailureClusterList.test.tsx` — _(no docstring)_
+- `frontend/src/components/observability/RunTimelineFilters.test.tsx` — _(no docstring)_
+- `frontend/src/components/observability/SupportBundleCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/observability/TimelineTree.test.tsx` — _(no docstring)_
+- `frontend/src/components/pipeline/WorkflowRunMonitor.test.tsx` — _(no docstring)_
+- `frontend/src/components/projects/ProjectTemplateGallery.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/EmptyState.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/ArchetypeComparisonPanel.test.tsx` — ArchetypeComparisonPanel tests (USER-SUCCESS Epic 8 Phase 8b).
+- `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/video/TabVideoLink.test.tsx` — _(no docstring)_
+- `frontend/src/components/video/YouTubeEmbedModal.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectAdapterStudioPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectAutopilotPage.prefill.test.tsx` — Newbie UX Phase 3.1 — pre-fill the Autopilot intent textarea from the
+- `frontend/src/pages/ProjectAutopilotPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectDataStudioPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectDeploymentsPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectExtensionStudioPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectListPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectManifestPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectModelsPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectObservabilityPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectPipelinePage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectWizardPage.test.tsx` — _(no docstring)_
+- `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
+
 ---
 _Regenerate: `python scripts/regenerate_index.py`. A missing description means the file lacks a header docstring.

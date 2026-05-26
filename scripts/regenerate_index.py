@@ -54,10 +54,19 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
     ("Frontend · Pages", "frontend/src/pages", (".tsx",)),
     ("Frontend · Components (by domain)", "frontend/src/components", (".tsx",)),
     ("Repo · Top-level scripts", "scripts", (".py", ".sh")),
+    # Test suites — each file's top docstring tells future agents
+    # (and future-me) what the file covers without opening it.
+    # New test files surface immediately as ``_(no docstring)_``
+    # in INDEX.md, which is the signal to add a one-liner.
+    ("Backend · Tests", "backend/tests", (".py",)),
+    ("Frontend · Tests", "frontend/src", (".test.tsx", ".test.ts")),
 ]
 
 # Files to skip entirely (noise / generated).
 SKIP_NAMES = {"__init__.py", "__pycache__"}
+# Suffixes here are filtered out of *non-test* sections. Test
+# sections explicitly OPT IN via their suffix tuple, so .test.*
+# files only land in those sections (not in Components etc.).
 SKIP_SUFFIXES = (".test.tsx", ".test.ts", ".test.py", ".test.tsx.snap")
 
 # Headers that survive in the script's own output — guards us against
@@ -219,27 +228,49 @@ def extract_summary(path: Path) -> str:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _should_skip(path: Path) -> bool:
+def _should_skip(path: Path, *, allow_test_files: bool = False) -> bool:
     if path.name in SKIP_NAMES:
         return True
-    if any(path.name.endswith(suffix) for suffix in SKIP_SUFFIXES):
+    if not allow_test_files and any(
+        path.name.endswith(suffix) for suffix in SKIP_SUFFIXES
+    ):
         return True
     if "__pycache__" in path.parts:
         return True
+    # Skip fixture / generated files inside test-data subdirs.
+    # Convention in this repo: pytest fixture dirs end with
+    # ``_data`` and live under ``backend/tests/``. Without this
+    # filter the index leaks generated scaffolds (e.g. adapter
+    # plugin templates emitted during a test run).
+    if any(part.endswith("_data") for part in path.parts):
+        return True
     return False
+
+
+def _matches_suffix(path: Path, suffixes: tuple[str, ...]) -> bool:
+    """Match by full-name ``endswith`` rather than ``Path.suffix`` so
+    multi-dot suffixes like ``.test.tsx`` work as section filters.
+    ``Path.suffix`` only sees the last extension and would treat
+    ``Foo.test.tsx`` as a ``.tsx`` file."""
+    name_lower = path.name.lower()
+    return any(name_lower.endswith(suf) for suf in suffixes)
 
 
 def collect_section(root_glob: str, suffixes: tuple[str, ...]) -> list[FileSummary]:
     root = REPO_ROOT / root_glob
     if not root.exists():
         return []
+    # A section opts INTO test files by listing a ``.test.*`` suffix in
+    # its filter; the global SKIP_SUFFIXES rule is bypassed in that
+    # case so the test files actually surface.
+    section_wants_tests = any(".test." in s for s in suffixes)
     entries: list[FileSummary] = []
     for file_path in sorted(root.rglob("*")):
         if not file_path.is_file():
             continue
-        if file_path.suffix.lower() not in suffixes:
+        if not _matches_suffix(file_path, suffixes):
             continue
-        if _should_skip(file_path):
+        if _should_skip(file_path, allow_test_files=section_wants_tests):
             continue
         rel = file_path.relative_to(REPO_ROOT).as_posix()
         entries.append(FileSummary(rel_path=rel, summary=extract_summary(file_path)))
