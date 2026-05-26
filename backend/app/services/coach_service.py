@@ -78,6 +78,201 @@ def _recipe_id_for(project: Project) -> str | None:
     return None
 
 
+_ARCHETYPE_DOMINANT_PRIORITY: tuple[str, ...] = (
+    # Order = "which below-cohort feature is the most actionable
+    # leverage when multiple fire at once." Row count beats class
+    # balance beats hard-negatives beats diversity beats length
+    # mismatches. Used to pick which feature's suggestion the Coach
+    # card surfaces verbatim (the panel itself shows all of them).
+    "row_count",
+    "class_entropy",
+    "class_balance_ratio",
+    "hard_negative_ratio",
+    "goldset_diversity",
+    "input_length_chars",
+    "output_length_chars",
+)
+
+
+def _pick_dominant_below_feature(
+    comparison: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Walk the comparison's features in priority order; return the
+    first one whose status is ``below``. None when nothing below."""
+    features_by_id: dict[str, dict[str, Any]] = {
+        f["feature_id"]: f for f in comparison.get("features", [])
+    }
+    for fid in _ARCHETYPE_DOMINANT_PRIORITY:
+        f = features_by_id.get(fid)
+        if f and f.get("status") == "below":
+            return f
+    return None
+
+
+def _archetype_drift_nudge(
+    project_id: int,
+    stage: Literal["data", "training"],
+    comparison: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """USER-SUCCESS Epic 8 Phase 8c — surface archetype drift as a
+    Coach suggestion. Pure function: caller is responsible for
+    loading the comparison (we never block Coach on the archetype
+    service if it fails).
+
+    Severity + threshold by stage:
+      * data → info, fires when ≥1 feature is below cohort p25
+      * training → warning, fires when ≥2 features below
+
+    Skip conditions:
+      * comparison missing / lacks features → no nudge
+      * fewer-below than the stage threshold → no nudge
+      * user IS the only archetype provenance (n_user_projects == 1
+        AND that one project is this project) → no nudge (no point
+        recommending you match yourself)
+      * data-stage AND no user passing projects (template seeds
+        only) → no nudge (too early; the user hasn't trained
+        anything yet so the recommendation isn't actionable until
+        they reach training stage)
+
+    Cites cohort size + the dominant-drift feature's suggestion in
+    the body so the recommendation is auditable from inside the
+    Coach card. Action is the dominant feature's ``suggested_action``
+    verbatim (matches Coach's existing contract so the same handler
+    fires it as the data-stage gold-row-count card).
+    """
+    if not isinstance(comparison, dict):
+        return None
+    features = comparison.get("features") or []
+    below = [f for f in features if isinstance(f, dict) and f.get("status") == "below"]
+    threshold = 1 if stage == "data" else 2
+    if len(below) < threshold:
+        return None
+
+    archetype = comparison.get("archetype") or {}
+    n_user = int(archetype.get("n_user_projects") or 0)
+    n_template = int(archetype.get("n_template_seeds") or 0)
+    cohort = archetype.get("cohort_provenance") or []
+
+    # Skip when the user is the only contributor (self-comparison
+    # is silly). Detect via the cohort_provenance entries: if there's
+    # exactly one user entry AND its id matches this project, bail.
+    user_entries = [
+        c for c in cohort if isinstance(c, dict) and c.get("source") == "user"
+    ]
+    if (
+        len(user_entries) == 1
+        and int(user_entries[0].get("id") or 0) == project_id
+    ):
+        return None
+
+    # Skip the data-stage nudge when there are no user passing
+    # projects yet. Template seeds are still useful at training-time
+    # (the user is about to spend compute), but at data-time the
+    # advice is premature.
+    if stage == "data" and n_user == 0:
+        return None
+
+    dominant = _pick_dominant_below_feature(comparison)
+    if dominant is None:
+        # Shouldn't happen given the len(below) >= threshold guard
+        # above, but defend so a future feature-set change doesn't
+        # crash here.
+        return None
+
+    severity: Severity = "info" if stage == "data" else "warning"
+    cohort_size_str = (
+        f"{n_user} successful {comparison.get('recipe_id', '')} project"
+        + ("" if n_user == 1 else "s")
+        + (
+            f" (+ {n_template} template seed" + ("" if n_template == 1 else "s") + ")"
+            if n_template > 0
+            else ""
+        )
+    ).strip()
+
+    n_below_str = (
+        "1 feature"
+        if len(below) == 1
+        else f"{len(below)} features"
+    )
+    title = (
+        f"Your project shape differs from successful cohorts "
+        f"({n_below_str} below p25)"
+    )
+
+    body_parts: list[str] = []
+    body_parts.append(
+        f"Cohort: {cohort_size_str}."
+    )
+    body_parts.append(
+        f"Dominant drift: {dominant.get('label', dominant.get('feature_id'))}."
+    )
+    suggestion_text = dominant.get("suggestion")
+    if suggestion_text:
+        body_parts.append(suggestion_text)
+    if len(below) > 1:
+        body_parts.append(
+            f"See the Archetype panel on Training Config for all "
+            f"{len(below)} drifts."
+        )
+
+    body = " ".join(body_parts).strip()
+
+    # Action: use the dominant feature's suggested_action if present
+    # (same contract as Coach's other suggestions). Falls back to a
+    # navigate-to-training-config when the dominant feature has no
+    # one-click fix (length mismatches etc.).
+    action = dominant.get("suggested_action") or {
+        "kind": "navigate",
+        "label": "Open archetype comparison",
+        "params": {"target": "training-config"},
+    }
+    if "label" not in action:
+        # Coach contract: action MUST carry a label string. Some
+        # comparison.suggested_action payloads were stamped without
+        # one (the backend builds them as {kind, params} for the
+        # frontend to format). Provide a sensible default.
+        action = {
+            **action,
+            "label": (
+                "Generate via playbook"
+                if action.get("kind") == "run_playbook"
+                else "Open"
+            ),
+        }
+
+    return {
+        "id": f"{stage}:archetype-drift",
+        "title": title,
+        "body": body,
+        "severity": severity,
+        "action": action,
+        "context": {
+            "n_below_features": len(below),
+            "n_user_projects": n_user,
+            "n_template_seeds": n_template,
+            "dominant_feature_id": dominant.get("feature_id"),
+            "below_feature_ids": [f.get("feature_id") for f in below],
+        },
+    }
+
+
+async def _load_archetype_comparison_safe(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    """Best-effort comparison load — Coach never blocks on a broken
+    archetype service. Returns None on any error (missing recipe,
+    empty cohort, project not found, exception)."""
+    try:
+        from app.services.archetype_service import (
+            compare_project_to_archetype,
+        )
+
+        return await compare_project_to_archetype(db, project_id)
+    except Exception:  # noqa: BLE001 — defense across the boundary
+        return None
+
+
 async def _data_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -152,6 +347,13 @@ async def _data_stage_suggestions(
                 "thin_threshold": GOLD_ROW_THIN_MAX,
             },
         })
+
+    # Phase 8c — archetype-drift nudge. Best-effort; never blocks
+    # the data-tab Coach if the archetype service is unavailable.
+    comparison = await _load_archetype_comparison_safe(db, project.id)
+    archetype_nudge = _archetype_drift_nudge(project.id, "data", comparison)
+    if archetype_nudge:
+        suggestions.append(archetype_nudge)
 
     return suggestions
 
@@ -697,6 +899,17 @@ async def _training_stage_suggestions(
     curriculum_nudge = _curriculum_training_suggestion(project.id, recipe_id)
     if curriculum_nudge:
         suggestions.append(curriculum_nudge)
+
+    # Phase 8c — archetype-drift nudge runs alongside the curriculum
+    # nudge and BEFORE the forecast logic (so it surfaces even when
+    # forecast is likely_pass and returns early below). Different
+    # framing of partially overlapping concerns: forecast = "will
+    # this run pass the gate?", archetype = "does your data look
+    # like successful data?". Both can render together.
+    comparison = await _load_archetype_comparison_safe(db, project.id)
+    archetype_nudge = _archetype_drift_nudge(project.id, "training", comparison)
+    if archetype_nudge:
+        suggestions.append(archetype_nudge)
 
     try:
         forecast = await forecast_training(db, project.id)
