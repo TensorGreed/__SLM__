@@ -39,9 +39,17 @@ function installGetRouter(overrides: Record<string, any> = {}) {
         if (url.includes('/synthetic/playbooks')) {
             return {
                 data: overrides['playbooks'] ?? {
+                    // Default mocks model a project that already has a
+                    // recipe applied (the new normal post-1449877 —
+                    // brief-driven + magic-create auto-apply at create
+                    // time). Tests that want the legacy NULL-recipe
+                    // shape override 'playbooks' to set recipe_required.
                     project_id: 1,
-                    recipe_id: null,
-                    playbooks: [],
+                    recipe_id: 'qa-sft',
+                    recipe_required: false,
+                    playbooks: [
+                        { recipe_id: 'qa-sft', mode: 'positives_paraphrase' },
+                    ],
                 },
             };
         }
@@ -173,7 +181,7 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         // Provide source text so the form isn't disabled.
         const sourceTextarea = screen.getByPlaceholderText(/Paste domain text here/i);
         fireEvent.change(sourceTextarea, { target: { value: 'seed text seed text' } });
-        await userEvent.click(screen.getByRole('button', { name: /Generate/i }));
+        await userEvent.click(screen.getByTestId(`synth-legacy-generate`));
 
         await waitFor(() => {
             expect(apiMock.post).toHaveBeenCalledWith(
@@ -219,7 +227,7 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         fireEvent.change(input, { target: { value: '10' } });
         const sourceTextarea = screen.getByPlaceholderText(/Paste domain text here/i);
         fireEvent.change(sourceTextarea, { target: { value: 'seed text seed text' } });
-        await userEvent.click(screen.getByRole('button', { name: /Generate/i }));
+        await userEvent.click(screen.getByTestId(`synth-legacy-generate`));
 
         await waitFor(() => {
             expect(apiMock.post).toHaveBeenCalledWith(
@@ -278,5 +286,46 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         ).toBe('playbook:classification:class_balance_fill:class=technical');
         const acceptAll = screen.getByTestId('synth-review-queue-focus-accept-all');
         expect(acceptAll.textContent).toMatch(/Accept all 3 rows/);
+    });
+
+    it('collapses to only the playbook picker when the project has no recipe (legacy NULL)', async () => {
+        // Pre-this-fix, a legacy NULL-recipe project would render the
+        // "Pick a recipe first" CTA at the top of the panel AND a
+        // fully-functional-looking Generate form 200px below. That
+        // form would either fail or silently write recipe-wrong rows.
+        // The fix gates the lower sections (review queue + legacy
+        // generator form) on the same ``recipe_required`` flag the
+        // picker uses, so the legacy user sees one prompt, not two
+        // competing surfaces. See /tmp/e2e-screens/01-synthetic-cta.png
+        // for the pre-fix visual.
+        installGetRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: null,
+                recipe_required: true,
+                playbooks: [],
+            },
+        });
+        render(<SyntheticPanel projectId={1} />);
+
+        // The collapse wrapper renders; PlaybookPickerPanel shows its
+        // own NoRecipeEmptyState CTA inside it.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('synthetic-panel-recipe-required'),
+            ).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('playbook-picker-empty-recipe-required'),
+        ).toBeInTheDocument();
+
+        // The legacy form's mode select must NOT render.
+        expect(
+            screen.queryByTestId('synth-generation-mode'),
+        ).not.toBeInTheDocument();
+        // The Synth review queue wrapper must also be gone.
+        expect(
+            document.querySelector('#synth-review-queue'),
+        ).toBeNull();
     });
 });

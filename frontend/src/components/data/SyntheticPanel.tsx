@@ -159,6 +159,39 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const [isGenerating, setIsGenerating] = useState(false);
     const [saveResult, setSaveResult] = useState<any>(null);
     const [prefillSourceStage, setPrefillSourceStage] = useState('');
+    // True when the project's selected_recipe is NULL (legacy projects
+    // pre-dating the auto-apply-on-create fix). When true we render
+    // ONLY the PlaybookPickerPanel — which surfaces the directive
+    // "Pick a recipe first" CTA — and hide the legacy generator form
+    // + review queue. Without this gate the user saw a fully-rendered
+    // Generate form 200px below the CTA, which is misleading: synth
+    // playbooks won't dispatch without a recipe, and the legacy
+    // generators write into the same `synthetic.jsonl` with no
+    // recipe-shape validation. ``null`` while we're still loading the
+    // /synthetic/playbooks response so the lower sections don't flash
+    // before being hidden. The same endpoint PlaybookPickerPanel uses
+    // — duplicate fetch is cheap (returns 6 entries max) and avoids
+    // prop-drilling state through this 1300-line component.
+    const [recipeRequired, setRecipeRequired] = useState<boolean | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        api.get<{ recipe_required?: boolean }>(
+            `/projects/${projectId}/synthetic/playbooks`,
+        )
+            .then((res) => {
+                if (cancelled) return;
+                setRecipeRequired(Boolean(res?.data?.recipe_required));
+            })
+            .catch(() => {
+                // Endpoint failures fall through to today's behavior
+                // (render the full panel) — the picker panel's own
+                // fetch + error state still surfaces the actual cause.
+                if (!cancelled) setRecipeRequired(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
 
     // Auto-load chunks state
     const [chunks, setChunks] = useState<Chunk[]>([]);
@@ -664,6 +697,24 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 ? generatedSpans.some((r) => r.source === 'demo_heuristic')
                 : generatedConversations.some((c) => c.source === 'demo_heuristic');
 
+    // Legacy NULL-recipe projects collapse to ONLY the picker, which
+    // renders its own NoRecipeEmptyState CTA. Hiding the review queue
+    // + legacy generator form here matches the visual contract of the
+    // other recipe-gated panels (auto-RAG comparison, archetype
+    // comparison) — the legacy user sees one prompt, not a CTA card
+    // stacked on top of an apparently-functional form.
+    if (recipeRequired) {
+        return (
+            <div
+                className="animate-fade-in"
+                style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}
+                data-testid="synthetic-panel-recipe-required"
+            >
+                <PlaybookPickerPanel projectId={projectId} />
+            </div>
+        );
+    }
+
     return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
             <PlaybookPickerPanel projectId={projectId} />
@@ -994,6 +1045,7 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     <button
                         className="btn btn-primary"
                         onClick={handleGenerate}
+                        data-testid="synth-legacy-generate"
                         disabled={
                             isGenerating
                             || (
