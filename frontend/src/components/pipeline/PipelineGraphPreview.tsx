@@ -1,3 +1,7 @@
+/**
+ * Read-only pipeline visualization with dry-run, validation, and execution controls.
+ */
+
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';

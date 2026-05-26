@@ -1,3 +1,7 @@
+/**
+ * Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';

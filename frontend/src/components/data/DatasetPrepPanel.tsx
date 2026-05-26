@@ -1,3 +1,7 @@
+/**
+ * Panel for dataset preparation with profiling, normalization, and split-manifest configuration.
+ */
+
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';

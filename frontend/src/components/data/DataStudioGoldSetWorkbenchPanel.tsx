@@ -1,3 +1,7 @@
+/**
+ * Panel for gold-set coverage metrics, field alignment checks, and review-state assessment.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

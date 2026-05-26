@@ -1,3 +1,7 @@
+/**
+ * Visual workflow builder page for DAG editing, execution monitoring, and stage orchestration.
+ */
+
 import { useOutletContext } from 'react-router-dom';
 
 import PipelineProgress from '../components/dashboard/PipelineProgress';

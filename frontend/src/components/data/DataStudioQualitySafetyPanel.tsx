@@ -1,3 +1,7 @@
+/**
+ * Panel for quality and safety checks including PII detection, toxicity, and data-leakage scanning.
+ */
+
 import { useEffect, useId, useMemo, useState } from 'react';
 import {
     AlertTriangle,

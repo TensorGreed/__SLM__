@@ -1,3 +1,7 @@
+/**
+ * Panel showing sampled row mapping preview against the active recipe with required-field coverage.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

@@ -1,3 +1,7 @@
+/**
+ * Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
+ */
+
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import Skeleton from '../shared/Skeleton';

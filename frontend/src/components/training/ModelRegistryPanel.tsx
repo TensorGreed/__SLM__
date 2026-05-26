@@ -1,3 +1,7 @@
+/**
+ * Checkpoint history browser with filtering and download links.
+ */
+
 import { useState, useEffect } from 'react';
 import { Download, Star, Clock, HardDrive } from 'lucide-react';
 import api from '../../api/client';

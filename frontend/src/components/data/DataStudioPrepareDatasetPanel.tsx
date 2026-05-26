@@ -1,3 +1,7 @@
+/**
+ * Panel for dataset preparation split configuration with recipe, mapping, and manifest alignment checks.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

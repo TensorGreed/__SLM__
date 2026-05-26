@@ -1,3 +1,7 @@
+/**
+ * Panel summarizing ingested data sources with file counts, documents, and dataset distribution.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

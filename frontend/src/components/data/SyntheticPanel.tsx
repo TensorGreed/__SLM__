@@ -1,3 +1,7 @@
+/**
+ * Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../../api/client';

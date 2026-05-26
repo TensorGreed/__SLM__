@@ -1,3 +1,7 @@
+/**
+ * Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';

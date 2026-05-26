@@ -1,3 +1,7 @@
+/**
+ * Header with user menu, runtime settings editor, documentation link, and notification bell.
+ */
+
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CircleHelp } from 'lucide-react';
 

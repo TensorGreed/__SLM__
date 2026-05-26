@@ -1,3 +1,7 @@
+/**
+ * Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 

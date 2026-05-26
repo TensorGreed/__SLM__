@@ -1,3 +1,7 @@
+/**
+ * Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
+ */
+
 import { useState } from 'react';
 import {
     AlertTriangle,

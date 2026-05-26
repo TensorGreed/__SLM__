@@ -1,3 +1,7 @@
+/**
+ * Panel for domain detection and confirmation with profile assignment and signal review.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

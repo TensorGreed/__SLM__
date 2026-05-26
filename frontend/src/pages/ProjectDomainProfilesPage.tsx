@@ -1,3 +1,7 @@
+/**
+ * Page for editing task schemas, quality gates, and domain-specific deployment checks.
+ */
+
 import { useOutletContext } from 'react-router-dom';
 
 import DomainProfileManager from '../components/domain/DomainProfileManager';

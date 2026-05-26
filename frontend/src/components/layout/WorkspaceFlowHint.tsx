@@ -1,3 +1,7 @@
+/**
+ * Advisory chip showing current pipeline stage progress and recommending the next action.
+ */
+
 import { useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 

@@ -1,3 +1,7 @@
+/**
+ * Linear progress tracker showing pipeline stage completion with percentage and status indicators.
+ */
+
 import type { PipelineStageInfo } from '../../types';
 import './PipelineProgress.css';
 

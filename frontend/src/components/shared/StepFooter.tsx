@@ -1,3 +1,7 @@
+/**
+ * Footer bar with completion badge and conditional next-step navigation button.
+ */
+
 import './StepFooter.css';
 
 interface StepFooterProps {

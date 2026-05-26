@@ -1,3 +1,7 @@
+/**
+ * Zustand store for glossary entries with lazy loading and case-insensitive term lookup.
+ */
+
 import { create } from 'zustand';
 import api from '../api/client';
 

@@ -1,3 +1,7 @@
+/**
+ * Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
+ */
+
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
 import './ReadinessPanel.css';

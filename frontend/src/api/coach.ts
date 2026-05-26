@@ -1,3 +1,7 @@
+/**
+ * Coach suggestion types + async fetcher for stage-specific coaching recommendations.
+ */
+
 import api from './client';
 
 export type CoachStage = 'data' | 'cleaning' | 'gold_set' | 'training' | 'eval';

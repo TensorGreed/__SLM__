@@ -1,3 +1,7 @@
+/**
+ * Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
+ */
+
 import api from './client';
 
 export type DataStudioVerdict = 'blocked' | 'needs_work' | 'ready';

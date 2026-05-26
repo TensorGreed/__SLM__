@@ -1,3 +1,7 @@
+/**
+ * Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
+ */
+
 import axios from 'axios';
 
 const api = axios.create({

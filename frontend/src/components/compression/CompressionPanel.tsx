@@ -1,3 +1,7 @@
+/**
+ * Model quantization UI with format selection, ONNX/GGUF conversion, and benchmark reporting.
+ */
+
 import { useState, useEffect } from 'react';
 import { Terminal } from 'lucide-react';
 import api from '../../api/client';

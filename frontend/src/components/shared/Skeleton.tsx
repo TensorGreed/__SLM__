@@ -1,3 +1,7 @@
+/**
+ * Configurable animated placeholder component for content loading states.
+ */
+
 import React from 'react';
 
 interface SkeletonProps {

@@ -1,3 +1,7 @@
+/**
+ * Project summary card displaying status, description, stats, and pipeline-stage progress.
+ */
+
 import { useState, useEffect } from 'react';
 import type { Project, ProjectStats } from '../../types';
 import api from '../../api/client';

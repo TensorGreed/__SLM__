@@ -62,7 +62,7 @@ session-start guidance.
 - `backend/app/api/starter_packs.py` — Starter-pack catalog API routes.
 - `backend/app/api/support_bundles.py` — Support-bundle API (priority.md P34, Wave G).
 - `backend/app/api/synthetic.py` — Synthetic data generation API routes.
-- `backend/app/api/targets.py` — _(no docstring)_
+- `backend/app/api/targets.py` — Hardware target catalog API — list deploy-target profiles and check base-model compatibility against them.
 - `backend/app/api/tokenization.py` — Tokenization analysis API routes.
 - `backend/app/api/training.py` — Training API routes.
 
@@ -158,7 +158,7 @@ session-start guidance.
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/app/services/rag_sandbox_service.py` — Lightweight RAG sandbox retrieval helpers.
-- `backend/app/services/readiness_service.py` — _(no docstring)_
+- `backend/app/services/readiness_service.py` — Pre-deployment readiness checks for a project — GPU, deps, paths, secrets, with pass/warn/fail verdicts.
 - `backend/app/services/recipe_apply_service.py` — Apply a Theme 2 recipe selection to a Project record.
 - `backend/app/services/recipe_service.py` — Task-shape recipe registry.
 - `backend/app/services/record_normalization.py` — Generic record normalization utilities for arbitrary tabular/text datasets.
@@ -202,7 +202,7 @@ session-start guidance.
 - `backend/app/services/synth_playbooks/summarization_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `summarization` recipe.
 - `backend/app/services/synth_review_queue_service.py` — Synth review queue service (USER-SUCCESS Epic 2b).
 - `backend/app/services/synthetic_service.py` — Synthetic data generation service — teacher model integration.
-- `backend/app/services/target_profile_service.py` — _(no docstring)_
+- `backend/app/services/target_profile_service.py` — Plugin-extensible registry of deployment target profiles with constraint validation and HF-introspection compatibility checks.
 - `backend/app/services/timeline_service.py` — Unified timeline service (priority.md P32, Wave G).
 - `backend/app/services/tokenization_service.py` — Tokenization service — tokenizer management and dataset statistics.
 - `backend/app/services/trainability_forecast_service.py` — Trainability forecast service — USER-SUCCESS Epic 1.
@@ -261,7 +261,7 @@ session-start guidance.
 - `backend/app/schemas/domain_pack.py` — Pydantic schemas for domain pack contracts and assignment.
 - `backend/app/schemas/domain_profile.py` — Pydantic schemas for domain profile contracts and assignment.
 - `backend/app/schemas/evaluation.py` — Pydantic schemas for evaluation APIs.
-- `backend/app/schemas/export.py` — _(no docstring)_
+- `backend/app/schemas/export.py` — Pydantic shapes for compression / optimization candidate proposals + export requests.
 - `backend/app/schemas/project.py` — Pydantic schemas for Project CRUD and pipeline operations.
 - `backend/app/schemas/step_contract.py` — Typed step contract schemas for workflow graph runtime.
 - `backend/app/schemas/training.py` — Pydantic schemas for training configuration and experiment APIs.
@@ -323,9 +323,9 @@ session-start guidance.
 - `frontend/src/api/activeLearning.ts` — Typed wrapper for the Theme 8 Epic 2 active-learning recommender.
 - `frontend/src/api/annotation.ts` — Typed wrappers around the Story 1.1 annotation API.
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
-- `frontend/src/api/client.ts` — _(no docstring)_
-- `frontend/src/api/coach.ts` — _(no docstring)_
-- `frontend/src/api/dataStudio.ts` — _(no docstring)_
+- `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
+- `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
+- `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
@@ -339,36 +339,36 @@ session-start guidance.
 
 ## Frontend · Zustand stores
 
-- `frontend/src/stores/coachModeStore.ts` — _(no docstring)_
-- `frontend/src/stores/glossaryStore.ts` — _(no docstring)_
+- `frontend/src/stores/coachModeStore.ts` — Zustand store for per-project Coach Mode toggle with XP-gated defaults and localStorage persistence.
+- `frontend/src/stores/glossaryStore.ts` — Zustand store for glossary entries with lazy loading and case-insensitive term lookup.
 - `frontend/src/stores/jobsStore.ts` — Global jobs store (Hardening Phase H1).
-- `frontend/src/stores/projectStore.ts` — _(no docstring)_
-- `frontend/src/stores/toastStore.ts` — _(no docstring)_
+- `frontend/src/stores/projectStore.ts` — Zustand store for the active project, pipeline status, project list, and CRUD operations.
+- `frontend/src/stores/toastStore.ts` — Zustand store for toast notifications with optional achievement payload and auto-dismiss timers.
 
 ## Frontend · Pages
 
-- `frontend/src/pages/ProjectAdapterStudioPage.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectAdapterStudioPage.tsx` — Free-form schema explorer page for mapping custom JSON payloads to adapter-compatible structures.
 - `frontend/src/pages/ProjectAnnotatePage.tsx` — Annotation workspace (Story 1.2).
 - `frontend/src/pages/ProjectAutopilotPage.tsx` — Autopilot Planner page (priority.md P6).
-- `frontend/src/pages/ProjectDataStudioPage.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectDataStudioPage.tsx` — Data preparation hub page with multi-panel visualization for ingestion through export stages.
 - `frontend/src/pages/ProjectDeploymentsPage.tsx` — ProjectDeploymentsPage — Deployment Assistant (priority.md P30).
-- `frontend/src/pages/ProjectDomainPacksPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectDomainPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectDomainProfilesPage.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectDomainPacksPage.tsx` — Page for assigning reusable domain pack policy bundles and hook defaults to projects.
+- `frontend/src/pages/ProjectDomainPage.tsx` — Combined domain pack + profile manager page for preprocessing, validation, and defaults.
+- `frontend/src/pages/ProjectDomainProfilesPage.tsx` — Page for editing task schemas, quality gates, and domain-specific deployment checks.
 - `frontend/src/pages/ProjectExtensionStudioPage.tsx` — ProjectExtensionStudioPage — Extension Studio for Wave H power users
-- `frontend/src/pages/ProjectGuidePage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectListPage.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectGuidePage.tsx` — Progress guide page with achievement tracking and recommended next actions for pipeline advancement.
+- `frontend/src/pages/ProjectListPage.tsx` — Dashboard page for creating, browsing, filtering, and deleting projects with approach recommendation.
 - `frontend/src/pages/ProjectManifestPage.tsx` — ProjectManifestPage — Pipeline-as-Code import / validate / diff / apply
-- `frontend/src/pages/ProjectModelsPage.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectModelsPage.tsx` — Searchable model catalog page with compatibility scoring, hardware requirements, and training mode filters.
 - `frontend/src/pages/ProjectObservabilityPage.tsx` — ProjectObservabilityPage — Run Timeline + Failure Analysis +
-- `frontend/src/pages/ProjectPipelinePage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectPlaygroundPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectRecipesPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectTrainingConfigPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectWizardPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectWorkflowPage.tsx` — _(no docstring)_
-- `frontend/src/pages/ProjectWorkspaceLayout.tsx` — _(no docstring)_
-- `frontend/src/pages/SSOLoginPage.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectPipelinePage.tsx` — Multi-tab workflow orchestrator page spanning data ingestion through model export.
+- `frontend/src/pages/ProjectPlaygroundPage.tsx` — Prompt testing page against local or runtime adapters with response feedback logging.
+- `frontend/src/pages/ProjectRecipesPage.tsx` — Pipeline recipe catalog page for applying, configuring, and monitoring template-based workflows.
+- `frontend/src/pages/ProjectTrainingConfigPage.tsx` — Dedicated training configuration page with essentials and advanced toggle modes.
+- `frontend/src/pages/ProjectWizardPage.tsx` — Autopilot planning assistant page for configuration recommendations and intent clarification.
+- `frontend/src/pages/ProjectWorkflowPage.tsx` — Visual workflow builder page for DAG editing, execution monitoring, and stage orchestration.
+- `frontend/src/pages/ProjectWorkspaceLayout.tsx` — Root layout for project workspace providing routing context, sidebar, topbar, and command palette.
+- `frontend/src/pages/SSOLoginPage.tsx` — Authentication page supporting SSO integration and local username/password login.
 
 ## Frontend · Components (by domain)
 
@@ -380,53 +380,53 @@ session-start guidance.
 - `frontend/src/components/coach/CoachStrip.tsx` — Per-panel Coach Mode strip (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/coach/CoachSuggestion.tsx` — One Coach Mode suggestion card with a click-to-execute action
 - `frontend/src/components/coach/CoachToggle.tsx` — TopBar toggle for Coach Mode (USER-SUCCESS Epic 4 Phase 1).
-- `frontend/src/components/compression/CompressionPanel.tsx` — _(no docstring)_
+- `frontend/src/components/compression/CompressionPanel.tsx` — Model quantization UI with format selection, ONNX/GGUF conversion, and benchmark reporting.
 - `frontend/src/components/dashboard/DemoProjectTiles.tsx` — DemoProjectTiles — entry-point tiles on the project list that seed a
 - `frontend/src/components/dashboard/FirstRunCheatSheet.tsx` — FirstRunCheatSheet — one-time orientation card on the project list
-- `frontend/src/components/dashboard/PipelineProgress.tsx` — _(no docstring)_
-- `frontend/src/components/dashboard/ProjectCard.tsx` — _(no docstring)_
-- `frontend/src/components/data/CleaningPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioAssistPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioCoachRailPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioDatasetVersionsPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioDomainDetectionPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioGoldSetWorkbenchPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioMappingPreviewPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioOverviewPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioPrepareDatasetPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioQualitySafetyPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioReviewQueuePanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioSourcesSummaryPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioSyntheticPlaybookCenterPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioSyntheticQualityPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.tsx` — _(no docstring)_
+- `frontend/src/components/dashboard/PipelineProgress.tsx` — Linear progress tracker showing pipeline stage completion with percentage and status indicators.
+- `frontend/src/components/dashboard/ProjectCard.tsx` — Project summary card displaying status, description, stats, and pipeline-stage progress.
+- `frontend/src/components/data/CleaningPanel.tsx` — Panel for async batch document cleaning with progress tracking and quality scoring.
+- `frontend/src/components/data/DataStudioAssistPanel.tsx` — Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
+- `frontend/src/components/data/DataStudioCoachRailPanel.tsx` — Coach rail panel for DataStudio checks with blocked / attention / ready verdicts.
+- `frontend/src/components/data/DataStudioDatasetVersionsPanel.tsx` — Panel showing prepared dataset version history with reproducibility and reuse-signal checks.
+- `frontend/src/components/data/DataStudioDomainDetectionPanel.tsx` — Panel for domain detection and confirmation with profile assignment and signal review.
+- `frontend/src/components/data/DataStudioGoldSetWorkbenchPanel.tsx` — Panel for gold-set coverage metrics, field alignment checks, and review-state assessment.
+- `frontend/src/components/data/DataStudioMappingPreviewPanel.tsx` — Panel showing sampled row mapping preview against the active recipe with required-field coverage.
+- `frontend/src/components/data/DataStudioOverviewPanel.tsx` — Overview panel summarizing data readiness with blocker / warning / info issue display.
+- `frontend/src/components/data/DataStudioPrepareDatasetPanel.tsx` — Panel for dataset preparation split configuration with recipe, mapping, and manifest alignment checks.
+- `frontend/src/components/data/DataStudioQualitySafetyPanel.tsx` — Panel for quality and safety checks including PII detection, toxicity, and data-leakage scanning.
+- `frontend/src/components/data/DataStudioReviewQueuePanel.tsx` — Panel tracking review work queues across synthetic, Gold Set, and annotation workflows.
+- `frontend/src/components/data/DataStudioSourcesSummaryPanel.tsx` — Panel summarizing ingested data sources with file counts, documents, and dataset distribution.
+- `frontend/src/components/data/DataStudioSyntheticPlaybookCenterPanel.tsx` — Panel for recipe-aware synthetic generation playbooks with prerequisites and local backend readiness.
+- `frontend/src/components/data/DataStudioSyntheticQualityPanel.tsx` — Panel for synthetic-row quality analytics with review gates and anchor consistency checks.
+- `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.tsx` — Panel with domain-aware synthetic-data expansion recommendations and setup guidance.
 - `frontend/src/components/data/DatasetImportWizard.tsx` — Generic dataset-import wizard (Phase F of DATASET_IMPORT_PLAN.md).
-- `frontend/src/components/data/DatasetPrepPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/DatasetVersionPanel.tsx` — _(no docstring)_
+- `frontend/src/components/data/DatasetPrepPanel.tsx` — Panel for dataset preparation with profiling, normalization, and split-manifest configuration.
+- `frontend/src/components/data/DatasetVersionPanel.tsx` — Panel listing prepared dataset versions with record counts, types, and creation timestamps.
 - `frontend/src/components/data/DocumentSampleAccordion.tsx` — Inline 10-random-rows preview for the Ingested Documents table.
-- `frontend/src/components/data/EDADashboard.tsx` — _(no docstring)_
-- `frontend/src/components/data/GoldSetPanel.tsx` — _(no docstring)_
-- `frontend/src/components/data/IngestionPanel.tsx` — _(no docstring)_
+- `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
+- `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
+- `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
 - `frontend/src/components/data/SavedMappingsPanel.tsx` — Saved dataset-import mappings panel (Phase G of DATASET_IMPORT_PLAN).
 - `frontend/src/components/data/SynthReviewQueue.tsx` — SynthReviewQueue — USER-SUCCESS Epic 2b.
-- `frontend/src/components/data/SyntheticPanel.tsx` — _(no docstring)_
+- `frontend/src/components/data/SyntheticPanel.tsx` — Panel for generating synthetic training data with playbook selection, batch async support, and review queue.
 - `frontend/src/components/deployment/DeployabilityScoreCard.tsx` — DeployabilityScoreCard — readiness report (priority.md P30, P28).
 - `frontend/src/components/deployment/DeployedVersionsList.tsx` — DeployedVersionsList — served-versions table for the deployment page
 - `frontend/src/components/deployment/DriftPanel.tsx` — DriftPanel — drift verdict + history for a deployment version
 - `frontend/src/components/deployment/TelemetryPanel.tsx` — TelemetryPanel — live request volume / latency / error / token-throughput
-- `frontend/src/components/domain/DomainPackManager.tsx` — _(no docstring)_
-- `frontend/src/components/domain/DomainProfileManager.tsx` — _(no docstring)_
+- `frontend/src/components/domain/DomainPackManager.tsx` — Editor for policy bundles including normalizer, validator, and evaluator hook selection.
+- `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
-- `frontend/src/components/evaluation/EvalPanel.tsx` — _(no docstring)_
-- `frontend/src/components/evaluation/FailureClustersPanel.tsx` — _(no docstring)_
-- `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
+- `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
+- `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
-- `frontend/src/components/evaluation/ScorecardPanel.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
-- `frontend/src/components/export/ExportPanel.tsx` — _(no docstring)_
+- `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
 - `frontend/src/components/extensions/ScaffoldForm.tsx` — ScaffoldForm — generate a contract-valid plugin scaffold from the
 - `frontend/src/components/extensions/ScaffoldPreview.tsx` — ScaffoldPreview — display the generated scaffold files inline with
@@ -439,9 +439,9 @@ session-start guidance.
 - `frontend/src/components/layout/CommandPalette.tsx` — CommandPalette — global Cmd-K / Ctrl-K palette for fast navigation.
 - `frontend/src/components/layout/NotificationBell.tsx` — NotificationBell — Hardening Phase H1.
 - `frontend/src/components/layout/ParentProjectBackChip.tsx` — ParentProjectBackChip — USER-SUCCESS Epic 7 Phase 7d.
-- `frontend/src/components/layout/ProjectSidebar.tsx` — _(no docstring)_
-- `frontend/src/components/layout/TopBar.tsx` — _(no docstring)_
-- `frontend/src/components/layout/WorkspaceFlowHint.tsx` — _(no docstring)_
+- `frontend/src/components/layout/ProjectSidebar.tsx` — Collapsible navigation hub with pipeline tabs, settings, and command-palette access.
+- `frontend/src/components/layout/TopBar.tsx` — Header with user menu, runtime settings editor, documentation link, and notification bell.
+- `frontend/src/components/layout/WorkspaceFlowHint.tsx` — Advisory chip showing current pipeline stage progress and recommending the next action.
 - `frontend/src/components/manifest/ManifestExportButton.tsx` — ManifestExportButton — small reusable button that exports the project's
 - `frontend/src/components/manifest/ManifestSummaryCard.tsx` — ManifestSummaryCard — compact "Pipeline-as-Code" preview rendered at
 - `frontend/src/components/observability/EventDrilldownDrawer.tsx` — EventDrilldownDrawer — per-run event stream (priority.md P36, P31).
@@ -449,32 +449,32 @@ session-start guidance.
 - `frontend/src/components/observability/RunTimelineFilters.tsx` — RunTimelineFilters — controlled filter bar for the timeline page
 - `frontend/src/components/observability/SupportBundleCard.tsx` — SupportBundleCard — generate + list + download surface for the
 - `frontend/src/components/observability/TimelineTree.tsx` — TimelineTree — recursive tree view of P32 timeline nodes
-- `frontend/src/components/pipeline/PipelineGraphEditor.tsx` — _(no docstring)_
-- `frontend/src/components/pipeline/PipelineGraphPreview.tsx` — _(no docstring)_
-- `frontend/src/components/pipeline/WorkflowRunMonitor.tsx` — _(no docstring)_
+- `frontend/src/components/pipeline/PipelineGraphEditor.tsx` — Canvas-based DAG editor for node layout, contract configuration, and validation.
+- `frontend/src/components/pipeline/PipelineGraphPreview.tsx` — Read-only pipeline visualization with dry-run, validation, and execution controls.
+- `frontend/src/components/pipeline/WorkflowRunMonitor.tsx` — Workflow execution tracker with autopilot gating, queueing, and run-history display.
 - `frontend/src/components/projects/ApproachChip.tsx` — Decision-engine chip (Theme 7).
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
-- `frontend/src/components/shared/GettingStartedWizard.tsx` — _(no docstring)_
-- `frontend/src/components/shared/ReadinessPanel.tsx` — _(no docstring)_
-- `frontend/src/components/shared/Skeleton.tsx` — _(no docstring)_
-- `frontend/src/components/shared/StepFooter.tsx` — _(no docstring)_
-- `frontend/src/components/shared/Term.tsx` — _(no docstring)_
-- `frontend/src/components/shared/TerminalConsole.tsx` — _(no docstring)_
-- `frontend/src/components/shared/Toast.tsx` — _(no docstring)_
-- `frontend/src/components/training/AlignmentScaffoldPanel.tsx` — _(no docstring)_
-- `frontend/src/components/training/ChatPlaygroundPanel.tsx` — _(no docstring)_
+- `frontend/src/components/shared/GettingStartedWizard.tsx` — Eight-step pipeline walkthrough modal introducing the data-to-deployment workflow.
+- `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
+- `frontend/src/components/shared/Skeleton.tsx` — Configurable animated placeholder component for content loading states.
+- `frontend/src/components/shared/StepFooter.tsx` — Footer bar with completion badge and conditional next-step navigation button.
+- `frontend/src/components/shared/Term.tsx` — Glossary popover component providing beginner/advanced terminology with definitions.
+- `frontend/src/components/shared/TerminalConsole.tsx` — Console viewer with auto-scroll and error highlighting for streaming runner output.
+- `frontend/src/components/shared/Toast.tsx` — Toast notification renderer with achievement support and auto-dismiss capability.
+- `frontend/src/components/training/AlignmentScaffoldPanel.tsx` — DPO/alignment recipe resolver and dataset quality validator.
+- `frontend/src/components/training/ChatPlaygroundPanel.tsx` — Interactive prompt session manager supporting multiple inference backends and providers.
 - `frontend/src/components/training/CheckpointsPanel.tsx` — CheckpointsPanel — P20 Checkpoints side panel.
 - `frontend/src/components/training/DatasetFitCard.tsx` — DatasetFitCard — "Why this dataset isn't ready for SFT" explainer
-- `frontend/src/components/training/ExperimentCompare.tsx` — _(no docstring)_
-- `frontend/src/components/training/HardwareRecommenderModal.tsx` — _(no docstring)_
-- `frontend/src/components/training/ModelRegistryPanel.tsx` — _(no docstring)_
+- `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
+- `frontend/src/components/training/HardwareRecommenderModal.tsx` — Configuration recommender modal based on available GPU profiles and task type.
+- `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
-- `frontend/src/components/training/TokenizationPanel.tsx` — _(no docstring)_
+- `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
-- `frontend/src/components/training/TrainingPanel.tsx` — _(no docstring)_
+- `frontend/src/components/training/TrainingPanel.tsx` — Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
 - `frontend/src/components/training/WhyThisPlanPanel.tsx` — WhyThisPlanPanel — P20 Training Planner reproducibility & cost view.
 - `frontend/src/components/video/TabVideoLink.tsx` — TabVideoLink — small "▶ Watch the 2-minute walkthrough" affordance
 - `frontend/src/components/video/YouTubeEmbedModal.tsx` — YouTubeEmbedModal — in-page modal for the inline-video-embed

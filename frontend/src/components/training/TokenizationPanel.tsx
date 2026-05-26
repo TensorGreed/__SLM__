@@ -1,3 +1,7 @@
+/**
+ * Token distribution analyzer with histogram and sequence-length statistics.
+ */
+
 import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import api from '../../api/client';

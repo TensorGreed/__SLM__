@@ -1,3 +1,7 @@
+/**
+ * Interactive prompt session manager supporting multiple inference backends and providers.
+ */
+
 import { useEffect, useState } from 'react';
 
 import api from '../../api/client';

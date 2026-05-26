@@ -1,3 +1,7 @@
+/**
+ * Workflow execution tracker with autopilot gating, queueing, and run-history display.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';

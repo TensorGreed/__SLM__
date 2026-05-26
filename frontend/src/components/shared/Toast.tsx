@@ -1,3 +1,7 @@
+/**
+ * Toast notification renderer with achievement support and auto-dismiss capability.
+ */
+
 import { useState } from 'react';
 import { useToastStore, type ToastMessage } from '../../stores/toastStore';
 import AchievementToast from '../gamification/AchievementToast';

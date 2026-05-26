@@ -1,3 +1,7 @@
+/**
+ * Autopilot planning assistant page for configuration recommendations and intent clarification.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 

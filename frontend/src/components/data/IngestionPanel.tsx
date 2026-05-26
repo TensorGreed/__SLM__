@@ -1,3 +1,7 @@
+/**
+ * Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
+ */
+
 import { Fragment, useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { RawDocument, DocumentStatus } from '../../types';

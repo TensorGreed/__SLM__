@@ -1,3 +1,7 @@
+/**
+ * Panel listing prepared dataset versions with record counts, types, and creation timestamps.
+ */
+
 import { useState, useEffect } from 'react';
 import { GitBranch, FileText, Clock, ArrowRight, CheckCircle } from 'lucide-react';
 import api from '../../api/client';

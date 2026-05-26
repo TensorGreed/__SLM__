@@ -1,3 +1,7 @@
+/**
+ * Coach rail panel for DataStudio checks with blocked / attention / ready verdicts.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

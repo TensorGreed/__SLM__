@@ -1,3 +1,7 @@
+/**
+ * Glossary popover component providing beginner/advanced terminology with definitions.
+ */
+
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { getTermDefinition, TERM_DEFINITIONS } from './glossary';

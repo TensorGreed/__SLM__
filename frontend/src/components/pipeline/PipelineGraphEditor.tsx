@@ -1,3 +1,7 @@
+/**
+ * Canvas-based DAG editor for node layout, contract configuration, and validation.
+ */
+
 import {
     useCallback,
     useEffect,

@@ -1,3 +1,7 @@
+/**
+ * Zustand store for per-project Coach Mode toggle with XP-gated defaults and localStorage persistence.
+ */
+
 import { create } from 'zustand';
 
 // Coach Mode toggle is per-project. The store holds explicit user

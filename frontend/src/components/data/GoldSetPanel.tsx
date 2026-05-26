@@ -1,3 +1,7 @@
+/**
+ * Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
+ */
+
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';

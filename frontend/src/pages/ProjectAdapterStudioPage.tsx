@@ -1,3 +1,7 @@
+/**
+ * Free-form schema explorer page for mapping custom JSON payloads to adapter-compatible structures.
+ */
+
 import { useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 

@@ -1,3 +1,7 @@
+/**
+ * Panel with domain-aware synthetic-data expansion recommendations and setup guidance.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

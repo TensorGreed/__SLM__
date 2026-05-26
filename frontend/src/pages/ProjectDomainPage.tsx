@@ -1,3 +1,7 @@
+/**
+ * Combined domain pack + profile manager page for preprocessing, validation, and defaults.
+ */
+
 import DomainPackManager from '../components/domain/DomainPackManager';
 import DomainProfileManager from '../components/domain/DomainProfileManager';
 import { useProjectStore } from '../stores/projectStore';

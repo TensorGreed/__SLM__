@@ -1,3 +1,7 @@
+/**
+ * Root layout for project workspace providing routing context, sidebar, topbar, and command palette.
+ */
+
 import { useEffect, useMemo } from 'react';
 import { Navigate, Outlet, useParams } from 'react-router-dom';
 

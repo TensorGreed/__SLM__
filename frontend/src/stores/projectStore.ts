@@ -1,3 +1,7 @@
+/**
+ * Zustand store for the active project, pipeline status, project list, and CRUD operations.
+ */
+
 import { create } from 'zustand';
 import api from '../api/client';
 import type { Project, PipelineStatusResponse, TabKey } from '../types';

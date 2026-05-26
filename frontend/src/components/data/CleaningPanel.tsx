@@ -1,3 +1,7 @@
+/**
+ * Panel for async batch document cleaning with progress tracking and quality scoring.
+ */
+
 import { useState, useCallback, useEffect } from 'react';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';

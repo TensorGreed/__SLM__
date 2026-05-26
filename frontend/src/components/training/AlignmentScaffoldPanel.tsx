@@ -1,3 +1,7 @@
+/**
+ * DPO/alignment recipe resolver and dataset quality validator.
+ */
+
 import { useEffect, useState } from 'react';
 
 import api from '../../api/client';

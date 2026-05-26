@@ -1,3 +1,7 @@
+/**
+ * Searchable model catalog page with compatibility scoring, hardware requirements, and training mode filters.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 

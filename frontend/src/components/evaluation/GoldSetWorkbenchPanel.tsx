@@ -1,3 +1,7 @@
+/**
+ * Interactive Q&A pair editor for gold-set curation and quality annotation.
+ */
+
 import {
     useCallback,
     useEffect,

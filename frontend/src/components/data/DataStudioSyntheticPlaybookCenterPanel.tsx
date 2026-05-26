@@ -1,3 +1,7 @@
+/**
+ * Panel for recipe-aware synthetic generation playbooks with prerequisites and local backend readiness.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

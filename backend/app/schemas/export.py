@@ -1,3 +1,5 @@
+"""Pydantic shapes for compression / optimization candidate proposals + export requests."""
+
 from typing import Any
 
 from pydantic import BaseModel, Field

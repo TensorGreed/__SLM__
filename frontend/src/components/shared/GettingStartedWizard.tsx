@@ -1,3 +1,7 @@
+/**
+ * Eight-step pipeline walkthrough modal introducing the data-to-deployment workflow.
+ */
+
 import './GettingStartedWizard.css';
 
 interface GettingStartedWizardProps {

@@ -1,3 +1,7 @@
+/**
+ * Panel tracking review work queues across synthetic, Gold Set, and annotation workflows.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

@@ -1,3 +1,7 @@
+/**
+ * Data preparation hub page with multi-panel visualization for ingestion through export stages.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { ChevronDown, ChevronRight, ExternalLink, Search, X } from 'lucide-react';

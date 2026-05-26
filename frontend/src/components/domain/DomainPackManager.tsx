@@ -1,3 +1,7 @@
+/**
+ * Editor for policy bundles including normalizer, validator, and evaluator hook selection.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import api from '../../api/client';

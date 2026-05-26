@@ -1,3 +1,7 @@
+/**
+ * Prompt testing page against local or runtime adapters with response feedback logging.
+ */
+
 import { useOutletContext } from 'react-router-dom';
 
 import ChatPlaygroundPanel from '../components/training/ChatPlaygroundPanel';

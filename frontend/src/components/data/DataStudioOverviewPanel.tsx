@@ -1,3 +1,7 @@
+/**
+ * Overview panel summarizing data readiness with blocker / warning / info issue display.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

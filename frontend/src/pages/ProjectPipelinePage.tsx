@@ -1,3 +1,7 @@
+/**
+ * Multi-tab workflow orchestrator page spanning data ingestion through model export.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 

@@ -1,3 +1,7 @@
+/**
+ * Model export orchestrator supporting format conversion and deployment-target provisioning.
+ */
+
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { TerminalConsole } from '../shared/TerminalConsole';

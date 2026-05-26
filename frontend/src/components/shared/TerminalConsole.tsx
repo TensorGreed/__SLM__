@@ -1,3 +1,7 @@
+/**
+ * Console viewer with auto-scroll and error highlighting for streaming runner output.
+ */
+
 import { useRef, useEffect } from "react";
 import "./TerminalConsole.css";
 

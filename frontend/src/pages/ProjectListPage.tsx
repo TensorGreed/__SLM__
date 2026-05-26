@@ -1,3 +1,7 @@
+/**
+ * Dashboard page for creating, browsing, filtering, and deleting projects with approach recommendation.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 

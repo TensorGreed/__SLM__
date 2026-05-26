@@ -1,3 +1,7 @@
+/**
+ * Quality gate reporter showing pass/fail decisions with missing-metric detection.
+ */
+
 import React, { useEffect, useState } from 'react';
 import api from '../../api/client';
 import { Term } from '../shared/Term';

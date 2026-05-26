@@ -1,3 +1,5 @@
+"""Hardware target catalog API — list deploy-target profiles and check base-model compatibility against them."""
+
 from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel

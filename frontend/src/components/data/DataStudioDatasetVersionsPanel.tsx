@@ -1,3 +1,7 @@
+/**
+ * Panel showing prepared dataset version history with reproducibility and reuse-signal checks.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

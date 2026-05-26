@@ -1,3 +1,7 @@
+/**
+ * Progress guide page with achievement tracking and recommended next actions for pipeline advancement.
+ */
+
 import { useMemo, useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 

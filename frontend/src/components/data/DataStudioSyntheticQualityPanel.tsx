@@ -1,3 +1,7 @@
+/**
+ * Panel for synthetic-row quality analytics with review gates and anchor consistency checks.
+ */
+
 import { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,

@@ -1,3 +1,7 @@
+/**
+ * Collapsible navigation hub with pipeline tabs, settings, and command-palette access.
+ */
+
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {

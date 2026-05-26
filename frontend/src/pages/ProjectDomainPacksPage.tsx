@@ -1,3 +1,7 @@
+/**
+ * Page for assigning reusable domain pack policy bundles and hook defaults to projects.
+ */
+
 import { useOutletContext } from 'react-router-dom';
 
 import DomainPackManager from '../components/domain/DomainPackManager';

@@ -1,3 +1,7 @@
+/**
+ * Configuration recommender modal based on available GPU profiles and task type.
+ */
+
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
 

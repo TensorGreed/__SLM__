@@ -1,3 +1,7 @@
+/**
+ * Dedicated training configuration page with essentials and advanced toggle modes.
+ */
+
 import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 

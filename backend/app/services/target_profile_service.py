@@ -1,3 +1,5 @@
+"""Plugin-extensible registry of deployment target profiles with constraint validation and HF-introspection compatibility checks."""
+
 import copy
 import importlib
 import inspect

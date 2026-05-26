@@ -1,3 +1,7 @@
+/**
+ * CRUD interface for task schemas with quality checks, split rules, and normalization config.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import api from '../../api/client';

@@ -1,3 +1,7 @@
+/**
+ * Zustand store for toast notifications with optional achievement payload and auto-dismiss timers.
+ */
+
 import { create } from 'zustand';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'achievement';

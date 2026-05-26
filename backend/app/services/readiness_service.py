@@ -1,3 +1,5 @@
+"""Pre-deployment readiness checks for a project — GPU, deps, paths, secrets, with pass/warn/fail verdicts."""
+
 import shutil
 import subprocess
 import sys
