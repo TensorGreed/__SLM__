@@ -13,6 +13,7 @@ Phase 9b wires retrieval into actual inference.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -147,12 +148,74 @@ async def preview_auto_rag(
     }
 
 
+@router.get("/comparison")
+async def get_auto_rag_comparison(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Phase 9d — return the cached auto-RAG comparison written by
+    the harness's ``--project`` mode. Read-only; the inference run is
+    expensive (~2 min on GB10) and out-of-band by design.
+
+    Status codes:
+      200 — comparison cached on disk; payload includes aggregate F1
+            (with / without RAG) + per-row records with retrieved
+            chunks for the expandable cards.
+      400 — project missing a recipe / recipe not RAG-eligible.
+      404 — project not found OR no comparison cached yet (the
+            ``detail`` includes the exact harness command to run).
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+    selected_recipe = project.selected_recipe or {}
+    recipe_id = selected_recipe.get("recipe_id")
+    if not recipe_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Project has no selected recipe — auto-RAG comparison needs the recipe.",
+        )
+    if recommended_text_keys_for_recipe(recipe_id) is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Recipe {recipe_id!r} has no auto-RAG corpus shape yet "
+                f"(Phase 9a covers qa-sft only)."
+            ),
+        )
+    cache_path = (
+        settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
+    )
+    if not cache_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No auto-RAG comparison cached yet for project "
+                f"{project_id}. Run: ``python -m backend.scripts."
+                f"auto_rag_ab --project {project_id}`` to generate "
+                f"the comparison."
+            ),
+        )
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cached comparison at {cache_path} is unreadable: {e}",
+        ) from e
+    return {
+        "project_id": project_id,
+        "recipe_id": recipe_id,
+        "cached_at": payload.get("cached_at"),
+        "summary": payload.get("summary") or {},
+        "rows": payload.get("rows") or [],
+    }
+
+
 def _index_row_count(index_path: Path) -> int:
     """Cheap doc_count read for the cache-validity check. Returns
     -1 on any read error so the caller treats it as "needs rebuild"
     rather than crashing on a malformed index file."""
-    import json
-
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):

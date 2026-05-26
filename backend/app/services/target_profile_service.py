@@ -78,6 +78,35 @@ _BUILTIN_TARGET_PROFILES = [
         },
         "inference_runner_default": "exporter.onnx",
     },
+    {
+        # Phase 9d (USER-SUCCESS Epic 9) — serves a QA-SFT model
+        # with auto-RAG retrieval enabled at inference time. The
+        # actual auto-RAG enablement comes from the create_experiment
+        # default-on heuristic (recipe=qa-sft → config.auto_rag.enabled
+        # = True); this profile is the user-facing "this is the
+        # RAG-augmented serve target" choice. Phase 9c A/B measured
+        # +146% F1 lift over the SFT-only baseline on policy-qa-style.
+        "id": "qa_with_auto_rag",
+        "name": "QA with auto-RAG",
+        "description": (
+            "Question-answering with BM25 retrieval at inference time. "
+            "The trained model receives top-3 retrieved (Q, A) pairs "
+            "from the training corpus as a system-message preamble "
+            "for each request — generalizes via retrieval instead of "
+            "memorization. Best fit for knowledge-retrieval tasks "
+            "where reference Q&A pairs already exist in the gold set."
+        ),
+        "device_class": "server",
+        "constraints": {
+            # vLLM-compatible — retrieval adds a few hundred tokens
+            # to the prompt so the model needs enough context window
+            # to fit preamble + question + generation. 8GB VRAM is
+            # comfortable for SmolLM2-135M with 3 retrieved pairs.
+            "min_vram_gb": 8.0,
+            "preferred_formats": ["huggingface"],
+        },
+        "inference_runner_default": "runner.vllm",
+    },
 ]
 
 _TARGET_REGISTRY_LOCK = threading.RLock()

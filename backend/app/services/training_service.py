@@ -91,6 +91,38 @@ def _experiment_dir(project_id: int, experiment_id: int) -> Path:
     return d
 
 
+def _decide_auto_rag_default(*, project_obj: Project | None) -> dict:
+    """Phase 9d — return {'should_default_on': bool, 'reason': str}.
+
+    Fires True iff the project's recipe is RAG-eligible (today: qa-sft
+    only, via auto_rag_service's recipe map). Returns False with a
+    categorical reason otherwise — the reason flows into
+    ``config._auto_rag_auto_defaulted`` for the UI to show on the
+    experiment card so users understand why auto-RAG is (or isn't)
+    on by default.
+
+    Unlike curriculum's default, auto-RAG doesn't have a row-count
+    threshold — the Phase 9c A/B (+146% lift) was on the same ~140-
+    row training set we'd see in most QA-SFT projects, and the auto-
+    RAG benefit grows with corpus size (more training rows → better
+    retrieval), so there's no thin-vs-thick distinction to make."""
+    from app.services.auto_rag_service import recommended_text_keys_for_recipe
+
+    selected_recipe = (project_obj.selected_recipe or {}) if project_obj else {}
+    recipe_id = selected_recipe.get("recipe_id")
+    if not recipe_id:
+        return {"should_default_on": False, "reason": "no_recipe_selected"}
+    if recommended_text_keys_for_recipe(recipe_id) is None:
+        return {
+            "should_default_on": False,
+            "reason": f"recipe_has_no_auto_rag:{recipe_id}",
+        }
+    return {
+        "should_default_on": True,
+        "reason": f"rag_eligible_recipe:{recipe_id}",
+    }
+
+
 async def _safe_build_auto_rag_index(
     db: AsyncSession, *, project_id: int
 ) -> dict:
@@ -345,6 +377,22 @@ async def create_experiment(
             config = dict(config)
             config["curriculum"] = True
             config["_curriculum_auto_defaulted"] = auto_decision["reason"]
+
+    # Phase 9d — auto-on heuristic for auto-RAG. Fires only when the
+    # caller hasn't set ``auto_rag`` explicitly. Phase 9c A/B run
+    # (2026-05-25) showed +146.49% F1 lift on the policy-qa-style
+    # QA-SFT template (5 seeds, GB10, SmolLM2-135M-Instruct, 3
+    # epochs). Heuristic gates on recipe alone — qa-sft → on; no
+    # row-count threshold here because the auto-RAG benefit grows
+    # with corpus size (more training rows = better retrieval) and
+    # there's no thin-data overfitting risk like there was for
+    # curriculum.
+    if "auto_rag" not in config:
+        auto_rag_decision = _decide_auto_rag_default(project_obj=project_obj)
+        if auto_rag_decision["should_default_on"]:
+            config = dict(config)
+            config["auto_rag"] = {"enabled": True}
+            config["_auto_rag_auto_defaulted"] = auto_rag_decision["reason"]
 
     exp = Experiment(
         project_id=project_id,

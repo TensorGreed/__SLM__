@@ -9,6 +9,7 @@ import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
 import SftLiftPanel from './SftLiftPanel';
+import AutoRagComparisonPanel from './AutoRagComparisonPanel';
 import CoachStrip from '../coach/CoachStrip';
 import './EvalPanel.css';
 
@@ -1589,6 +1590,12 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     refreshToken={evalResults.length}
                 />
             )}
+
+            {/* Phase 9d — auto-RAG with-vs-without comparison. Renders */}
+            {/* only for QA-SFT projects (the panel itself self-hides */}
+            {/* when the recipe is ineligible via a 400 from the API). */}
+            <AutoRagComparisonPanel projectId={projectId} />
+
 
             {latestInference && (
                 <div className="card" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 'var(--space-md)' }}>

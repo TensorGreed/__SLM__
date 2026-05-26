@@ -839,6 +839,75 @@ async def _read_latest_eval_result(
     return result.scalars().first()
 
 
+def _auto_rag_eval_nudge(
+    project_id: int,
+    recipe_id: str | None,
+    pass_rate: float | None,
+    latest_experiment_config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Phase 9d — info-severity nudge on the Eval tab when:
+    - project recipe is qa-sft (RAG-eligible)
+    - latest eval pass_rate < 0.5 (the model is struggling)
+    - the experiment that produced it has ``auto_rag.enabled`` either
+      missing or false (so flipping auto-RAG on for the next training
+      is a concrete next step)
+
+    Cites the Phase 9c A/B numbers verbatim so the recommendation is
+    auditable. Returns None on any skip condition (no double-coaching
+    on top of the existing pass-rate suggestion)."""
+    if not recipe_id or pass_rate is None:
+        return None
+    from app.services.auto_rag_service import recommended_text_keys_for_recipe
+
+    if recommended_text_keys_for_recipe(recipe_id) is None:
+        return None  # recipe not RAG-eligible
+    if pass_rate >= 0.5:
+        return None  # only fire when the model is meaningfully struggling
+    # Check whether the experiment had auto_rag on. ``auto_rag`` lives
+    # at config["auto_rag"]["enabled"] (Phase 9d default-on shape) but
+    # we also tolerate the legacy ``config.auto_rag == True`` shape
+    # for forward-compat with whatever the playground request used.
+    cfg = latest_experiment_config or {}
+    auto_rag_block = cfg.get("auto_rag")
+    auto_rag_on = False
+    if isinstance(auto_rag_block, dict):
+        auto_rag_on = bool(auto_rag_block.get("enabled"))
+    elif isinstance(auto_rag_block, bool):
+        auto_rag_on = auto_rag_block
+    if auto_rag_on:
+        return None  # already on — no nudge
+
+    return {
+        "id": "eval:auto-rag-recommended",
+        "title": (
+            f"QA model at {pass_rate * 100:.0f}% pass rate — try auto-RAG "
+            f"on the next training run"
+        ),
+        "body": (
+            "Auto-RAG retrieves relevant (Q, A) pairs from your training "
+            "corpus at inference time and prepends them as context. "
+            "Phase 9c A/B (2026-05-25, 5 seeds, GB10) measured "
+            "**+146% F1 lift on the policy-qa-style QA-SFT template** "
+            "vs the SFT-only baseline. New qa-sft experiments now default "
+            "to auto-RAG on; this one didn't, so the next experiment "
+            "will pick it up automatically. Or flip it on for an "
+            "individual playground chat without re-training."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open Training Config",
+            "params": {"target": "training-config"},
+        },
+        "context": {
+            "pass_rate": round(float(pass_rate), 4),
+            "phase_9c_lift_pct": 146.49,
+            "phase_9c_template": "policy-qa-style",
+            "ab_run_date": "2026-05-25",
+        },
+    }
+
+
 async def _eval_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -849,10 +918,16 @@ async def _eval_stage_suggestions(
     via ``cluster_eval_result_failures`` (Epic 2b primitive) and
     surfaces a click-to-execute ``augment_from_cluster`` action
     targeting the largest cluster.
+
+    Phase 9d adds an info-severity auto-RAG nudge for struggling
+    qa-sft projects (fires independently of the failure-cluster
+    suggestion; both can render together).
     """
     from app.services.failure_cluster_service import (
         cluster_eval_result_failures,
     )
+
+    suggestions: list[dict[str, Any]] = []
 
     latest = await _read_latest_eval_result(db, project.id)
     if latest is None:
@@ -862,8 +937,36 @@ async def _eval_stage_suggestions(
         return []
 
     pass_rate = latest.pass_rate
+
+    # Phase 9d — auto-RAG nudge runs independently of the failure-
+    # cluster suggestion (different lever on different timeline).
+    # Append now so it surfaces even when the cluster path no-ops.
+    recipe_id = _recipe_id_for(project)
+    # Read the latest experiment's config — needed to check whether
+    # auto_rag was already enabled. Best-effort; if the lookup
+    # fails, the nudge gates as "not enabled" which is the safe
+    # default (worst case: false-positive nudge).
+    latest_exp_config: dict[str, Any] | None = None
+    try:
+        from app.models.experiment import Experiment
+
+        exp_row = await db.execute(
+            select(Experiment)
+            .where(Experiment.id == latest.experiment_id)
+        )
+        exp = exp_row.scalar_one_or_none()
+        if exp is not None:
+            latest_exp_config = dict(exp.config or {})
+    except Exception:  # noqa: BLE001 — never block the eval strip on this
+        latest_exp_config = None
+    nudge = _auto_rag_eval_nudge(
+        project.id, recipe_id, pass_rate, latest_exp_config
+    )
+    if nudge:
+        suggestions.append(nudge)
+
     if pass_rate is None or pass_rate >= EVAL_PASS_RATE_HEALTHY:
-        return []
+        return suggestions
 
     severity: Severity = (
         "critical" if pass_rate < EVAL_PASS_RATE_CRITICAL else "warning"
@@ -876,15 +979,16 @@ async def _eval_stage_suggestions(
     except ValueError:
         # Eval row was deleted between the read + the cluster call —
         # treat as no-suggestion. (Race so rare it's not worth a hard
-        # error; the next poll will recover.)
-        return []
+        # error; the next poll will recover.) Keep any earlier
+        # suggestions (e.g. the Phase 9d auto-RAG nudge).
+        return suggestions
 
     clusters = cluster_payload.get("clusters") or []
     if not clusters:
         # Below-threshold pass rate but no clusterable failures (e.g.
         # all failures share no signal). Surface a softer "review
         # eval" navigate suggestion rather than nothing.
-        return [{
+        suggestions.append({
             "id": "eval:low-pass-rate-no-clusters",
             "title": (
                 f"Eval pass rate is {pass_rate * 100:.0f}% — below the "
@@ -905,7 +1009,8 @@ async def _eval_stage_suggestions(
                 "pass_rate": round(float(pass_rate), 4),
                 "eval_result_id": latest.id,
             },
-        }]
+        })
+        return suggestions
 
     # Largest cluster first — that's the one whose augmentation lifts
     # the most failed rows. Tie-break on confidence to prefer the
@@ -922,7 +1027,7 @@ async def _eval_stage_suggestions(
     reason_code = str(top.get("reason_code") or "unknown")
     share = float(top.get("share_of_total") or 0.0)
 
-    return [{
+    suggestions.append({
         "id": "eval:top-failure-cluster",
         "title": (
             f"Top failure cluster: {failure_count} {reason_code} failures "
@@ -953,7 +1058,8 @@ async def _eval_stage_suggestions(
             "failure_count": failure_count,
             "share_of_total": round(share, 4),
         },
-    }]
+    })
+    return suggestions
 
 
 _STAGE_HANDLERS = {

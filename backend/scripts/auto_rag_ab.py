@@ -701,7 +701,7 @@ def format_markdown_block(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="A/B harness for auto-RAG (Phase 9c)."
+        description="A/B harness for auto-RAG (Phase 9c) + per-project comparison cache (Phase 9d)."
     )
     parser.add_argument("--seeds", type=int, default=5)
     parser.add_argument("--num-epochs", type=int, default=3)
@@ -717,11 +717,144 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--markdown-output", type=str, default="auto_rag_ab_results.md",
     )
     parser.add_argument("--templates", type=str, nargs="*", default=None)
+    parser.add_argument(
+        "--project", type=int, default=None,
+        help=(
+            "Phase 9d per-project mode. Runs ONE A/B (1 seed, training "
+            "already done — points at the project's latest experiment's "
+            "model_dir) and writes the comparison to data/projects/"
+            "{project_id}/auto_rag/comparison.json so the Eval-tab "
+            "AutoRagComparisonPanel can render it. Skips the multi-"
+            "template gate flow used for Phase 9c."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def run_project_comparison(project_id: int, *, seed: int = 0) -> dict[str, Any]:
+    """Phase 9d — generate the per-project comparison the Eval-tab
+    panel reads. Reuses the per-row eval inference loop with the
+    project's latest COMPLETED experiment's model_dir. Writes
+    ``data/projects/{project_id}/auto_rag/comparison.json``.
+
+    This function is invoked from the CLI's ``--project`` mode (and
+    can be called programmatically by a future API trigger if we
+    decide to make the comparison runnable from the UI). For now,
+    it's an opt-in manual step the user runs via the CLI.
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.config import settings
+    from app.services.evaluation_service import f1_score
+
+    # Reach into the SQLite directly — avoids the async-DB session
+    # complexity for a CLI-only path. The schema is stable.
+    db_path = str(settings.DATABASE_URL).replace("sqlite+aiosqlite:///", "")
+    if not Path(db_path).exists():
+        raise FileNotFoundError(f"Database not found at {db_path}")
+    with sqlite3.connect(db_path) as con:
+        con.row_factory = sqlite3.Row
+        cur = con.execute(
+            "SELECT id, output_dir, base_model FROM experiments "
+            "WHERE project_id = ? AND status = 'COMPLETED' "
+            "ORDER BY completed_at DESC LIMIT 1",
+            (project_id,),
+        )
+        exp_row = cur.fetchone()
+        if exp_row is None:
+            raise RuntimeError(
+                f"No COMPLETED experiment found for project {project_id}. "
+                f"Train a QA-SFT experiment first."
+            )
+        model_dir = Path(str(exp_row["output_dir"])) / "model"
+        base_model = str(exp_row["base_model"])
+
+    if not model_dir.exists():
+        raise RuntimeError(f"Trained model dir missing at {model_dir}.")
+
+    # Use the project's prepared train + val files as the eval set.
+    prepared_dir = settings.DATA_DIR / "projects" / str(project_id) / "prepared"
+    train_file = prepared_dir / "train.jsonl"
+    val_file = prepared_dir / "val.jsonl"
+    if not train_file.exists() or not val_file.exists():
+        raise RuntimeError(
+            f"Prepared train/val missing at {prepared_dir}. "
+            f"Run dataset prep first."
+        )
+    with train_file.open(encoding="utf-8") as f:
+        train_rows = [json.loads(line) for line in f if line.strip()]
+    with val_file.open(encoding="utf-8") as f:
+        val_rows = [json.loads(line) for line in f if line.strip()]
+
+    print(f"[harness] project={project_id} model={model_dir}")
+    print(f"[harness] train_rows={len(train_rows)} val_rows={len(val_rows)}")
+
+    off_f1s, off_records = evaluate_with_inference(
+        base_model=base_model, model_dir=model_dir,
+        val_rows=val_rows, train_rows=train_rows, with_rag=False,
+    )
+    on_f1s, on_records = evaluate_with_inference(
+        base_model=base_model, model_dir=model_dir,
+        val_rows=val_rows, train_rows=train_rows, with_rag=True,
+    )
+
+    off_mean = statistics.mean(off_f1s) if off_f1s else 0.0
+    on_mean = statistics.mean(on_f1s) if on_f1s else 0.0
+    lift = (on_mean - off_mean) / off_mean * 100.0 if off_mean else None
+
+    # Combine per-row records into one list (off + on side-by-side
+    # by row index) — the UI panel renders an expandable card per
+    # row showing both generations + the retrieved chunks.
+    combined_rows: list[dict[str, Any]] = []
+    for off_r, on_r in zip(off_records, on_records):
+        combined_rows.append({
+            "question": off_r["question"],
+            "reference": off_r["reference"],
+            "without_rag": {
+                "generated": off_r["generated"],
+                "f1": off_r["f1"],
+            },
+            "with_rag": {
+                "generated": on_r["generated"],
+                "f1": on_r["f1"],
+                "retrieved_row_count": on_r["retrieved_row_count"],
+            },
+        })
+
+    payload = {
+        "project_id": project_id,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "experiment_id": int(exp_row["id"]),
+        "base_model": base_model,
+        "model_dir": str(model_dir),
+        "summary": {
+            "off_mean_f1": off_mean,
+            "on_mean_f1": on_mean,
+            "absolute_lift": on_mean - off_mean,
+            "relative_lift_pct": lift,
+            "n_val_rows": len(off_records),
+            "rag_k": RAG_K,
+            "phase_9c_reference_lift_pct": 146.49,
+        },
+        "rows": combined_rows,
+    }
+    cache_path = settings.DATA_DIR / "projects" / str(project_id) / "auto_rag" / "comparison.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[harness] wrote comparison to {cache_path}")
+    print(f"[harness] off_mean={off_mean:.4f}  on_mean={on_mean:.4f}  lift={lift:.2f}%")
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Phase 9d per-project mode — short-circuits the template gate
+    # flow and writes the cached comparison for the Eval-tab panel.
+    if args.project is not None:
+        run_project_comparison(args.project)
+        return 0
+
     templates = tuple(args.templates) if args.templates else QA_SFT_TEMPLATES
     seeds = list(range(args.seeds))
     workdir = (
