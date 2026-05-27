@@ -137,6 +137,7 @@ session-start guidance.
 - `backend/app/services/evaluation_pack_service.py` — Evaluation pack catalog + task-aware auto-gate evaluation helpers.
 - `backend/app/services/evaluation_remediation_service.py` — Closed-loop remediation planning for evaluation failures.
 - `backend/app/services/evaluation_service.py` — Evaluation framework service — metrics, safety, regression comparison.
+- `backend/app/services/experiment_comparison_service.py` — Eval-aware experiment comparison service (E3).
 - `backend/app/services/experiment_recovery_service.py` — Experiment lifecycle recovery actions (Story 1.7).
 - `backend/app/services/export_service.py` — Export & runtime packaging service.
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
@@ -343,6 +344,7 @@ session-start guidance.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
+- `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
@@ -372,6 +374,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectDomainPacksPage.tsx` — Page for assigning reusable domain pack policy bundles and hook defaults to projects.
 - `frontend/src/pages/ProjectDomainPage.tsx` — Combined domain pack + profile manager page for preprocessing, validation, and defaults.
 - `frontend/src/pages/ProjectDomainProfilesPage.tsx` — Page for editing task schemas, quality gates, and domain-specific deployment checks.
+- `frontend/src/pages/ProjectEvalComparePage.tsx` — Side-by-side eval comparison page (E3).
 - `frontend/src/pages/ProjectExtensionStudioPage.tsx` — ProjectExtensionStudioPage — Extension Studio for Wave H power users
 - `frontend/src/pages/ProjectGuidePage.tsx` — Progress guide page with achievement tracking and recommended next actions for pipeline advancement.
 - `frontend/src/pages/ProjectListPage.tsx` — Dashboard page for creating, browsing, filtering, and deleting projects with approach recommendation.
@@ -538,6 +541,7 @@ session-start guidance.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
@@ -775,6 +779,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectAutopilotPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectDataStudioPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectDeploymentsPage.test.tsx` — _(no docstring)_
+- `frontend/src/pages/ProjectEvalComparePage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectExtensionStudioPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectListPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectManifestPage.test.tsx` — _(no docstring)_

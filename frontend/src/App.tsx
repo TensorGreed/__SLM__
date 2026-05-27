@@ -10,6 +10,7 @@ import ProjectWorkflowPage from './pages/ProjectWorkflowPage';
 import ProjectRecipesPage from './pages/ProjectRecipesPage';
 import ProjectRecipePickerPage from './pages/ProjectRecipePickerPage';
 import ProjectTrainingConfigPage from './pages/ProjectTrainingConfigPage';
+import ProjectEvalComparePage from './pages/ProjectEvalComparePage';
 import ProjectPlaygroundPage from './pages/ProjectPlaygroundPage';
 import ProjectGuidePage from './pages/ProjectGuidePage';
 import ProjectWizardPage from './pages/ProjectWizardPage';
@@ -53,6 +54,7 @@ function App() {
               <Route path="recipes" element={<ProjectRecipesPage />} />
               <Route path="recipe-picker" element={<ProjectRecipePickerPage />} />
               <Route path="training-config" element={<ProjectTrainingConfigPage />} />
+              <Route path="eval/compare" element={<ProjectEvalComparePage />} />
               <Route path="models" element={<ProjectModelsPage />} />
               <Route path="adapter-studio" element={<ProjectAdapterStudioPage />} />
               <Route path="autopilot" element={<ProjectAutopilotPage />} />

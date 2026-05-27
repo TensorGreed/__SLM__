@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -238,7 +239,7 @@ describe('EvalPanel remediation planner', () => {
 
   it('generates and renders remediation recommendations with root-cause details', async () => {
     const user = userEvent.setup();
-    render(<EvalPanel projectId={4} />);
+    render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
 
     await user.click(await screen.findByRole('button', { name: 'exp-21' }));
     expect(await screen.findByText('Closed-Loop Remediation Planner')).toBeInTheDocument();

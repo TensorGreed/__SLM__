@@ -501,6 +501,39 @@ async def safety_scorecard(
         raise HTTPException(404, str(e))
 
 
+@router.get("/compare")
+async def compare_two_experiments(
+    project_id: int,
+    a: int,
+    b: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Side-by-side eval comparison for two experiments (E3).
+
+    Returns per-metric deltas, failure-cluster diff (only-in-A,
+    only-in-B, shared with delta), and a config diff (primary fields
+    always present, other changed fields surfaced). The ``regressed``
+    flag fires when B's pass_rate is below A's — drives the
+    "Fix the gap" CTA in the comparison page.
+
+    400 — same experiment passed for a + b (no comparison to make).
+    404 — either experiment missing / not in the project.
+    """
+    if a == b:
+        raise HTTPException(
+            400, "Pick two different experiments — comparing an experiment to itself is a no-op."
+        )
+
+    from app.services.experiment_comparison_service import compare_experiments
+
+    try:
+        return await compare_experiments(
+            db, project_id=project_id, exp_a_id=a, exp_b_id=b,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/{eval_result_id}/failure-clusters")
 async def failure_clusters(
     project_id: int,  # noqa: ARG001 — scoped by router prefix, used for route matching

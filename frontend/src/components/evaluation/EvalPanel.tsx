@@ -3,6 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer } from 'recharts';
 import api from '../../api/client';
 import { useJobsStore } from '../../stores/jobsStore';
@@ -363,6 +364,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
+    const navigate = useNavigate();
     const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
     const [selectedExp, setSelectedExp] = useState<number | null>(null);
     const [evalResults, setEvalResults] = useState<EvalResult[]>([]);
@@ -1010,11 +1012,43 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             )}
 
             {selectedExp && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <h2 style={{ fontSize: 'var(--font-size-lg)', margin: 0 }}>Evaluation Suite</h2>
-                    <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)}>
-                        + Run Held-out Evaluation
-                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        {experiments.length >= 2 && (() => {
+                            // E3 — quick deep-link to the side-by-side eval compare page.
+                            // Pairs the currently-selected experiment (B) with the
+                            // chronologically prior one (A). When the user wants a
+                            // different pair they can still tweak the URL params
+                            // by hand — this affordance covers the most common
+                            // "did my latest run regress against the previous one?"
+                            // question with one click.
+                            const sorted = [...experiments].sort(
+                                (a, b) => Number(b.id) - Number(a.id),
+                            );
+                            const selectedIdx = sorted.findIndex((e) => e.id === selectedExp);
+                            const prior = sorted[selectedIdx + 1] ?? sorted[1];
+                            if (!prior || prior.id === selectedExp) return null;
+                            return (
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    data-testid="eval-panel-compare-to-prior"
+                                    onClick={() =>
+                                        navigate(
+                                            `/project/${projectId}/eval/compare?a=${prior.id}&b=${selectedExp}`,
+                                        )
+                                    }
+                                    title={`Side-by-side eval comparison: ${prior.name} → currently selected`}
+                                >
+                                    Compare to #{prior.id}
+                                </button>
+                            );
+                        })()}
+                        <button className="btn btn-primary" onClick={() => setShowRunForm((open) => !open)}>
+                            + Run Held-out Evaluation
+                        </button>
+                    </div>
                 </div>
             )}
 

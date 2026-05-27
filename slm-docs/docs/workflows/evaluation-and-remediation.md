@@ -201,6 +201,17 @@ The gold set is also the input to the **trainability forecast** (Training Config
 
 When you expand a failure-cluster card on the Eval tab, a **Fix in gold set** button next to the cluster-augment control deep-links into the gold-set workbench with the LLM-gen panel pre-configured: `distribution.hallucination_traps` defaults to 5 and the focus textarea is prefilled with a one-line summary of the cluster's failure pattern (reason code + classifier explanation). The destination panel shows a dismissible "Generating traps for cluster X" banner so you can verify what was prefilled before clicking Generate. Non-qa-sft recipes still get the focus hint; the trap distribution UI is qa-sft-only.
 
+## Eval comparison + "Fix the gap" rollback
+
+When you've run eval against two experiments in the same project, the Eval tab shows a **Compare to #<id>** button that deep-links into a side-by-side comparison page at `/project/{id}/eval/compare?a=<exp>&b=<exp>`. The page renders:
+
+- Two side cards with pass-rate badges and a winner marker.
+- A metric-delta table with regressions sorted to the top (direction-coded against `higher_is_better` so `eval_loss` is graded inverted).
+- Failure-cluster diff: **New in B (regressions)**, **Resolved in B (fixed)**, and **Shared clusters** with per-cluster delta.
+- Config diff with primary fields (`base_model`, `learning_rate`, `num_epochs`, etc.) always visible plus any other changed knobs.
+
+When B regressed, a red **Fix the gap** banner offers a one-click "Rerun experiment #A" button that posts to the existing `rerun-from-manifest` endpoint. The rerun spawns a NEW experiment that replays A's resolved config + dataset snapshot — A and B both stay untouched. If A never produced a manifest (e.g. it failed mid-training), the click surfaces a toast explaining only completed runs can be rolled back to.
+
 ## Remediation outcome tracking (admin)
 
 Every click on a suggested-action button — from the trainability forecast panel and from the failure-cluster cards — fires a fire-and-forget `POST /api/projects/{id}/remediation/events` with `{kind, params, outcome}`. When the next eval result lands for the project, `evaluate_experiment_auto_gates` stamps every pending event in the window with `evaluation_lift_pct = (current_pass_rate - previous_pass_rate) × 100`. `GET /api/admin/remediation/outcomes?kind=<action_kind>` aggregates by kind with median + mean lift, positive-lift count, and a positive-lift rate so admins can spot suggestion sources that get clicked but don't correlate with improvements. No UI in v1 — admin reads the JSON.
