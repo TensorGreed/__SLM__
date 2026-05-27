@@ -1,0 +1,107 @@
+/* EvalPackScaffoldPanel — recipe-aware eval-pack draft with inline edit. */
+
+.eval-pack-scaffold {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    border-left: 3px solid var(--accent, #3b82f6);
+}
+
+.eval-pack-scaffold--note {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    border-left-color: var(--border-default);
+}
+
+.eval-pack-scaffold__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+}
+
+.eval-pack-scaffold__head h3 {
+    margin: 0 0 4px 0;
+    font-size: var(--font-size-md);
+}
+
+.eval-pack-scaffold__subtitle {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+}
+
+.eval-pack-scaffold__subtitle code {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-muted);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--text-primary);
+}
+
+.eval-pack-scaffold__task {
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-secondary);
+}
+
+.eval-pack-scaffold__task > header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    font-size: var(--font-size-sm);
+}
+
+.eval-pack-scaffold__pill {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-muted);
+    color: var(--text-tertiary);
+    text-transform: lowercase;
+}
+
+.eval-pack-scaffold__gates {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+}
+
+.eval-pack-scaffold__gates th,
+.eval-pack-scaffold__gates td {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-muted);
+    vertical-align: middle;
+}
+
+.eval-pack-scaffold__gates th {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+}
+
+.eval-pack-scaffold__gates code {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-muted);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11px;
+}
+
+.eval-pack-scaffold__threshold {
+    width: 80px;
+}
+
+.eval-pack-scaffold__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}

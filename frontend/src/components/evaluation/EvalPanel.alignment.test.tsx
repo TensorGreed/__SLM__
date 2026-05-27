@@ -9,6 +9,7 @@
  */
 
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -142,7 +143,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/Preferred chosen/i)).toBeInTheDocument();
@@ -170,7 +171,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/Preferred rejected/i)).toBeInTheDocument();
@@ -195,7 +196,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(
@@ -217,7 +218,7 @@ describe('EvalPanel — Sample Predictions with AlignmentHandler enrichment', ()
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Predictions card rendered.

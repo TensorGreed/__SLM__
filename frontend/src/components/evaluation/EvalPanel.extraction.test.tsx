@@ -16,6 +16,7 @@
  */
 
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -152,7 +153,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/JSON: valid/i)).toBeInTheDocument();
@@ -176,7 +177,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/JSON: malformed/i)).toBeInTheDocument();
@@ -201,7 +202,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/missing:\s*total/i)).toBeInTheDocument();
@@ -238,7 +239,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The disclosure is collapsed by default; its summary is visible.
@@ -267,7 +268,7 @@ describe('EvalPanel — Sample Predictions with StructuredExtractionHandler enri
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Wait for the predictions card to land.

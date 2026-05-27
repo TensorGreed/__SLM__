@@ -1,6 +1,6 @@
 """Evaluation API routes."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -322,6 +322,65 @@ async def generate_eval_pack(
         status = _PACK_GENERATE_ERROR_STATUS.get(reason, 400)
         raise HTTPException(status, reason)
     return pack
+
+
+@router.get("/pack-scaffold")
+async def get_pack_scaffold(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recipe-aware eval-pack scaffold (E5).
+
+    Returns a draft pack tailored to the project's selected recipe +
+    gold-set shape. NOT persisted — the frontend lets the user edit
+    the draft inline + POST to /pack-scaffold to save.
+
+    Errors:
+      * 404 — project not found.
+      * 400 — project has no recipe selected.
+    """
+    from app.services.eval_pack_scaffold_service import scaffold_pack_for_project
+
+    try:
+        return await scaffold_pack_for_project(db, project_id=project_id)
+    except ValueError as exc:
+        code = str(exc)
+        if code == "project_not_found":
+            raise HTTPException(404, code)
+        raise HTTPException(400, code)
+
+
+class _PackScaffoldSaveRequest(BaseModel):
+    draft_pack: dict[str, Any] = Field(...)
+
+
+@router.post("/pack-scaffold", status_code=201)
+async def save_pack_scaffold(
+    project_id: int,
+    payload: _PackScaffoldSaveRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist the user's edited scaffold draft (E5). Flips
+    ``evaluation_preferred_pack_id`` to ``evalpack.project.scaffolded``
+    so the new pack becomes the active one on the next eval run.
+
+    Errors:
+      * 404 — project not found.
+      * 400 — draft is missing required keys (e.g. no task_specs).
+    """
+    from app.services.eval_pack_scaffold_service import save_scaffolded_pack
+
+    try:
+        return await save_scaffolded_pack(
+            db,
+            project_id=project_id,
+            draft_pack=payload.draft_pack,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code == "project_not_found":
+            raise HTTPException(404, code)
+        raise HTTPException(400, code)
 
 
 @router.get("/pack-preference")

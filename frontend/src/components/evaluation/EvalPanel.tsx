@@ -13,6 +13,7 @@ import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
 import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
+import EvalPackScaffoldPanel from './EvalPackScaffoldPanel';
 import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
 import SftLiftPanel from './SftLiftPanel';
@@ -1099,6 +1100,39 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         <div className="eval-pack-note">
                             {loadingPackState ? 'Loading evaluation pack settings...' : 'Saving pack preference...'}
                         </div>
+                    )}
+
+                    {/* E5: when the project has no preferred pack set,
+                        offer a recipe-derived draft the user can edit
+                        inline + save with one click. Stays hidden once
+                        a preference (any pack id) is set so the regular
+                        pack picker remains the path for users who
+                        already chose. */}
+                    {!loadingPackState && !preferredPackId && (
+                        <EvalPackScaffoldPanel
+                            projectId={projectId}
+                            onSaved={() => {
+                                // Re-fetch the pack preference + gate
+                                // report after save so the surrounding
+                                // card reflects the scaffolded pack
+                                // immediately.
+                                void api
+                                    .get(`/projects/${projectId}/evaluation/pack-preference`)
+                                    .then((res) => {
+                                        setPreferredPackId(
+                                            res.data?.preferred_pack_id ?? null,
+                                        );
+                                        setActivePackId(res.data?.active_pack_id ?? null);
+                                        setActivePackSource(res.data?.active_pack_source ?? 'default');
+                                        setActivePackLabel(res.data?.active_pack?.display_name ?? '');
+                                    })
+                                    .catch(() => {
+                                        // Best-effort refresh — the page
+                                        // still works if pack-preference
+                                        // hiccups.
+                                    });
+                            }}
+                        />
                     )}
 
                     {isLoadingGateReport ? (

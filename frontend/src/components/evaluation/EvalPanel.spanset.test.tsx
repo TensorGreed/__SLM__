@@ -16,6 +16,7 @@
  */
 
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -160,7 +161,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Inline counts pick up the entity tallies.
@@ -196,7 +197,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The disclosure summary is present.
@@ -237,7 +238,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText(/✗ missed/i)).toBeInTheDocument();
@@ -270,7 +271,7 @@ describe('EvalPanel — Sample Predictions in span_set scoring mode', () => {
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The per-field count + disclosure render, NOT the entity-by-entity view.

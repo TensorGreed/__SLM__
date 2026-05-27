@@ -657,6 +657,14 @@ def is_supported_evaluation_pack_id(value: str | None) -> bool:
         return False
     if token == DOMAIN_PROFILE_EVAL_PACK_ID:
         return True
+    # E5: project-scoped scaffolded packs are recognised so callers
+    # that pass through is_supported_evaluation_pack_id (the existing
+    # PUT /pack-preference + gates endpoints) don't 400 on the
+    # scaffolded id. The blob still has to exist on the project's
+    # runtime_config — that's enforced by the resolver, not here.
+    from app.services.eval_pack_scaffold_service import SCAFFOLDED_PACK_ID
+    if token == SCAFFOLDED_PACK_ID:
+        return True
     return get_evaluation_pack(token) is not None
 
 
@@ -860,12 +868,35 @@ async def resolve_project_evaluation_pack(
                     "Preferred pack is evalpack.domain-profile but effective domain contract has no thresholds; falling back."
                 )
         else:
-            selected = get_evaluation_pack(configured)
-            if selected is not None:
-                active_pack = selected
-                source = "project"
+            # E5: when the preference points at the scaffolded pack id,
+            # load the JSON blob the user saved onto runtime_config.
+            # Falls through to the builtin path if the blob is missing
+            # (e.g. preference set but never saved) so the user isn't
+            # stranded on a 404.
+            try:
+                from app.services.eval_pack_scaffold_service import (
+                    SCAFFOLDED_PACK_ID,
+                    get_scaffolded_pack,
+                )
+            except Exception:
+                SCAFFOLDED_PACK_ID = "evalpack.project.scaffolded"
+                get_scaffolded_pack = None  # type: ignore[assignment]
+
+            scaffolded = (
+                get_scaffolded_pack(project)
+                if (configured == SCAFFOLDED_PACK_ID and get_scaffolded_pack is not None)
+                else None
+            )
+            if scaffolded is not None:
+                active_pack = scaffolded
+                source = "project_scaffold"
             else:
-                warnings.append(f"Preferred evaluation pack '{configured}' is not available; falling back.")
+                selected = get_evaluation_pack(configured)
+                if selected is not None:
+                    active_pack = selected
+                    source = "project"
+                else:
+                    warnings.append(f"Preferred evaluation pack '{configured}' is not available; falling back.")
 
     if active_pack is None and dynamic_pack is not None:
         active_pack = dynamic_pack

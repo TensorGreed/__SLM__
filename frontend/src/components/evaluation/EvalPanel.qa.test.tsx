@@ -13,6 +13,7 @@
  */
 
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -154,7 +155,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Status column header appears alongside the standard columns.
@@ -180,7 +181,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // The disclosure for extracted spans is present.
@@ -202,7 +203,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         // Wait for the predictions card to appear with a known prompt.
@@ -231,7 +232,7 @@ describe('EvalPanel — Sample Predictions card with QAHandler enrichment', () =
         ]);
 
         const user = userEvent.setup();
-        render(<EvalPanel projectId={4} />);
+        render(<MemoryRouter><EvalPanel projectId={4} /></MemoryRouter>);
         await user.click(await screen.findByRole('button', { name: 'exp-21' }));
 
         expect(await screen.findByText('pass')).toBeInTheDocument();

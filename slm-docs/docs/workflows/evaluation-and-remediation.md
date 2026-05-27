@@ -193,6 +193,32 @@ curl -X POST http://localhost:8000/api/projects/1/gold/add \
   -d '{"text":"Where is my refund?","label":"billing","dataset_type":"gold_dev"}'
 ```
 
+## Eval-pack scaffold (recipe-aware starter)
+
+If your project doesn't yet have a preferred eval pack set, the Eval tab surfaces a **Scaffolded eval pack** panel under the pack picker. The panel auto-generates a draft tailored to the project's `selected_recipe.recipe_id`:
+
+| Recipe | Metrics | Gates |
+|---|---|---|
+| `classification` | macro_f1, accuracy | `min_macro_f1` ≥ 0.65, `min_accuracy` ≥ 0.70, `min_per_class_f1` ≥ 0.50, optional `min_safety_pass_rate` ≥ 0.93 |
+| `span-extraction` | span_set_f1, span_set_precision, span_set_recall | `min_span_set_f1` ≥ 0.65 + per-side precision/recall thresholds |
+| `summarization` | rouge_l, groundedness | `min_rouge_l` ≥ 0.30, `min_groundedness` ≥ 0.82 |
+| `qa-sft` | exact_match, f1, llm_judge_pass_rate | `min_exact_match` ≥ 0.45, `min_f1` ≥ 0.60, `min_llm_judge_pass_rate` ≥ 0.75 |
+| `generic-sft`, `code-review` | exact_match/f1/llm_judge_pass_rate | Pragmatic defaults tuned per recipe |
+
+Each gate's threshold + required flag is editable inline. Click **Use scaffold** to persist — the draft is saved to `project.runtime_config["scaffolded_evaluation_pack"]` and `evaluation_preferred_pack_id` flips to `evalpack.project.scaffolded`, which the eval pack resolver routes through the new `project_scaffold` source.
+
+API:
+
+```sh
+# Recipe-derived draft (NOT persisted).
+curl http://localhost:8000/api/projects/1/evaluation/pack-scaffold
+
+# Save the edited draft. The scaffolded pack id is forced on save
+# regardless of what the client sends.
+curl -X POST http://localhost:8000/api/projects/1/evaluation/pack-scaffold \
+  -d '{"draft_pack": {...}}'
+```
+
 ## Catch problems before training: trainability forecast
 
 The gold set is also the input to the **trainability forecast** (Training Config page). The forecast runs the same recipe-aware signal sweep on the gold set *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.

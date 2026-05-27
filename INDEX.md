@@ -135,6 +135,7 @@ session-start guidance.
 - `backend/app/services/domain_runtime_service.py` — Runtime resolution for effective domain defaults (core + profile + pack overlay).
 - `backend/app/services/drift_trap_refresh_service.py` — Drift-triggered hallucination-trap refresh (E4).
 - `backend/app/services/eval_jobs_service.py` — Job-runner wrappers for long-running evaluation endpoints.
+- `backend/app/services/eval_pack_scaffold_service.py` — Recipe-aware evaluation-pack scaffolder (E5).
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
 - `backend/app/services/evaluation_pack_service.py` — Evaluation pack catalog + task-aware auto-gate evaluation helpers.
 - `backend/app/services/evaluation_remediation_service.py` — Closed-loop remediation planning for evaluation failures.
@@ -348,6 +349,7 @@ session-start guidance.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
+- `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
@@ -448,6 +450,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
+- `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
@@ -546,6 +549,7 @@ session-start guidance.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
+- `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
@@ -739,6 +743,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
+- `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.
 - `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
 - `frontend/src/components/evaluation/EvalPanel.qa.test.tsx` — Phase 5.3.2 — Sample Predictions card with QA-style per-row enrichment.
