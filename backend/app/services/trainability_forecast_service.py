@@ -38,15 +38,16 @@ import json
 import math
 import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal, TypedDict
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Dataset, DatasetType
 from app.models.project import Project
+from app.models.training_forecast_snapshot import TrainingForecastSnapshot
 from app.services.dataset_service import _load_records_from_file
 from app.services.recipe_service import get_recipe
 
@@ -134,6 +135,12 @@ SPAN_OFFSET_INVALID_BLOCK_FRAC = 0.10
 # the doc are usually mislabeled (the "summary" is just a paraphrase
 # of similar length, or the wrong column was loaded).
 SUMMARY_DOC_RATIO_WARN = 0.70
+
+# Snapshot retention window. The trainability-forecast history table
+# is pruned on every insert (cheap, no separate cron) so the sparkline
+# always reflects the last 60 days. Anything older is opaque dead
+# weight — the user's iteration cycle is measured in days, not months.
+SNAPSHOT_RETENTION_DAYS = 60
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1441,16 +1448,94 @@ async def forecast_training(
 
     overall = _overall_verdict(signals=signals, confidence_pct=confidence_pct)
 
+    computed_at_dt = datetime.now(timezone.utc)
     result: ForecastResult = {
         "overall": overall,
         "confidence_pct": confidence_pct,
         "signals": signals,
-        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "computed_at": computed_at_dt.isoformat(),
         "cache_key": cache_key,
         "cache_hit": False,
     }
 
     project.training_forecast_cache = json.loads(json.dumps(result))
+    await _persist_snapshot(
+        db,
+        project_id=project_id,
+        cache_key=cache_key,
+        computed_at=computed_at_dt,
+        overall=overall,
+        confidence_pct=confidence_pct,
+        signals=signals,
+    )
     await db.flush()
 
     return result
+
+
+async def _persist_snapshot(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    cache_key: str,
+    computed_at: datetime,
+    overall: str,
+    confidence_pct: int,
+    signals: list[ForecastSignal],
+) -> None:
+    """Persist one snapshot row + prune anything older than the
+    retention window in the same call. Cheap enough that we don't
+    need a separate retention job; the work scales with how often the
+    user actually iterates."""
+    db.add(
+        TrainingForecastSnapshot(
+            project_id=project_id,
+            cache_key=cache_key,
+            computed_at=computed_at,
+            overall=overall,
+            confidence_pct=confidence_pct,
+            # Round-trip through json so we store plain dicts (not
+            # TypedDicts) — matches the cache-payload convention above.
+            signals=json.loads(json.dumps(signals)),
+        )
+    )
+    cutoff = computed_at - timedelta(days=SNAPSHOT_RETENTION_DAYS)
+    await db.execute(
+        delete(TrainingForecastSnapshot).where(
+            TrainingForecastSnapshot.project_id == project_id,
+            TrainingForecastSnapshot.computed_at < cutoff,
+        )
+    )
+
+
+async def list_forecast_history(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Returns up to ``limit`` recent snapshots for the project,
+    newest-first. The shape mirrors ``ForecastResult`` (minus the
+    cache_hit field, which is always False for a persisted snapshot)
+    so the panel can render historical entries with the same code
+    path it uses for the live result.
+
+    Limit is clamped to [1, 100]; the panel reads ~10 by default."""
+    clamped = max(1, min(100, limit))
+    result = await db.execute(
+        select(TrainingForecastSnapshot)
+        .where(TrainingForecastSnapshot.project_id == project_id)
+        .order_by(TrainingForecastSnapshot.computed_at.desc())
+        .limit(clamped)
+    )
+    return [
+        {
+            "id": snap.id,
+            "cache_key": snap.cache_key,
+            "computed_at": snap.computed_at.isoformat(),
+            "overall": snap.overall,
+            "confidence_pct": snap.confidence_pct,
+            "signals": snap.signals or [],
+        }
+        for snap in result.scalars()
+    ]

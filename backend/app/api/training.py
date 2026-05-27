@@ -5547,3 +5547,34 @@ async def get_training_forecast(
         if "not found" in message.lower():
             raise HTTPException(404, message)
         raise HTTPException(400, message)
+
+
+@router.get("/forecast/history")
+async def get_training_forecast_history(
+    project_id: int,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent trainability-forecast snapshots for the project,
+    newest-first. USER-SUCCESS Epic 1 (T2).
+
+    One row per cache-miss compute (cache hits do NOT add to history —
+    a recomputation with identical inputs would just dilute the
+    sparkline without telling the user anything new). Snapshots
+    older than 60 days are pruned on insert.
+
+    Used by the panel sparkline + last-3 verdict-delta strip so the
+    user can see whether their last gold-set edit moved the
+    ``confidence_pct`` needle.
+
+    Limit is clamped to [1, 100]; default 10 matches the panel's
+    sparkline width.
+    """
+    from app.services.trainability_forecast_service import list_forecast_history
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    snapshots = await list_forecast_history(db, project_id, limit=limit)
+    return {"project_id": project_id, "snapshots": snapshots}

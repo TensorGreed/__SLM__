@@ -254,6 +254,7 @@ session-start guidance.
 - `backend/app/models/run_event.py` — Canonical RunEvent schema (priority.md P31, Wave G).
 - `backend/app/models/secret.py` — Project-level secret storage ORM model.
 - `backend/app/models/support_bundle.py` — Persisted support bundles (priority.md P34, Wave G).
+- `backend/app/models/training_forecast_snapshot.py` — Trainability forecast snapshot — per-compute history (USER-SUCCESS Epic 1, T2).
 - `backend/app/models/training_manifest.py` — Immutable training-run manifest (priority.md P14).
 - `backend/app/models/workflow_run.py` — Workflow run ORM models for DAG execution tracking.
 
@@ -323,6 +324,7 @@ session-start guidance.
 - `backend/alembic/versions/20260523_0035_project_training_forecast_cache.py` — Project training_forecast_cache JSON column (USER-SUCCESS Epic 1).
 - `backend/alembic/versions/20260526_0036_project_rag_first_columns.py` — Project parent_project_id + runtime_config columns (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/alembic/versions/20260526_0037_jobs_table.py` — Jobs table for the background-task framework (Hardening Phase H1).
+- `backend/alembic/versions/20260527_0038_training_forecast_snapshots.py` — Training-forecast snapshot history table (USER-SUCCESS Epic 1, T2).
 
 ## Frontend · API clients
 

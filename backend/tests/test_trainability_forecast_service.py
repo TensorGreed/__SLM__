@@ -799,6 +799,177 @@ class TrainabilityForecastApiTests(unittest.TestCase):
             "new recipe should produce a different cache_key",
         )
 
+    # ── T2 — snapshot history persistence + endpoint ────────────────
+
+    def test_forecast_history_endpoint_returns_empty_for_fresh_project(self):
+        # A project that has never had its forecast computed should
+        # return an empty snapshot list (NOT 404 — the project exists,
+        # there's just no history yet).
+        create_resp = self.client.post(
+            "/api/projects",
+            json={"name": "T2 Fresh Project"},
+        )
+        pid = create_resp.json()["id"]
+        resp = self.client.get(f"/api/projects/{pid}/training/forecast/history")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["project_id"], pid)
+        self.assertEqual(body["snapshots"], [])
+
+    def test_forecast_history_endpoint_404s_on_unknown_project(self):
+        resp = self.client.get("/api/projects/99999/training/forecast/history")
+        self.assertEqual(resp.status_code, 404, resp.text)
+
+    def test_forecast_persists_a_snapshot_on_cache_miss(self):
+        project = self._instantiate_template(
+            "ticket-router", "T2 Persist On Miss",
+        )
+        pid = project["id"]
+        # First forecast read → cache miss → one snapshot persisted.
+        first = self.client.get(f"/api/projects/{pid}/training/forecast")
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertFalse(first.json()["cache_hit"])
+
+        hist = self.client.get(f"/api/projects/{pid}/training/forecast/history")
+        self.assertEqual(hist.status_code, 200, hist.text)
+        snaps = hist.json()["snapshots"]
+        self.assertEqual(len(snaps), 1, f"expected 1 snapshot, got {len(snaps)}")
+        # Snapshot fields mirror the live forecast.
+        self.assertEqual(snaps[0]["overall"], first.json()["overall"])
+        self.assertEqual(snaps[0]["confidence_pct"], first.json()["confidence_pct"])
+        self.assertEqual(snaps[0]["cache_key"], first.json()["cache_key"])
+        # Signals carried through so the panel tooltip has historical data.
+        self.assertGreater(len(snaps[0]["signals"]), 0)
+
+    def test_forecast_does_NOT_persist_a_snapshot_on_cache_hit(self):
+        # The sparkline would dilute into a flat line if identical-input
+        # recomputes counted. Cache hits MUST be silent.
+        project = self._instantiate_template(
+            "ticket-router", "T2 Silent On Hit",
+        )
+        pid = project["id"]
+        self.client.get(f"/api/projects/{pid}/training/forecast")  # miss
+        # Two cache hits — they should not add snapshots.
+        hit_1 = self.client.get(f"/api/projects/{pid}/training/forecast")
+        hit_2 = self.client.get(f"/api/projects/{pid}/training/forecast")
+        self.assertTrue(hit_1.json()["cache_hit"])
+        self.assertTrue(hit_2.json()["cache_hit"])
+
+        snaps = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history"
+        ).json()["snapshots"]
+        self.assertEqual(len(snaps), 1, "cache hits must not add snapshots")
+
+    def test_forecast_refresh_adds_a_snapshot_per_recompute(self):
+        # ?refresh=true bypasses the cache → every call counts. The
+        # panel's "Refresh" button uses this path so the sparkline
+        # advances on each click.
+        project = self._instantiate_template(
+            "policy-qa-style", "T2 Refresh Path",
+        )
+        pid = project["id"]
+        for _ in range(3):
+            r = self.client.get(
+                f"/api/projects/{pid}/training/forecast?refresh=true"
+            )
+            self.assertFalse(r.json()["cache_hit"])
+
+        snaps = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history"
+        ).json()["snapshots"]
+        self.assertEqual(len(snaps), 3)
+        # Newest-first ordering — computed_at descends.
+        ts = [s["computed_at"] for s in snaps]
+        self.assertEqual(ts, sorted(ts, reverse=True))
+
+    def test_forecast_history_limit_param_clamps_and_truncates(self):
+        project = self._instantiate_template(
+            "log-triage", "T2 Limit Clamp",
+        )
+        pid = project["id"]
+        for _ in range(5):
+            self.client.get(f"/api/projects/{pid}/training/forecast?refresh=true")
+
+        # Limit smaller than count → truncate to the newest N.
+        resp_two = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history?limit=2"
+        )
+        self.assertEqual(len(resp_two.json()["snapshots"]), 2)
+        # Limit clamping at the upper bound: limit=10000 → capped at 100.
+        resp_big = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history?limit=10000"
+        )
+        # Only 5 snapshots exist; the clamp is invisible at this scale
+        # but the call mustn't 400.
+        self.assertEqual(resp_big.status_code, 200, resp_big.text)
+        self.assertEqual(len(resp_big.json()["snapshots"]), 5)
+        # Limit clamping at the lower bound: limit=0 → at least 1.
+        resp_zero = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history?limit=0"
+        )
+        self.assertEqual(resp_zero.status_code, 200, resp_zero.text)
+        self.assertEqual(len(resp_zero.json()["snapshots"]), 1)
+
+    def test_snapshot_retention_prunes_rows_older_than_window(self):
+        # Direct-DB test: write an old snapshot + a new one, trigger a
+        # recompute, confirm the old one is pruned.
+        import asyncio
+        from datetime import datetime, timedelta, timezone
+        from app.database import async_session_factory
+        from app.models.training_forecast_snapshot import TrainingForecastSnapshot
+        from app.services.trainability_forecast_service import (
+            SNAPSHOT_RETENTION_DAYS,
+        )
+
+        project = self._instantiate_template(
+            "data-to-sql", "T2 Retention Prune",
+        )
+        pid = project["id"]
+
+        async def seed_old_snapshot():
+            async with async_session_factory() as session:
+                session.add(
+                    TrainingForecastSnapshot(
+                        project_id=pid,
+                        cache_key="old-key-0123456789",
+                        # 90 days back, well outside the 60-day window.
+                        computed_at=datetime.now(timezone.utc) - timedelta(days=90),
+                        overall="likely_pass",
+                        confidence_pct=80,
+                        signals=[],
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(seed_old_snapshot())
+
+        # Sanity: history endpoint sees the old snapshot before the next compute.
+        before = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history?limit=50"
+        ).json()["snapshots"]
+        self.assertTrue(any(s["cache_key"] == "old-key-0123456789" for s in before))
+
+        # Trigger a fresh compute, which prunes anything older than
+        # SNAPSHOT_RETENTION_DAYS in the same call.
+        self.client.get(f"/api/projects/{pid}/training/forecast?refresh=true")
+        after = self.client.get(
+            f"/api/projects/{pid}/training/forecast/history?limit=50"
+        ).json()["snapshots"]
+        # Old snapshot pruned, new one persisted.
+        self.assertFalse(any(s["cache_key"] == "old-key-0123456789" for s in after))
+        # Sanity: at least the freshly-computed snapshot survived.
+        self.assertGreaterEqual(len(after), 1)
+        # Defensive: every surviving snapshot is within the window.
+        # SQLite round-trips DateTime(timezone=True) as a naive string;
+        # we coerce to UTC-aware before comparing so the test isn't
+        # backend-specific.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=SNAPSHOT_RETENTION_DAYS)
+        for snap in after:
+            ts = datetime.fromisoformat(snap["computed_at"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            self.assertGreaterEqual(ts, cutoff)
+
     def test_endpoint_handles_no_prepared_dataset(self):
         """Spec test name. A project with a recipe but no datasets
         at all should NOT 404 — the forecast still returns, with the

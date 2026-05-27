@@ -40,6 +40,7 @@ from app.models.run_event import RunEvent
 from app.models.failure_cluster import FailureCluster
 from app.models.support_bundle import SupportBundle
 from app.models.job import Job, JobStatus
+from app.models.training_forecast_snapshot import TrainingForecastSnapshot
 
 __all__ = [
     "Project",
@@ -89,5 +90,6 @@ __all__ = [
     "LabelJob",
     "LabelRow",
     "Job",
+    "TrainingForecastSnapshot",
     "JobStatus",
 ]

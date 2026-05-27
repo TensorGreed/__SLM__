@@ -44,3 +44,33 @@ export async function fetchTrainingForecast(
     const resp = await api.get(`/projects/${projectId}/training/forecast`, { params });
     return resp.data as ForecastResult;
 }
+
+/** One row from the per-project forecast history (T2). Shape mirrors
+ *  ``ForecastResult`` minus ``cache_hit`` (always false for persisted
+ *  rows) so the panel can render historical entries with the same
+ *  code path it uses for live results. */
+export interface ForecastSnapshot {
+    id: number;
+    cache_key: string;
+    computed_at: string;
+    overall: ForecastVerdict;
+    confidence_pct: number;
+    signals: ForecastSignal[];
+}
+
+export interface ForecastHistoryResponse {
+    project_id: number;
+    snapshots: ForecastSnapshot[];
+}
+
+export async function fetchTrainingForecastHistory(
+    projectId: number,
+    options: { limit?: number } = {},
+): Promise<ForecastHistoryResponse> {
+    const params = options.limit !== undefined ? { limit: options.limit } : undefined;
+    const resp = await api.get(
+        `/projects/${projectId}/training/forecast/history`,
+        { params },
+    );
+    return resp.data as ForecastHistoryResponse;
+}

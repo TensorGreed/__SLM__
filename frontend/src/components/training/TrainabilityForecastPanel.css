@@ -96,6 +96,81 @@
     cursor: not-allowed;
 }
 
+.trainability-forecast__history {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-xs) var(--space-sm);
+    margin-bottom: var(--space-sm);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    flex-wrap: wrap;
+}
+
+.trainability-forecast__sparkline {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.trainability-forecast__sparkline-dot {
+    fill: var(--gray-400, #9ca3af);
+}
+
+.trainability-forecast__sparkline-dot--likely_pass {
+    fill: var(--color-success, #18a058);
+}
+
+.trainability-forecast__sparkline-dot--borderline {
+    fill: var(--color-warning, #f0a020);
+}
+
+.trainability-forecast__sparkline-dot--likely_fail {
+    fill: var(--color-error, #d03050);
+}
+
+.trainability-forecast__deltas {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.trainability-forecast__delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.trainability-forecast__delta--up {
+    color: var(--color-success-fg, #0c6b3a);
+    border-color: var(--color-success, #18a058);
+    background: var(--color-success-bg, rgba(24, 160, 88, 0.08));
+}
+
+.trainability-forecast__delta--down {
+    color: var(--color-error-fg, #8c1f37);
+    border-color: var(--color-error, #d03050);
+    background: var(--color-error-bg, rgba(208, 48, 80, 0.08));
+}
+
+.trainability-forecast__delta--flat {
+    color: var(--text-tertiary);
+}
+
+.trainability-forecast__delta-arrow {
+    font-size: 10px;
+}
+
 .trainability-forecast__signals {
     list-style: none;
     padding: 0;

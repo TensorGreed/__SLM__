@@ -131,9 +131,20 @@ describe('TrainabilityForecastPanel', () => {
     });
 
     it('refreshes the forecast and bypasses cache when Refresh is clicked', async () => {
-        apiMock.get
-            .mockResolvedValueOnce({ data: makeForecast({ cache_hit: false }) })
-            .mockResolvedValueOnce({ data: makeForecast({ cache_hit: false, confidence_pct: 80 }) });
+        // After T2, every load() fires two GETs: the forecast itself
+        // and the snapshot-history endpoint. We mock both with a
+        // route-aware implementation + a mutable forecast slot so the
+        // refresh click flips the served confidence.
+        let nextForecast = makeForecast({ cache_hit: false });
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return { data: nextForecast };
+            }
+            if (url.endsWith('/training/forecast/history')) {
+                return { data: { project_id: 5, snapshots: [] } };
+            }
+            return { data: {} };
+        });
 
         render(<TrainabilityForecastPanel projectId={5} />);
 
@@ -141,16 +152,17 @@ describe('TrainabilityForecastPanel', () => {
             const chip = screen.getByText('Predicted gate-pass:').parentElement;
             expect(chip?.textContent).toMatch(/~72%/);
         });
-        // First call: no refresh param.
-        expect(apiMock.get).toHaveBeenNthCalledWith(1, '/projects/5/training/forecast', { params: undefined });
+        // Forecast endpoint hit first with no refresh param.
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/5/training/forecast', { params: undefined });
 
+        nextForecast = makeForecast({ cache_hit: false, confidence_pct: 80 });
         await userEvent.click(screen.getByRole('button', { name: /Refresh forecast/i }));
         await waitFor(() => {
             const chip = screen.getByText('Predicted gate-pass:').parentElement;
             expect(chip?.textContent).toMatch(/~80%/);
         });
-        // Second call: refresh=true bypasses cache.
-        expect(apiMock.get).toHaveBeenNthCalledWith(2, '/projects/5/training/forecast', { params: { refresh: true } });
+        // Refresh path: forecast endpoint hit with refresh=true.
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/5/training/forecast', { params: { refresh: true } });
     });
 
     it('renders a cache-hit note when result was served from cache', async () => {
@@ -188,5 +200,142 @@ describe('TrainabilityForecastPanel', () => {
         await waitFor(() => {
             expect(screen.getByText('Likely to pass gates')).toBeInTheDocument();
         });
+    });
+
+    // ── T2 — sparkline + verdict-delta strip ───────────────────────
+    // Mounted above the signal list once there are >=2 snapshots in
+    // the history endpoint payload. A single point isn't a trend, so
+    // the strip stays hidden until the second compute lands.
+
+    function mockForecastWithHistory(snapshots: any[]) {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return { data: makeForecast() };
+            }
+            if (url.endsWith('/training/forecast/history')) {
+                return { data: { project_id: 1, snapshots } };
+            }
+            return { data: {} };
+        });
+    }
+
+    it('hides the history strip when there are fewer than 2 snapshots', async () => {
+        mockForecastWithHistory([
+            {
+                id: 1,
+                cache_key: 'a',
+                computed_at: '2026-05-25T10:00:00Z',
+                overall: 'likely_pass',
+                confidence_pct: 72,
+                signals: [],
+            },
+        ]);
+        render(<TrainabilityForecastPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('trainability-forecast')).toBeInTheDocument();
+        });
+        // History endpoint was called, but the strip isn't rendered.
+        expect(apiMock.get).toHaveBeenCalledWith(
+            '/projects/1/training/forecast/history',
+            { params: { limit: 10 } },
+        );
+        expect(screen.queryByTestId('trainability-forecast-history')).not.toBeInTheDocument();
+    });
+
+    it('renders the sparkline with one dot per snapshot (chronological order)', async () => {
+        // Newest-first from the API; the strip reverses for the chart.
+        mockForecastWithHistory([
+            { id: 3, cache_key: 'c', computed_at: '2026-05-25T12:00:00Z', overall: 'likely_pass', confidence_pct: 81, signals: [] },
+            { id: 2, cache_key: 'b', computed_at: '2026-05-25T11:00:00Z', overall: 'borderline', confidence_pct: 55, signals: [] },
+            { id: 1, cache_key: 'a', computed_at: '2026-05-25T10:00:00Z', overall: 'likely_fail', confidence_pct: 38, signals: [] },
+        ]);
+        render(<TrainabilityForecastPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('trainability-forecast-history')).toBeInTheDocument();
+        });
+        // SVG with one circle per snapshot.
+        const dots = screen.getAllByTestId(/^trainability-forecast-sparkline-dot-\d+$/);
+        expect(dots).toHaveLength(3);
+        // The strip plots chronologically left-to-right; dot 0 is the
+        // oldest snapshot (verdict likely_fail).
+        expect(dots[0].getAttribute('class')).toContain('--likely_fail');
+        // Newest dot is the rightmost + carries the latest verdict.
+        expect(dots[2].getAttribute('class')).toContain('--likely_pass');
+    });
+
+    it('renders verdict-delta chips for the last three transitions', async () => {
+        // 4 snapshots → 3 deltas: +21, +17, -15.
+        mockForecastWithHistory([
+            { id: 4, cache_key: 'd', computed_at: '2026-05-25T13:00:00Z', overall: 'likely_pass', confidence_pct: 73, signals: [] },
+            { id: 3, cache_key: 'c', computed_at: '2026-05-25T12:00:00Z', overall: 'borderline', confidence_pct: 52, signals: [] },
+            { id: 2, cache_key: 'b', computed_at: '2026-05-25T11:00:00Z', overall: 'borderline', confidence_pct: 35, signals: [] },
+            { id: 1, cache_key: 'a', computed_at: '2026-05-25T10:00:00Z', overall: 'likely_fail', confidence_pct: 50, signals: [] },
+        ]);
+        render(<TrainabilityForecastPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('trainability-forecast-deltas')).toBeInTheDocument();
+        });
+        const chips = screen.getAllByTestId('trainability-forecast-delta-chip');
+        expect(chips).toHaveLength(3);
+        // Newest first: +21, +17, -15.
+        expect(chips[0].textContent).toMatch(/\+21%/);
+        expect(chips[1].textContent).toMatch(/\+17%/);
+        expect(chips[2].textContent).toMatch(/-15%/);
+        // Tone classes encode the direction so the UI can color-code.
+        expect(chips[0].getAttribute('class')).toContain('--up');
+        expect(chips[2].getAttribute('class')).toContain('--down');
+    });
+
+    it('renders a tooltip per dot with verdict + signal severities', async () => {
+        mockForecastWithHistory([
+            {
+                id: 2,
+                cache_key: 'b',
+                computed_at: '2026-05-25T11:00:00Z',
+                overall: 'borderline',
+                confidence_pct: 55,
+                signals: [
+                    { id: 'row_count_below_minimum', severity: 'warn', headline: '', detail: '', suggested_action: null },
+                    { id: 'class_imbalance', severity: 'ok', headline: '', detail: '', suggested_action: null },
+                ],
+            },
+            {
+                id: 1,
+                cache_key: 'a',
+                computed_at: '2026-05-25T10:00:00Z',
+                overall: 'likely_fail',
+                confidence_pct: 38,
+                signals: [],
+            },
+        ]);
+        render(<TrainabilityForecastPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('trainability-forecast-history')).toBeInTheDocument();
+        });
+        // The newer dot's <title> carries verdict + signal severities.
+        const newestDot = screen.getByTestId('trainability-forecast-sparkline-dot-1');
+        const titleEl = newestDot.querySelector('title');
+        expect(titleEl?.textContent).toMatch(/borderline @ 55%/);
+        expect(titleEl?.textContent).toMatch(/warn: row_count_below_minimum/);
+        expect(titleEl?.textContent).toMatch(/ok: class_imbalance/);
+    });
+
+    it('survives a 5xx history fetch without breaking the live forecast render', async () => {
+        // History endpoint flakes; the forecast read still succeeds.
+        // The panel must show the verdict badge and just skip the strip.
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return { data: makeForecast() };
+            }
+            if (url.endsWith('/training/forecast/history')) {
+                throw { response: { status: 500, data: { detail: 'boom' } } };
+            }
+            return { data: {} };
+        });
+        render(<TrainabilityForecastPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByText('Likely to pass gates')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('trainability-forecast-history')).not.toBeInTheDocument();
     });
 });

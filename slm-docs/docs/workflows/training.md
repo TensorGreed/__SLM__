@@ -103,12 +103,23 @@ Dispatched by the recipe's `task_profile`. A non-classification project never se
 
 Suggested actions on every signal map to one of `synth_augment` / `synth_balance` / `synth_diversify` / `fix_gold_rows`, surfaced as a one-click button next to the signal row.
 
+### Snapshot history + sparkline
+
+Every cache-miss compute writes one row to `training_forecast_snapshots`. The Training Config panel reads `GET /api/projects/{id}/training/forecast/history?limit=10` and renders a sparkline above the signal list — `confidence_pct` on the y-axis (fixed [0, 100] so the shape is comparable across sessions) with a coloured dot per snapshot (green = `likely_pass`, amber = `borderline`, red = `likely_fail`). Hover a dot to see its verdict + signal severities at the time of compute.
+
+Next to the sparkline a three-chip strip shows the last three verdict deltas (`▼ -24%`, `· 0%`, `▲ +12%`). The user can pin down whether a gold-set edit or synth run actually moved the needle without re-reading the signal list.
+
+Cache hits do not add to history — only true recomputes do, so the sparkline reflects iteration, not idle polling. Snapshots older than 60 days are pruned on insert.
+
 ### API
 
 ```sh
 curl http://localhost:8000/api/projects/1/training/forecast
 # Cached by default on `Project.training_forecast_cache`. Recipe + dataset + base-model changes invalidate.
 curl http://localhost:8000/api/projects/1/training/forecast?refresh=true
+
+# Recent snapshots (newest-first). ``limit`` is clamped to [1, 100].
+curl http://localhost:8000/api/projects/1/training/forecast/history?limit=10
 ```
 
 The forecast reads the project's `selected_recipe.recipe_id` and dispatches signals through a per-recipe builder — see [`backend/app/services/trainability_forecast_service.py`](https://github.com/anugram/__SLM__/blob/main/backend/app/services/trainability_forecast_service.py).
