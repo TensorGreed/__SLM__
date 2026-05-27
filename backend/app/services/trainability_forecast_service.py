@@ -46,6 +46,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dataset import Dataset, DatasetType
+from app.models.experiment import Experiment
+from app.models.forecast_calibration_observation import (
+    ForecastCalibrationObservation,
+)
 from app.models.project import Project
 from app.models.training_forecast_snapshot import TrainingForecastSnapshot
 from app.services.dataset_service import _load_records_from_file
@@ -1506,6 +1510,198 @@ async def _persist_snapshot(
             TrainingForecastSnapshot.computed_at < cutoff,
         )
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# T5 — forecast-vs-reality calibration.
+#
+# One observation per experiment: pair the user's latest snapshot at
+# launch time with the post-eval gate-pass verdict. The pair is the
+# evidence we use to retune the heuristic coefficients in
+# ``estimate_gate_pass_prob()``.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Decile buckets — pick a bucket size that gives enough granularity to
+# spot calibration miscalibration (e.g. the 70-80% bucket actually
+# passing only 50% of the time) without being so granular that each
+# bucket has <5 observations. 10% buckets are the calibration-curve
+# convention for a reason.
+_CALIBRATION_BUCKETS: list[tuple[int, int]] = [
+    (0, 10), (10, 20), (20, 30), (30, 40), (40, 50),
+    (50, 60), (60, 70), (70, 80), (80, 90), (90, 101),
+]
+
+
+def _bucket_index(confidence_pct: int) -> int:
+    """Return the index in _CALIBRATION_BUCKETS for a given confidence
+    value. 90-100 lives in one bucket (the top range is right-inclusive,
+    everything else is right-exclusive) so the 100% edge has a home."""
+    for idx, (lo, hi) in enumerate(_CALIBRATION_BUCKETS):
+        if lo <= confidence_pct < hi:
+            return idx
+    # Defensive: confidence_pct should be clamped to [5, 95] already.
+    return len(_CALIBRATION_BUCKETS) - 1
+
+
+async def record_forecast_observation(
+    db: AsyncSession,
+    experiment_id: int,
+) -> ForecastCalibrationObservation | None:
+    """Record a forecast→reality observation when a new experiment
+    is created. Pairs the experiment with the most-recent snapshot
+    for its project (the user's last view of the forecast before
+    committing to train).
+
+    Returns the new observation, or None when there's no snapshot
+    to pair against (e.g. user trained without ever viewing the
+    forecast — those runs are excluded from calibration). Also
+    returns None when an observation already exists for this
+    experiment, so the caller can safely call this from multiple
+    code paths without dupe risk.
+    """
+    existing = await db.execute(
+        select(ForecastCalibrationObservation).where(
+            ForecastCalibrationObservation.experiment_id == experiment_id
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return None
+
+    experiment = await db.get(Experiment, experiment_id)
+    if experiment is None:
+        return None
+    project = await db.get(Project, experiment.project_id)
+    if project is None:
+        return None
+    recipe_id = (project.selected_recipe or {}).get("recipe_id") or ""
+    if not recipe_id:
+        # Calibration only makes sense per-recipe. Untyped runs are
+        # excluded; they wouldn't aggregate cleanly anyway.
+        return None
+
+    snapshot_q = await db.execute(
+        select(TrainingForecastSnapshot)
+        .where(TrainingForecastSnapshot.project_id == experiment.project_id)
+        .order_by(TrainingForecastSnapshot.computed_at.desc())
+        .limit(1)
+    )
+    snapshot = snapshot_q.scalar_one_or_none()
+    if snapshot is None:
+        return None
+
+    obs = ForecastCalibrationObservation(
+        experiment_id=experiment_id,
+        project_id=experiment.project_id,
+        snapshot_id=snapshot.id,
+        predicted_confidence_pct=snapshot.confidence_pct,
+        predicted_overall=snapshot.overall,
+        recipe_id=recipe_id,
+    )
+    db.add(obs)
+    await db.flush()
+    return obs
+
+
+async def resolve_forecast_observation(
+    db: AsyncSession,
+    experiment_id: int,
+    *,
+    passed: bool,
+) -> ForecastCalibrationObservation | None:
+    """Mark the observation for ``experiment_id`` as resolved with
+    the post-eval gate-pass outcome. Idempotent — if the observation
+    already has a verdict, the latest call wins (eval can re-run
+    against the same experiment, and we want the freshest signal).
+
+    Returns the updated observation, or None when no observation
+    exists for this experiment (user trained without ever viewing
+    the forecast — silent no-op so the eval-gates path doesn't
+    fail loudly).
+    """
+    obs_q = await db.execute(
+        select(ForecastCalibrationObservation).where(
+            ForecastCalibrationObservation.experiment_id == experiment_id
+        )
+    )
+    obs = obs_q.scalar_one_or_none()
+    if obs is None:
+        return None
+    obs.actual_passed = bool(passed)
+    obs.resolved_at = datetime.now(timezone.utc)
+    await db.flush()
+    return obs
+
+
+async def compute_calibration_buckets(
+    db: AsyncSession,
+    *,
+    recipe_id: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate resolved observations into decile-confidence buckets.
+
+    Returns a payload of the form::
+
+        {
+            "recipe_id": <filter or None>,
+            "total_observations": <int>,
+            "resolved_observations": <int>,
+            "buckets": [
+                {
+                    "range": [60, 70],
+                    "predicted_count": <int>,
+                    "actual_pass_count": <int>,
+                    "actual_pass_rate": <0..1 | None>,
+                },
+                ...
+            ],
+        }
+
+    Buckets are decile-wide; 90-100 is right-inclusive (so the 100%
+    edge lands somewhere). ``actual_pass_rate`` is None when no
+    observations resolved in that bucket — preserves the distinction
+    between "0% pass rate" and "no data" so the admin reader doesn't
+    misread a stale or empty bucket as catastrophic.
+
+    Unresolved observations (``actual_passed IS NULL``) are excluded
+    from bucket math but counted in ``total_observations`` so the
+    admin can sanity-check how much data is still pending.
+    """
+    query = select(ForecastCalibrationObservation)
+    if recipe_id:
+        query = query.where(ForecastCalibrationObservation.recipe_id == recipe_id)
+
+    rows = (await db.execute(query)).scalars().all()
+    total = len(rows)
+    resolved_rows = [r for r in rows if r.actual_passed is not None]
+
+    bucket_acc: list[dict[str, Any]] = [
+        {"predicted_count": 0, "actual_pass_count": 0}
+        for _ in _CALIBRATION_BUCKETS
+    ]
+    for row in resolved_rows:
+        idx = _bucket_index(int(row.predicted_confidence_pct))
+        bucket_acc[idx]["predicted_count"] += 1
+        if row.actual_passed:
+            bucket_acc[idx]["actual_pass_count"] += 1
+
+    buckets_payload: list[dict[str, Any]] = []
+    for (lo, hi), acc in zip(_CALIBRATION_BUCKETS, bucket_acc):
+        n = int(acc["predicted_count"])
+        passed_n = int(acc["actual_pass_count"])
+        buckets_payload.append({
+            "range": [lo, hi],
+            "predicted_count": n,
+            "actual_pass_count": passed_n,
+            "actual_pass_rate": (passed_n / n) if n > 0 else None,
+        })
+
+    return {
+        "recipe_id": recipe_id,
+        "total_observations": total,
+        "resolved_observations": len(resolved_rows),
+        "buckets": buckets_payload,
+    }
 
 
 async def list_forecast_history(

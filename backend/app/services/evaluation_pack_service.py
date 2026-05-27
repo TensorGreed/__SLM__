@@ -1295,6 +1295,21 @@ async def evaluate_experiment_auto_gates(
     missing_required_metrics = sorted(set(missing_required_gate_metrics + missing_required_schema_metrics))
     passed = not failed_required and not missing_required_metrics
 
+    # USER-SUCCESS Epic 1 (T5): pair the forecast prediction with the
+    # actual gate-pass verdict. Best-effort — never block the eval
+    # response on a calibration write failure.
+    try:
+        from app.services.trainability_forecast_service import (
+            resolve_forecast_observation,
+        )
+
+        await resolve_forecast_observation(db, experiment_id, passed=bool(passed))
+    except Exception as obs_exc:
+        print(
+            f"[forecast_calibration] resolve_failed experiment_id={experiment_id}: {obs_exc}",
+            flush=True,
+        )
+
     return {
         "project_id": project_id,
         "experiment_id": experiment_id,

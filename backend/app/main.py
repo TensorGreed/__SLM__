@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import async_session_factory, init_db
 from app.models.auth import AuditLog
 from app.security import authorize_request, ensure_bootstrap_auth, extract_project_id_from_path
+from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.audit import router as audit_router
 from app.api.settings import router as settings_router
@@ -263,6 +264,7 @@ API_DEPENDENCIES = [Depends(authorize_request)]
 
 # Mount API routers
 app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(admin_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(projects_router, prefix="/api", dependencies=API_DEPENDENCIES)

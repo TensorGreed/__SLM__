@@ -3,8 +3,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { augmentFromCluster } from '../../api/synthPlaybook';
+import { routeClusterFix } from '../../utils/clusterFixRouter';
 import './FailureClustersPanel.css';
 
 interface AugmentState {
@@ -104,6 +106,7 @@ export default function FailureClustersPanel({
     evalResults,
     onGenerateRemediation,
 }: FailureClustersPanelProps) {
+    const navigate = useNavigate();
     const [selectedResultId, setSelectedResultId] = useState<number | ''>('');
     const [clusters, setClusters] = useState<FailureClustersResponse | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -364,6 +367,29 @@ export default function FailureClustersPanel({
                                                 }))
                                             }
                                         />
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary failure-cluster-fix-in-gold"
+                                            data-testid={`failure-cluster-fix-in-gold-${cluster.cluster_id}`}
+                                            onClick={() => {
+                                                // E1 — deep-link into the gold-set
+                                                // tab's LLM-gen panel with the
+                                                // cluster's focus_hint + 5 traps
+                                                // defaulted. The destination panel
+                                                // renders a banner showing what's
+                                                // prefilled so the user can adjust
+                                                // before generating.
+                                                const route = routeClusterFix(projectId, cluster);
+                                                navigate(
+                                                    route.search
+                                                        ? `${route.path}?${route.search}`
+                                                        : route.path,
+                                                );
+                                            }}
+                                            title="Generate 5 hallucination traps for this cluster in the gold-set workbench"
+                                        >
+                                            Fix in gold set
+                                        </button>
                                         {cluster.classifier_reason && (
                                             <p className="failure-cluster-reason">{cluster.classifier_reason}</p>
                                         )}

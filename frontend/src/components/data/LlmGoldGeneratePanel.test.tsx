@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock, toastMock } = vi.hoisted(() => ({
@@ -21,6 +23,19 @@ vi.mock('../../api/client', () => ({ default: apiMock }));
 vi.mock('../../stores/toastStore', () => ({ toast: toastMock }));
 
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
+
+/** Render the panel inside a MemoryRouter so the cluster-fix
+ *  prefill reader (``useLocation``) can mount. Pass ``search`` to
+ *  simulate a deep-link from FailureClustersPanel's "Fix in gold set"
+ *  button. */
+function renderPanel(element: ReactElement, opts: { search?: string } = {}) {
+    const path = `/route${opts.search ?? ''}`;
+    return render(
+        <MemoryRouter initialEntries={[path]}>
+            {element}
+        </MemoryRouter>,
+    );
+}
 
 
 function makeGenerateResponse(overrides: Record<string, unknown> = {}) {
@@ -144,7 +159,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('Anthropic model dropdown swaps when provider switches', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -166,7 +181,7 @@ describe('LlmGoldGeneratePanel', () => {
     it('POSTs the right payload + renders preview rows on happy path', async () => {
         installPostRouter();
         const onRowsSaved = vi.fn();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -223,7 +238,7 @@ describe('LlmGoldGeneratePanel', () => {
     it('Save selected calls /gold/import with only the checked rows', async () => {
         installPostRouter({ import: { imported: 2 } });
         const onRowsSaved = vi.fn();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_test"
@@ -271,7 +286,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('Discard wipes the preview without POSTing /gold/import', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -313,7 +328,7 @@ describe('LlmGoldGeneratePanel', () => {
                 },
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -347,7 +362,7 @@ describe('LlmGoldGeneratePanel', () => {
         installPostRouter({
             generateError: { message: 'Network Error' },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -377,7 +392,7 @@ describe('LlmGoldGeneratePanel', () => {
                 },
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -398,7 +413,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('clamps the count input to [1, 50]', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -416,7 +431,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('grounding is on by default + cost badge renders with chunk count', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -436,7 +451,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('unchecking grounding sends ground_in_source=false', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -470,7 +485,7 @@ describe('LlmGoldGeneratePanel', () => {
                 estimated_cost_usd: 0.0003,
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -487,7 +502,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('selecting Deepseek sends provider=openai + api_url=Deepseek host on the wire', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -529,7 +544,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('custom model override beats the dropdown — e.g. DeepSeek-V4-Pro', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -574,7 +589,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('switching provider clears any custom-model override', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -617,7 +632,7 @@ describe('LlmGoldGeneratePanel', () => {
             }
             return { data: {} };
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -647,7 +662,7 @@ describe('LlmGoldGeneratePanel', () => {
         apiMock.put.mockResolvedValue({
             data: { has_stored_key: true, value_hint: 'sk************123' },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -685,7 +700,7 @@ describe('LlmGoldGeneratePanel', () => {
     it('does NOT fire PUT when the "Save this key" checkbox is unchecked', async () => {
         installPostRouter();
         installGetRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -727,7 +742,7 @@ describe('LlmGoldGeneratePanel', () => {
             return { data: {} };
         });
         apiMock.delete.mockResolvedValue({ status: 204, data: '' });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={7}
                 datasetType="gold_dev"
@@ -757,7 +772,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('mix toggle is qa-sft-only (hidden for classification)', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -771,7 +786,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('mix toggle visible on qa-sft; off by default; Generate sends count, not distribution', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -803,7 +818,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('opening the mix toggle reveals 4 inputs + total; total replaces count', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -837,7 +852,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('Generate with mix on sends distribution payload + correct total count', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -875,7 +890,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('mix total of 0 disables Generate + surfaces an error hint', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -921,7 +936,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -976,7 +991,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={7}
                 datasetType="gold_dev"
@@ -1021,7 +1036,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('Review-prompt toggle is OFF by default + Generate fires LLM directly', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1058,7 +1073,7 @@ describe('LlmGoldGeneratePanel', () => {
                 known_labels: ['positive', 'negative'],
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -1108,7 +1123,7 @@ describe('LlmGoldGeneratePanel', () => {
                 known_labels: [],
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={7}
                 datasetType="gold_dev"
@@ -1171,7 +1186,7 @@ describe('LlmGoldGeneratePanel', () => {
                 known_labels: [],
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1203,7 +1218,7 @@ describe('LlmGoldGeneratePanel', () => {
 
     it('Cancel from review discards edits + does NOT fire /generate-via-llm', async () => {
         installPostRouter();
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1242,7 +1257,7 @@ describe('LlmGoldGeneratePanel', () => {
                 known_labels: [],
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1272,7 +1287,7 @@ describe('LlmGoldGeneratePanel', () => {
                 known_labels: [],
             },
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1304,7 +1319,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1344,7 +1359,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -1393,7 +1408,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1422,7 +1437,7 @@ describe('LlmGoldGeneratePanel', () => {
                 rows: [{ text: 'clean text, no PII', entities: [] }],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1454,7 +1469,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={7}
                 datasetType="gold_test"
@@ -1496,7 +1511,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1533,7 +1548,7 @@ describe('LlmGoldGeneratePanel', () => {
                 ],
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={42}
                 datasetType="gold_dev"
@@ -1578,7 +1593,7 @@ describe('LlmGoldGeneratePanel', () => {
                 estimated_cost_usd: 0.0012,
             }),
         });
-        render(
+        renderPanel(
             <LlmGoldGeneratePanel
                 projectId={1}
                 datasetType="gold_dev"
@@ -1599,5 +1614,92 @@ describe('LlmGoldGeneratePanel', () => {
         const meta = screen.getByTestId('llm-gold-preview-meta').textContent || '';
         expect(meta).toMatch(/\$0\.0012 spent/);
         expect(meta).toMatch(/grounded in 5 chunks/);
+    });
+
+    // ── E1 — cluster-fix deep link prefill ───────────────────────────
+
+    it('renders no cluster-fix banner when the URL carries no cluster params', async () => {
+        installPostRouter();
+        renderPanel(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        expect(screen.queryByTestId('llm-gold-cluster-fix-banner')).not.toBeInTheDocument();
+    });
+
+    it('prefills focusHint + trap count and renders the banner for qa-sft', async () => {
+        installPostRouter();
+        renderPanel(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+            {
+                search: '?focus_cluster_id=cluster-42&focus_hint=%5Bhallucination%5D+Model+fabricates+dates&trap_count=5',
+            },
+        );
+        // Banner present + carries the cluster id + the hint text.
+        const banner = await screen.findByTestId('llm-gold-cluster-fix-banner');
+        expect(banner.textContent).toMatch(/cluster-42/);
+        const hintLine = screen.getByTestId('llm-gold-cluster-fix-hint');
+        expect(hintLine.textContent).toMatch(/Model fabricates dates/);
+        // Focus textarea prefilled with the hint (without the brackets
+        // collapsing — the hint went through encodeURIComponent so the
+        // [ and ] survived).
+        const focus = screen.getByTestId('llm-gold-focus-hint') as HTMLTextAreaElement;
+        expect(focus.value).toMatch(/\[hallucination\] Model fabricates dates/);
+        // qa-sft default → mix is customizable → traps slot populated.
+        const trapLine = screen.getByTestId('llm-gold-cluster-fix-trap-count');
+        expect(trapLine.textContent).toMatch(/5/);
+    });
+
+    it('on a non-qa-sft recipe, applies the focus hint but flags the trap-count skip', async () => {
+        installPostRouter();
+        renderPanel(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+                recipeId="classification"
+            />,
+            {
+                search: '?focus_cluster_id=cluster-7&focus_hint=label+drift&trap_count=5',
+            },
+        );
+        await screen.findByTestId('llm-gold-cluster-fix-banner');
+        // Hint flowed through.
+        const focus = screen.getByTestId('llm-gold-focus-hint') as HTMLTextAreaElement;
+        expect(focus.value).toBe('label drift');
+        // Banner explains that the trap mix is qa-sft-only — the user
+        // shouldn't expect the row mix UI to appear.
+        expect(screen.getByTestId('llm-gold-cluster-fix-trap-skip').textContent)
+            .toMatch(/qa-sft-only/);
+        // qa-sft trap count line is NOT rendered (recipeId !== 'qa-sft').
+        expect(screen.queryByTestId('llm-gold-cluster-fix-trap-count')).not.toBeInTheDocument();
+    });
+
+    it('dismiss button hides the banner (URL params + applied prefill stay)', async () => {
+        installPostRouter();
+        renderPanel(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+            {
+                search: '?focus_cluster_id=cluster-9&focus_hint=foo&trap_count=3',
+            },
+        );
+        await screen.findByTestId('llm-gold-cluster-fix-banner');
+
+        await userEvent.click(screen.getByTestId('llm-gold-cluster-fix-dismiss'));
+        expect(screen.queryByTestId('llm-gold-cluster-fix-banner')).not.toBeInTheDocument();
+        // The prefill itself stays — focusHint textarea retains the value.
+        const focus = screen.getByTestId('llm-gold-focus-hint') as HTMLTextAreaElement;
+        expect(focus.value).toBe('foo');
     });
 });

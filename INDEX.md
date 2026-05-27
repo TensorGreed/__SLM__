@@ -19,6 +19,7 @@ session-start guidance.
 ## Backend · API routes
 
 - `backend/app/api/adapter_studio.py` — API routes for Dataset Structure Explorer + Adapter Studio.
+- `backend/app/api/admin.py` — Admin API surface (USER-SUCCESS Epic 1, T5).
 - `backend/app/api/annotation.py` — Annotation foundation API (Story 1.1).
 - `backend/app/api/archetypes.py` — Archetype API routes (USER-SUCCESS Epic 8 Phase 8a).
 - `backend/app/api/artifacts.py` — Typed artifact registry API routes.
@@ -244,6 +245,7 @@ session-start guidance.
 - `backend/app/models/experiment.py` — Experiment, Checkpoint, and EvalResult ORM models.
 - `backend/app/models/export.py` — Export ORM model for tracking model exports.
 - `backend/app/models/failure_cluster.py` — Persisted failure clusters (priority.md P33, Wave G).
+- `backend/app/models/forecast_calibration_observation.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
 - `backend/app/models/gold_set_annotation.py` — Gold-set annotation workbench tables — versions, rows, and reviewer queue.
 - `backend/app/models/job.py` — Generic background job record (Hardening Phase H1).
 - `backend/app/models/label_job.py` — Annotation foundation (Story 1.1) — label jobs + per-row work units.
@@ -325,6 +327,7 @@ session-start guidance.
 - `backend/alembic/versions/20260526_0036_project_rag_first_columns.py` — Project parent_project_id + runtime_config columns (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/alembic/versions/20260526_0037_jobs_table.py` — Jobs table for the background-task framework (Hardening Phase H1).
 - `backend/alembic/versions/20260527_0038_training_forecast_snapshots.py` — Training-forecast snapshot history table (USER-SUCCESS Epic 1, T2).
+- `backend/alembic/versions/20260527_0039_forecast_calibration_observations.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
 
 ## Frontend · API clients
 
@@ -530,6 +533,7 @@ session-start guidance.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
@@ -775,6 +779,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectWizardPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_
+- `frontend/src/utils/clusterFixRouter.test.ts` — _(no docstring)_
 - `frontend/src/utils/forecastActionRouter.test.ts` — _(no docstring)_
 
 ---

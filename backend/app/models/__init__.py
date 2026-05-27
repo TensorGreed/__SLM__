@@ -41,6 +41,9 @@ from app.models.failure_cluster import FailureCluster
 from app.models.support_bundle import SupportBundle
 from app.models.job import Job, JobStatus
 from app.models.training_forecast_snapshot import TrainingForecastSnapshot
+from app.models.forecast_calibration_observation import (
+    ForecastCalibrationObservation,
+)
 
 __all__ = [
     "Project",
@@ -91,5 +94,6 @@ __all__ = [
     "LabelRow",
     "Job",
     "TrainingForecastSnapshot",
+    "ForecastCalibrationObservation",
     "JobStatus",
 ]

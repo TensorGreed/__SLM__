@@ -407,6 +407,24 @@ async def create_experiment(
     await db.flush()
     await db.refresh(exp)
 
+    # USER-SUCCESS Epic 1 (T5): record a forecast→reality observation
+    # pairing this experiment with the user's most-recent forecast
+    # snapshot. Silent no-op when no snapshot exists (user trained
+    # without viewing the forecast first); those runs are excluded
+    # from calibration aggregation rather than fail-loud here.
+    try:
+        from app.services.trainability_forecast_service import (
+            record_forecast_observation,
+        )
+
+        await record_forecast_observation(db, exp.id)
+    except Exception as obs_exc:
+        # Calibration is best-effort; never block experiment creation.
+        print(
+            f"[forecast_calibration] record_failed experiment_id={exp.id}: {obs_exc}",
+            flush=True,
+        )
+
     # Create output dir
     output_dir = _experiment_dir(project_id, exp.id)
     exp.output_dir = str(output_dir)

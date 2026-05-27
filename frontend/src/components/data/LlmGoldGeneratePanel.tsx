@@ -22,7 +22,8 @@
  * before they poison evals.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
@@ -441,6 +442,30 @@ export default function LlmGoldGeneratePanel({
     const recipeUx = RECIPE_UX[recipeId] || RECIPE_UX['qa-sft'];
     const [provider, setProvider] = useState<Provider>(initialProvider || 'openai');
     const [model, setModel] = useState<string>(DEFAULT_MODELS.openai[0].value);
+
+    // E1 — failure-cluster "Fix in gold set" deep link. The cluster
+    // card on FailureClustersPanel emits a URL with focus_cluster_id +
+    // focus_hint + trap_count; we apply once on mount to prefill the
+    // focus textarea + the hallucination-trap row count. Banner stays
+    // visible (dismissible) so the user sees what triggered the
+    // prefill before generating.
+    const location = useLocation();
+    const clusterFix = useMemo(() => {
+        const params = new URLSearchParams(location.search);
+        const clusterId = params.get('focus_cluster_id');
+        const hint = params.get('focus_hint');
+        const trapCountRaw = params.get('trap_count');
+        const trapCount = trapCountRaw !== null ? Number(trapCountRaw) : null;
+        return {
+            clusterId: clusterId?.trim() || null,
+            hint: hint?.trim() || null,
+            trapCount: Number.isFinite(trapCount) && trapCount! > 0
+                ? Math.max(1, Math.min(20, Math.round(trapCount as number)))
+                : null,
+        };
+    }, [location.search]);
+    const [clusterFixApplied, setClusterFixApplied] = useState(false);
+    const [clusterFixDismissed, setClusterFixDismissed] = useState(false);
     // Override slot for unusual / unreleased / private model ids
     // (e.g. a Deepseek "DeepSeek-V4-Pro" the dropdown doesn't carry,
     // or a fresh OpenAI / Anthropic SKU). When non-empty, this is
@@ -503,6 +528,25 @@ export default function LlmGoldGeneratePanel({
         hard: 2,
         hallucination_traps: 0,
     });
+
+    // E1 — apply cluster-fix prefill once. Runs after the mix +
+    // focusHint state slots are declared so the initial setters exist.
+    // qa-sft is the only recipe whose mix carries hallucination_traps;
+    // other recipes get the focus_hint prefill but skip the mix edit.
+    useEffect(() => {
+        if (clusterFixApplied) return;
+        if (!clusterFix.clusterId && !clusterFix.hint && clusterFix.trapCount === null) {
+            return;
+        }
+        if (clusterFix.hint) {
+            setFocusHint(clusterFix.hint);
+        }
+        if (clusterFix.trapCount !== null && recipeId === 'qa-sft') {
+            setCustomizeMix(true);
+            setMix((prev) => ({ ...prev, hallucination_traps: clusterFix.trapCount! }));
+        }
+        setClusterFixApplied(true);
+    }, [clusterFix, clusterFixApplied, recipeId]);
     const mixTotal = mix.easy + mix.medium + mix.hard + mix.hallucination_traps;
     const mixActive = recipeId === 'qa-sft' && customizeMix;
     const effectiveCount = mixActive ? mixTotal : count;
@@ -900,6 +944,70 @@ export default function LlmGoldGeneratePanel({
                     "Save selected" below.
                 </p>
             </header>
+
+            {/* E1 — cluster-fix prefill banner. Shown when the user
+                landed here via a failure cluster's "Fix in gold set"
+                button. Carries the cluster id + the focus hint that
+                was applied so the user can verify what got prefilled
+                before clicking Generate. Dismiss clears the banner
+                only (URL params + applied prefill stay). */}
+            {clusterFixApplied
+                && !clusterFixDismissed
+                && (clusterFix.clusterId || clusterFix.hint || clusterFix.trapCount !== null) && (
+                <div
+                    data-testid="llm-gold-cluster-fix-banner"
+                    style={{
+                        padding: 'var(--space-sm) var(--space-md)',
+                        border: '1px solid var(--color-warning, #f0a020)',
+                        background: 'var(--color-warning-bg, rgba(240, 160, 32, 0.10))',
+                        borderRadius: 'var(--radius-sm)',
+                        color: 'var(--text-primary)',
+                        fontSize: '0.9rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                    }}
+                >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-sm)' }}>
+                        <strong>
+                            Generating traps for cluster
+                            {clusterFix.clusterId
+                                ? <> <code>{clusterFix.clusterId}</code></>
+                                : null}
+                        </strong>
+                        <button
+                            type="button"
+                            className="btn btn-link"
+                            onClick={() => setClusterFixDismissed(true)}
+                            data-testid="llm-gold-cluster-fix-dismiss"
+                            style={{ padding: 0 }}
+                            aria-label="Dismiss cluster-fix banner"
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                    {clusterFix.hint && (
+                        <div data-testid="llm-gold-cluster-fix-hint">
+                            Focus hint applied: <em>{clusterFix.hint}</em>
+                        </div>
+                    )}
+                    {clusterFix.trapCount !== null && recipeId === 'qa-sft' && (
+                        <div data-testid="llm-gold-cluster-fix-trap-count">
+                            Row mix prefilled with <strong>{clusterFix.trapCount}</strong> hallucination
+                            trap{clusterFix.trapCount === 1 ? '' : 's'}.
+                        </div>
+                    )}
+                    {clusterFix.trapCount !== null && recipeId !== 'qa-sft' && (
+                        <div
+                            data-testid="llm-gold-cluster-fix-trap-skip"
+                            style={{ color: 'var(--text-tertiary)' }}
+                        >
+                            Hallucination-trap distribution is qa-sft-only; the focus hint still flows
+                            through to the LLM prompt.
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div
                 style={{

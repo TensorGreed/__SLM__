@@ -107,6 +107,10 @@ Suggested actions on every signal map to one of `synth_augment` / `synth_balance
 
 Every cache-miss compute writes one row to `training_forecast_snapshots`. The Training Config panel reads `GET /api/projects/{id}/training/forecast/history?limit=10` and renders a sparkline above the signal list — `confidence_pct` on the y-axis (fixed [0, 100] so the shape is comparable across sessions) with a coloured dot per snapshot (green = `likely_pass`, amber = `borderline`, red = `likely_fail`). Hover a dot to see its verdict + signal severities at the time of compute.
 
+### Calibration (admin)
+
+`GET /api/admin/forecast/calibration?recipe=<id>` exposes forecast-vs-reality calibration: every experiment is paired with the user's most-recent forecast snapshot at creation time, and resolved against the actual gate-pass verdict when `evaluate_experiment_auto_gates` runs. The response buckets resolved observations into 10%-confidence bands so per-recipe calibration drift (e.g. predicted 70-80% but actually passing 40% of the time) is visible without leaving the JSON. Used for retuning the heuristic coefficients in `trainability_forecast_service.estimate_gate_pass_prob`. No UI in v1 — admin-only endpoint.
+
 Next to the sparkline a three-chip strip shows the last three verdict deltas (`▼ -24%`, `· 0%`, `▲ +12%`). The user can pin down whether a gold-set edit or synth run actually moved the needle without re-reading the signal list.
 
 Cache hits do not add to history — only true recomputes do, so the sparkline reflects iteration, not idle polling. Snapshots older than 60 days are pruned on insert.

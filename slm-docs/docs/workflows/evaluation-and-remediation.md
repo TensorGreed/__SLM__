@@ -197,6 +197,10 @@ curl -X POST http://localhost:8000/api/projects/1/gold/add \
 
 The gold set is also the input to the **trainability forecast** (Training Config page). The forecast runs the same recipe-aware signal sweep on the gold set *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.
 
+## Fix-in-gold-set deep links
+
+When you expand a failure-cluster card on the Eval tab, a **Fix in gold set** button next to the cluster-augment control deep-links into the gold-set workbench with the LLM-gen panel pre-configured: `distribution.hallucination_traps` defaults to 5 and the focus textarea is prefilled with a one-line summary of the cluster's failure pattern (reason code + classifier explanation). The destination panel shows a dismissible "Generating traps for cluster X" banner so you can verify what was prefilled before clicking Generate. Non-qa-sft recipes still get the focus hint; the trap distribution UI is qa-sft-only.
+
 ## Step 2 — Pick an eval pack
 
 An **eval pack** bundles task-aware metric schemas + gate policies. Built-in packs cover the common cases; you can scaffold custom packs via [Extensions → Scaffold](../extensions/scaffold.md).

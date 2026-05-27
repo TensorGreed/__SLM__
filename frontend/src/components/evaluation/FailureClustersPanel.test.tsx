@@ -1,8 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, navigateMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
         post: vi.fn(),
@@ -10,11 +12,25 @@ const { apiMock } = vi.hoisted(() => ({
         put: vi.fn(),
         delete: vi.fn(),
     },
+    navigateMock: vi.fn(),
 }));
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
+// Stub useNavigate so the "Fix in gold set" click can be asserted on
+// without driving the route in a MemoryRouter (the existing tests
+// don't care about route changes — they care that we call navigate
+// with the expected URL). The MemoryRouter wrapper still provides
+// useLocation for sibling consumers.
+vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+    return { ...actual, useNavigate: () => navigateMock };
+});
 
 import FailureClustersPanel from './FailureClustersPanel';
+
+function renderPanel(element: ReactElement) {
+    return render(<MemoryRouter>{element}</MemoryRouter>);
+}
 
 const EVAL_RESULTS = [
     { id: 501, dataset_name: 'gold_test', eval_type: 'llm_judge', pass_rate: 0.62 },
@@ -87,7 +103,7 @@ describe('FailureClustersPanel', () => {
     it('fetches clusters for the first eval result and renders counts + remediation plan', async () => {
         apiMock.get.mockResolvedValueOnce({ data: CLUSTER_RESPONSE });
 
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
 
         await waitFor(() => {
             expect(apiMock.get).toHaveBeenCalledWith(
@@ -133,7 +149,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
         const headButtons = await screen.findAllByRole('button', { expanded: false });
@@ -171,7 +187,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
         const headButtons = await screen.findAllByRole('button', { expanded: false });
@@ -211,7 +227,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
         const findHead = async () => {
@@ -246,7 +262,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
         const headButtons = await screen.findAllByRole('button', { expanded: false });
@@ -279,7 +295,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
         const headButtons = await screen.findAllByRole('button', { expanded: false });
@@ -309,7 +325,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
 
         const headButtons = await screen.findAllByRole('button', { expanded: false });
@@ -349,7 +365,7 @@ describe('FailureClustersPanel', () => {
         });
 
         const user = userEvent.setup();
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         await waitFor(() =>
             expect(apiMock.get).toHaveBeenCalledWith(
                 '/projects/1/evaluation/501/failure-clusters',
@@ -374,7 +390,7 @@ describe('FailureClustersPanel', () => {
     });
 
     it('shows a fallback when the experiment has no eval results yet', () => {
-        render(<FailureClustersPanel projectId={1} evalResults={[]} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={[]} />);
         expect(apiMock.get).not.toHaveBeenCalled();
         expect(
             screen.getByText(/run at least one evaluation to cluster its failures/i),
@@ -385,7 +401,7 @@ describe('FailureClustersPanel', () => {
         apiMock.get.mockRejectedValueOnce({
             response: { data: { detail: 'eval_result_not_found' } },
         });
-        render(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
         expect(
             await screen.findByText(/eval_result_not_found/i),
         ).toBeInTheDocument();
@@ -395,7 +411,7 @@ describe('FailureClustersPanel', () => {
 
     it('renders the per-cluster augment control inside an expanded cluster card', async () => {
         apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
-        render(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
 
         const clusterButton = await screen.findByRole('button', {
             name: /hallucination/i,
@@ -423,7 +439,7 @@ describe('FailureClustersPanel', () => {
             },
         });
 
-        render(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
         const clusterButton = await screen.findByRole('button', {
             name: /hallucination/i,
         });
@@ -453,7 +469,7 @@ describe('FailureClustersPanel', () => {
             response: { status: 503, data: { detail: 'No synth backend reachable.' } },
         });
 
-        render(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
+        renderPanel(<FailureClustersPanel projectId={5} evalResults={EVAL_RESULTS} />);
         const clusterButton = await screen.findByRole('button', {
             name: /hallucination/i,
         });
@@ -464,5 +480,49 @@ describe('FailureClustersPanel', () => {
             expect(screen.getByTestId('failure-cluster-augment-error-cluster-1')).toBeInTheDocument();
         });
         expect(screen.getByTestId('failure-cluster-augment-error-cluster-1').textContent).toMatch(/No synth backend/);
+    });
+
+    // ── E1 — "Fix in gold set" deep link ─────────────────────────────
+
+    it('renders the Fix-in-gold-set button when a cluster card is expanded', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        renderPanel(<FailureClustersPanel projectId={3} evalResults={EVAL_RESULTS} />);
+
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) =>
+            btn.textContent?.includes('hallucination'),
+        );
+        await userEvent.click(targetHead!);
+
+        expect(
+            screen.getByTestId('failure-cluster-fix-in-gold-cluster-1'),
+        ).toBeInTheDocument();
+    });
+
+    it('navigates to /pipeline/goldset with focus + trap params on click', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        navigateMock.mockReset();
+        renderPanel(<FailureClustersPanel projectId={3} evalResults={EVAL_RESULTS} />);
+
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) =>
+            btn.textContent?.includes('hallucination'),
+        );
+        await userEvent.click(targetHead!);
+
+        await userEvent.click(
+            screen.getByTestId('failure-cluster-fix-in-gold-cluster-1'),
+        );
+
+        expect(navigateMock).toHaveBeenCalledTimes(1);
+        const target = String(navigateMock.mock.calls[0][0]);
+        expect(target.startsWith('/project/3/pipeline/goldset?')).toBe(true);
+        const params = new URLSearchParams(target.split('?')[1]);
+        expect(params.get('focus_cluster_id')).toBe('cluster-1');
+        expect(params.get('trap_count')).toBe('5');
+        // The hint inherits the classifier_reason — the LLM-gen panel
+        // dumps it into the focusHint textarea verbatim.
+        expect(params.get('focus_hint')).toMatch(/hallucination/);
+        expect(params.get('focus_hint')).toMatch(/Low reference overlap/);
     });
 });
