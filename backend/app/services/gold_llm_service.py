@@ -21,9 +21,13 @@ Scope:
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
+
+
+_LOG = logging.getLogger("gold_llm")
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -391,50 +395,113 @@ def _build_user_prompt(
 # ─────────────────────────────────────────────────────────────────────
 
 
+# Field aliases the parser accepts in addition to the canonical
+# question/answer names. Real LLM outputs across vendors use:
+#   * q / a (compact form, common in code-targeted LLMs)
+#   * prompt / response (instruction-tuned models default)
+#   * input / output (training-data convention)
+#   * query / reply (chat-flavored shorthand)
+# Keys are checked in order; first non-empty match wins.
+_QUESTION_FIELD_ALIASES = (
+    "question", "q", "prompt", "input", "query", "user", "instruction",
+)
+_ANSWER_FIELD_ALIASES = (
+    "answer", "a", "response", "output", "reply", "assistant", "completion",
+)
+
+# Container keys the parser searches for the items list. Extended
+# beyond the canonical "pairs" because real LLM outputs often
+# label the array as "questions", "examples", "samples", etc.
+_ITEM_CONTAINER_KEYS = (
+    "pairs", "qa_pairs", "questions", "examples", "samples", "items", "data", "rows", "output",
+)
+
+
+def _extract_field(item: dict[str, Any], aliases: tuple[str, ...]) -> str:
+    """Return the first non-empty stripped string match against the
+    alias list. Case-insensitive on keys so models that emit
+    ``Question`` or ``ANSWER`` still parse."""
+    lower_keys = {k.lower(): k for k in item.keys() if isinstance(k, str)}
+    for alias in aliases:
+        actual_key = lower_keys.get(alias)
+        if actual_key is None:
+            continue
+        value = item.get(actual_key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _extract_items(payload: Any) -> list[Any]:
+    """Pull the list-of-pairs out of an arbitrarily-shaped JSON
+    response. Walks the known container keys, falls back to a
+    single-pair object, then to any top-level list-of-dicts."""
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+
+    # Known container keys, case-insensitive.
+    lower_keys = {k.lower(): k for k in payload.keys() if isinstance(k, str)}
+    for container in _ITEM_CONTAINER_KEYS:
+        actual_key = lower_keys.get(container)
+        if actual_key is None:
+            continue
+        candidate = payload.get(actual_key)
+        if isinstance(candidate, list):
+            return candidate
+        # One level of nesting tolerated: e.g. {"data": {"pairs": [...]}}.
+        if isinstance(candidate, dict):
+            nested = _extract_items(candidate)
+            if nested:
+                return nested
+
+    # Single-pair object shape — wrap it.
+    if _extract_field(payload, _QUESTION_FIELD_ALIASES) and _extract_field(
+        payload, _ANSWER_FIELD_ALIASES,
+    ):
+        return [payload]
+
+    # Last-ditch: a top-level dict with EXACTLY one value that's a
+    # list (some models wrap with a single arbitrary key like
+    # ``{"result": [...]}``).
+    list_values = [v for v in payload.values() if isinstance(v, list)]
+    if len(list_values) == 1:
+        return list_values[0]
+
+    return []
+
+
 def _parse_qa_payload(content: str, expected_count: int) -> list[GeneratedQa]:
-    """Pull ``GeneratedQa`` rows out of the LLM response. Tolerant
-    of two top-level shapes:
-      * ``{"pairs": [{"question": ..., "answer": ...}, ...]}``
-      * ``[{"question": ..., "answer": ...}, ...]``
-    Rejects rows missing question or answer; doesn't enforce the
-    expected_count strictly (LLMs sometimes return N±1)."""
+    """Pull ``GeneratedQa`` rows out of the LLM response. Tolerates:
+      * top-level list OR ``{<container>: [...]}`` with container in
+        ``_ITEM_CONTAINER_KEYS`` (case-insensitive)
+      * one level of nesting (``{"data": {"pairs": [...]}}``)
+      * field aliases on each item (``q``/``a``, ``prompt``/``response``,
+        ``input``/``output``, etc. — see ``_QUESTION_FIELD_ALIASES``)
+    Rows missing question OR answer are skipped silently. Doesn't
+    enforce expected_count strictly (LLMs sometimes return N±1)."""
     try:
         payload = extract_json_payload(content)
     except ValueError as exc:
-        # Re-raise as structured GoldGenerationError so the API
-        # layer returns 400 with LLM_RESPONSE_UNPARSEABLE instead
-        # of a generic 500.
         raise GoldGenerationError(
             "LLM_RESPONSE_UNPARSEABLE",
             f"LLM response was not parseable JSON: {exc}",
         ) from exc
 
-    items: list = []
-    if isinstance(payload, list):
-        items = payload
-    elif isinstance(payload, dict):
-        for key in ("pairs", "qa_pairs", "items", "data"):
-            if isinstance(payload.get(key), list):
-                items = payload[key]
-                break
-        else:
-            # Single-pair object shape — wrap it.
-            if isinstance(payload.get("question"), str) and isinstance(
-                payload.get("answer"), str,
-            ):
-                items = [payload]
+    items = _extract_items(payload)
 
     rows: list[GeneratedQa] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        q = str(item.get("question") or "").strip()
-        a = str(item.get("answer") or "").strip()
-        r = str(item.get("rationale") or "").strip()
-        # ``source_excerpt`` only appears when grounding is on; the
-        # parser stays tolerant of its absence so ungrounded
-        # responses don't fail this check.
-        src = str(item.get("source_excerpt") or "").strip()
+        q = _extract_field(item, _QUESTION_FIELD_ALIASES)
+        a = _extract_field(item, _ANSWER_FIELD_ALIASES)
+        r = _extract_field(item, ("rationale", "explanation", "reasoning", "why"))
+        src = _extract_field(
+            item,
+            ("source_excerpt", "source", "evidence", "quote", "citation"),
+        )
         if not q or not a:
             continue
         rows.append(
@@ -442,10 +509,46 @@ def _parse_qa_payload(content: str, expected_count: int) -> list[GeneratedQa]:
         )
 
     if not rows:
+        # Two distinct failure modes — distinguish so the user knows
+        # what to change. Both surface as 400 from the API layer.
+        snippet = (content or "").strip()[:300]
+        # Log full response for backend debug so support can see the
+        # actual model output without the user having to copy-paste.
+        _LOG.warning(
+            "gold_llm parse failed — payload kind=%s top_keys=%s items_seen=%d "
+            "raw_response_preview=%r",
+            type(payload).__name__,
+            list(payload.keys())[:8] if isinstance(payload, dict) else "(not a dict)",
+            len(items),
+            (content or "")[:500],
+        )
+
+        if items and not rows:
+            # Items list exists but every entry was rejected — field
+            # name mismatch is overwhelmingly the cause.
+            first_item_keys = (
+                list(items[0].keys())[:8]
+                if isinstance(items[0], dict)
+                else "(first item not a dict)"
+            )
+            raise GoldGenerationError(
+                "LLM_RESPONSE_UNPARSEABLE",
+                f"Got {len(items)} item(s) back, but none had recognizable "
+                f"question/answer fields. The first item's keys were: "
+                f"{first_item_keys}. Try a different model, or rephrase "
+                f"the focus hint to push the LLM toward standard "
+                f"Q&A shape. Raw response (first 300 chars): {snippet!r}",
+            )
+        # Empty items list — model either refused, returned the
+        # wrong outer shape, or (when grounded) couldn't anchor any
+        # questions in the reference material.
         raise GoldGenerationError(
             "LLM_RESPONSE_UNPARSEABLE",
-            "The LLM response did not contain any parseable question/answer pairs. "
-            "Try a different model or a clearer focus hint.",
+            "The LLM returned valid JSON but no question/answer pairs. "
+            "When grounding is on, this often means the model couldn't "
+            "anchor any questions to your reference material — try "
+            "ungrounded mode OR add more focused source content. "
+            f"Raw response (first 300 chars): {snippet!r}",
         )
     if abs(len(rows) - expected_count) > max(2, expected_count // 4):
         # Soft warning rather than hard fail — preview lets the user

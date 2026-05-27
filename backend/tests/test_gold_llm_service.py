@@ -81,6 +81,145 @@ class ExtractJsonPayloadTests(unittest.TestCase):
             extract_json_payload("not json at all just words")
 
 
+class ParserToleranceTests(unittest.TestCase):
+    """Direct tests of ``_parse_qa_payload`` — the alias map + container
+    keys + improved error messages. Goal: real LLM outputs across
+    vendors should parse without the user having to know what field
+    names BrewSLM wants."""
+
+    def _parse(self, content: str, expected_count: int = 2):
+        from app.services.gold_llm_service import _parse_qa_payload
+        return _parse_qa_payload(content, expected_count)
+
+    # ── Alias paths — each accepted field-name variant ────────────
+
+    def test_canonical_question_answer_keys(self):
+        rows = self._parse(
+            '{"pairs":[{"question":"Q1","answer":"A1"},'
+            '{"question":"Q2","answer":"A2"}]}',
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].question, "Q1")
+
+    def test_q_a_short_form(self):
+        rows = self._parse(
+            '{"pairs":[{"q":"Q1","a":"A1"},{"q":"Q2","a":"A2"}]}',
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].question, "Q1")
+        self.assertEqual(rows[0].answer, "A1")
+
+    def test_prompt_response_form(self):
+        rows = self._parse(
+            '{"pairs":[{"prompt":"P1","response":"R1"},'
+            '{"prompt":"P2","response":"R2"}]}',
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].question, "P1")
+
+    def test_input_output_form(self):
+        rows = self._parse(
+            '[{"input":"i1","output":"o1"},{"input":"i2","output":"o2"}]',
+        )
+        self.assertEqual(len(rows), 2)
+
+    def test_case_insensitive_field_match(self):
+        # Some models emit TitleCase or UPPERCASE keys; aliases match
+        # case-insensitively.
+        rows = self._parse(
+            '{"pairs":[{"Question":"Q1","ANSWER":"A1"}]}',
+            expected_count=1,
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].question, "Q1")
+
+    # ── Container key variants ────────────────────────────────────
+
+    def test_questions_container_key(self):
+        rows = self._parse(
+            '{"questions":[{"question":"Q","answer":"A"}]}',
+            expected_count=1,
+        )
+        self.assertEqual(len(rows), 1)
+
+    def test_examples_container_key(self):
+        rows = self._parse(
+            '{"examples":[{"q":"Q","a":"A"}]}',
+            expected_count=1,
+        )
+        self.assertEqual(len(rows), 1)
+
+    def test_nested_container_one_level(self):
+        # {"data": {"pairs": [...]}} shape — common from
+        # over-specified prompt templates.
+        rows = self._parse(
+            '{"data":{"pairs":[{"question":"Q","answer":"A"}]}}',
+            expected_count=1,
+        )
+        self.assertEqual(len(rows), 1)
+
+    def test_single_arbitrary_list_value_fallback(self):
+        # {"result": [...]} — single-key dict whose value is a
+        # list. Last-ditch path before erroring.
+        rows = self._parse(
+            '{"result":[{"q":"Q","a":"A"}]}',
+            expected_count=1,
+        )
+        self.assertEqual(len(rows), 1)
+
+    # ── Improved errors ───────────────────────────────────────────
+
+    def test_wrong_field_names_error_includes_first_item_keys(self):
+        # LLM returned items but used field names we don't know.
+        # User needs to see WHICH keys came back so they can either
+        # request different keys via focus_hint or pick another
+        # model.
+        from app.services.gold_llm_service import GoldGenerationError
+        with self.assertRaises(GoldGenerationError) as cm:
+            self._parse(
+                '{"pairs":[{"foo":"x","bar":"y"},{"foo":"x","bar":"y"}]}',
+            )
+        message = str(cm.exception)
+        self.assertIn("foo", message)
+        self.assertIn("bar", message)
+        # Also the raw response preview so users can copy-paste for
+        # debugging.
+        self.assertIn("pairs", message)
+        self.assertEqual(cm.exception.error_code, "LLM_RESPONSE_UNPARSEABLE")
+
+    def test_empty_pairs_array_distinct_error_message(self):
+        # Grounded mode + LLM couldn't anchor any questions — emits
+        # {"pairs":[]}. Error must point at grounding, not field-name.
+        from app.services.gold_llm_service import GoldGenerationError
+        with self.assertRaises(GoldGenerationError) as cm:
+            self._parse('{"pairs":[]}')
+        self.assertEqual(cm.exception.error_code, "LLM_RESPONSE_UNPARSEABLE")
+        message = str(cm.exception)
+        self.assertIn("grounding", message.lower())
+
+    def test_error_includes_raw_response_preview(self):
+        # Any unparseable case must include the raw response so the
+        # user can see what the LLM actually returned without having
+        # to dig through server logs.
+        from app.services.gold_llm_service import GoldGenerationError
+        with self.assertRaises(GoldGenerationError) as cm:
+            self._parse('{"pairs":[{"foo":"x"}]}')
+        message = str(cm.exception)
+        self.assertIn("foo", message)
+
+    def test_rationale_and_source_excerpt_aliases(self):
+        # Models often use "explanation" or "reasoning" for rationale
+        # and "source" / "evidence" / "quote" for the citation.
+        rows = self._parse(
+            '{"pairs":[{"question":"Q","answer":"A",'
+            '"reasoning":"because","evidence":"from doc"}]}',
+            expected_count=1,
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].rationale, "because")
+        self.assertEqual(rows[0].source_excerpt, "from doc")
+
+
 class GenerateGoldQaServiceTests(unittest.TestCase):
     """Service-level tests — patch the cloud clients so we don't
     hit OpenAI / Anthropic for real."""
