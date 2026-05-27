@@ -202,6 +202,39 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
         setEntryFilter('all');
     }, [recipeId]);
 
+    /** Known span-extraction entity types — pulled from the current
+     *  entries (after normalization) so the add-form's helper Type
+     *  input lets the user reuse the existing type vocabulary
+     *  instead of typing each one from scratch. Empty list when the
+     *  recipe isn't span-extraction (the form branch doesn't render
+     *  the helper at all in that case). */
+    const knownSpanTypes = useMemo(() => {
+        if (recipeId !== 'span-extraction') return [];
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const e of entries) {
+            // Run each entry through the normalizer first so legacy
+            // template rows (entities JSON-encoded in ``answer``)
+            // contribute their types alongside the recipe-shaped
+            // ones.
+            const normalized = normalizeEntryForRecipe('span-extraction', e);
+            const ents = normalized.entities;
+            if (!Array.isArray(ents)) continue;
+            for (const ent of ents) {
+                if (!ent || typeof ent !== 'object') continue;
+                const t = (ent as { type?: unknown }).type;
+                if (typeof t !== 'string') continue;
+                const trimmed = t.trim();
+                if (!trimmed) continue;
+                const key = trimmed.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(trimmed);
+            }
+        }
+        return out.sort();
+    }, [entries, recipeId]);
+
     /** Known classification labels — pulled from the current entries
      *  so the add-form's combobox lets the user reuse the existing
      *  label vocabulary instead of inventing new tokens per row.
@@ -333,6 +366,7 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     <GoldEntryAddForm
                         recipeId={recipeId as GoldRowRecipe}
                         knownLabels={knownClassificationLabels}
+                        knownSpanTypes={knownSpanTypes}
                         onAdd={handleAddRow}
                     />
                 ) : (

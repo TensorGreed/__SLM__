@@ -53,6 +53,13 @@ interface Props {
      *  the existing label vocabulary instead of inventing new ones
      *  per row. */
     knownLabels?: string[];
+    /** Existing span-extraction entity types (extracted from the
+     *  current gold rows) — populates the helper Type input's
+     *  ``<datalist>`` so PII / contract / NER projects don't make
+     *  the user retype ``email`` / ``liability_cap`` / etc. every
+     *  add. Types from in-progress entities in the JSON editor are
+     *  automatically merged in (see ``unionedSpanTypes`` below). */
+    knownSpanTypes?: string[];
     /** Called when the user clicks the add button with a fully
      *  validated payload. Returns a promise so the form can disable
      *  inputs / reset on success. Throws / rejects on error so the
@@ -134,6 +141,7 @@ function validateSpansJson(jsonText: string, text: string): SpanJsonValidation {
 export default function GoldEntryAddForm({
     recipeId,
     knownLabels = [],
+    knownSpanTypes = [],
     onAdd,
 }: Props) {
     // qa-sft state
@@ -234,6 +242,80 @@ export default function GoldEntryAddForm({
         && selectionType.trim().length > 0
         && entitiesJsonParseable
     );
+
+    /** Raw-parsed array of entity objects from the JSON editor, used
+     *  to render the deletable-chip list above the editor. Distinct
+     *  from ``spanValidation.spans`` because that one's empty when
+     *  ANY span fails offset validation — chips need to render even
+     *  with a broken individual span so the user can delete it via
+     *  ✕ instead of hand-fixing the JSON. Null when the JSON is
+     *  fundamentally unparseable (not an array, syntax error). */
+    const parsedEntities = useMemo<Array<Record<string, unknown>> | null>(() => {
+        const trimmed = entitiesJson.trim();
+        if (!trimmed) return null;  // empty == no chips to render
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (!Array.isArray(parsed)) return null;
+            // Filter to object-shaped items only — string / number
+            // entries can't be rendered as a chip and shouldn't
+            // crash the list.
+            return parsed.filter(
+                (x): x is Record<string, unknown> =>
+                    !!x && typeof x === 'object' && !Array.isArray(x),
+            );
+        } catch {
+            return null;
+        }
+    }, [entitiesJson]);
+
+    /** Union of caller-supplied known types + types currently in
+     *  the JSON editor. Powers the helper Type input's autocomplete
+     *  ``<datalist>``. In-progress types are merged in so the user
+     *  can reuse a type they just added without it disappearing
+     *  from the dropdown the moment the row hasn't been saved yet.
+     *  Comparison is case-insensitive; preserves the first-seen
+     *  casing so "Email" and "email" don't both show up. */
+    const unionedSpanTypes = useMemo(() => {
+        if (recipeId !== 'span-extraction') return [];
+        const seen = new Set<string>();
+        const out: string[] = [];
+        const consider = (t: unknown) => {
+            if (typeof t !== 'string') return;
+            const trimmed = t.trim();
+            if (!trimmed) return;
+            const key = trimmed.toLowerCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            out.push(trimmed);
+        };
+        for (const t of knownSpanTypes) consider(t);
+        if (parsedEntities) {
+            for (const ent of parsedEntities) consider(ent.type);
+        }
+        return out.sort();
+    }, [recipeId, knownSpanTypes, parsedEntities]);
+
+    /** True when the user typed a type that isn't in the existing
+     *  vocabulary. Drives the soft amber-border hint on the input —
+     *  not a block, just a "you're introducing a new type" nudge. */
+    const selectionTypeIsNew = (
+        recipeId === 'span-extraction'
+        && selectionType.trim().length > 0
+        && !unionedSpanTypes.some(
+            (t) => t.toLowerCase() === selectionType.trim().toLowerCase(),
+        )
+    );
+
+    /** Remove the entity at ``idx`` from the JSON editor + re-
+     *  pretty-print. When removing the last entity, clear the
+     *  textarea to '' so the form returns to the empty-means-
+     *  negative-example state (rather than leaving an orphaned
+     *  ``[]`` token the user has to delete manually). */
+    const handleRemoveSpan = (idx: number) => {
+        if (parsedEntities === null) return;
+        const next = parsedEntities.filter((_, i) => i !== idx);
+        setEntitiesJson(next.length === 0 ? '' : JSON.stringify(next, null, 2));
+    };
 
     /** Append the currently-highlighted span to the entities JSON.
      *  Preserves any hand-edited entries — we parse the current
@@ -490,6 +572,18 @@ export default function GoldEntryAddForm({
                                 htmlFor="gold-add-span-helper-type"
                             >
                                 Type
+                                {unionedSpanTypes.length > 0 && (
+                                    <span
+                                        style={{
+                                            color: 'var(--text-tertiary)',
+                                            fontWeight: 400,
+                                            marginLeft: 4,
+                                        }}
+                                        data-testid="gold-add-span-helper-type-hint"
+                                    >
+                                        (existing: {unionedSpanTypes.join(', ')})
+                                    </span>
+                                )}
                             </label>
                             <input
                                 id="gold-add-span-helper-type"
@@ -497,9 +591,50 @@ export default function GoldEntryAddForm({
                                 placeholder="e.g. email, phone, person"
                                 value={selectionType}
                                 onChange={(e) => setSelectionType(e.target.value)}
+                                list={
+                                    unionedSpanTypes.length > 0
+                                        ? 'gold-add-span-helper-known-types'
+                                        : undefined
+                                }
                                 data-testid="gold-add-span-helper-type"
-                                style={{ fontFamily: 'monospace', width: '12em' }}
+                                data-new-type={
+                                    selectionTypeIsNew ? 'true' : 'false'
+                                }
+                                style={{
+                                    fontFamily: 'monospace',
+                                    width: '12em',
+                                    // Soft amber tint when the typed
+                                    // value isn't in the vocabulary
+                                    // — signals "you're introducing
+                                    // a new type" without blocking.
+                                    borderColor: selectionTypeIsNew
+                                        ? 'var(--color-warning)'
+                                        : undefined,
+                                    boxShadow: selectionTypeIsNew
+                                        ? '0 0 0 2px var(--color-warning-bg)'
+                                        : undefined,
+                                }}
                             />
+                            {unionedSpanTypes.length > 0 && (
+                                <datalist id="gold-add-span-helper-known-types">
+                                    {unionedSpanTypes.map((t) => (
+                                        <option key={t} value={t} />
+                                    ))}
+                                </datalist>
+                            )}
+                            {selectionTypeIsNew && (
+                                <div
+                                    data-testid="gold-add-span-helper-type-new-hint"
+                                    style={{
+                                        marginTop: 4,
+                                        fontSize: '0.8rem',
+                                        color: 'var(--color-warning)',
+                                    }}
+                                >
+                                    New type — not seen in this project's
+                                    gold rows yet.
+                                </div>
+                            )}
                         </div>
                         <button
                             type="button"
@@ -550,6 +685,78 @@ export default function GoldEntryAddForm({
                             )}
                         </div>
                     </div>
+
+                    {/* Deletable chip list — derived from the parsed
+                        entities JSON. The JSON editor below stays
+                        the canonical view for power-user edits; the
+                        chips give normal users a one-click ✕ delete
+                        without hand-fixing commas. */}
+                    {parsedEntities && parsedEntities.length > 0 && (
+                        <div
+                            className="form-group"
+                            data-testid="gold-add-span-chips"
+                            style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: 'var(--space-sm)',
+                                margin: 0,
+                            }}
+                        >
+                            {parsedEntities.map((ent, idx) => {
+                                const type = String(ent.type ?? '?');
+                                const text = String(ent.text ?? '');
+                                const start = ent.start;
+                                const end = ent.end;
+                                return (
+                                    <span
+                                        key={idx}
+                                        data-testid={`gold-add-span-chip-${idx}`}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 6,
+                                            padding: '4px 8px',
+                                            background: 'var(--bg-card)',
+                                            border: '1px solid var(--border-color)',
+                                            borderRadius: 'var(--radius-md)',
+                                            fontSize: '0.85rem',
+                                        }}
+                                    >
+                                        <span className="badge badge-accent">{type}</span>
+                                        <span style={{ fontFamily: 'monospace' }}>
+                                            "{text}"
+                                        </span>
+                                        <span
+                                            style={{
+                                                color: 'var(--text-tertiary)',
+                                                fontFamily: 'monospace',
+                                            }}
+                                        >
+                                            [{String(start)}:{String(end)}]
+                                        </span>
+                                        <button
+                                            type="button"
+                                            aria-label={`Remove ${type} entity`}
+                                            title={`Remove ${type} entity`}
+                                            onClick={() => handleRemoveSpan(idx)}
+                                            data-testid={`gold-add-span-chip-${idx}-remove`}
+                                            style={{
+                                                border: 'none',
+                                                background: 'transparent',
+                                                cursor: 'pointer',
+                                                color: 'var(--text-secondary)',
+                                                padding: 0,
+                                                fontSize: '0.9rem',
+                                                lineHeight: 1,
+                                            }}
+                                        >
+                                            ✕
+                                        </button>
+                                    </span>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     <div className="form-group">
                         <label className="form-label" htmlFor="gold-add-entities-input">

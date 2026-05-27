@@ -1101,6 +1101,396 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         ).toMatch(/Highlight a range/);
     });
 
+    // ── Deletable chip list above the Entities JSON editor ─────────
+
+    it('span-extraction chips: list derives from parsed JSON; one chip per entity', async () => {
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const initialJson = JSON.stringify(
+            [
+                { type: 'email', start: 8, end: 24, text: 'jane@example.com' },
+                { type: 'phone', start: 34, end: 45, text: '+1-555-0100' },
+            ],
+            null,
+            2,
+        );
+        fireEvent.change(screen.getByTestId('gold-add-entities'), {
+            target: { value: initialJson },
+        });
+
+        // Two chips render, surfacing type + text + offsets each.
+        const chip0 = await screen.findByTestId('gold-add-span-chip-0');
+        expect(chip0.textContent).toContain('email');
+        expect(chip0.textContent).toContain('jane@example.com');
+        expect(chip0.textContent).toContain('[8:24]');
+        const chip1 = screen.getByTestId('gold-add-span-chip-1');
+        expect(chip1.textContent).toContain('phone');
+        expect(chip1.textContent).toContain('+1-555-0100');
+        expect(chip1.textContent).toContain('[34:45]');
+        // No third chip.
+        expect(screen.queryByTestId('gold-add-span-chip-2')).not.toBeInTheDocument();
+    });
+
+    it('span-extraction chips: clicking ✕ removes the entity + re-pretty-prints', async () => {
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const initialJson = JSON.stringify(
+            [
+                { type: 'email', start: 8, end: 24, text: 'jane@example.com' },
+                { type: 'phone', start: 34, end: 45, text: '+1-555-0100' },
+            ],
+            null,
+            2,
+        );
+        fireEvent.change(screen.getByTestId('gold-add-entities'), {
+            target: { value: initialJson },
+        });
+
+        await userEvent.click(screen.getByTestId('gold-add-span-chip-0-remove'));
+
+        // The remaining chip slides into index 0.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('gold-add-span-chip-0').textContent,
+            ).toContain('phone');
+        });
+        expect(
+            screen.queryByTestId('gold-add-span-chip-1'),
+        ).not.toBeInTheDocument();
+
+        // JSON editor reflects the deletion with pretty-printed
+        // (2-space) output — single entity remaining.
+        const editor = screen.getByTestId('gold-add-entities') as HTMLTextAreaElement;
+        const parsed = JSON.parse(editor.value);
+        expect(parsed).toEqual([
+            { type: 'phone', start: 34, end: 45, text: '+1-555-0100' },
+        ]);
+        expect(editor.value).toContain('  "type"');
+    });
+
+    it('span-extraction chips: removing the last chip clears the editor to empty', async () => {
+        // Empty string (not "[]") is the canonical "no entities"
+        // state — matches the form's initial state + the
+        // "empty = negative example" handling.
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        fireEvent.change(screen.getByTestId('gold-add-entities'), {
+            target: {
+                value: JSON.stringify(
+                    [{ type: 'email', start: 0, end: 5, text: 'hello' }],
+                ),
+            },
+        });
+        await userEvent.click(screen.getByTestId('gold-add-span-chip-0-remove'));
+
+        await waitFor(() => {
+            expect(
+                screen.queryByTestId('gold-add-span-chip-0'),
+            ).not.toBeInTheDocument();
+        });
+        // Chip container hidden when no chips.
+        expect(
+            screen.queryByTestId('gold-add-span-chips'),
+        ).not.toBeInTheDocument();
+        // Editor cleared.
+        const editor = screen.getByTestId('gold-add-entities') as HTMLTextAreaElement;
+        expect(editor.value).toBe('');
+    });
+
+    it('span-extraction chips: unparseable JSON hides the chip list entirely', async () => {
+        // Power users editing JSON by hand will pass through invalid
+        // intermediate states (mid-typing). Chips should disappear
+        // until the JSON re-parses — they never render stale state.
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        fireEvent.change(screen.getByTestId('gold-add-entities'), {
+            target: { value: '[{"type":"email"' },  // unclosed
+        });
+        expect(
+            screen.queryByTestId('gold-add-span-chips'),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByTestId('gold-add-span-chip-0'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('span-extraction chips: chips render even when individual offsets fail validation', async () => {
+        // A user could have a row with one broken span and want to
+        // delete it via ✕ rather than hand-fix the JSON. The chip
+        // list parses the raw JSON, NOT spanValidation.spans (which
+        // is empty when validation fails), so chips remain
+        // actionable in this state.
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        fireEvent.change(screen.getByTestId('gold-add-span-text'), {
+            target: { value: 'abcdefghij' },
+        });
+        // text[0:3] = "abc" but the user wrote "xyz" — offset
+        // mismatch, validation will reject the row.
+        const brokenJson = JSON.stringify(
+            [{ type: 'tag', start: 0, end: 3, text: 'xyz' }],
+        );
+        fireEvent.change(screen.getByTestId('gold-add-entities'), {
+            target: { value: brokenJson },
+        });
+
+        // Validation error visible.
+        expect(
+            screen.getByTestId('gold-add-entities-error').textContent,
+        ).toMatch(/offset mismatch/);
+        // BUT the chip still renders so the user can delete it.
+        const chip = screen.getByTestId('gold-add-span-chip-0');
+        expect(chip.textContent).toContain('tag');
+        expect(chip.textContent).toContain('xyz');
+
+        await userEvent.click(screen.getByTestId('gold-add-span-chip-0-remove'));
+        await waitFor(() => {
+            expect(
+                screen.queryByTestId('gold-add-entities-error'),
+            ).not.toBeInTheDocument();
+        });
+    });
+
+    it('span-extraction chips: helper-added span appears as a chip immediately', async () => {
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
+        fireEvent.change(textarea, { target: { value: 'Contact jane@example.com today' } });
+        selectRange(textarea, 8, 24);
+        fireEvent.change(screen.getByTestId('gold-add-span-helper-type'), {
+            target: { value: 'email' },
+        });
+        await userEvent.click(screen.getByTestId('gold-add-span-helper-add'));
+
+        // The helper's append + the chip list's parse derive from
+        // the same JSON — chip lands immediately.
+        const chip = await screen.findByTestId('gold-add-span-chip-0');
+        expect(chip.textContent).toContain('email');
+        expect(chip.textContent).toContain('jane@example.com');
+    });
+
+    // ── Span-type autocomplete + new-type amber warning ─────────────
+
+    it('span-type datalist surfaces existing types from the project gold rows', async () => {
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    text: 'Contact jane@example.com today',
+                    entities: [
+                        { type: 'email', start: 8, end: 24, text: 'jane@example.com' },
+                    ],
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+                {
+                    id: 2,
+                    text: 'Call +1-555-0100 between 9-5.',
+                    entities: [
+                        { type: 'phone', start: 5, end: 16, text: '+1-555-0100' },
+                    ],
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        // Existing-types hint renders next to the Type label.
+        const hint = screen.getByTestId('gold-add-span-helper-type-hint');
+        expect(hint.textContent).toMatch(/email/);
+        expect(hint.textContent).toMatch(/phone/);
+
+        // Input is wired up to a datalist (HTML5 combobox pattern).
+        const input = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
+        expect(input.getAttribute('list')).toBe('gold-add-span-helper-known-types');
+    });
+
+    it('span-type datalist also merges in legacy-shape entity types', async () => {
+        // Template-seeded rows store entities JSON-encoded in
+        // ``answer``. The extractor normalizes each entry first so
+        // these legacy types still surface in the autocomplete.
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    question: "Provider's total liability shall not exceed fees.",
+                    answer: JSON.stringify({
+                        entities: [
+                            {
+                                type: 'liability_cap',
+                                start: 0,
+                                end: 48,
+                                text: "Provider's total liability shall not exceed fees",
+                            },
+                        ],
+                    }),
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+        expect(
+            screen.getByTestId('gold-add-span-helper-type-hint').textContent,
+        ).toMatch(/liability_cap/);
+    });
+
+    it('span-type input: typing an existing type does NOT trigger the amber-border warning', async () => {
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    text: 'email@example.com',
+                    entities: [
+                        { type: 'email', start: 0, end: 17, text: 'email@example.com' },
+                    ],
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
+        fireEvent.change(typeInput, { target: { value: 'email' } });
+        expect(typeInput.getAttribute('data-new-type')).toBe('false');
+        expect(
+            screen.queryByTestId('gold-add-span-helper-type-new-hint'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('span-type input: typing a brand-new type tints the border amber + shows the hint', async () => {
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    text: 'sample',
+                    entities: [
+                        { type: 'email', start: 0, end: 6, text: 'sample' },
+                    ],
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
+        fireEvent.change(typeInput, { target: { value: 'ssn' } });
+        expect(typeInput.getAttribute('data-new-type')).toBe('true');
+        const hint = await screen.findByTestId('gold-add-span-helper-type-new-hint');
+        expect(hint.textContent).toMatch(/New type/);
+    });
+
+    it('span-type match is case-insensitive (Email == email)', async () => {
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    text: 'sample',
+                    entities: [
+                        { type: 'email', start: 0, end: 6, text: 'sample' },
+                    ],
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
+        fireEvent.change(typeInput, { target: { value: 'Email' } });
+        // Existing "email" matches case-insensitively → not flagged
+        // as new (avoids amber-border noise when the user just
+        // capitalizes a known type).
+        expect(typeInput.getAttribute('data-new-type')).toBe('false');
+    });
+
+    it('span-type datalist merges in-progress types (added via helper) without saving', async () => {
+        // The user just added a "person" span via the helper; the
+        // chip is in the JSON editor but the row hasn't been saved
+        // to the gold set yet. "person" should ALREADY show up in
+        // the datalist for the next add.
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
+        fireEvent.change(textarea, { target: { value: 'Alice met Bob today.' } });
+        selectRange(textarea, 0, 5);  // "Alice"
+        fireEvent.change(screen.getByTestId('gold-add-span-helper-type'), {
+            target: { value: 'person' },
+        });
+        await userEvent.click(screen.getByTestId('gold-add-span-helper-add'));
+
+        // After add, type input cleared. Now the user starts a
+        // second span — the datalist hint should already include
+        // "person" because it's in the in-progress entities.
+        await waitFor(() => {
+            const hint = screen.getByTestId('gold-add-span-helper-type-hint');
+            expect(hint.textContent).toMatch(/person/);
+        });
+        // And typing "person" again is NOT flagged as a new type.
+        fireEvent.change(screen.getByTestId('gold-add-span-helper-type'), {
+            target: { value: 'person' },
+        });
+        expect(
+            (screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement)
+                .getAttribute('data-new-type'),
+        ).toBe('false');
+    });
+
+    it('span-type warning does not block submit — soft hint only', async () => {
+        // Amber border is signal, not a blocker. With a valid
+        // selection + a brand-new type, the helper add button
+        // stays enabled and the click still succeeds.
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
+        fireEvent.change(textarea, { target: { value: 'My SSN is 123-45-6789.' } });
+        selectRange(textarea, 10, 21);  // "123-45-6789"
+        // No existing types → "ssn" is brand-new.
+        fireEvent.change(screen.getByTestId('gold-add-span-helper-type'), {
+            target: { value: 'ssn' },
+        });
+        expect(
+            (screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement)
+                .getAttribute('data-new-type'),
+        ).toBe('true');
+        // But the add button is enabled.
+        expect(
+            (screen.getByTestId('gold-add-span-helper-add') as HTMLButtonElement).disabled,
+        ).toBe(false);
+        await userEvent.click(screen.getByTestId('gold-add-span-helper-add'));
+        // Chip lands.
+        await screen.findByTestId('gold-add-span-chip-0');
+    });
+
     it('form resets after a successful submit', async () => {
         installGetRouter({ recipeId: 'qa-sft', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 1 } });
