@@ -39,6 +39,82 @@ class RefreshTrapsResponse(BaseModel):
     row_ids: list[int]
 
 
+class DriftSettingsResponse(BaseModel):
+    project_id: int
+    enabled: bool
+    count: int
+
+
+class DriftSettingsUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    count: int | None = Field(default=None, ge=1, le=20)
+
+
+@router.get("/settings", response_model=DriftSettingsResponse)
+async def get_drift_settings(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the project's drift-refresh opt-in flag + per-refresh count.
+
+    Defaults: enabled=False, count=5. The flag is persisted under
+    ``project.runtime_config['drift_refresh_traps']``.
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project_not_found")
+
+    from app.services.drift_trap_refresh_service import (
+        is_trap_refresh_enabled,
+        resolved_target_count,
+    )
+
+    return DriftSettingsResponse(
+        project_id=project_id,
+        enabled=is_trap_refresh_enabled(project),
+        count=resolved_target_count(project),
+    )
+
+
+@router.put("/settings", response_model=DriftSettingsResponse)
+async def update_drift_settings(
+    project_id: int,
+    payload: DriftSettingsUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the drift-refresh opt-in flag and/or per-refresh count.
+
+    Both fields are optional — pass only what you want to change. The
+    runtime_config blob is merged so unrelated keys round-trip
+    unchanged. Count clamped to [1, 20] by the request validator.
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project_not_found")
+
+    from app.services.drift_trap_refresh_service import (
+        RUNTIME_CONFIG_KEY,
+        is_trap_refresh_enabled,
+        resolved_target_count,
+    )
+
+    rc = dict(project.runtime_config or {})
+    current = dict(rc.get(RUNTIME_CONFIG_KEY) or {})
+    if payload.enabled is not None:
+        current["enabled"] = payload.enabled
+    if payload.count is not None:
+        current["count"] = payload.count
+    rc[RUNTIME_CONFIG_KEY] = current
+    project.runtime_config = rc
+    await db.flush()
+
+    return DriftSettingsResponse(
+        project_id=project_id,
+        enabled=is_trap_refresh_enabled(project),
+        count=resolved_target_count(project),
+    )
+
+
 @router.post("/refresh-traps", status_code=201, response_model=RefreshTrapsResponse)
 async def refresh_traps(
     project_id: int,

@@ -461,5 +461,90 @@ class DriftApiTests(unittest.TestCase):
         self.assertEqual(after_count, (before_count or 0) + 1)
 
 
+class DriftSettingsApiTests(unittest.TestCase):
+    """GET/PUT /api/projects/{id}/drift/settings — opt-in flag + count."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._prev_auth = settings.AUTH_ENABLED
+        settings.AUTH_ENABLED = False
+        if TEST_DB_PATH.exists():
+            TEST_DB_PATH.unlink()
+        TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+        settings.AUTH_ENABLED = cls._prev_auth
+        if TEST_DB_PATH.exists():
+            TEST_DB_PATH.unlink()
+
+    def _instantiate_template(self, slug: str, name: str) -> int:
+        resp = self.client.post(
+            f"/api/project-templates/{slug}/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return resp.json()["id"]
+
+    def test_get_settings_returns_defaults_on_fresh_project(self):
+        pid = self._instantiate_template("policy-qa-style", "Drift Settings GET Default")
+        resp = self.client.get(f"/api/projects/{pid}/drift/settings")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        # Default: opt-out, count=5.
+        self.assertFalse(body["enabled"])
+        self.assertEqual(body["count"], 5)
+
+    def test_put_settings_flips_enabled_and_persists_count(self):
+        pid = self._instantiate_template("policy-qa-style", "Drift Settings PUT Flip")
+        resp = self.client.put(
+            f"/api/projects/{pid}/drift/settings",
+            json={"enabled": True, "count": 8},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["count"], 8)
+
+        # GET surfaces the persisted state.
+        read = self.client.get(f"/api/projects/{pid}/drift/settings").json()
+        self.assertEqual(read, body)
+
+    def test_put_settings_count_alone_preserves_enabled(self):
+        # Enable first, then update only the count — the enabled flag
+        # must not regress to its default.
+        pid = self._instantiate_template("policy-qa-style", "Drift Settings PUT Partial")
+        self.client.put(f"/api/projects/{pid}/drift/settings", json={"enabled": True})
+        resp = self.client.put(
+            f"/api/projects/{pid}/drift/settings",
+            json={"count": 12},
+        )
+        body = resp.json()
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["count"], 12)
+
+    def test_put_settings_count_validator_rejects_out_of_range(self):
+        pid = self._instantiate_template("policy-qa-style", "Drift Settings PUT Range")
+        # FastAPI's Pydantic validator returns 422 for failed Field
+        # constraints — explicit assert so the contract stays loud.
+        too_big = self.client.put(
+            f"/api/projects/{pid}/drift/settings",
+            json={"count": 999},
+        )
+        self.assertEqual(too_big.status_code, 422, too_big.text)
+        too_small = self.client.put(
+            f"/api/projects/{pid}/drift/settings",
+            json={"count": 0},
+        )
+        self.assertEqual(too_small.status_code, 422, too_small.text)
+
+    def test_get_settings_404s_on_unknown_project(self):
+        resp = self.client.get("/api/projects/99999/drift/settings")
+        self.assertEqual(resp.status_code, 404, resp.text)
+
+
 if __name__ == "__main__":
     unittest.main()

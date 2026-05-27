@@ -240,7 +240,11 @@ When B regressed, a red **Fix the gap** banner offers a one-click "Rerun experim
 
 ## Drift-triggered hallucination-trap refresh (admin opt-in)
 
-Projects can opt into automatic hallucination-trap refresh by setting `runtime_config.drift_refresh_traps.enabled = true` (and optionally `count`, default 5, clamped to [1, 20]). When opted-in, every per-deployment drift check fires the trap-refresh runner alongside its normal eval, populating a per-project review queue with fresh traps targeting the last 7 days of failure-cluster patterns.
+Projects can opt into automatic hallucination-trap refresh from the **Drift-trap review queue** panel under the Eval tab. When auto-refresh is off, the panel shows an opt-in banner with a one-click "Enable auto-refresh" button; when it's on, a status chip surfaces the per-refresh trap count and a "Disable" link. Either way, the panel's "Generate now" button always works — it hits the manual `POST /drift/refresh-traps` endpoint and reloads the queue.
+
+Each pending row carries the cluster pattern (`reason_code`) that motivated it plus a recipe-shaped preview of the trap. Per-row Accept and Reject buttons triage in place: accepting appends the row to `gold_test.jsonl`; rejecting marks the row in the audit trail. Switch the status filter to **Accepted**, **Rejected**, or **All (audit)** to see triaged rows after the fact.
+
+Settings persist under `runtime_config.drift_refresh_traps` (enabled + count, count clamped to [1, 20]). When opted-in, every per-deployment drift check fires the trap-refresh runner alongside its normal eval, populating the queue with fresh traps targeting the last 7 days of failure-cluster patterns.
 
 Manual trigger:
 

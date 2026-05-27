@@ -14,6 +14,7 @@ import { Term } from '../shared/Term';
 import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import EvalPackScaffoldPanel from './EvalPackScaffoldPanel';
+import DriftReviewQueuePanel from './DriftReviewQueuePanel';
 import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
 import SftLiftPanel from './SftLiftPanel';
@@ -1708,6 +1709,12 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             {/* only for QA-SFT projects (the panel itself self-hides */}
             {/* when the recipe is ineligible via a 400 from the API). */}
             <AutoRagComparisonPanel projectId={projectId} />
+
+            {/* E4 — drift-trap review queue. Mounted under the runs */}
+            {/* sub-tab; self-fetches its own state + recipe so it doesn't */}
+            {/* depend on selectedExp. Opt-in banner explains how to */}
+            {/* enable auto-refresh; manual Generate-now always works. */}
+            <DriftReviewQueuePanel projectId={projectId} />
 
 
             {latestInference && (

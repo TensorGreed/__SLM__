@@ -1,0 +1,205 @@
+/* DriftReviewQueuePanel — E4 UI for the drift trap review queue. */
+
+.drift-review {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    border-left: 3px solid var(--color-warning, #f0a020);
+}
+
+.drift-review--error {
+    border-left-color: var(--color-error, #d03050);
+    color: var(--color-error-fg, #8c1f37);
+}
+
+.drift-review__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.drift-review__title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+}
+
+.drift-review__link-flush {
+    padding: 0;
+}
+
+.drift-review__subtitle {
+    margin: 4px 0 0 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+}
+
+.drift-review__subtitle code {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-muted);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--text-primary);
+    margin: 0 2px;
+}
+
+.drift-review__controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.drift-review__optin-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--color-warning, #f0a020);
+    background: var(--color-warning-bg, rgba(240, 160, 32, 0.08));
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+}
+
+.drift-review__status-chip {
+    align-self: flex-start;
+    padding: 4px 10px;
+    border: 1px solid var(--color-success, #18a058);
+    background: var(--color-success-bg, rgba(24, 160, 88, 0.08));
+    color: var(--color-success-fg, #0c6b3a);
+    border-radius: 10px;
+    font-size: 12px;
+}
+
+.drift-review__last-summary {
+    padding: 6px 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.drift-review__last-summary code {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-muted);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--text-primary);
+    margin: 0 2px;
+}
+
+.drift-review__empty {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-sm);
+    font-style: italic;
+}
+
+.drift-review__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.drift-review__row {
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.drift-review__row--accepted {
+    border-left: 3px solid var(--color-success, #18a058);
+    background: var(--color-success-bg, rgba(24, 160, 88, 0.04));
+}
+
+.drift-review__row--rejected {
+    border-left: 3px solid var(--gray-400, #9ca3af);
+    background: var(--bg-secondary);
+    opacity: 0.85;
+}
+
+.drift-review__row-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.drift-review__pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-muted);
+    color: var(--text-secondary);
+}
+
+.drift-review__pill--pending {
+    color: var(--color-warning-fg, #936203);
+    border-color: var(--color-warning, #f0a020);
+    background: var(--color-warning-bg, rgba(240, 160, 32, 0.10));
+}
+
+.drift-review__pill--accepted {
+    color: var(--color-success-fg, #0c6b3a);
+    border-color: var(--color-success, #18a058);
+    background: var(--color-success-bg, rgba(24, 160, 88, 0.10));
+}
+
+.drift-review__pill--rejected {
+    color: var(--text-tertiary);
+}
+
+.drift-review__cluster code {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-muted);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--text-primary);
+}
+
+.drift-review__cluster--none {
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+.drift-review__row-time {
+    margin-left: auto;
+    font-size: 11px;
+}
+
+.drift-review__row-body {
+    font-size: var(--font-size-sm);
+}
+
+.drift-review__row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}
+
+.drift-review__triage-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-style: italic;
+}

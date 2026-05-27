@@ -349,6 +349,7 @@ session-start guidance.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
+- `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
@@ -450,6 +451,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
+- `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
@@ -743,6 +745,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
+- `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.
 - `frontend/src/components/evaluation/EvalPanel.extraction.test.tsx` — Phase 5.3.4 — Sample Predictions card with structured-extraction enrichment.
