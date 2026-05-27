@@ -42,6 +42,134 @@ function normalizeDifficulty(raw: unknown): 'easy' | 'medium' | 'hard' {
     return 'medium';
 }
 
+
+/** Project templates (ticket-router, contract-clause-extractor,
+ *  security-alert-summarizer, etc.) seed the gold JSONL through a
+ *  shared materialization path that flattens EVERY recipe shape into
+ *  the legacy ``{question, answer}`` Q+A keys. Specifically:
+ *    * classification   → ``answer`` carries the label string verbatim
+ *    * span-extraction  → ``answer`` is JSON.stringify({"entities": [...]})
+ *    * summarization    → ``answer`` is JSON.stringify({"summary": "..."})
+ *  Newer rows (LLM-gen + manual add via the per-recipe form) already
+ *  carry recipe-shaped keys directly. This helper normalizes legacy
+ *  rows into the recipe-shaped keys the panel's row renderer expects
+ *  WITHOUT touching the underlying storage — keeping the on-disk JSONL
+ *  consistent with what eval handlers (which read question/answer
+ *  aliases) already accept.
+ *
+ *  Recipe-shaped keys on the input win over the legacy keys, so
+ *  a half-migrated row (with both shapes present) renders the new
+ *  shape. */
+function normalizeEntryForRecipe(
+    recipe: GoldRowRecipe,
+    entry: Record<string, unknown>,
+): Record<string, unknown> {
+    if (recipe === 'qa-sft') {
+        return entry;
+    }
+    const out: Record<string, unknown> = { ...entry };
+
+    // Try to parse ``answer`` as JSON; many legacy rows have a
+    // JSON-encoded dict there ({entities: [...]} or {summary: "..."}).
+    const answer = entry.answer;
+    let parsedAnswer: Record<string, unknown> | null = null;
+    if (typeof answer === 'string' && answer.trim().startsWith('{')) {
+        try {
+            const candidate = JSON.parse(answer);
+            if (
+                candidate
+                && typeof candidate === 'object'
+                && !Array.isArray(candidate)
+            ) {
+                parsedAnswer = candidate as Record<string, unknown>;
+            }
+        } catch {
+            // Not JSON — fall through. Classification's ``answer`` is
+            // a plain string like "billing".
+        }
+    }
+
+    if (recipe === 'classification') {
+        if (out.text === undefined && typeof entry.question === 'string') {
+            out.text = entry.question;
+        }
+        if (out.label === undefined) {
+            // Legacy classification rows have the label flat in ``answer``.
+            // Nested-under-``expected``.label is also possible from the
+            // gold_set_workbench path.
+            if (typeof answer === 'string' && !parsedAnswer) {
+                out.label = answer;
+            } else if (
+                parsedAnswer
+                && typeof parsedAnswer.label === 'string'
+            ) {
+                out.label = parsedAnswer.label;
+            } else if (
+                entry.expected
+                && typeof entry.expected === 'object'
+                && typeof (entry.expected as { label?: unknown }).label === 'string'
+            ) {
+                out.label = (entry.expected as { label: string }).label;
+            }
+        }
+        return out;
+    }
+
+    if (recipe === 'span-extraction') {
+        if (out.text === undefined && typeof entry.question === 'string') {
+            out.text = entry.question;
+        }
+        if (!Array.isArray(out.entities)) {
+            // Legacy: ``answer`` is JSON.stringify({"entities": [...]}).
+            if (
+                parsedAnswer
+                && Array.isArray(parsedAnswer.entities)
+            ) {
+                out.entities = parsedAnswer.entities;
+            } else if (
+                entry.expected
+                && typeof entry.expected === 'object'
+                && Array.isArray((entry.expected as { entities?: unknown }).entities)
+            ) {
+                out.entities = (entry.expected as { entities: unknown[] }).entities;
+            } else {
+                // Negative example (no entities) — keep an empty array
+                // so the row renders with the "negative example" hint
+                // rather than blank.
+                out.entities = [];
+            }
+        }
+        return out;
+    }
+
+    if (recipe === 'summarization') {
+        if (out.document === undefined && typeof entry.question === 'string') {
+            out.document = entry.question;
+        }
+        if (out.summary === undefined) {
+            // Legacy summarization rows have summary nested in the
+            // JSON-encoded ``answer`` dict, OR plain in ``answer``.
+            if (
+                parsedAnswer
+                && typeof parsedAnswer.summary === 'string'
+            ) {
+                out.summary = parsedAnswer.summary;
+            } else if (typeof answer === 'string' && !parsedAnswer) {
+                out.summary = answer;
+            } else if (
+                entry.expected
+                && typeof entry.expected === 'object'
+                && typeof (entry.expected as { summary?: unknown }).summary === 'string'
+            ) {
+                out.summary = (entry.expected as { summary: string }).summary;
+            }
+        }
+        return out;
+    }
+
+    return out;
+}
+
 interface GoldSetPanelProps {
     projectId: number;
     onNextStep?: () => void;
@@ -191,7 +319,7 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     <LlmGoldGeneratePanel
                         projectId={projectId}
                         datasetType={datasetType}
-                        recipeId={recipeId}
+                        recipeId={recipeId as GoldRowRecipe}
                         onRowsSaved={fetchEntries}
                     />
                 )}
@@ -327,39 +455,45 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                 )}
 
                 <div className="entries-list">
-                    {filteredEntries.map((e, i) => (
-                        <div
-                            key={i}
-                            className="entry-item"
-                            data-testid={`gold-entry-row-${i}`}
-                        >
-                            {/* Render per-recipe via the shared body
-                                component so the LLM-gen preview and
-                                this list don't drift. qa-sft falls
-                                through as the default — earlier
-                                projects had a recipe but new ones
-                                still go through this path with a
-                                non-null recipeId. ``unknown`` projects
-                                (recipeId === null) render as qa-sft
-                                for backward compat with rows saved
-                                before recipe-aware import landed. */}
-                            <GoldEntryRowBody
-                                recipeId={
-                                    (recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId)
-                                        ? recipeId
-                                        : 'qa-sft') as GoldRowRecipe
-                                }
-                                row={{
-                                    ...e,
-                                    // Normalize so the qa-sft badge
-                                    // renders "medium" rather than
-                                    // "" / undefined for legacy rows.
-                                    difficulty: normalizeDifficulty(e.difficulty),
-                                }}
-                                testidPrefix={`gold-entry-row-${i}`}
-                            />
-                        </div>
-                    ))}
+                    {filteredEntries.map((e, i) => {
+                        // Recipe narrowing: anything unsupported or
+                        // null falls back to qa-sft for backward
+                        // compat with rows saved before recipe-aware
+                        // import landed.
+                        const renderRecipe: GoldRowRecipe = (
+                            recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId)
+                                ? recipeId
+                                : 'qa-sft'
+                        ) as GoldRowRecipe;
+                        // Templates pre-date the per-recipe panel and
+                        // shove every shape into ``{question, answer}``
+                        // on disk. Normalize so non-qa-sft rows render
+                        // their recipe-shaped fields instead of blank
+                        // divs. qa-sft rows pass through unchanged.
+                        const normalized = normalizeEntryForRecipe(renderRecipe, e);
+                        return (
+                            <div
+                                key={i}
+                                className="entry-item"
+                                data-testid={`gold-entry-row-${i}`}
+                            >
+                                <GoldEntryRowBody
+                                    recipeId={renderRecipe}
+                                    row={{
+                                        ...normalized,
+                                        // Normalize so the qa-sft
+                                        // badge renders "medium"
+                                        // rather than "" / undefined
+                                        // for legacy rows.
+                                        difficulty: normalizeDifficulty(
+                                            normalized.difficulty,
+                                        ),
+                                    }}
+                                    testidPrefix={`gold-entry-row-${i}`}
+                                />
+                            </div>
+                        );
+                    })}
                     {entries.length === 0 && (
                         <EmptyState
                             title="No gold-set entries yet"

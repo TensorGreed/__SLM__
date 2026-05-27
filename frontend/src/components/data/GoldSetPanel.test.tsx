@@ -705,6 +705,198 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         expect(submit.disabled).toBe(false);
     });
 
+    // ── Legacy template-seeded rows (Q+A on disk) ──────────────────
+    //
+    // Templates (ticket-router, contract-clause-extractor, security-
+    // alert-summarizer) pre-date the per-recipe panel. The shared
+    // materialization path flattens every recipe shape into the
+    // legacy ``{question, answer}`` Q+A keys on disk:
+    //   * classification   → answer = "<label>"
+    //   * span-extraction  → answer = JSON.stringify({"entities": [...]})
+    //   * summarization    → answer = JSON.stringify({"summary": "..."})
+    // The panel normalizes these on read so rows don't render as
+    // empty divs in non-qa-sft projects.
+
+    it('legacy classification: template-seeded {question, answer:"label"} renders correctly', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    question: 'Charged $49 yesterday but I cancelled.',
+                    answer: 'billing',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+                {
+                    id: 2,
+                    question: 'App crashes on Android.',
+                    answer: 'technical',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-entry-row-0');
+
+        // Text mapped from ``question``, label mapped from ``answer``.
+        expect(
+            screen.getByTestId('gold-entry-row-0-text').textContent,
+        ).toBe('Charged $49 yesterday but I cancelled.');
+        expect(
+            screen.getByTestId('gold-entry-row-0-label').textContent,
+        ).toContain('billing');
+        expect(
+            screen.getByTestId('gold-entry-row-1-label').textContent,
+        ).toContain('technical');
+    });
+
+    it('legacy span-extraction: JSON-encoded entities in answer get parsed + rendered', async () => {
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    question: "Provider's total liability shall not exceed fees.",
+                    // ↓ Exactly what _materialize_demo_bundle_into_project
+                    // writes for the contract-clause-extractor template.
+                    answer: JSON.stringify({
+                        entities: [
+                            {
+                                type: 'liability_cap',
+                                start: 0,
+                                end: 48,
+                                text: "Provider's total liability shall not exceed fees",
+                            },
+                        ],
+                    }),
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-entry-row-0');
+
+        // Text mapped from ``question``.
+        expect(
+            screen.getByTestId('gold-entry-row-0-text').textContent,
+        ).toContain("Provider's total liability");
+        // Entities parsed out of the JSON-encoded answer.
+        const ents = screen.getByTestId('gold-entry-row-0-entities');
+        expect(ents.textContent).toContain('liability_cap');
+        expect(ents.textContent).toContain('[0:48]');
+    });
+
+    it('legacy span-extraction with no entities (negative example) shows the hint', async () => {
+        // Some templates / hand-curated rows might not have an
+        // entities key at all and ``answer`` is something else.
+        // The normalizer defaults to empty array, which renders as
+        // "No entities (negative example)".
+        installGetRouter({
+            recipeId: 'span-extraction',
+            entries: [
+                {
+                    id: 1,
+                    question: 'plain text with nothing notable',
+                    answer: '',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-entry-row-0');
+        expect(
+            screen.getByTestId('gold-entry-row-0-entities').textContent,
+        ).toMatch(/negative example/i);
+    });
+
+    it('legacy summarization: JSON-encoded summary in answer gets parsed + rendered', async () => {
+        installGetRouter({
+            recipeId: 'summarization',
+            entries: [
+                {
+                    id: 1,
+                    question: 'Cisco IOS XE devices with the management web interface enabled are affected by CVE-2023-20198 (CVSS 10.0)...',
+                    // ↓ Exactly what _materialize_demo_bundle_into_project
+                    // writes for the security-alert-summarizer template.
+                    answer: JSON.stringify({
+                        summary: 'Critical unauth account-create + RCE in Cisco IOS XE management web interface (CVE-2023-20198).',
+                    }),
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-entry-row-0');
+
+        // Document collapses behind <details> by default — its
+        // textContent still includes the advisory text.
+        const doc = screen.getByTestId('gold-entry-row-0-document');
+        expect(doc.textContent).toContain('Cisco IOS XE');
+        // Summary parsed from the JSON-encoded answer.
+        expect(
+            screen.getByTestId('gold-entry-row-0-summary').textContent,
+        ).toContain('CVE-2023-20198');
+    });
+
+    it('legacy rows: half-migrated row (both shapes present) prefers the new shape', async () => {
+        // Defensive — if a row carries BOTH the legacy {question, answer}
+        // AND the recipe-shaped {text, label}, the normalizer must
+        // NOT overwrite the recipe shape with the legacy one.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    question: 'OLD QUESTION (should be ignored)',
+                    answer: 'OLD ANSWER (should be ignored)',
+                    text: 'NEW TEXT (preferred)',
+                    label: 'NEW LABEL (preferred)',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-entry-row-0');
+        expect(
+            screen.getByTestId('gold-entry-row-0-text').textContent,
+        ).toBe('NEW TEXT (preferred)');
+        expect(
+            screen.getByTestId('gold-entry-row-0-label').textContent,
+        ).toContain('NEW LABEL (preferred)');
+    });
+
+    it('legacy classification with nested expected.label also parses', async () => {
+        // gold_set_workbench writes rows with the expected shape
+        // (``{input: {...}, expected: {label: ...}}``) directly when
+        // not flattening — the normalizer reaches into ``expected``
+        // as a fallback so workbench-style rows also render.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    question: 'A ticket text.',
+                    expected: { label: 'billing' },
+                    // ``answer`` deliberately omitted — exercising the
+                    // expected-dict fallback path.
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-entry-row-0');
+        expect(
+            screen.getByTestId('gold-entry-row-0-label').textContent,
+        ).toContain('billing');
+    });
+
     // ── Highlight-to-select helper for span-extraction ──────────────
 
     /** Programmatically set a textarea's selection range + fire the
