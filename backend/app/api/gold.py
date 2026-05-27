@@ -15,6 +15,7 @@ from app.services.gold_llm_service import (
     GoldGenerationError,
     MAX_REFERENCE_CHUNKS,
     MAX_REFERENCE_TOTAL_CHARS,
+    build_prompt_preview,
     estimate_call_cost_usd,
     generate_gold_qa_via_llm,
 )
@@ -141,6 +142,22 @@ async def import_pairs(
 # ── LLM-assisted generation ──────────────────────────────────────────
 
 
+class RowDistribution(BaseModel):
+    """Explicit mix of rows by difficulty + hallucination-trap. When
+    set on a generate request, the four counts add up to the actual
+    row count and override the top-level ``count`` field. Only
+    honored for qa-sft (the gold-row schema's ``difficulty`` /
+    ``is_hallucination_trap`` fields are QA-flavored)."""
+    easy: int = Field(default=0, ge=0, le=50)
+    medium: int = Field(default=0, ge=0, le=50)
+    hard: int = Field(default=0, ge=0, le=50)
+    hallucination_traps: int = Field(default=0, ge=0, le=50)
+
+    @property
+    def total(self) -> int:
+        return self.easy + self.medium + self.hard + self.hallucination_traps
+
+
 class GenerateViaLlmRequest(BaseModel):
     provider: Literal["openai", "anthropic"] = Field(
         ...,
@@ -180,6 +197,46 @@ class GenerateViaLlmRequest(BaseModel):
                     "them. Falls back to ungrounded when the project "
                     "hasn't imported any data yet.",
     )
+    user_prompt_override: str | None = Field(
+        default=None,
+        max_length=200_000,
+        description="Optional verbatim replacement for the user prompt. "
+                    "When set, the service skips its own prompt "
+                    "construction (project/blueprint/grounding/labels) "
+                    "and sends this string instead. Powers the "
+                    "panel's 'review & edit prompt before sending' UX. "
+                    "Triggers a second behavior change: the classification "
+                    "vocab filter on parse is suspended (the user took "
+                    "control of the LLM contract, so we trust their "
+                    "label space).",
+    )
+    system_prompt_override: str | None = Field(
+        default=None,
+        max_length=10_000,
+        description="Optional verbatim replacement for the system prompt. "
+                    "Independent of user_prompt_override — caller can "
+                    "override one, both, or neither.",
+    )
+    distribution: RowDistribution | None = Field(
+        default=None,
+        description="Optional explicit row-count distribution by "
+                    "difficulty + hallucination-trap. When set, the "
+                    "sum replaces ``count`` and the prompt enumerates "
+                    "the mix to the LLM. qa-sft only — silently ignored "
+                    "for other recipes (their gold_template lacks "
+                    "difficulty / trap fields).",
+    )
+
+
+class PreviewPromptRequest(BaseModel):
+    """Body for ``/generate-via-llm/preview-prompt``. Mirrors the
+    generate request's prompt-affecting fields only — provider,
+    model, api_key, api_url don't influence the prompt string, so
+    they're omitted here to keep the surface tight."""
+    count: int = Field(default=10, ge=1, le=50)
+    focus_hint: str = Field(default="", max_length=1000)
+    ground_in_source: bool = Field(default=True)
+    distribution: RowDistribution | None = None
 
 
 class CostEstimateRequest(BaseModel):
@@ -235,6 +292,33 @@ async def generate_via_llm(
             },
         )
 
+    # When a distribution is supplied, its total replaces ``count``.
+    # Validate that sum is in the same [1, 50] range we apply to count.
+    if req.distribution is not None:
+        dist_total = req.distribution.total
+        if dist_total < 1 or dist_total > 50:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "DISTRIBUTION_OUT_OF_RANGE",
+                    "message": (
+                        "Distribution counts must sum to between 1 and 50 "
+                        f"(got {dist_total}). Adjust easy/medium/hard/"
+                        "hallucination_traps so the total stays in range."
+                    ),
+                },
+            )
+    distribution_tuple: tuple[int, int, int, int] | None = (
+        None
+        if req.distribution is None
+        else (
+            req.distribution.easy,
+            req.distribution.medium,
+            req.distribution.hard,
+            req.distribution.hallucination_traps,
+        )
+    )
+
     try:
         result = await generate_gold_qa_via_llm(
             db,
@@ -246,6 +330,9 @@ async def generate_via_llm(
             focus_hint=req.focus_hint,
             api_url=req.api_url,
             ground_in_source=req.ground_in_source,
+            user_prompt_override=req.user_prompt_override,
+            system_prompt_override=req.system_prompt_override,
+            distribution=distribution_tuple,
         )
     except GoldGenerationError as exc:
         raise HTTPException(
@@ -272,6 +359,73 @@ async def generate_via_llm(
         "prompt_preview": result.prompt_preview,
         "reference_chunk_count": result.reference_chunk_count,
         "estimated_cost_usd": result.estimated_cost_usd,
+    }
+
+
+@router.post("/generate-via-llm/preview-prompt")
+async def generate_via_llm_preview_prompt(
+    project_id: int,
+    req: PreviewPromptRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the user + system prompts the service WOULD send to the
+    LLM for this project / recipe / grounding combo, without actually
+    calling the LLM. Powers the "review & edit prompt before sending"
+    UX for advanced users.
+
+    Shape-identical to what ``/generate-via-llm`` constructs internally,
+    so the user can copy the returned strings into the override fields
+    on the generate call after editing.
+
+    Status codes:
+      * 200 — preview returned in the payload.
+      * 400 — same caller-fixable cases as the generate endpoint
+        (RECIPE_REQUIRED, RECIPE_NOT_SUPPORTED, COUNT_OUT_OF_RANGE,
+        PROJECT_NOT_FOUND).
+    """
+    if req.distribution is not None:
+        dist_total = req.distribution.total
+        if dist_total < 1 or dist_total > 50:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error_code": "DISTRIBUTION_OUT_OF_RANGE",
+                    "message": (
+                        "Distribution counts must sum to between 1 and 50 "
+                        f"(got {dist_total})."
+                    ),
+                },
+            )
+    distribution_tuple: tuple[int, int, int, int] | None = (
+        None
+        if req.distribution is None
+        else (
+            req.distribution.easy,
+            req.distribution.medium,
+            req.distribution.hard,
+            req.distribution.hallucination_traps,
+        )
+    )
+    try:
+        preview = await build_prompt_preview(
+            db,
+            project_id=project_id,
+            count=req.count,
+            focus_hint=req.focus_hint,
+            ground_in_source=req.ground_in_source,
+            distribution=distribution_tuple,
+        )
+    except GoldGenerationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": exc.error_code, "message": str(exc)},
+        )
+    return {
+        "recipe_id": preview.recipe_id,
+        "system_prompt": preview.system_prompt,
+        "user_prompt": preview.user_prompt,
+        "reference_chunk_count": preview.reference_chunk_count,
+        "known_labels": preview.known_labels,
     }
 
 

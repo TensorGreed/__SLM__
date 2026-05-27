@@ -413,6 +413,7 @@ session-start guidance.
 - `frontend/src/components/data/DatasetVersionPanel.tsx` — Panel listing prepared dataset versions with record counts, types, and creation timestamps.
 - `frontend/src/components/data/DocumentSampleAccordion.tsx` — Inline 10-random-rows preview for the Ingested Documents table.
 - `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
+- `frontend/src/components/data/GoldEntryRowBody.tsx` — GoldEntryRowBody — shared per-recipe body renderer for a single
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
@@ -700,6 +701,7 @@ session-start guidance.
 - `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
+- `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_

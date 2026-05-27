@@ -73,10 +73,24 @@ function installPostRouter(opts: {
     import?: unknown;
     importError?: unknown;
     estimate?: unknown;
+    previewPrompt?: unknown;
+    previewPromptError?: unknown;
 } = {}) {
     apiMock.post.mockImplementation(async (url: string) => {
         if (url.includes('/gold/generate-via-llm/cost-estimate')) {
             return { data: opts.estimate ?? makeCostEstimateResponse() };
+        }
+        if (url.includes('/gold/generate-via-llm/preview-prompt')) {
+            if (opts.previewPromptError) throw opts.previewPromptError;
+            return {
+                data: opts.previewPrompt ?? {
+                    recipe_id: 'qa-sft',
+                    system_prompt: 'SYSTEM: be helpful.',
+                    user_prompt: 'USER: generate 3 QA pairs about refunds.',
+                    reference_chunk_count: 0,
+                    known_labels: [],
+                },
+            };
         }
         if (url.includes('/gold/generate-via-llm')) {
             if (opts.generateError) throw opts.generateError;
@@ -737,6 +751,545 @@ describe('LlmGoldGeneratePanel', () => {
         expect(screen.queryByTestId('llm-gold-stored-key-row')).not.toBeInTheDocument();
         // GET was called at least twice — initial mount + post-delete refetch.
         expect(getCallCount).toBeGreaterThanOrEqual(2);
+    });
+
+    // ── Difficulty + hallucination-trap distribution (qa-sft) ──────
+
+    it('mix toggle is qa-sft-only (hidden for classification)', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="classification"
+                onRowsSaved={() => {}}
+            />,
+        );
+        expect(screen.queryByTestId('llm-gold-mix-toggle')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('llm-gold-mix-group')).not.toBeInTheDocument();
+    });
+
+    it('mix toggle visible on qa-sft; off by default; Generate sends count, not distribution', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                recipeId="qa-sft"
+                onRowsSaved={() => {}}
+            />,
+        );
+        const toggle = screen.getByTestId('llm-gold-mix-toggle') as HTMLInputElement;
+        expect(toggle.checked).toBe(false);
+        // Mix inputs hidden when toggle is off.
+        expect(screen.queryByTestId('llm-gold-mix-inputs')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+            const body = generateCalls[generateCalls.length - 1][1];
+            expect(body.distribution).toBeUndefined();
+            expect(body.count).toBe(10);  // default count
+        });
+    });
+
+    it('opening the mix toggle reveals 4 inputs + total; total replaces count', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="qa-sft"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-mix-toggle'));
+        const inputs = await screen.findByTestId('llm-gold-mix-inputs');
+        expect(inputs).toBeInTheDocument();
+        // Defaults: 5/3/2/0 → total 10.
+        expect(
+            (screen.getByTestId('llm-gold-mix-easy') as HTMLInputElement).value,
+        ).toBe('5');
+        expect(
+            (screen.getByTestId('llm-gold-mix-medium') as HTMLInputElement).value,
+        ).toBe('3');
+        expect(
+            (screen.getByTestId('llm-gold-mix-hard') as HTMLInputElement).value,
+        ).toBe('2');
+        expect(
+            (screen.getByTestId('llm-gold-mix-hallucination-traps') as HTMLInputElement)
+                .value,
+        ).toBe('0');
+        expect(screen.getByTestId('llm-gold-mix-total').textContent).toMatch(/Total:\s*10/);
+        // Count input is now read-only + reflects the mix-total.
+        const countInput = screen.getByTestId('llm-gold-count') as HTMLInputElement;
+        expect(countInput.disabled).toBe(true);
+        expect(countInput.value).toBe('10');
+    });
+
+    it('Generate with mix on sends distribution payload + correct total count', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                recipeId="qa-sft"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-mix-toggle'));
+        // Set 5 easy / 3 medium / 2 hard / 2 traps = 12 total.
+        fireEvent.change(screen.getByTestId('llm-gold-mix-hallucination-traps'), {
+            target: { value: '2' },
+        });
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+            const body = generateCalls[generateCalls.length - 1][1];
+            expect(body.distribution).toEqual({
+                easy: 5,
+                medium: 3,
+                hard: 2,
+                hallucination_traps: 2,
+            });
+            // count carries the mix total.
+            expect(body.count).toBe(12);
+        });
+    });
+
+    it('mix total of 0 disables Generate + surfaces an error hint', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="qa-sft"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-mix-toggle'));
+        // Zero everything out.
+        for (const id of ['easy', 'medium', 'hard', 'hallucination-traps']) {
+            fireEvent.change(screen.getByTestId(`llm-gold-mix-${id}`), {
+                target: { value: '0' },
+            });
+        }
+        // Total error visible + Generate button disabled.
+        expect(screen.getByTestId('llm-gold-mix-total-error')).toBeInTheDocument();
+        expect(
+            (screen.getByTestId('llm-gold-generate') as HTMLButtonElement).disabled,
+        ).toBe(true);
+    });
+
+    it('preview row shows difficulty + trap badges when the LLM tagged them', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'qa-sft',
+                rows: [
+                    {
+                        question: 'Easy Q?',
+                        answer: 'Easy A.',
+                        rationale: '',
+                        source_excerpt: '',
+                        difficulty: 'easy',
+                        is_hallucination_trap: false,
+                    },
+                    {
+                        question: 'Trap Q?',
+                        answer: "I don't know.",
+                        rationale: '',
+                        source_excerpt: '',
+                        difficulty: 'hard',
+                        is_hallucination_trap: true,
+                    },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="qa-sft"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('llm-gold-preview-row-0-difficulty').textContent,
+        ).toBe('easy');
+        // Row 0 has no trap → trap badge absent.
+        expect(
+            screen.queryByTestId('llm-gold-preview-row-0-trap'),
+        ).not.toBeInTheDocument();
+        // Row 1 has trap → both badges present.
+        expect(
+            screen.getByTestId('llm-gold-preview-row-1-difficulty').textContent,
+        ).toBe('hard');
+        expect(
+            screen.getByTestId('llm-gold-preview-row-1-trap').textContent,
+        ).toMatch(/trap/);
+    });
+
+    it('Save selected forwards difficulty + trap fields in qa-sft pairs', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'qa-sft',
+                rows: [
+                    {
+                        question: 'Easy Q?',
+                        answer: 'Easy A.',
+                        rationale: '',
+                        source_excerpt: '',
+                        difficulty: 'easy',
+                        is_hallucination_trap: false,
+                    },
+                    {
+                        question: 'Trap Q?',
+                        answer: "I don't know.",
+                        rationale: '',
+                        source_excerpt: '',
+                        difficulty: 'hard',
+                        is_hallucination_trap: true,
+                    },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={7}
+                datasetType="gold_dev"
+                recipeId="qa-sft"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-save'));
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/7/gold/import',
+                expect.objectContaining({
+                    dataset_type: 'gold_dev',
+                    pairs: [
+                        {
+                            question: 'Easy Q?',
+                            answer: 'Easy A.',
+                            difficulty: 'easy',
+                            is_hallucination_trap: false,
+                        },
+                        {
+                            question: 'Trap Q?',
+                            answer: "I don't know.",
+                            difficulty: 'hard',
+                            is_hallucination_trap: true,
+                        },
+                    ],
+                }),
+            );
+        });
+    });
+
+    // ── Review-prompt-before-sending (advanced UX) ─────────────────
+
+    it('Review-prompt toggle is OFF by default + Generate fires LLM directly', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        const toggle = screen.getByTestId('llm-gold-review-toggle') as HTMLInputElement;
+        expect(toggle.checked).toBe(false);
+
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        // No review section — went straight to generation.
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('llm-gold-prompt-review')).not.toBeInTheDocument();
+        // preview-prompt was NOT called.
+        const previewCalls = apiMock.post.mock.calls.filter(
+            (call: unknown[]) =>
+                String(call[0] || '').includes('/gold/generate-via-llm/preview-prompt'),
+        );
+        expect(previewCalls).toHaveLength(0);
+    });
+
+    it('Review-prompt toggle ON: Generate opens review section with prompts', async () => {
+        installPostRouter({
+            previewPrompt: {
+                recipe_id: 'classification',
+                system_prompt: 'You are a sentiment classifier.',
+                user_prompt: 'Generate 3 classification rows. Labels: positive, negative.',
+                reference_chunk_count: 0,
+                known_labels: ['positive', 'negative'],
+            },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                recipeId="classification"
+                onRowsSaved={() => {}}
+            />,
+        );
+        // Flip the toggle on.
+        await userEvent.click(screen.getByTestId('llm-gold-review-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+
+        // Review section appears with pre-populated textareas.
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-prompt-review')).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('llm-gold-prompt-review-header').textContent,
+        ).toMatch(/classification/);
+        const userArea = screen.getByTestId('llm-gold-prompt-review-user') as HTMLTextAreaElement;
+        expect(userArea.value).toMatch(/Generate 3 classification/);
+        const systemArea = screen.getByTestId('llm-gold-prompt-review-system') as HTMLTextAreaElement;
+        expect(systemArea.value).toMatch(/sentiment classifier/);
+        // Known-labels hint visible.
+        expect(
+            screen.getByTestId('llm-gold-prompt-review-labels').textContent,
+        ).toMatch(/positive, negative/);
+        // No /generate-via-llm POST yet — only preview-prompt.
+        const genCalls = apiMock.post.mock.calls.filter(
+            (call: unknown[]) => {
+                const u = String(call[0] || '');
+                return u.endsWith('/gold/generate-via-llm');
+            },
+        );
+        expect(genCalls).toHaveLength(0);
+    });
+
+    it('Send from review fires /generate-via-llm with edited overrides', async () => {
+        installPostRouter({
+            previewPrompt: {
+                recipe_id: 'qa-sft',
+                system_prompt: 'Default system prompt.',
+                user_prompt: 'Default user prompt.',
+                reference_chunk_count: 0,
+                known_labels: [],
+            },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={7}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-review-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-prompt-review')).toBeInTheDocument();
+        });
+
+        // User edits both prompts.
+        const userArea = screen.getByTestId('llm-gold-prompt-review-user');
+        fireEvent.change(userArea, {
+            target: { value: 'MY CUSTOM USER PROMPT — please return JSON.' },
+        });
+        const systemArea = screen.getByTestId('llm-gold-prompt-review-system');
+        fireEvent.change(systemArea, {
+            target: { value: 'MY CUSTOM SYSTEM PROMPT.' },
+        });
+
+        await userEvent.click(screen.getByTestId('llm-gold-prompt-review-send'));
+
+        // Generate POST fires with both overrides.
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+            const body = generateCalls[generateCalls.length - 1][1];
+            expect(body).toEqual(
+                expect.objectContaining({
+                    user_prompt_override: 'MY CUSTOM USER PROMPT — please return JSON.',
+                    system_prompt_override: 'MY CUSTOM SYSTEM PROMPT.',
+                }),
+            );
+        });
+        // Review section gone (rows preview appears in its place).
+        await waitFor(() => {
+            expect(screen.queryByTestId('llm-gold-prompt-review')).not.toBeInTheDocument();
+        });
+        expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+    });
+
+    it('Send from review with unchanged prompts omits both overrides', async () => {
+        // When the user clicks Send without editing, the backend
+        // should run its default prompt-building path — verify by
+        // checking that override fields are undefined on the wire.
+        installPostRouter({
+            previewPrompt: {
+                recipe_id: 'qa-sft',
+                system_prompt: 'Default system.',
+                user_prompt: 'Default user.',
+                reference_chunk_count: 0,
+                known_labels: [],
+            },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-review-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-prompt-review')).toBeInTheDocument();
+        });
+        // Click Send without editing.
+        await userEvent.click(screen.getByTestId('llm-gold-prompt-review-send'));
+
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+            const body = generateCalls[generateCalls.length - 1][1];
+            expect(body.user_prompt_override).toBeUndefined();
+            expect(body.system_prompt_override).toBeUndefined();
+        });
+    });
+
+    it('Cancel from review discards edits + does NOT fire /generate-via-llm', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-review-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-prompt-review')).toBeInTheDocument();
+        });
+        // Edit the user prompt (would be lost on Cancel).
+        fireEvent.change(screen.getByTestId('llm-gold-prompt-review-user'), {
+            target: { value: 'will be discarded' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-prompt-review-cancel'));
+        expect(screen.queryByTestId('llm-gold-prompt-review')).not.toBeInTheDocument();
+        // No /generate-via-llm POST fired.
+        const genCalls = apiMock.post.mock.calls.filter(
+            (call: unknown[]) =>
+                String(call[0] || '').endsWith('/gold/generate-via-llm'),
+        );
+        expect(genCalls).toHaveLength(0);
+    });
+
+    it('Reference-chunk count surfaces in the review section when grounded', async () => {
+        installPostRouter({
+            previewPrompt: {
+                recipe_id: 'qa-sft',
+                system_prompt: 'System.',
+                user_prompt: 'User prompt with REFERENCE MATERIAL ... and refs.',
+                reference_chunk_count: 4,
+                known_labels: [],
+            },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-review-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-prompt-review')).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('llm-gold-prompt-review-refs').textContent,
+        ).toMatch(/4 reference chunks/);
+    });
+
+    it('Token-count hints update as the user types in the review textareas', async () => {
+        installPostRouter({
+            previewPrompt: {
+                recipe_id: 'qa-sft',
+                system_prompt: 'sys',
+                user_prompt: 'user',
+                reference_chunk_count: 0,
+                known_labels: [],
+            },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.click(screen.getByTestId('llm-gold-review-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        const userArea = await screen.findByTestId('llm-gold-prompt-review-user');
+        // Add a 400-char string → ~100 tokens.
+        fireEvent.change(userArea, { target: { value: 'x'.repeat(400) } });
+        expect(
+            screen.getByTestId('llm-gold-prompt-review-user-tokens').textContent,
+        ).toMatch(/100 tokens/);
     });
 
     // ── Per-recipe rendering + save payload ────────────────────────

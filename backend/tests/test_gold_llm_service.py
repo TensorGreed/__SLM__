@@ -1425,6 +1425,629 @@ class NonQaRecipeEndpointTests(unittest.TestCase):
         self.assertIn("created_at", rows[0])
 
 
+class PreviewPromptEndpointTests(unittest.TestCase):
+    """Tests for ``POST /generate-via-llm/preview-prompt`` — the
+    endpoint that returns the would-be prompts without calling the
+    LLM. Powers the panel's 'review & edit prompt before sending' UX."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_qa_sft_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def _make_classification_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/ticket-router/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def test_preview_returns_user_and_system_prompts_for_qa_sft(self):
+        pid = self._make_qa_sft_project("Preview QA happy")
+        resp = self.client.post(
+            f"/api/projects/{pid}/gold/generate-via-llm/preview-prompt",
+            json={"count": 5, "ground_in_source": False},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "qa-sft")
+        self.assertIn("question/answer", body["user_prompt"])
+        self.assertIn("Generate exactly 5", body["user_prompt"])
+        # System prompt is non-empty + recipe-appropriate.
+        self.assertIn("question/answer pairs", body["system_prompt"])
+        self.assertEqual(body["reference_chunk_count"], 0)
+        self.assertEqual(body["known_labels"], [])
+
+    def test_preview_for_classification_returns_known_labels(self):
+        pid = self._make_classification_project("Preview Class labels")
+        resp = self.client.post(
+            f"/api/projects/{pid}/gold/generate-via-llm/preview-prompt",
+            json={"count": 3, "ground_in_source": False},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "classification")
+        # ticket-router template seeds 5 labels.
+        self.assertIn("billing", body["known_labels"])
+        self.assertIn("technical", body["known_labels"])
+        # Prompt mentions the vocabulary section.
+        self.assertIn("LABEL VOCABULARY", body["user_prompt"])
+        # Labels appear in deterministic (sorted) order in the prompt.
+        self.assertIn("billing", body["user_prompt"])
+
+    def test_preview_grounded_includes_reference_material(self):
+        pid = self._make_qa_sft_project("Preview QA grounded")
+        # Mock the chunk loader so we don't depend on data being
+        # imported into the test project. Without this, fresh
+        # projects have no cleaned chunks and grounding falls back.
+        with patch(
+            "app.services.gold_llm_service._load_project_cleaned_chunks",
+            return_value=[
+                "First cleaned chunk about Topic A.",
+                "Second chunk about Topic A.",
+                "Third chunk about Topic B.",
+            ],
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm/preview-prompt",
+                json={"count": 2, "ground_in_source": True},
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["reference_chunk_count"], 3)
+        # Reference section appears in the user prompt.
+        self.assertIn("REFERENCE MATERIAL", body["user_prompt"])
+        self.assertIn("Topic A", body["user_prompt"])
+
+    def test_preview_recipe_required_returns_400(self):
+        # Project without a selected_recipe.
+        import asyncio
+        from app.database import async_session_factory
+        from app.services.recipe_apply_service import clear_recipe_from_project
+
+        pid = self._make_qa_sft_project("Preview no recipe")
+
+        async def _clear() -> None:
+            async with async_session_factory() as db:
+                await clear_recipe_from_project(db, pid)
+                await db.commit()
+        asyncio.run(_clear())
+
+        resp = self.client.post(
+            f"/api/projects/{pid}/gold/generate-via-llm/preview-prompt",
+            json={"count": 3, "ground_in_source": False},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json().get("detail") or {}
+        self.assertEqual(detail.get("error_code"), "RECIPE_REQUIRED")
+
+    def test_preview_count_out_of_range_returns_422(self):
+        pid = self._make_qa_sft_project("Preview bad count")
+        resp = self.client.post(
+            f"/api/projects/{pid}/gold/generate-via-llm/preview-prompt",
+            json={"count": 999, "ground_in_source": False},
+        )
+        # Pydantic field-level constraint fires at 422.
+        self.assertIn(resp.status_code, (400, 422), resp.text)
+
+
+class PromptOverrideTests(unittest.TestCase):
+    """Tests for the ``user_prompt_override`` / ``system_prompt_override``
+    fields on ``/generate-via-llm``. Verifies:
+      * the override is what reaches the cloud client (not the built prompt)
+      * the classification vocab filter is suspended on parse when the
+        user takes control (advanced-user trust contract)
+      * either field can be overridden independently"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_qa_sft_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def _make_classification_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/ticket-router/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def test_user_prompt_override_reaches_the_cloud_client(self):
+        pid = self._make_qa_sft_project("Override user-prompt")
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content='{"pairs":[{"question":"Q","answer":"A"}]}',
+                model="gpt-4o-mini",
+                prompt_tokens=50,
+                completion_tokens=20,
+            )
+
+        custom_prompt = (
+            "CUSTOM PROMPT — this is what the advanced user wrote. "
+            'Return JSON: {"pairs":[{"question":"X","answer":"Y"}]}.'
+        )
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "user_prompt_override": custom_prompt,
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        # The literal override string is what reached the cloud client —
+        # NOT the service's normally-built prompt.
+        self.assertEqual(captured.get("user_prompt"), custom_prompt)
+        # System prompt fell back to the service default.
+        self.assertIn("question/answer", captured.get("system_prompt") or "")
+
+    def test_system_prompt_override_alone_does_not_affect_user_prompt(self):
+        pid = self._make_qa_sft_project("Override system-prompt")
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content='{"pairs":[{"question":"Q","answer":"A"}]}',
+                model="gpt-4o-mini",
+                prompt_tokens=50,
+                completion_tokens=20,
+            )
+
+        custom_system = "You are a helpful tester. Output exactly one Q/A pair."
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "system_prompt_override": custom_system,
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(captured.get("system_prompt"), custom_system)
+        # User prompt still built by the service (project name appears).
+        self.assertIn("Override system-prompt", captured.get("user_prompt") or "")
+
+    def test_user_override_suspends_classification_vocab_filter(self):
+        # Without override: the parser drops out-of-vocab labels. With
+        # override: the user has taken control, vocab filter is off,
+        # arbitrary labels pass through.
+        pid = self._make_classification_project("Override class vocab")
+        # ticket-router seeds {billing, account, sales, technical, legal}.
+        # The mock emits "spam" (not in vocab) — without override this
+        # row would be filtered out and the parser would error.
+        async def _fake(**kwargs):
+            return CloudLlmResponse(
+                content=json.dumps({
+                    "rows": [{"text": "buy now!!!", "label": "spam"}],
+                }),
+                model="gpt-4o-mini",
+                prompt_tokens=80,
+                completion_tokens=30,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_fake,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "user_prompt_override": (
+                        "Generate one classification row using labels of "
+                        'your choice. Return {"rows":[{"text":"...","label":"..."}]}'
+                    ),
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        # The out-of-template-vocab label "spam" survived because we
+        # suspended the vocab filter under override.
+        self.assertEqual(body["rows"][0]["label"], "spam")
+
+
+class DifficultyAndTrapLabelTests(unittest.TestCase):
+    """Tests for the per-row difficulty + is_hallucination_trap labels
+    on qa-sft generations — both the explicit distribution path and
+    the always-on labeling that fixes the silent-medium bug."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_qa_sft_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    # ── Parser-level: pure-function tests ─────────────────────────
+
+    def test_parser_extracts_difficulty_and_trap_from_response(self):
+        from app.services.gold_llm_service import _parse_qa_payload
+        content = json.dumps({
+            "pairs": [
+                {"question": "Q1", "answer": "A1", "difficulty": "easy",
+                 "is_hallucination_trap": False},
+                {"question": "Q2", "answer": "A2", "difficulty": "hard",
+                 "is_hallucination_trap": True},
+            ],
+        })
+        rows = _parse_qa_payload(content, expected_count=2)
+        self.assertEqual(rows[0].difficulty, "easy")
+        self.assertEqual(rows[0].is_hallucination_trap, False)
+        self.assertEqual(rows[1].difficulty, "hard")
+        self.assertEqual(rows[1].is_hallucination_trap, True)
+
+    def test_parser_defaults_difficulty_to_medium_and_trap_to_false(self):
+        # LLM didn't include the fields — defaults apply.
+        from app.services.gold_llm_service import _parse_qa_payload
+        content = json.dumps({
+            "pairs": [{"question": "Q", "answer": "A"}],
+        })
+        rows = _parse_qa_payload(content, expected_count=1)
+        self.assertEqual(rows[0].difficulty, "medium")
+        self.assertEqual(rows[0].is_hallucination_trap, False)
+
+    def test_parser_normalizes_difficulty_synonyms(self):
+        # LLM emits 'simple' / 'tough' / 'expert' / etc. — parser maps
+        # them to the canonical {easy, medium, hard} set.
+        from app.services.gold_llm_service import _parse_qa_payload
+        content = json.dumps({
+            "pairs": [
+                {"question": "Q1", "answer": "A1", "difficulty": "Simple"},
+                {"question": "Q2", "answer": "A2", "difficulty": "TOUGH"},
+                {"question": "Q3", "answer": "A3", "difficulty": "expert"},
+                {"question": "Q4", "answer": "A4", "difficulty": "bizarre"},
+            ],
+        })
+        rows = _parse_qa_payload(content, expected_count=4)
+        self.assertEqual(rows[0].difficulty, "easy")
+        self.assertEqual(rows[1].difficulty, "hard")
+        self.assertEqual(rows[2].difficulty, "hard")
+        # Unrecognized → falls back to medium (not None / not the raw).
+        self.assertEqual(rows[3].difficulty, "medium")
+
+    def test_parser_trap_field_string_true_is_coerced(self):
+        # LLM emits "true" (string) instead of true (bool) — accepted.
+        from app.services.gold_llm_service import _parse_qa_payload
+        content = json.dumps({
+            "pairs": [
+                {"question": "Q", "answer": "I don't know",
+                 "is_hallucination_trap": "true"},
+            ],
+        })
+        rows = _parse_qa_payload(content, expected_count=1)
+        self.assertEqual(rows[0].is_hallucination_trap, True)
+
+    # ── End-to-end: distribution drives prompt + saves labeled rows ──
+
+    def test_distribution_enumerates_mix_in_user_prompt(self):
+        pid = self._make_qa_sft_project("Distribution prompt mix")
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content=json.dumps({
+                    "pairs": [
+                        # Match the requested mix so the count-drift
+                        # check passes (5 + 3 + 2 + 2 = 12 total).
+                        *[{"question": f"E{i}", "answer": f"A{i}",
+                           "difficulty": "easy",
+                           "is_hallucination_trap": False} for i in range(5)],
+                        *[{"question": f"M{i}", "answer": f"A{i}",
+                           "difficulty": "medium",
+                           "is_hallucination_trap": False} for i in range(3)],
+                        *[{"question": f"H{i}", "answer": f"A{i}",
+                           "difficulty": "hard",
+                           "is_hallucination_trap": False} for i in range(2)],
+                        *[{"question": f"T{i}", "answer": "I don't know",
+                           "difficulty": "hard",
+                           "is_hallucination_trap": True} for i in range(2)],
+                    ],
+                }),
+                model="gpt-4o-mini",
+                prompt_tokens=300,
+                completion_tokens=600,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    # count is in Pydantic-valid range but FAR from
+                    # the distribution total (12). Proves the service
+                    # used distribution.total (12) — if it had used
+                    # count (5), the parser's drift check would reject
+                    # the 12-row response with COUNT_MISMATCH.
+                    "count": 5,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                    "distribution": {
+                        "easy": 5,
+                        "medium": 3,
+                        "hard": 2,
+                        "hallucination_traps": 2,
+                    },
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        user_prompt = captured.get("user_prompt") or ""
+        # Prompt enumerates the breakdown.
+        self.assertIn("5 EASY", user_prompt)
+        self.assertIn("3 MEDIUM", user_prompt)
+        self.assertIn("2 HARD", user_prompt)
+        self.assertIn("2 HALLUCINATION TRAP", user_prompt)
+        # Total mentioned ("12 question/answer pairs total").
+        self.assertIn("12 question/answer pairs", user_prompt)
+
+    def test_distribution_response_rows_carry_per_row_labels(self):
+        pid = self._make_qa_sft_project("Distribution row labels")
+        fake_content = json.dumps({
+            "pairs": [
+                {"question": "Easy Q", "answer": "Easy A",
+                 "difficulty": "easy", "is_hallucination_trap": False},
+                {"question": "Trap Q", "answer": "I don't know",
+                 "difficulty": "hard", "is_hallucination_trap": True},
+            ],
+        })
+
+        async def _fake(**kwargs):
+            return CloudLlmResponse(
+                content=fake_content,
+                model="gpt-4o-mini",
+                prompt_tokens=100,
+                completion_tokens=100,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_fake,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 2,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["rows"][0]["difficulty"], "easy")
+        self.assertEqual(body["rows"][0]["is_hallucination_trap"], False)
+        self.assertEqual(body["rows"][1]["difficulty"], "hard")
+        self.assertEqual(body["rows"][1]["is_hallucination_trap"], True)
+
+    def test_distribution_out_of_range_returns_400(self):
+        pid = self._make_qa_sft_project("Distribution oor")
+        # Sum = 60 > 50 → reject.
+        resp = self.client.post(
+            f"/api/projects/{pid}/gold/generate-via-llm",
+            json={
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "count": 10,
+                "api_key": "sk-test",
+                "ground_in_source": False,
+                "distribution": {
+                    "easy": 30, "medium": 20, "hard": 10, "hallucination_traps": 0,
+                },
+            },
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json().get("detail") or {}
+        self.assertEqual(detail.get("error_code"), "DISTRIBUTION_OUT_OF_RANGE")
+
+    def test_distribution_total_zero_returns_400(self):
+        pid = self._make_qa_sft_project("Distribution zero")
+        resp = self.client.post(
+            f"/api/projects/{pid}/gold/generate-via-llm",
+            json={
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "count": 10,
+                "api_key": "sk-test",
+                "distribution": {
+                    "easy": 0, "medium": 0, "hard": 0, "hallucination_traps": 0,
+                },
+            },
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        detail = resp.json().get("detail") or {}
+        self.assertEqual(detail.get("error_code"), "DISTRIBUTION_OUT_OF_RANGE")
+
+    def test_distribution_ignored_for_non_qa_recipes(self):
+        # Classification project + a distribution → distribution is
+        # silently ignored, prompt should NOT enumerate the mix.
+        resp = self.client.post(
+            "/api/project-templates/ticket-router/instantiate",
+            json={"project_name": "Distribution non-qa"},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        pid = int(resp.json()["id"])
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content=json.dumps({
+                    "rows": [{"text": "good", "label": "billing"}],
+                }),
+                model="gpt-4o-mini",
+                prompt_tokens=100,
+                completion_tokens=100,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                    "distribution": {
+                        "easy": 5, "medium": 3, "hard": 2, "hallucination_traps": 2,
+                    },
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        # Prompt should NOT enumerate the mix (distribution silently
+        # ignored for non-qa-sft).
+        user_prompt = captured.get("user_prompt") or ""
+        self.assertNotIn("HALLUCINATION TRAP", user_prompt)
+        self.assertNotIn("5 EASY", user_prompt)
+
+    def _make_qa_sft_project_clean(self, name: str) -> int:
+        """Create a qa-sft project directly (no template seeding +
+        lock) so we can write fresh rows into gold_dev."""
+        import asyncio
+        from app.database import async_session_factory
+        from app.models.project import Project
+
+        resp = self.client.post("/api/projects", json={"name": name})
+        self.assertEqual(resp.status_code, 201, resp.text)
+        pid = int(resp.json()["id"])
+
+        async def _set_recipe() -> None:
+            async with async_session_factory() as db:
+                project = await db.get(Project, pid)
+                project.selected_recipe = {"recipe_id": "qa-sft"}
+                await db.commit()
+        asyncio.run(_set_recipe())
+        return pid
+
+    def test_import_round_trips_difficulty_and_trap_fields(self):
+        # Generate + save in one round-trip; read back via /gold/entries
+        # to confirm the labels persisted into the JSONL. Use a clean
+        # project (no template seeding/locking) so gold_dev is writable.
+        pid = self._make_qa_sft_project_clean("Round-trip labels")
+        fake_content = json.dumps({
+            "pairs": [
+                {"question": "Easy Q", "answer": "Easy A",
+                 "difficulty": "easy", "is_hallucination_trap": False},
+                {"question": "Trap Q", "answer": "I don't know",
+                 "difficulty": "hard", "is_hallucination_trap": True},
+            ],
+        })
+
+        async def _fake(**kwargs):
+            return CloudLlmResponse(
+                content=fake_content,
+                model="gpt-4o-mini",
+                prompt_tokens=100,
+                completion_tokens=100,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_fake,
+        ):
+            gen = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 2,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(gen.status_code, 200, gen.text)
+        # Save the rows as-is (mirror what the panel does — pass the
+        # full per-row dict so labels survive).
+        save = self.client.post(
+            f"/api/projects/{pid}/gold/import",
+            json={
+                "pairs": gen.json()["rows"],
+                "dataset_type": "gold_dev",
+            },
+        )
+        self.assertEqual(save.status_code, 200, save.text)
+        # Read back. Templates seed a lot of rows; just check that our
+        # two new entries (with their labels intact) are present.
+        entries = self.client.get(
+            f"/api/projects/{pid}/gold/entries",
+            params={"dataset_type": "gold_dev"},
+        )
+        self.assertEqual(entries.status_code, 200, entries.text)
+        rows = entries.json()["entries"]
+        # Find by question.
+        easy_row = next(r for r in rows if r.get("question") == "Easy Q")
+        trap_row = next(r for r in rows if r.get("question") == "Trap Q")
+        self.assertEqual(easy_row["difficulty"], "easy")
+        self.assertEqual(easy_row["is_hallucination_trap"], False)
+        self.assertEqual(trap_row["difficulty"], "hard")
+        self.assertEqual(trap_row["is_hallucination_trap"], True)
+
+
 class SavedKeyEndpointTests(unittest.TestCase):
     """Tests for the new GET/PUT/DELETE /generate-via-llm/saved-key
     endpoints — the panel-local stored-key UX. The plumbing for

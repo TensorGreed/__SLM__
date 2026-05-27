@@ -2,12 +2,14 @@
  * Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import CoachStrip from '../coach/CoachStrip';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
+import GoldEntryRowBody from './GoldEntryRowBody';
+import type { GoldRowRecipe } from './GoldEntryRowBody';
 import './GoldSetPanel.css';
 
 
@@ -20,6 +22,23 @@ const SUPPORTED_LLM_GOLD_RECIPES = new Set([
     'span-extraction',
     'summarization',
 ]);
+
+
+/** Difficulty / trap filter for the entries list. Only meaningful
+ *  for qa-sft; non-qa-sft recipes don't use these fields. ``all`` is
+ *  the no-op default. */
+type EntryFilter = 'all' | 'easy' | 'medium' | 'hard' | 'traps';
+
+
+/** Normalize the difficulty field on an entry. Older entries (from
+ *  before the LLM-gen path started tagging rows) may have ``undefined``
+ *  or ``""`` — treat those as ``medium`` so the mix summary doesn't
+ *  silently drop them. */
+function normalizeDifficulty(raw: unknown): 'easy' | 'medium' | 'hard' {
+    const token = String(raw || '').trim().toLowerCase();
+    if (token === 'easy' || token === 'hard') return token;
+    return 'medium';
+}
 
 interface GoldSetPanelProps {
     projectId: number;
@@ -37,6 +56,11 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     // the right prompt shape + render per-recipe row previews. The
     // panel handles its own self-hiding for unsupported recipes.
     const [recipeId, setRecipeId] = useState<string | null>(null);
+    // Filter for the entries list. Only meaningful for qa-sft (other
+    // recipes don't carry difficulty / hallucination-trap data); the
+    // filter dropdown is hidden + the filter resets to ``all`` when
+    // the recipe changes.
+    const [entryFilter, setEntryFilter] = useState<EntryFilter>('all');
 
     const fetchEntries = useCallback(async () => {
         const res = await api.get(`/projects/${projectId}/gold/entries?dataset_type=${datasetType}`);
@@ -44,6 +68,45 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     }, [projectId, datasetType]);
 
     useEffect(() => { fetchEntries(); }, [fetchEntries]);
+
+    // Filter resets when the recipe changes (e.g. user navigated to
+    // a different project mid-session) so a stale qa-sft "hard only"
+    // filter doesn't accidentally apply to a classification project.
+    useEffect(() => {
+        setEntryFilter('all');
+    }, [recipeId]);
+
+    /** Mix summary + filtered entries. qa-sft only — for other recipes
+     *  the summary is null + the filter is a no-op (filter dropdown
+     *  is hidden, so this branch is unreachable from the UI). */
+    const { mixSummary, filteredEntries } = useMemo(() => {
+        if (recipeId !== 'qa-sft') {
+            return {
+                mixSummary: null as {
+                    total: number; easy: number; medium: number; hard: number; traps: number;
+                } | null,
+                filteredEntries: entries,
+            };
+        }
+        const summary = {
+            total: entries.length,
+            easy: 0,
+            medium: 0,
+            hard: 0,
+            traps: 0,
+        };
+        for (const e of entries) {
+            const d = normalizeDifficulty(e.difficulty);
+            summary[d] += 1;
+            if (e.is_hallucination_trap) summary.traps += 1;
+        }
+        const filtered = entries.filter((e) => {
+            if (entryFilter === 'all') return true;
+            if (entryFilter === 'traps') return !!e.is_hallucination_trap;
+            return normalizeDifficulty(e.difficulty) === entryFilter;
+        });
+        return { mixSummary: summary, filteredEntries: filtered };
+    }, [entries, entryFilter, recipeId]);
 
     // One-shot fetch of the project's selected_recipe so we can
     // gate the LLM-generate panel without changing this component's
@@ -127,16 +190,140 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
             </div>
 
             <div className="card">
-                <h3>Entries <span className="badge badge-accent">{entries.length}</span></h3>
+                <div
+                    className="gold-header"
+                    data-testid="gold-entries-header"
+                    style={{ flexWrap: 'wrap' }}
+                >
+                    <h3>
+                        Entries <span className="badge badge-accent">{entries.length}</span>
+                    </h3>
+                    {recipeId === 'qa-sft' && entries.length > 0 && (
+                        <div
+                            className="gold-controls"
+                            data-testid="gold-entries-filter-row"
+                        >
+                            <label
+                                className="form-label"
+                                htmlFor="gold-entries-filter"
+                                style={{ margin: 0, fontWeight: 400 }}
+                            >
+                                Filter:
+                            </label>
+                            <select
+                                id="gold-entries-filter"
+                                className="input"
+                                value={entryFilter}
+                                onChange={(e) => setEntryFilter(e.target.value as EntryFilter)}
+                                data-testid="gold-entries-filter"
+                                style={{ width: 'auto' }}
+                            >
+                                <option value="all">All</option>
+                                <option value="easy">Easy only</option>
+                                <option value="medium">Medium only</option>
+                                <option value="hard">Hard only</option>
+                                <option value="traps">Hallucination traps only</option>
+                            </select>
+                        </div>
+                    )}
+                </div>
+
+                {/* Mix summary — qa-sft only. Helps the user see the
+                    current difficulty distribution at a glance so they
+                    can ask the LLM-gen panel to fill the gaps in the
+                    next Generate click. */}
+                {recipeId === 'qa-sft' && mixSummary && mixSummary.total > 0 && (
+                    <div
+                        data-testid="gold-entries-mix-summary"
+                        style={{
+                            margin: '0 0 var(--space-sm)',
+                            padding: 'var(--space-sm) var(--space-md)',
+                            background: 'var(--bg-subtle)',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-secondary)',
+                        }}
+                    >
+                        <strong>{mixSummary.total}</strong>{' '}
+                        entr{mixSummary.total === 1 ? 'y' : 'ies'}:{' '}
+                        <span data-testid="gold-entries-mix-easy">
+                            {mixSummary.easy} easy
+                        </span>
+                        {' / '}
+                        <span data-testid="gold-entries-mix-medium">
+                            {mixSummary.medium} medium
+                        </span>
+                        {' / '}
+                        <span data-testid="gold-entries-mix-hard">
+                            {mixSummary.hard} hard
+                        </span>
+                        {' · '}
+                        <span data-testid="gold-entries-mix-traps">
+                            {mixSummary.traps} hallucination trap
+                            {mixSummary.traps === 1 ? '' : 's'}
+                        </span>
+                    </div>
+                )}
+
+                {/* Active-filter banner: when filtered, surface how
+                    many of the total are showing so the user isn't
+                    confused by the truncated list. */}
+                {entryFilter !== 'all' && filteredEntries.length !== entries.length && (
+                    <div
+                        data-testid="gold-entries-filter-banner"
+                        style={{
+                            margin: '0 0 var(--space-sm)',
+                            fontSize: '0.85rem',
+                            color: 'var(--text-tertiary)',
+                        }}
+                    >
+                        Showing <strong>{filteredEntries.length}</strong> of{' '}
+                        {entries.length} (filter: <em>{entryFilter}</em>).
+                        {' '}
+                        <button
+                            type="button"
+                            className="btn btn-link"
+                            onClick={() => setEntryFilter('all')}
+                            data-testid="gold-entries-filter-clear"
+                            style={{ padding: 0 }}
+                        >
+                            Clear filter
+                        </button>
+                    </div>
+                )}
+
                 <div className="entries-list">
-                    {entries.map((e, i) => (
-                        <div key={i} className="entry-item">
-                            <div className="entry-q"><strong>Q:</strong> {e.question}</div>
-                            <div className="entry-a"><strong>A:</strong> {e.answer}</div>
-                            <div className="entry-meta">
-                                <span className="badge badge-info">{e.difficulty}</span>
-                                {e.is_hallucination_trap && <span className="badge badge-warning">Trap</span>}
-                            </div>
+                    {filteredEntries.map((e, i) => (
+                        <div
+                            key={i}
+                            className="entry-item"
+                            data-testid={`gold-entry-row-${i}`}
+                        >
+                            {/* Render per-recipe via the shared body
+                                component so the LLM-gen preview and
+                                this list don't drift. qa-sft falls
+                                through as the default — earlier
+                                projects had a recipe but new ones
+                                still go through this path with a
+                                non-null recipeId. ``unknown`` projects
+                                (recipeId === null) render as qa-sft
+                                for backward compat with rows saved
+                                before recipe-aware import landed. */}
+                            <GoldEntryRowBody
+                                recipeId={
+                                    (recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId)
+                                        ? recipeId
+                                        : 'qa-sft') as GoldRowRecipe
+                                }
+                                row={{
+                                    ...e,
+                                    // Normalize so the qa-sft badge
+                                    // renders "medium" rather than
+                                    // "" / undefined for legacy rows.
+                                    difficulty: normalizeDifficulty(e.difficulty),
+                                }}
+                                testidPrefix={`gold-entry-row-${i}`}
+                            />
                         </div>
                     ))}
                     {entries.length === 0 && (
@@ -145,6 +332,18 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                             description="The gold set is the labelled ground-truth eval set. Add Q&A pairs above — 50–100 carefully labelled rows is enough to start scoring training runs."
                             docsHref="http://localhost:3001/docs/workflows/evaluation-and-remediation"
                         />
+                    )}
+                    {entries.length > 0 && filteredEntries.length === 0 && (
+                        <div
+                            data-testid="gold-entries-filtered-empty"
+                            style={{
+                                padding: 'var(--space-lg)',
+                                textAlign: 'center',
+                                color: 'var(--text-tertiary)',
+                            }}
+                        >
+                            No entries match the current filter.
+                        </div>
                     )}
                 </div>
             </div>

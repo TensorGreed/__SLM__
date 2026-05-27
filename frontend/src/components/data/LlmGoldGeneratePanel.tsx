@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
+import GoldEntryRowBody from './GoldEntryRowBody';
 
 
 /**
@@ -69,6 +70,23 @@ interface GeneratedRow {
     // shared
     rationale?: string;
     source_excerpt?: string;
+    // qa-sft only — populated by the LLM (defaults applied when
+    // missing): difficulty is one of "easy" | "medium" | "hard",
+    // is_hallucination_trap a boolean. Both round-trip into the
+    // saved gold-row JSONL.
+    difficulty?: 'easy' | 'medium' | 'hard';
+    is_hallucination_trap?: boolean;
+}
+
+/** qa-sft explicit row-mix. When set, the four counts add up to the
+ *  total row count and replace the single "Count" input. Fired on
+ *  the wire as ``distribution`` on /generate-via-llm and on
+ *  /preview-prompt. */
+interface RowDistribution {
+    easy: number;
+    medium: number;
+    hard: number;
+    hallucination_traps: number;
 }
 
 interface GenerateResponse {
@@ -96,6 +114,14 @@ interface CostEstimateResponse {
 interface SavedKeyResponse {
     has_stored_key: boolean;
     value_hint: string | null;
+}
+
+interface PromptPreviewResponse {
+    recipe_id: RecipeId;
+    system_prompt: string;
+    user_prompt: string;
+    reference_chunk_count: number;
+    known_labels: string[];
 }
 
 interface Props {
@@ -207,117 +233,197 @@ function extractErrorMessage(err: unknown): { code: string; message: string } {
 
 
 /**
- * Per-recipe preview-row body. Renders the recipe's load-bearing
- * fields with shape-appropriate framing:
- *   * qa-sft → Q + A
- *   * classification → text + label-as-badge
- *   * span-extraction → text + entity-table
- *   * summarization → document (collapsed) + summary
+ * Inline "review & edit prompt before sending" section. Shown when
+ * the user clicked Generate with the advanced toggle on. Renders:
+ *   * Recipe header so the user knows what shape the LLM will return.
+ *   * Reference-chunk count + known-label list (when applicable) so
+ *     they understand the grounding/vocab context.
+ *   * Editable system + user prompt textareas with ~token counts.
+ *   * Send / Cancel buttons.
+ *
+ * Edits are NOT auto-persisted — Cancel discards them.
  */
-function PreviewRowBody({
-    recipeId,
-    row,
-    idx,
+function PromptReviewSection({
+    review,
+    userPrompt,
+    systemPrompt,
+    onUserPromptChange,
+    onSystemPromptChange,
+    onSend,
+    onCancel,
+    generating,
 }: {
-    recipeId: RecipeId;
-    row: GeneratedRow;
-    idx: number;
+    review: PromptPreviewResponse;
+    userPrompt: string;
+    systemPrompt: string;
+    onUserPromptChange: (v: string) => void;
+    onSystemPromptChange: (v: string) => void;
+    onSend: () => void;
+    onCancel: () => void;
+    generating: boolean;
 }) {
-    if (recipeId === 'classification') {
-        return (
-            <>
-                <div style={{ fontWeight: 600 }} data-testid={`llm-gold-preview-row-${idx}-text`}>
-                    {row.text}
-                </div>
-                <div style={{ marginTop: 4 }} data-testid={`llm-gold-preview-row-${idx}-label`}>
-                    <span
-                        className="badge badge-info"
-                        style={{ fontFamily: 'monospace' }}
-                    >
-                        {row.label}
-                    </span>
-                </div>
-            </>
-        );
-    }
-    if (recipeId === 'span-extraction') {
-        const entities = row.entities || [];
-        return (
-            <>
-                <div
-                    style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}
-                    data-testid={`llm-gold-preview-row-${idx}-text`}
-                >
-                    {row.text}
-                </div>
-                <div
-                    style={{ marginTop: 4, fontSize: '0.85rem' }}
-                    data-testid={`llm-gold-preview-row-${idx}-entities`}
-                >
-                    {entities.length === 0 ? (
-                        <em style={{ color: 'var(--text-tertiary)' }}>
-                            No entities (negative example)
-                        </em>
-                    ) : (
-                        <ul style={{ margin: 0, paddingLeft: 'var(--space-md)' }}>
-                            {entities.map((ent, ei) => (
-                                <li key={ei}>
-                                    <span className="badge badge-accent" style={{ marginRight: 4 }}>
-                                        {ent.type}
-                                    </span>
-                                    <span style={{ fontFamily: 'monospace' }}>
-                                        "{ent.text}"
-                                    </span>
-                                    <span style={{ color: 'var(--text-tertiary)', marginLeft: 6 }}>
-                                        [{ent.start}:{ent.end}]
-                                    </span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            </>
-        );
-    }
-    if (recipeId === 'summarization') {
-        // Document is potentially long — keep it readable but
-        // collapsed-by-default so the row preview stays scannable.
-        return (
-            <>
-                <details data-testid={`llm-gold-preview-row-${idx}-document`}>
-                    <summary style={{ fontWeight: 600, cursor: 'pointer' }}>
-                        Document ({(row.document || '').length} chars) — click to expand
-                    </summary>
-                    <div
-                        style={{
-                            marginTop: 4,
-                            whiteSpace: 'pre-wrap',
-                            fontSize: '0.9rem',
-                            color: 'var(--text-secondary)',
-                        }}
-                    >
-                        {row.document}
-                    </div>
-                </details>
-                <div
-                    style={{ marginTop: 4 }}
-                    data-testid={`llm-gold-preview-row-${idx}-summary`}
-                >
-                    <strong>Summary:</strong> {row.summary}
-                </div>
-            </>
-        );
-    }
-    // Default: qa-sft.
+    // 1 token ≈ 4 chars heuristic (matches the cost estimator's
+    // backend formula). Worth surfacing because users editing prompts
+    // can blow out the cost ceiling without realizing it.
+    const approxUserTokens = Math.ceil(userPrompt.length / 4);
+    const approxSystemTokens = Math.ceil(systemPrompt.length / 4);
+
     return (
-        <>
-            <div style={{ fontWeight: 600 }}>
-                Q: {row.question}
+        <section
+            data-testid="llm-gold-prompt-review"
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 'var(--space-md)',
+                marginTop: 'var(--space-sm)',
+                padding: 'var(--space-md)',
+                border: '2px solid var(--accent-primary)',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-subtle)',
+            }}
+        >
+            <header>
+                <h4 style={{ margin: 0 }} data-testid="llm-gold-prompt-review-header">
+                    🔍 Review prompt before sending — recipe: {review.recipe_id}
+                </h4>
+                <p
+                    style={{
+                        margin: '4px 0 0',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.9rem',
+                    }}
+                >
+                    This is what the LLM will see. Edit either prompt
+                    below; click <strong>Send to LLM</strong> when ready.
+                    Token counts are approximate (chars ÷ 4) — bigger
+                    prompts cost more, even before the LLM responds.
+                </p>
+                {review.reference_chunk_count > 0 && (
+                    <p
+                        style={{
+                            margin: '4px 0 0',
+                            color: 'var(--text-tertiary)',
+                            fontSize: '0.85rem',
+                        }}
+                        data-testid="llm-gold-prompt-review-refs"
+                    >
+                        Grounded in <strong>{review.reference_chunk_count}</strong>{' '}
+                        reference chunk{review.reference_chunk_count === 1 ? '' : 's'}
+                        — the REFERENCE MATERIAL section in the user prompt
+                        below carries them inline; edit/remove there.
+                    </p>
+                )}
+                {review.known_labels.length > 0 && (
+                    <p
+                        style={{
+                            margin: '4px 0 0',
+                            color: 'var(--text-tertiary)',
+                            fontSize: '0.85rem',
+                        }}
+                        data-testid="llm-gold-prompt-review-labels"
+                    >
+                        Locked to <strong>{review.known_labels.length}</strong>{' '}
+                        label{review.known_labels.length === 1 ? '' : 's'}{' '}
+                        from your existing gold rows:{' '}
+                        <span style={{ fontFamily: 'monospace' }}>
+                            {review.known_labels.join(', ')}
+                        </span>
+                        . If you change the LABEL VOCABULARY section in the
+                        user prompt, the vocab filter is suspended on
+                        parse — your edit wins.
+                    </p>
+                )}
+            </header>
+
+            <div className="form-group" style={{ margin: 0 }}>
+                <label
+                    className="form-label"
+                    style={{ display: 'flex', justifyContent: 'space-between' }}
+                >
+                    <span>System prompt</span>
+                    <span
+                        style={{
+                            fontWeight: 400,
+                            color: 'var(--text-tertiary)',
+                        }}
+                        data-testid="llm-gold-prompt-review-system-tokens"
+                    >
+                        ≈ {approxSystemTokens} tokens
+                    </span>
+                </label>
+                <textarea
+                    aria-label="System prompt"
+                    className="input"
+                    value={systemPrompt}
+                    onChange={(e) => onSystemPromptChange(e.target.value)}
+                    rows={4}
+                    data-testid="llm-gold-prompt-review-system"
+                    style={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.85rem',
+                        resize: 'vertical',
+                    }}
+                />
             </div>
-            <div style={{ marginTop: 4 }}>
-                A: {row.answer}
+
+            <div className="form-group" style={{ margin: 0 }}>
+                <label
+                    className="form-label"
+                    style={{ display: 'flex', justifyContent: 'space-between' }}
+                >
+                    <span>User prompt</span>
+                    <span
+                        style={{
+                            fontWeight: 400,
+                            color: 'var(--text-tertiary)',
+                        }}
+                        data-testid="llm-gold-prompt-review-user-tokens"
+                    >
+                        ≈ {approxUserTokens} tokens
+                    </span>
+                </label>
+                <textarea
+                    aria-label="User prompt"
+                    className="input"
+                    value={userPrompt}
+                    onChange={(e) => onUserPromptChange(e.target.value)}
+                    rows={20}
+                    data-testid="llm-gold-prompt-review-user"
+                    style={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.85rem',
+                        resize: 'vertical',
+                    }}
+                />
             </div>
-        </>
+
+            <div
+                style={{
+                    display: 'flex',
+                    gap: 'var(--space-sm)',
+                    justifyContent: 'flex-end',
+                }}
+            >
+                <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={onCancel}
+                    disabled={generating}
+                    data-testid="llm-gold-prompt-review-cancel"
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={onSend}
+                    disabled={generating || !userPrompt.trim()}
+                    data-testid="llm-gold-prompt-review-send"
+                >
+                    {generating ? '⏳ Sending…' : '✨ Send to LLM'}
+                </button>
+            </div>
+        </section>
     );
 }
 
@@ -369,6 +475,35 @@ export default function LlmGoldGeneratePanel({
     // Default OFF — saving an API key crosses a privacy line, the user
     // has to opt in explicitly.
     const [saveForFuture, setSaveForFuture] = useState(false);
+    // Advanced "review & edit prompt before sending" workflow.
+    //   * ``reviewPromptBeforeSend`` — opt-in checkbox state.
+    //   * ``promptReview`` — populated by /preview-prompt when the
+    //     user clicks Generate with the toggle on. While non-null,
+    //     the panel renders the review section instead of firing
+    //     the LLM call. Edits land in ``editedUserPrompt`` /
+    //     ``editedSystemPrompt`` so we can preserve them across
+    //     fetches if the user toggles between sections.
+    const [reviewPromptBeforeSend, setReviewPromptBeforeSend] = useState(false);
+    const [promptReview, setPromptReview] = useState<PromptPreviewResponse | null>(null);
+    const [editedUserPrompt, setEditedUserPrompt] = useState('');
+    const [editedSystemPrompt, setEditedSystemPrompt] = useState('');
+    const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
+    // qa-sft "customize row mix" — when on, the single Count field is
+    // replaced with 4 numeric inputs (easy/medium/hard/traps). Default
+    // OFF for new users; advanced users opt in. Only shown for qa-sft
+    // because other recipes' gold_template doesn't carry difficulty /
+    // hallucination-trap fields.
+    const [customizeMix, setCustomizeMix] = useState(false);
+    const [mix, setMix] = useState<RowDistribution>({
+        easy: 5,
+        medium: 3,
+        hard: 2,
+        hallucination_traps: 0,
+    });
+    const mixTotal = mix.easy + mix.medium + mix.hard + mix.hallucination_traps;
+    const mixActive = recipeId === 'qa-sft' && customizeMix;
+    const effectiveCount = mixActive ? mixTotal : count;
+    const mixOutOfRange = mixActive && (mixTotal < 1 || mixTotal > 50);
 
     // Reset the model dropdown when provider changes so the user never
     // sees a stale model string from the other provider. Custom-model
@@ -450,7 +585,7 @@ export default function LlmGoldGeneratePanel({
             {
                 provider: wire.provider,
                 model: effectiveModel,
-                count,
+                count: effectiveCount,
                 ground_in_source: groundInSource,
             },
         )
@@ -468,7 +603,10 @@ export default function LlmGoldGeneratePanel({
             });
         return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, provider, model, customModel, count, groundInSource]);
+    }, [projectId, provider, model, customModel, count, groundInSource,
+        // Re-run when the row-mix changes so the cost badge tracks
+        // the mix-total rather than the stale single-count.
+        mixActive, mix.easy, mix.medium, mix.hard, mix.hallucination_traps]);
 
     /** Refetch the stored-key hint after a PUT / DELETE so the panel
      *  reflects the new state without a full reload. */
@@ -503,75 +641,164 @@ export default function LlmGoldGeneratePanel({
         }
     };
 
+    /** Persist the API key when the user checked "Save this key" —
+     *  factored out of the generate path so both the direct-fire
+     *  flow and the review-then-fire flow share the same logic.
+     *  Non-fatal: failure surfaces a warning toast but the caller
+     *  continues with the inline key. */
+    const maybeSaveApiKey = async (trimmedKey: string) => {
+        if (!saveForFuture || !trimmedKey) return;
+        try {
+            await api.put<SavedKeyResponse>(
+                `/projects/${projectId}/gold/generate-via-llm/saved-key`,
+                { provider, api_key: trimmedKey },
+            );
+            await refetchStoredKey();
+            setSaveForFuture(false);
+            setReplacingStoredKey(false);
+            toast.success(
+                'API key saved — future generations will reuse it.',
+                3000,
+            );
+        } catch {
+            toast.warning(
+                'Could not save the API key for reuse, '
+                + 'but proceeding with this one-shot generation.',
+                4000,
+            );
+        }
+    };
+
+    /** Fire the LLM call. Used by both the direct-Generate flow and
+     *  the review-then-send flow — the only difference is whether
+     *  prompt overrides are passed in. */
+    const fireGenerate = async (overrides?: {
+        user_prompt_override?: string;
+        system_prompt_override?: string;
+    }) => {
+        const trimmedKey = apiKey.trim();
+        await maybeSaveApiKey(trimmedKey);
+        const wire = wirePayloadDefaults();
+        const res = await api.post<GenerateResponse>(
+            `/projects/${projectId}/gold/generate-via-llm`,
+            {
+                provider: wire.provider,
+                api_url: wire.api_url,
+                model: effectiveModel,
+                count: effectiveCount,
+                focus_hint: focusHint.trim() || undefined,
+                api_key: trimmedKey || undefined,
+                ground_in_source: groundInSource,
+                user_prompt_override: overrides?.user_prompt_override,
+                system_prompt_override: overrides?.system_prompt_override,
+                // qa-sft only — backend silently ignores for other
+                // recipes. When the user hasn't opted into the mix
+                // UI, ``mixActive`` is false and we send undefined so
+                // the backend uses its default single-difficulty path.
+                distribution: mixActive ? mix : undefined,
+            },
+            // Generation is sync. Frontend timeout (7 min) sits
+            // ABOVE the backend's per-LLM-call timeout (5 min, see
+            // ``_DEFAULT_TIMEOUT_SECONDS`` in cloud_llm_service.py).
+            // Earlier both were 180s, so a slow reasoning model
+            // could race the two timeouts and the frontend would
+            // give up with "Network Error" before the backend
+            // could return a structured 502. Vite proxy is 10 min
+            // so it stays above this whole chain. See
+            // ``extractErrorMessage`` for the Network-Error branch
+            // that fires when this chain still gets exceeded.
+            { timeout: 420_000 },
+        );
+        setPreview(res.data);
+        // Default to all rows selected — the user opted into
+        // generation; preview's job is to let them deselect bad
+        // rows, not re-opt-in.
+        setSelectedIndexes(new Set(res.data.rows.map((_, i) => i)));
+    };
+
     const handleGenerate = async () => {
-        if (generating) return;
-        setGenerating(true);
+        if (generating || promptPreviewLoading) return;
         setGenError(null);
         setPreview(null);
         setSelectedIndexes(new Set());
-        try {
-            const trimmedKey = apiKey.trim();
-            // Opt-in save: fire PUT before the generate POST when the
-            // user checked "Save this key for future generations" AND
-            // they actually typed a key. PUT failure is non-fatal —
-            // we still attempt the generation with the inline key so
-            // the user isn't blocked by a secret-store hiccup.
-            if (saveForFuture && trimmedKey) {
-                try {
-                    await api.put<SavedKeyResponse>(
-                        `/projects/${projectId}/gold/generate-via-llm/saved-key`,
-                        { provider, api_key: trimmedKey },
-                    );
-                    await refetchStoredKey();
-                    setSaveForFuture(false);
-                    setReplacingStoredKey(false);
-                    toast.success(
-                        'API key saved — future generations will reuse it.',
-                        3000,
-                    );
-                } catch {
-                    toast.warning(
-                        'Could not save the API key for reuse, '
-                        + 'but proceeding with this one-shot generation.',
-                        4000,
-                    );
-                }
-            }
 
-            const wire = wirePayloadDefaults();
-            const res = await api.post<GenerateResponse>(
-                `/projects/${projectId}/gold/generate-via-llm`,
-                {
-                    provider: wire.provider,
-                    api_url: wire.api_url,
-                    model: effectiveModel,
-                    count,
-                    focus_hint: focusHint.trim() || undefined,
-                    api_key: trimmedKey || undefined,
-                    ground_in_source: groundInSource,
-                },
-                // Generation is sync. Frontend timeout (7 min) sits
-                // ABOVE the backend's per-LLM-call timeout (5 min, see
-                // ``_DEFAULT_TIMEOUT_SECONDS`` in cloud_llm_service.py).
-                // Earlier both were 180s, so a slow reasoning model
-                // could race the two timeouts and the frontend would
-                // give up with "Network Error" before the backend
-                // could return a structured 502. Vite proxy is 10 min
-                // so it stays above this whole chain. See
-                // ``extractErrorMessage`` for the Network-Error branch
-                // that fires when this chain still gets exceeded.
-                { timeout: 420_000 },
-            );
-            setPreview(res.data);
-            // Default to all rows selected — the user opted into
-            // generation; preview's job is to let them deselect bad
-            // rows, not re-opt-in.
-            setSelectedIndexes(new Set(res.data.rows.map((_, i) => i)));
+        // Review-mode fork: fetch the would-be prompt + open the
+        // review section instead of firing the LLM immediately. The
+        // user reviews/edits and clicks "Send to LLM" to commit.
+        if (reviewPromptBeforeSend) {
+            setPromptPreviewLoading(true);
+            try {
+                const res = await api.post<PromptPreviewResponse>(
+                    `/projects/${projectId}/gold/generate-via-llm/preview-prompt`,
+                    {
+                        count: effectiveCount,
+                        focus_hint: focusHint.trim() || undefined,
+                        ground_in_source: groundInSource,
+                        distribution: mixActive ? mix : undefined,
+                    },
+                );
+                setPromptReview(res.data);
+                setEditedUserPrompt(res.data.user_prompt);
+                setEditedSystemPrompt(res.data.system_prompt);
+            } catch (err) {
+                setGenError(extractErrorMessage(err));
+            } finally {
+                setPromptPreviewLoading(false);
+            }
+            return;
+        }
+
+        setGenerating(true);
+        try {
+            await fireGenerate();
         } catch (err) {
             setGenError(extractErrorMessage(err));
         } finally {
             setGenerating(false);
         }
+    };
+
+    /** Commit from the review section: fire the LLM with the edited
+     *  prompts as overrides. Falls back to defaults for any field
+     *  the user blanked out (better than letting the backend reject
+     *  an empty string). */
+    const handleSendFromReview = async () => {
+        if (!promptReview || generating) return;
+        const userOverride = editedUserPrompt.trim();
+        if (!userOverride) {
+            toast.warning('User prompt is empty — cannot send.', 3000);
+            return;
+        }
+        const systemOverride = editedSystemPrompt.trim();
+        // Only send a system override when the user actually changed it;
+        // sending the unchanged default works too but it's clearer for
+        // the backend if we let it use its default in that case.
+        const systemChanged = systemOverride !== promptReview.system_prompt.trim();
+        const userChanged = userOverride !== promptReview.user_prompt.trim();
+        setGenerating(true);
+        setGenError(null);
+        try {
+            await fireGenerate({
+                user_prompt_override: userChanged ? userOverride : undefined,
+                system_prompt_override: systemChanged ? systemOverride : undefined,
+            });
+            // Clear review state on success so the next Generate
+            // click starts fresh (with the now-current form values).
+            setPromptReview(null);
+            setEditedUserPrompt('');
+            setEditedSystemPrompt('');
+        } catch (err) {
+            setGenError(extractErrorMessage(err));
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handleCancelReview = () => {
+        setPromptReview(null);
+        setEditedUserPrompt('');
+        setEditedSystemPrompt('');
+        setGenError(null);
     };
 
     const toggleRow = (idx: number) => {
@@ -612,7 +839,14 @@ export default function LlmGoldGeneratePanel({
                         return { document: r.document, summary: r.summary };
                     case 'qa-sft':
                     default:
-                        return { question: r.question, answer: r.answer };
+                        // Forward difficulty + trap labels when present;
+                        // gold_service.import_qa_pairs preserves them.
+                        return {
+                            question: r.question,
+                            answer: r.answer,
+                            difficulty: r.difficulty,
+                            is_hallucination_trap: r.is_hallucination_trap,
+                        };
                 }
             });
             await api.post(`/projects/${projectId}/gold/import`, {
@@ -706,20 +940,128 @@ export default function LlmGoldGeneratePanel({
                     </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label"># of Q&A pairs</label>
+                    <label className="form-label">
+                        {mixActive ? '# of rows (from mix below)' : '# of rows'}
+                    </label>
                     <input
                         className="input"
                         type="number"
                         min={1}
                         max={50}
-                        value={count}
+                        value={mixActive ? mixTotal : count}
                         onChange={(e) =>
                             setCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
                         }
+                        disabled={mixActive}
+                        title={mixActive ? 'Total is computed from the row mix below.' : undefined}
                         data-testid="llm-gold-count"
                     />
                 </div>
             </div>
+
+            {/* qa-sft only: opt-in "customize row mix" UX so advanced
+                users can request "5 easy, 3 medium, 2 hard + 2 traps"
+                instead of all-defaults. The four counts replace the
+                single Count field; total flows to the wire as the
+                ``distribution`` payload. */}
+            {recipeId === 'qa-sft' && (
+                <div
+                    className="form-group"
+                    style={{ margin: 0 }}
+                    data-testid="llm-gold-mix-group"
+                >
+                    <label
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 'var(--space-sm)',
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                        }}
+                        data-testid="llm-gold-mix-toggle-label"
+                    >
+                        <input
+                            type="checkbox"
+                            checked={customizeMix}
+                            onChange={(e) => setCustomizeMix(e.target.checked)}
+                            data-testid="llm-gold-mix-toggle"
+                        />
+                        <span>
+                            <strong>Customize row mix</strong>{' '}
+                            <span style={{ color: 'var(--text-tertiary)' }}>
+                                (advanced — request a specific
+                                difficulty / hallucination-trap distribution)
+                            </span>
+                        </span>
+                    </label>
+                    {customizeMix && (
+                        <div
+                            data-testid="llm-gold-mix-inputs"
+                            style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                                gap: 'var(--space-sm)',
+                                marginTop: 'var(--space-sm)',
+                            }}
+                        >
+                            {(['easy', 'medium', 'hard', 'hallucination_traps'] as const).map(
+                                (bucket) => (
+                                    <div key={bucket}>
+                                        <label
+                                            className="form-label"
+                                            style={{ fontSize: '0.85rem' }}
+                                        >
+                                            {bucket === 'hallucination_traps'
+                                                ? 'Hallucination traps'
+                                                : bucket[0].toUpperCase() + bucket.slice(1)}
+                                        </label>
+                                        <input
+                                            aria-label={`${bucket} count`}
+                                            className="input"
+                                            type="number"
+                                            min={0}
+                                            max={50}
+                                            value={mix[bucket]}
+                                            onChange={(e) => {
+                                                const v = Math.max(
+                                                    0,
+                                                    Math.min(50, Number(e.target.value) || 0),
+                                                );
+                                                setMix((prev) => ({ ...prev, [bucket]: v }));
+                                            }}
+                                            data-testid={`llm-gold-mix-${bucket.replace(/_/g, '-')}`}
+                                        />
+                                    </div>
+                                ),
+                            )}
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    justifyContent: 'flex-end',
+                                }}
+                                data-testid="llm-gold-mix-total"
+                            >
+                                <div
+                                    style={{
+                                        fontSize: '0.85rem',
+                                        color: mixOutOfRange
+                                            ? 'var(--color-error)'
+                                            : 'var(--text-secondary)',
+                                    }}
+                                >
+                                    Total: <strong>{mixTotal}</strong>
+                                    {mixOutOfRange && (
+                                        <div data-testid="llm-gold-mix-total-error">
+                                            Total must be 1–50. Generate is disabled until you fix it.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div
                 className="form-group"
@@ -937,11 +1279,44 @@ export default function LlmGoldGeneratePanel({
                 <button
                     className="btn btn-primary"
                     onClick={handleGenerate}
-                    disabled={generating}
+                    disabled={
+                        generating
+                        || promptPreviewLoading
+                        || promptReview !== null
+                        || mixOutOfRange
+                    }
                     data-testid="llm-gold-generate"
                 >
-                    {generating ? '⏳ Generating…' : `✨ Generate ${count} Q&A pair${count === 1 ? '' : 's'}`}
+                    {generating
+                        ? '⏳ Generating…'
+                        : promptPreviewLoading
+                            ? '⏳ Loading prompt…'
+                            : reviewPromptBeforeSend
+                                ? `🔍 Review prompt for ${effectiveCount} row${effectiveCount === 1 ? '' : 's'}`
+                                : `✨ Generate ${effectiveCount} row${effectiveCount === 1 ? '' : 's'}`}
                 </button>
+                <label
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-sm)',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                    }}
+                    data-testid="llm-gold-review-toggle-label"
+                >
+                    <input
+                        type="checkbox"
+                        checked={reviewPromptBeforeSend}
+                        onChange={(e) => setReviewPromptBeforeSend(e.target.checked)}
+                        disabled={generating || promptReview !== null}
+                        data-testid="llm-gold-review-toggle"
+                    />
+                    <span>
+                        Review &amp; edit prompt before sending
+                        {' '}<span style={{ color: 'var(--text-tertiary)' }}>(advanced)</span>
+                    </span>
+                </label>
                 <span
                     data-testid="llm-gold-cost-estimate"
                     style={{
@@ -968,6 +1343,19 @@ export default function LlmGoldGeneratePanel({
                             : 'cost estimate unavailable'}
                 </span>
             </div>
+
+            {promptReview && (
+                <PromptReviewSection
+                    review={promptReview}
+                    userPrompt={editedUserPrompt}
+                    systemPrompt={editedSystemPrompt}
+                    onUserPromptChange={setEditedUserPrompt}
+                    onSystemPromptChange={setEditedSystemPrompt}
+                    onSend={handleSendFromReview}
+                    onCancel={handleCancelReview}
+                    generating={generating}
+                />
+            )}
 
             {genError && (
                 <div
@@ -1062,10 +1450,10 @@ export default function LlmGoldGeneratePanel({
                                     style={{ marginTop: 4 }}
                                 />
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                    <PreviewRowBody
+                                    <GoldEntryRowBody
                                         recipeId={preview.recipe_id}
                                         row={row}
-                                        idx={idx}
+                                        testidPrefix={`llm-gold-preview-row-${idx}`}
                                     />
                                     {row.rationale && (
                                         <div

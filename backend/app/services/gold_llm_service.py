@@ -82,6 +82,14 @@ class GeneratedQa:
     # excerpt that backs each answer. Empty string when grounding
     # was off OR when the LLM omitted the field.
     source_excerpt: str = ""
+    # Difficulty + hallucination-trap labels. The LLM is asked to
+    # populate these on every row (even when no distribution was
+    # specified) so the saved gold set captures the row mix. Defaults
+    # apply when the LLM omits the field. Both round-trip through
+    # ``/gold/import`` because that endpoint preserves arbitrary
+    # caller-supplied fields.
+    difficulty: str = "medium"
+    is_hallucination_trap: bool = False
 
 
 @dataclass
@@ -458,6 +466,7 @@ def _build_qa_prompt(
     count: int,
     focus_hint: str,
     reference_chunks: list[ReferenceChunk] | None = None,
+    distribution: tuple[int, int, int, int] | None = None,
 ) -> str:
     sections = _build_context_sections(
         project=project, blueprint=blueprint, focus_hint=focus_hint,
@@ -468,11 +477,54 @@ def _build_qa_prompt(
     ref_section = _build_reference_section(reference_chunks, label_pronoun="answers")
     if ref_section:
         parts.append(ref_section)
-    parts.append(f"Generate exactly {count} question/answer pairs for the project above.")
+
+    # When a distribution is provided, enumerate the mix explicitly so
+    # the LLM crafts the right rows. Otherwise fall back to the
+    # "Generate N + vary difficulty" wording.
+    if distribution is not None:
+        easy, medium, hard, traps = distribution
+        bucket_lines: list[str] = []
+        if easy:
+            bucket_lines.append(
+                f"  * {easy} EASY question{'s' if easy != 1 else ''} — "
+                "direct lookups, single fact, the answer is clear from "
+                "a single passage in the source."
+            )
+        if medium:
+            bucket_lines.append(
+                f"  * {medium} MEDIUM question{'s' if medium != 1 else ''} — "
+                "require combining 2-3 facts, moderate inference, or "
+                "domain-vocabulary disambiguation."
+            )
+        if hard:
+            bucket_lines.append(
+                f"  * {hard} HARD question{'s' if hard != 1 else ''} — "
+                "multi-hop reasoning across passages, edge cases, "
+                "ambiguous wording, or judgment calls a domain expert "
+                "would have to mediate."
+            )
+        if traps:
+            bucket_lines.append(
+                f"  * {traps} HALLUCINATION TRAP{'s' if traps != 1 else ''} — "
+                "questions whose answer is NOT in the project's domain "
+                "knowledge (or this source material). The reference "
+                "answer should explicitly say 'I don't know' / 'that "
+                "isn't covered' / similar. These exist to test the "
+                "trained model's ability to refuse rather than fabricate."
+            )
+        parts.append(
+            f"Generate exactly {count} question/answer pairs total, "
+            f"distributed as follows:\n" + "\n".join(bucket_lines)
+        )
+    else:
+        parts.append(
+            f"Generate exactly {count} question/answer pairs for the project above."
+        )
 
     rules = [
         "Return ONLY valid JSON. No markdown, no code fences, no commentary.",
-        'Shape: {"pairs": [{"question": "...", "answer": "..."}]}',
+        'Shape: {"pairs": [{"question": "...", "answer": "...", '
+        '"difficulty": "easy|medium|hard", "is_hallucination_trap": true|false}]}',
     ]
     if grounded:
         rules.extend([
@@ -483,6 +535,9 @@ def _build_qa_prompt(
             "quoting the supporting reference passage when grounding is "
             "clear. Skip the field when uncertain rather than fabricating "
             "a citation.",
+            "For HALLUCINATION TRAP rows specifically: do NOT supply a "
+            "``source_excerpt`` (the point is the answer isn't in the "
+            "source).",
         ])
     else:
         rules.append(
@@ -491,11 +546,24 @@ def _build_qa_prompt(
 
     rules.extend([
         "Each question MUST be specific to this project's domain.",
-        "Vary difficulty: mix factual lookups, edge cases, and judgment calls.",
+        # Per-row labeling: REQUIRED so the gold set captures the mix.
+        # Even when no distribution was specified the LLM still needs to
+        # tag each row so the user can filter / report by difficulty.
+        '``difficulty`` field on each row is REQUIRED — exactly one of '
+        '"easy", "medium", "hard".',
+        '``is_hallucination_trap`` field on each row is REQUIRED — '
+        'true|false. Use ``true`` ONLY for rows whose answer is "I don\'t '
+        'know" or "not covered" style.',
         "Optionally include a ``rationale`` field — one short sentence on "
         "why this is the right answer (used by some evaluators).",
-        f"Return EXACTLY {count} pairs in the ``pairs`` array.",
     ])
+    if distribution is None:
+        rules.insert(
+            -1,
+            "Vary difficulty: mix factual lookups, edge cases, and "
+            "judgment calls (label each row with its ``difficulty`` field).",
+        )
+    rules.append(f"Return EXACTLY {count} pairs in the ``pairs`` array.")
 
     parts.append("Output rules:\n- " + "\n- ".join(rules))
     return "\n\n".join(parts)
@@ -819,8 +887,21 @@ def _parse_qa_payload(content: str, expected_count: int) -> list[GeneratedQa]:
         )
         if not q or not a:
             continue
+        difficulty = _normalize_difficulty(
+            _extract_field(item, ("difficulty", "level", "complexity")),
+        )
+        trap = _coerce_bool(
+            _extract_any(item, ("is_hallucination_trap", "hallucination_trap", "trap")),
+        )
         rows.append(
-            GeneratedQa(question=q, answer=a, rationale=r, source_excerpt=src),
+            GeneratedQa(
+                question=q,
+                answer=a,
+                rationale=r,
+                source_excerpt=src,
+                difficulty=difficulty,
+                is_hallucination_trap=trap,
+            ),
         )
 
     if not rows:
@@ -903,6 +984,61 @@ def _extract_field_raw(item: dict[str, Any], aliases: tuple[str, ...]) -> str:
         if isinstance(value, str) and value.strip():
             return value
     return ""
+
+
+_DIFFICULTY_VALUES = ("easy", "medium", "hard")
+
+
+def _normalize_difficulty(raw: str) -> str:
+    """Coerce LLM-emitted difficulty into one of {easy, medium, hard}.
+    Falls back to ``medium`` for anything unrecognized (LLMs sometimes
+    emit synonyms like 'simple', 'tough', or 'expert'). Best-effort
+    canonicalization keeps the saved gold set's difficulty field
+    homogeneous so the user can filter/group reliably."""
+    token = (raw or "").strip().lower()
+    if not token:
+        return "medium"
+    if token in _DIFFICULTY_VALUES:
+        return token
+    # Common synonyms the LLM may emit.
+    aliases = {
+        "easy": ("simple", "trivial", "basic", "low", "lvl1", "1"),
+        "medium": ("med", "moderate", "intermediate", "normal", "lvl2", "2"),
+        "hard": ("difficult", "tough", "advanced", "expert", "complex", "high", "lvl3", "3"),
+    }
+    for canonical, syns in aliases.items():
+        if token in syns:
+            return canonical
+    return "medium"
+
+
+def _coerce_bool(value: Any) -> bool:
+    """Tolerant truthy coercion for the ``is_hallucination_trap``
+    field. Accepts real bools, the strings true/false/yes/no/1/0,
+    and falls back to ``bool(value)`` for anything else."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1", "y", "t")
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
+
+
+def _extract_any(item: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    """Variant of ``_extract_field`` that returns the raw value (not
+    stripped/string-coerced). Used for boolean fields like
+    ``is_hallucination_trap`` where the LLM might emit ``true`` (bool)
+    or ``"true"`` (string) — both need to round-trip."""
+    lower_keys = {k.lower(): k for k in item.keys() if isinstance(k, str)}
+    for alias in aliases:
+        actual_key = lower_keys.get(alias)
+        if actual_key is None:
+            continue
+        value = item.get(actual_key)
+        if value is not None:
+            return value
+    return None
 
 
 def _extract_list(item: dict[str, Any], aliases: tuple[str, ...]) -> list[Any]:
@@ -1160,6 +1296,121 @@ def _parse_summarization_rows(
 # ─────────────────────────────────────────────────────────────────────
 
 
+@dataclass
+class PromptPreview:
+    """Returned by ``build_prompt_preview`` — the prompts the service
+    WOULD send to the LLM if the caller fired generation right now.
+    Surfaced via ``/preview-prompt`` so advanced users can review +
+    edit before committing to the actual API call."""
+    recipe_id: str
+    system_prompt: str
+    user_prompt: str
+    reference_chunk_count: int
+    # Labels resolved from existing gold rows — informational so the
+    # UI can show "we'll lock the LLM to: [billing, account, ...]"
+    # alongside the prompt. Empty for non-classification recipes.
+    known_labels: list[str]
+
+
+async def build_prompt_preview(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    count: int,
+    focus_hint: str = "",
+    ground_in_source: bool = True,
+    distribution: tuple[int, int, int, int] | None = None,
+) -> PromptPreview:
+    """Build the user + system prompts the service would dispatch to
+    the LLM, WITHOUT actually calling the LLM. Shares all prompt-
+    construction logic with ``generate_gold_qa_via_llm`` — runs the
+    same recipe gate, blueprint lookup, reference-chunk sampling, and
+    classification label resolution — so the user reviews the exact
+    string that would go out.
+
+    Raises ``GoldGenerationError`` for the same caller-fixable cases
+    as ``generate_gold_qa_via_llm`` (missing recipe, unsupported
+    recipe, count out of range)."""
+    if count < 1 or count > 50:
+        raise GoldGenerationError(
+            "COUNT_OUT_OF_RANGE",
+            "Count must be between 1 and 50.",
+        )
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise GoldGenerationError(
+            "PROJECT_NOT_FOUND",
+            f"Project {project_id} not found.",
+        )
+    selected = project.selected_recipe or {}
+    recipe_id = str(selected.get("recipe_id") or "")
+    if not recipe_id:
+        raise GoldGenerationError(
+            "RECIPE_REQUIRED",
+            "Project has no selected recipe — pick a recipe before "
+            "generating gold rows.",
+        )
+    if recipe_id not in SUPPORTED_RECIPES:
+        raise GoldGenerationError(
+            "RECIPE_NOT_SUPPORTED",
+            f"LLM-assisted gold generation supports {list(SUPPORTED_RECIPES)} "
+            f"(project is using '{recipe_id}').",
+        )
+
+    blueprint: DomainBlueprintRevision | None = None
+    if project.active_domain_blueprint_version is not None:
+        bp_result = await db.execute(
+            select(DomainBlueprintRevision)
+            .where(
+                DomainBlueprintRevision.project_id == project_id,
+                DomainBlueprintRevision.version == project.active_domain_blueprint_version,
+            )
+            .limit(1),
+        )
+        blueprint = bp_result.scalar_one_or_none()
+
+    reference_chunks: list[ReferenceChunk] = []
+    if ground_in_source:
+        pool = await _load_project_cleaned_chunks(project_id)
+        reference_chunks = _sample_reference_chunks(pool)
+
+    known_labels: list[str] = []
+    if recipe_id == "classification":
+        known_labels = await _load_known_classification_labels(project_id)
+
+    # Distribution applies only to qa-sft — other recipes' gold_template
+    # has no difficulty / is_hallucination_trap field, so silently
+    # ignoring on those recipes is the least-surprising behavior.
+    effective_distribution: tuple[int, int, int, int] | None = (
+        distribution if recipe_id == "qa-sft" else None
+    )
+    # The distribution's total replaces ``count`` for prompt-building
+    # so the LLM gets the right "Generate exactly N rows" line.
+    effective_count = (
+        sum(effective_distribution)
+        if effective_distribution is not None
+        else count
+    )
+    user_prompt = _build_prompt_for_recipe(
+        recipe_id=recipe_id,
+        project=project,
+        blueprint=blueprint,
+        count=effective_count,
+        focus_hint=focus_hint,
+        reference_chunks=reference_chunks if reference_chunks else None,
+        known_labels=known_labels,
+        distribution=effective_distribution,
+    )
+    system_prompt = _SYSTEM_PROMPTS_BY_RECIPE.get(recipe_id, _SYSTEM_PROMPT_QA)
+    return PromptPreview(
+        recipe_id=recipe_id,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        reference_chunk_count=len(reference_chunks),
+        known_labels=known_labels,
+    )
+
+
 async def generate_gold_qa_via_llm(
     db: AsyncSession,
     *,
@@ -1171,6 +1422,9 @@ async def generate_gold_qa_via_llm(
     focus_hint: str = "",
     api_url: str | None = None,
     ground_in_source: bool = True,
+    user_prompt_override: str | None = None,
+    system_prompt_override: str | None = None,
+    distribution: tuple[int, int, int, int] | None = None,
 ) -> GenerationResult:
     """Generate ``count`` Q&A pairs for the project using the named
     cloud provider. Returns the parsed rows for preview — does NOT
@@ -1244,16 +1498,51 @@ async def generate_gold_qa_via_llm(
     if recipe_id == "classification":
         known_labels = await _load_known_classification_labels(project_id)
 
-    user_prompt = _build_prompt_for_recipe(
-        recipe_id=recipe_id,
-        project=project,
-        blueprint=blueprint,
-        count=count,
-        focus_hint=focus_hint,
-        reference_chunks=reference_chunks if reference_chunks else None,
-        known_labels=known_labels,
+    # Prompt resolution: caller-supplied override > service-built
+    # prompt. When ``user_prompt_override`` is set, the user has gone
+    # through the "review & edit" UX — we don't second-guess their
+    # rewrite. Same for ``system_prompt_override``. The two can be
+    # mixed independently (override one, default the other).
+    used_user_override = bool(
+        user_prompt_override and user_prompt_override.strip()
     )
-    system_prompt = _SYSTEM_PROMPTS_BY_RECIPE.get(recipe_id, _SYSTEM_PROMPT_QA)
+    used_system_override = bool(
+        system_prompt_override and system_prompt_override.strip()
+    )
+    # Distribution applies only to qa-sft — silently ignored elsewhere.
+    effective_distribution: tuple[int, int, int, int] | None = (
+        distribution if recipe_id == "qa-sft" else None
+    )
+    effective_count = (
+        sum(effective_distribution)
+        if effective_distribution is not None
+        else count
+    )
+    if used_user_override:
+        user_prompt = user_prompt_override  # type: ignore[assignment]
+    else:
+        user_prompt = _build_prompt_for_recipe(
+            recipe_id=recipe_id,
+            project=project,
+            blueprint=blueprint,
+            count=effective_count,
+            focus_hint=focus_hint,
+            reference_chunks=reference_chunks if reference_chunks else None,
+            known_labels=known_labels,
+            distribution=effective_distribution,
+        )
+    if used_system_override:
+        system_prompt = system_prompt_override  # type: ignore[assignment]
+    else:
+        system_prompt = _SYSTEM_PROMPTS_BY_RECIPE.get(recipe_id, _SYSTEM_PROMPT_QA)
+
+    # When the caller rewrote the user prompt, they took control of
+    # the LLM contract — including the implied label vocabulary. Don't
+    # apply the classification vocab filter on parse; the user can
+    # introduce new labels in their edit and we'd silently drop the
+    # rows otherwise, which would be very confusing UX for an
+    # advanced user who just edited the prompt.
+    parse_known_labels = [] if used_user_override else known_labels
 
     # Generous max_tokens for grounded calls: each row carries Q + A
     # + rationale + source_excerpt (4 fields × ~100 chars × 10 rows
@@ -1297,8 +1586,8 @@ async def generate_gold_qa_via_llm(
     rows = _parse_rows_for_recipe(
         recipe_id=recipe_id,
         content=response.content,
-        expected_count=count,
-        known_labels=known_labels,
+        expected_count=effective_count,
+        known_labels=parse_known_labels,
     )
 
     return GenerationResult(
@@ -1340,9 +1629,12 @@ def _build_prompt_for_recipe(
     focus_hint: str,
     reference_chunks: list[ReferenceChunk] | None,
     known_labels: list[str],
+    distribution: tuple[int, int, int, int] | None = None,
 ) -> str:
     """Route to the per-recipe prompt builder. Caller guarantees the
-    recipe is in ``SUPPORTED_RECIPES`` (validated upstream)."""
+    recipe is in ``SUPPORTED_RECIPES`` (validated upstream). The
+    ``distribution`` tuple ``(easy, medium, hard, traps)`` is honored
+    only by the qa-sft builder; other recipes ignore it."""
     if recipe_id == "qa-sft":
         return _build_qa_prompt(
             project=project,
@@ -1350,6 +1642,7 @@ def _build_prompt_for_recipe(
             count=count,
             focus_hint=focus_hint,
             reference_chunks=reference_chunks,
+            distribution=distribution,
         )
     if recipe_id == "classification":
         return _build_classification_prompt(
@@ -1400,6 +1693,8 @@ def _parse_rows_for_recipe(
                 "answer": r.answer,
                 "rationale": r.rationale,
                 "source_excerpt": r.source_excerpt,
+                "difficulty": r.difficulty,
+                "is_hallucination_trap": r.is_hallucination_trap,
             }
             for r in qa_rows
         ]
