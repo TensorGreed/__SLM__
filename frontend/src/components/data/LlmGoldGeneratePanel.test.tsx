@@ -90,13 +90,41 @@ function installPostRouter(opts: {
 }
 
 
+/**
+ * Default GET responder for /generate-via-llm/saved-key — the panel
+ * fires this on mount + on provider change. Tests that don't care
+ * about the stored-key UX get back "no stored key" so the existing
+ * input + Save-this-key checkbox render. Tests that DO care override
+ * by re-mocking apiMock.get directly.
+ */
+function installGetRouter(opts: { savedKey?: unknown } = {}) {
+    apiMock.get.mockImplementation(async (url: string) => {
+        if (url.includes('/gold/generate-via-llm/saved-key')) {
+            return {
+                data: opts.savedKey ?? {
+                    has_stored_key: false,
+                    value_hint: null,
+                },
+            };
+        }
+        return { data: {} };
+    });
+}
+
+
 describe('LlmGoldGeneratePanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
         apiMock.post.mockReset();
+        apiMock.put.mockReset();
+        apiMock.delete.mockReset();
         toastMock.success.mockReset();
         toastMock.warning.mockReset();
         toastMock.error.mockReset();
+        // Sensible default — no stored key for any provider. Tests
+        // exercising the stored-key UX override this with their own
+        // get-mock.
+        installGetRouter();
     });
 
     it('Anthropic model dropdown swaps when provider switches', async () => {
@@ -559,6 +587,155 @@ describe('LlmGoldGeneratePanel', () => {
         expect(
             (screen.getByTestId('llm-gold-model') as HTMLSelectElement).disabled,
         ).toBe(false);
+    });
+
+    // ── Stored-key UX (saved-key endpoints) ────────────────────────
+
+    it('renders the "Using stored key" row when GET returns has_stored_key=true', async () => {
+        installPostRouter();
+        // GET returns a stored hint up front.
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.includes('/gold/generate-via-llm/saved-key')) {
+                return {
+                    data: { has_stored_key: true, value_hint: 'sk************xyz' },
+                };
+            }
+            return { data: {} };
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        // Stored-key row renders + masked hint visible.
+        const hint = await screen.findByTestId('llm-gold-stored-key-hint');
+        expect(hint.textContent).toMatch(/Using stored key/);
+        expect(hint.textContent).toMatch(/sk\*+xyz/);
+        // The raw input is hidden by default in the stored-key state.
+        expect(screen.queryByTestId('llm-gold-api-key')).not.toBeInTheDocument();
+        // "Save this key" checkbox should NOT show — a key is already
+        // saved.
+        expect(screen.queryByTestId('llm-gold-save-key-toggle')).not.toBeInTheDocument();
+        // GET fired with provider=openai (the default).
+        expect(apiMock.get).toHaveBeenCalledWith(
+            '/projects/42/gold/generate-via-llm/saved-key',
+            expect.objectContaining({ params: { provider: 'openai' } }),
+        );
+    });
+
+    it('"Save this key for future generations" triggers PUT before generate', async () => {
+        installPostRouter();
+        // No stored key initially.
+        installGetRouter();
+        apiMock.put.mockResolvedValue({
+            data: { has_stored_key: true, value_hint: 'sk************123' },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        // Wait for stored-key fetch to settle so the input + checkbox
+        // render.
+        await screen.findByTestId('llm-gold-save-key-toggle');
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-new-key-123' },
+        });
+        // Opt in to save.
+        await userEvent.click(screen.getByTestId('llm-gold-save-key-toggle'));
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+
+        await waitFor(() => {
+            // PUT fired with the typed key + current provider.
+            expect(apiMock.put).toHaveBeenCalledWith(
+                '/projects/42/gold/generate-via-llm/saved-key',
+                expect.objectContaining({
+                    provider: 'openai',
+                    api_key: 'sk-new-key-123',
+                }),
+            );
+        });
+        // Generate call still fires.
+        const generateCalls = apiMock.post.mock.calls.filter(
+            (call: unknown[]) =>
+                String(call[0] || '').endsWith('/gold/generate-via-llm'),
+        );
+        expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('does NOT fire PUT when the "Save this key" checkbox is unchecked', async () => {
+        installPostRouter();
+        installGetRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await screen.findByTestId('llm-gold-save-key-toggle');
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-one-shot' },
+        });
+        // Leave checkbox unchecked.
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/gold/generate-via-llm',
+                expect.objectContaining({ api_key: 'sk-one-shot' }),
+                expect.anything(),
+            );
+        });
+        // No PUT to /saved-key.
+        expect(apiMock.put).not.toHaveBeenCalled();
+    });
+
+    it('"Remove" clicks DELETE + refetches the stored-key state', async () => {
+        installPostRouter();
+        // First GET returns stored key; after DELETE the refetch
+        // returns the no-key state. Use a counter to switch responses.
+        let getCallCount = 0;
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.includes('/gold/generate-via-llm/saved-key')) {
+                getCallCount += 1;
+                if (getCallCount === 1) {
+                    return {
+                        data: { has_stored_key: true, value_hint: 'sk********end' },
+                    };
+                }
+                return { data: { has_stored_key: false, value_hint: null } };
+            }
+            return { data: {} };
+        });
+        apiMock.delete.mockResolvedValue({ status: 204, data: '' });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={7}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        // Stored row shows up.
+        await screen.findByTestId('llm-gold-stored-key-row');
+        await userEvent.click(screen.getByTestId('llm-gold-stored-key-remove'));
+
+        await waitFor(() => {
+            expect(apiMock.delete).toHaveBeenCalledWith(
+                '/projects/7/gold/generate-via-llm/saved-key',
+                expect.objectContaining({ params: { provider: 'openai' } }),
+            );
+        });
+        // After refetch, the inline input + Save checkbox reappear.
+        await screen.findByTestId('llm-gold-api-key');
+        expect(screen.getByTestId('llm-gold-save-key-toggle')).toBeInTheDocument();
+        // Stored row gone.
+        expect(screen.queryByTestId('llm-gold-stored-key-row')).not.toBeInTheDocument();
+        // GET was called at least twice — initial mount + post-delete refetch.
+        expect(getCallCount).toBeGreaterThanOrEqual(2);
     });
 
     it('source_excerpt renders per row when present', async () => {

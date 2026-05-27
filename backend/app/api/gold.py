@@ -2,12 +2,14 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.dataset import DatasetType
+from app.models.secret import ProjectSecret
 from app.services.cloud_llm_service import CloudLlmError
 from app.services.gold_llm_service import (
     GoldGenerationError,
@@ -23,17 +25,70 @@ from app.services.gold_service import (
     import_qa_pairs,
     lock_gold_dataset,
 )
-from app.services.secret_service import get_project_secret_value
+from app.services.secret_service import (
+    delete_project_secret,
+    get_project_secret_value,
+    serialize_secret,
+    upsert_project_secret,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/gold", tags=["Gold Dataset"])
 
 
-# Project-secret coordinates for the per-project API keys. Both
-# clients accept an inline key on the request (one-shot, doesn't
-# persist) OR fall back to the stored secret. Matches the existing
-# synth path's (provider, key_name) convention.
+# Project-secret coordinates for the per-project API keys. Each
+# panel-supported provider has its own (provider, key_name) tuple —
+# Deepseek is treated as first-class even though the on-wire
+# generate-via-llm payload still piggybacks on provider=openai +
+# api_url=<deepseek host>. Keeping a separate secret coordinate lets
+# users store all three keys side-by-side without one overwriting
+# the others.
 _OPENAI_SECRET = ("cloud_llm_openai", "api_key")
 _ANTHROPIC_SECRET = ("cloud_llm_anthropic", "api_key")
+_DEEPSEEK_SECRET = ("cloud_llm_deepseek", "api_key")
+
+# UI-level provider tag → (secret_provider, key_name) for the saved-
+# key endpoints + generate-via-llm fallback lookup.
+_PROVIDER_SECRET_MAP: dict[str, tuple[str, str]] = {
+    "openai": _OPENAI_SECRET,
+    "anthropic": _ANTHROPIC_SECRET,
+    "deepseek": _DEEPSEEK_SECRET,
+}
+
+
+def _resolve_generate_secret_coords(
+    provider: str, api_url: str | None,
+) -> tuple[str, str]:
+    """Pick which stored secret to consult for a generate-via-llm fall-
+    back. Deepseek's API is OpenAI-compatible so it arrives on the
+    wire as provider=openai + api_url=<deepseek host>; the api_url
+    is the only signal we have to route the lookup at the deepseek
+    secret instead of the openai one."""
+    if api_url and "deepseek" in api_url.lower():
+        return _DEEPSEEK_SECRET
+    if provider == "anthropic":
+        return _ANTHROPIC_SECRET
+    return _OPENAI_SECRET
+
+
+async def _fetch_secret_obj(
+    db: AsyncSession,
+    project_id: int,
+    provider: str,
+    key_name: str,
+) -> ProjectSecret | None:
+    """Return the raw ProjectSecret row for hint extraction (NEVER
+    decrypts the value)."""
+    result = await db.execute(
+        select(ProjectSecret).where(
+            ProjectSecret.project_id == project_id,
+            ProjectSecret.provider == provider,
+            ProjectSecret.key_name == key_name,
+        ).order_by(
+            ProjectSecret.updated_at.desc(),
+            ProjectSecret.id.desc(),
+        ).limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 class QAPairCreate(BaseModel):
@@ -155,11 +210,13 @@ async def generate_via_llm(
       * 502 — upstream provider failure (rate limit, bad key, model
         not found). Body has the provider's error text.
     """
-    # Resolve the API key: inline > stored project secret.
+    # Resolve the API key: inline > stored project secret. Deepseek
+    # rides on provider=openai + api_url=<deepseek host>, so the
+    # resolver inspects api_url to pick the right secret coordinate.
     api_key = (req.api_key or "").strip()
     if not api_key:
-        secret_provider, key_name = (
-            _OPENAI_SECRET if req.provider == "openai" else _ANTHROPIC_SECRET
+        secret_provider, key_name = _resolve_generate_secret_coords(
+            req.provider, req.api_url,
         )
         stored = await get_project_secret_value(
             db, project_id, secret_provider, key_name,
@@ -278,6 +335,92 @@ async def generate_via_llm_cost_estimate(
         "ground_in_source_effective": req.ground_in_source and chunk_count > 0,
         **estimate,
     }
+
+
+# ── Saved API key (panel-local UX) ────────────────────────────────────
+#
+# The LLM gold-generation panel asks for an API key on every Generate
+# click today. These endpoints let the panel save / look up / clear
+# the key per project + provider so the user only pastes once.
+#
+# Wire shape is deliberately minimal: only a masked hint round-trips
+# back to the UI; the raw value never leaves the backend after write.
+
+
+class SavedKeyResponse(BaseModel):
+    has_stored_key: bool
+    value_hint: str | None = None
+
+
+class SavedKeyUpsert(BaseModel):
+    provider: Literal["openai", "anthropic", "deepseek"]
+    api_key: str = Field(
+        ...,
+        min_length=8,
+        max_length=200,
+        description="Raw API key. Validated as non-empty + reasonable "
+                    "length here so the panel can't silently overwrite "
+                    "a real key with a typo'd stub.",
+    )
+
+
+@router.get("/generate-via-llm/saved-key", response_model=SavedKeyResponse)
+async def get_saved_llm_key(
+    project_id: int,
+    provider: Literal["openai", "anthropic", "deepseek"],
+    db: AsyncSession = Depends(get_db),
+):
+    """Report whether a stored API key exists for this project +
+    provider, returning only the masked hint (never the raw value)."""
+    secret_provider, key_name = _PROVIDER_SECRET_MAP[provider]
+    secret_obj = await _fetch_secret_obj(
+        db, project_id, secret_provider, key_name,
+    )
+    if secret_obj is None:
+        return SavedKeyResponse(has_stored_key=False, value_hint=None)
+    serialized = serialize_secret(secret_obj)
+    return SavedKeyResponse(
+        has_stored_key=True, value_hint=serialized.get("value_hint"),
+    )
+
+
+@router.put("/generate-via-llm/saved-key", response_model=SavedKeyResponse)
+async def put_saved_llm_key(
+    project_id: int,
+    req: SavedKeyUpsert,
+    db: AsyncSession = Depends(get_db),
+):
+    """Store (or replace) the API key for this project + provider.
+    Only the masked hint is returned — the raw value stays server-side."""
+    secret_provider, key_name = _PROVIDER_SECRET_MAP[req.provider]
+    try:
+        secret_obj = await upsert_project_secret(
+            db=db,
+            project_id=project_id,
+            provider=secret_provider,
+            key_name=key_name,
+            value=req.api_key,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    serialized = serialize_secret(secret_obj)
+    return SavedKeyResponse(
+        has_stored_key=True, value_hint=serialized.get("value_hint"),
+    )
+
+
+@router.delete("/generate-via-llm/saved-key", status_code=204)
+async def delete_saved_llm_key(
+    project_id: int,
+    provider: Literal["openai", "anthropic", "deepseek"],
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the stored API key for this project + provider. Idempotent
+    — returns 204 whether or not a row existed, so the panel's
+    "Remove" button never lies after a stale cache."""
+    secret_provider, key_name = _PROVIDER_SECRET_MAP[provider]
+    await delete_project_secret(db, project_id, secret_provider, key_name)
+    return Response(status_code=204)
 
 
 @router.get("/entries")

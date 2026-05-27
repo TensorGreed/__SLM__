@@ -66,6 +66,11 @@ interface CostEstimateResponse {
     ground_in_source_effective: boolean;
 }
 
+interface SavedKeyResponse {
+    has_stored_key: boolean;
+    value_hint: string | null;
+}
+
 interface Props {
     projectId: number;
     datasetType: string;
@@ -177,6 +182,19 @@ export default function LlmGoldGeneratePanel({
     // call: no LLM involvement, just chunk-char counting + pricing math.
     const [costEstimate, setCostEstimate] = useState<CostEstimateResponse | null>(null);
     const [costEstimateLoading, setCostEstimateLoading] = useState(false);
+    // Stored-key UX state. The panel asks the backend "do you already
+    // have an API key for this provider on this project?" on mount +
+    // whenever the provider changes. When yes, the input is replaced
+    // with a hint row ("Using stored key (sk-…xyz) · Replace · Remove")
+    // so the user doesn't paste a fresh key every Generate click.
+    const [storedKey, setStoredKey] = useState<SavedKeyResponse | null>(null);
+    // True when the user has clicked Replace and wants to override the
+    // stored key for this one Generate (without removing it server-side).
+    const [replacingStoredKey, setReplacingStoredKey] = useState(false);
+    // Mirrors the "Save this key for future generations" checkbox.
+    // Default OFF — saving an API key crosses a privacy line, the user
+    // has to opt in explicitly.
+    const [saveForFuture, setSaveForFuture] = useState(false);
 
     // Reset the model dropdown when provider changes so the user never
     // sees a stale model string from the other provider. Custom-model
@@ -184,7 +202,38 @@ export default function LlmGoldGeneratePanel({
     useEffect(() => {
         setModel(DEFAULT_MODELS[provider][0].value);
         setCustomModel('');
+        // Clear the Replace + Save toggles when provider changes — they
+        // were per-provider state. saveForFuture stays off by default;
+        // the user has to re-opt-in for the new provider.
+        setReplacingStoredKey(false);
+        setSaveForFuture(false);
+        setApiKey('');
     }, [provider]);
+
+    // Look up the stored API key for this project + provider on mount
+    // and whenever the provider changes. The endpoint never returns
+    // the raw key — only a masked hint + a boolean — so this can fire
+    // freely without leaking the secret to the client.
+    useEffect(() => {
+        let cancelled = false;
+        setStoredKey(null);
+        api.get<SavedKeyResponse>(
+            `/projects/${projectId}/gold/generate-via-llm/saved-key`,
+            { params: { provider } },
+        )
+            .then((res) => {
+                if (!cancelled) setStoredKey(res.data);
+            })
+            .catch(() => {
+                // Best-effort lookup — if the endpoint errors, fall
+                // back to the "no stored key" UX so the user can still
+                // paste one inline.
+                if (!cancelled) {
+                    setStoredKey({ has_stored_key: false, value_hint: null });
+                }
+            });
+        return () => { cancelled = true; };
+    }, [projectId, provider]);
 
     /**
      * Effective model — custom override wins when the user has typed
@@ -247,6 +296,39 @@ export default function LlmGoldGeneratePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId, provider, model, customModel, count, groundInSource]);
 
+    /** Refetch the stored-key hint after a PUT / DELETE so the panel
+     *  reflects the new state without a full reload. */
+    const refetchStoredKey = async () => {
+        try {
+            const res = await api.get<SavedKeyResponse>(
+                `/projects/${projectId}/gold/generate-via-llm/saved-key`,
+                { params: { provider } },
+            );
+            setStoredKey(res.data);
+        } catch {
+            setStoredKey({ has_stored_key: false, value_hint: null });
+        }
+    };
+
+    const handleRemoveStoredKey = async () => {
+        try {
+            await api.delete(
+                `/projects/${projectId}/gold/generate-via-llm/saved-key`,
+                { params: { provider } },
+            );
+            toast.success('Stored API key removed.', 3000);
+        } catch {
+            toast.error('Failed to remove the stored key — try again.');
+        } finally {
+            // Always refetch so the UI matches server state even if the
+            // DELETE raced with a concurrent change in another tab.
+            await refetchStoredKey();
+            setReplacingStoredKey(false);
+            setApiKey('');
+            setSaveForFuture(false);
+        }
+    };
+
     const handleGenerate = async () => {
         if (generating) return;
         setGenerating(true);
@@ -254,6 +336,34 @@ export default function LlmGoldGeneratePanel({
         setPreview(null);
         setSelectedIndexes(new Set());
         try {
+            const trimmedKey = apiKey.trim();
+            // Opt-in save: fire PUT before the generate POST when the
+            // user checked "Save this key for future generations" AND
+            // they actually typed a key. PUT failure is non-fatal —
+            // we still attempt the generation with the inline key so
+            // the user isn't blocked by a secret-store hiccup.
+            if (saveForFuture && trimmedKey) {
+                try {
+                    await api.put<SavedKeyResponse>(
+                        `/projects/${projectId}/gold/generate-via-llm/saved-key`,
+                        { provider, api_key: trimmedKey },
+                    );
+                    await refetchStoredKey();
+                    setSaveForFuture(false);
+                    setReplacingStoredKey(false);
+                    toast.success(
+                        'API key saved — future generations will reuse it.',
+                        3000,
+                    );
+                } catch {
+                    toast.warning(
+                        'Could not save the API key for reuse, '
+                        + 'but proceeding with this one-shot generation.',
+                        4000,
+                    );
+                }
+            }
+
             const wire = wirePayloadDefaults();
             const res = await api.post<GenerateResponse>(
                 `/projects/${projectId}/gold/generate-via-llm`,
@@ -263,7 +373,7 @@ export default function LlmGoldGeneratePanel({
                     model: effectiveModel,
                     count,
                     focus_hint: focusHint.trim() || undefined,
-                    api_key: apiKey.trim() || undefined,
+                    api_key: trimmedKey || undefined,
                     ground_in_source: groundInSource,
                 },
                 // Generation is sync. Frontend timeout (7 min) sits
@@ -424,26 +534,121 @@ export default function LlmGoldGeneratePanel({
                 </div>
             </div>
 
-            <div className="form-group" style={{ margin: 0 }}>
-                <label className="form-label">
-                    API key{' '}
-                    <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
-                        (one-shot — or store under Project Secrets to reuse)
-                    </span>
-                </label>
-                <input
-                    className="input"
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={
-                        provider === 'openai' ? 'sk-...'
-                            : provider === 'anthropic' ? 'sk-ant-...'
-                                : 'sk-...'
-                    }
-                    data-testid="llm-gold-api-key"
-                    style={{ fontFamily: 'monospace' }}
-                />
+            <div
+                className="form-group"
+                style={{ margin: 0 }}
+                data-testid="llm-gold-api-key-group"
+            >
+                {storedKey?.has_stored_key && !replacingStoredKey ? (
+                    // Stored-key row: shows the masked hint inline so
+                    // the user knows what's about to be charged BEFORE
+                    // clicking Generate. Replace reveals the input
+                    // (one-shot override); Remove clears it on the
+                    // server.
+                    <div data-testid="llm-gold-stored-key-row">
+                        <label className="form-label">API key</label>
+                        <div
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 'var(--space-sm)',
+                                flexWrap: 'wrap',
+                                padding: 'var(--space-sm)',
+                                background: 'var(--bg-subtle)',
+                                borderRadius: 'var(--radius-sm)',
+                                fontSize: '0.9rem',
+                            }}
+                        >
+                            <span data-testid="llm-gold-stored-key-hint">
+                                Using stored key{' '}
+                                <strong style={{ fontFamily: 'monospace' }}>
+                                    {storedKey.value_hint || '••••••'}
+                                </strong>
+                            </span>
+                            <button
+                                type="button"
+                                className="btn btn-link"
+                                onClick={() => setReplacingStoredKey(true)}
+                                data-testid="llm-gold-stored-key-replace"
+                            >
+                                Replace
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-link"
+                                onClick={handleRemoveStoredKey}
+                                data-testid="llm-gold-stored-key-remove"
+                            >
+                                Remove
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        <label className="form-label">
+                            API key{' '}
+                            <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
+                                {storedKey?.has_stored_key
+                                    ? '(replacing stored key for this run)'
+                                    : '(one-shot — or save below to reuse)'}
+                            </span>
+                        </label>
+                        <input
+                            className="input"
+                            type="password"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            placeholder={
+                                provider === 'openai' ? 'sk-...'
+                                    : provider === 'anthropic' ? 'sk-ant-...'
+                                        : 'sk-...'
+                            }
+                            data-testid="llm-gold-api-key"
+                            style={{ fontFamily: 'monospace' }}
+                        />
+                        {!storedKey?.has_stored_key && (
+                            <label
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 'var(--space-sm)',
+                                    marginTop: 'var(--space-sm)',
+                                    fontSize: '0.85rem',
+                                    cursor: 'pointer',
+                                }}
+                                data-testid="llm-gold-save-key-label"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={saveForFuture}
+                                    onChange={(e) => setSaveForFuture(e.target.checked)}
+                                    data-testid="llm-gold-save-key-toggle"
+                                />
+                                <span>
+                                    Save this key for future generations
+                                    {' '}<span style={{ color: 'var(--text-tertiary)' }}>
+                                        (encrypted server-side; only a masked hint
+                                        comes back to the UI)
+                                    </span>
+                                </span>
+                            </label>
+                        )}
+                        {storedKey?.has_stored_key && replacingStoredKey && (
+                            <button
+                                type="button"
+                                className="btn btn-link"
+                                onClick={() => {
+                                    setReplacingStoredKey(false);
+                                    setApiKey('');
+                                }}
+                                data-testid="llm-gold-stored-key-cancel-replace"
+                                style={{ marginTop: 'var(--space-sm)' }}
+                            >
+                                Cancel — keep using stored key
+                            </button>
+                        )}
+                    </>
+                )}
             </div>
 
             <div className="form-group" style={{ margin: 0 }}>

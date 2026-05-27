@@ -938,5 +938,251 @@ class CostEstimateEndpointTests(unittest.TestCase):
         self.assertEqual(body["reference_chunk_count"], 0)
 
 
+class SavedKeyEndpointTests(unittest.TestCase):
+    """Tests for the new GET/PUT/DELETE /generate-via-llm/saved-key
+    endpoints — the panel-local stored-key UX. The plumbing for
+    stored-key fallback in /generate-via-llm itself is already
+    exercised by the existing API_KEY_REQUIRED + happy-path tests;
+    here we test the explicit saved-key surface."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_qa_sft_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    # ── GET ───────────────────────────────────────────────────────
+
+    def test_get_saved_key_returns_false_when_no_secret_stored(self):
+        pid = self._make_qa_sft_project("Saved Key GET empty")
+        resp = self.client.get(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            params={"provider": "openai"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["has_stored_key"], False)
+        self.assertIsNone(body["value_hint"])
+
+    def test_get_saved_key_returns_hint_when_secret_exists(self):
+        pid = self._make_qa_sft_project("Saved Key GET present")
+        # Seed a secret via PUT first.
+        put_resp = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "anthropic", "api_key": "sk-ant-test-123456"},
+        )
+        self.assertEqual(put_resp.status_code, 200, put_resp.text)
+
+        get_resp = self.client.get(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            params={"provider": "anthropic"},
+        )
+        self.assertEqual(get_resp.status_code, 200, get_resp.text)
+        body = get_resp.json()
+        self.assertTrue(body["has_stored_key"])
+        # Hint format from _mask_secret: first 2 + stars + last 2 chars.
+        self.assertIsNotNone(body["value_hint"])
+        self.assertNotIn("sk-ant-test-123456", body["value_hint"])
+        # Raw API key MUST NOT appear anywhere in the response.
+        self.assertNotIn("sk-ant-test-123456", get_resp.text)
+
+    def test_get_saved_key_isolated_per_provider(self):
+        # Seeding the OpenAI secret must not appear under deepseek.
+        pid = self._make_qa_sft_project("Saved Key GET per-provider")
+        self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "openai", "api_key": "sk-openai-only"},
+        )
+        # Deepseek lookup should still return empty.
+        resp = self.client.get(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            params={"provider": "deepseek"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertFalse(resp.json()["has_stored_key"])
+
+    # ── PUT ───────────────────────────────────────────────────────
+
+    def test_put_saved_key_creates_and_then_replaces(self):
+        pid = self._make_qa_sft_project("Saved Key PUT create+replace")
+        # Initial PUT.
+        r1 = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "deepseek", "api_key": "sk-deepseek-aaaaaa"},
+        )
+        self.assertEqual(r1.status_code, 200, r1.text)
+        hint_1 = r1.json()["value_hint"]
+        # Replace with a new key.
+        r2 = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "deepseek", "api_key": "sk-deepseek-zzzzzz"},
+        )
+        self.assertEqual(r2.status_code, 200, r2.text)
+        hint_2 = r2.json()["value_hint"]
+        self.assertNotEqual(hint_1, hint_2)
+        # Listing all secrets should show only one deepseek row, not two.
+        list_resp = self.client.get(f"/api/projects/{pid}/secrets")
+        self.assertEqual(list_resp.status_code, 200)
+        rows = [
+            s for s in list_resp.json()["secrets"]
+            if s["provider"] == "cloud_llm_deepseek"
+        ]
+        self.assertEqual(len(rows), 1)
+
+    def test_put_saved_key_rejects_short_api_key(self):
+        # min_length=8 — guards against silently overwriting a real key
+        # with a typo'd stub like "sk-" or "abc".
+        pid = self._make_qa_sft_project("Saved Key PUT too short")
+        resp = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "openai", "api_key": "sk-"},
+        )
+        # Pydantic field validation → 422.
+        self.assertEqual(resp.status_code, 422, resp.text)
+
+    def test_put_saved_key_rejects_unknown_provider(self):
+        pid = self._make_qa_sft_project("Saved Key PUT bad provider")
+        resp = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "cohere", "api_key": "abcdefghij"},
+        )
+        self.assertEqual(resp.status_code, 422, resp.text)
+
+    def test_put_response_does_not_leak_raw_key(self):
+        pid = self._make_qa_sft_project("Saved Key PUT no leak")
+        raw = "sk-leak-canary-xyz12345"
+        resp = self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "openai", "api_key": raw},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertNotIn(raw, resp.text)
+
+    # ── DELETE ────────────────────────────────────────────────────
+
+    def test_delete_saved_key_removes_existing_secret(self):
+        pid = self._make_qa_sft_project("Saved Key DELETE exists")
+        self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "openai", "api_key": "sk-delete-me-abc"},
+        )
+        resp = self.client.delete(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            params={"provider": "openai"},
+        )
+        self.assertEqual(resp.status_code, 204, resp.text)
+        # GET now reports no stored key.
+        get_resp = self.client.get(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            params={"provider": "openai"},
+        )
+        self.assertFalse(get_resp.json()["has_stored_key"])
+
+    def test_delete_saved_key_is_idempotent_when_missing(self):
+        # No secret stored — DELETE still returns 204 so the panel's
+        # Remove button never lies after a stale cache.
+        pid = self._make_qa_sft_project("Saved Key DELETE idempotent")
+        resp = self.client.delete(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            params={"provider": "anthropic"},
+        )
+        self.assertEqual(resp.status_code, 204, resp.text)
+
+    # ── End-to-end: stored key drives a generate-via-llm call ─────
+
+    def test_stored_key_falls_back_into_generate_call(self):
+        # PUT a key, then call /generate-via-llm WITHOUT inline api_key
+        # — the call must succeed (would 400 with API_KEY_REQUIRED if
+        # the fallback wired up wrong).
+        pid = self._make_qa_sft_project("Saved Key drives generate")
+        self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "openai", "api_key": "sk-stored-fallback"},
+        )
+
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content='{"pairs":[{"question":"Q","answer":"A"}]}',
+                model="gpt-4o-mini",
+                prompt_tokens=10,
+                completion_tokens=10,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    # api_key omitted — stored key must be used.
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        # The stored key reached the cloud client.
+        self.assertEqual(captured.get("api_key"), "sk-stored-fallback")
+
+    def test_deepseek_secret_used_when_api_url_is_deepseek(self):
+        # Deepseek arrives on the wire as provider=openai +
+        # api_url=<deepseek host>. The fallback must consult the
+        # cloud_llm_deepseek secret, NOT cloud_llm_openai, even though
+        # provider says openai.
+        pid = self._make_qa_sft_project("Deepseek secret routing")
+        # Seed both keys so we can prove the right one was picked.
+        self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "openai", "api_key": "sk-openai-wrong"},
+        )
+        self.client.put(
+            f"/api/projects/{pid}/gold/generate-via-llm/saved-key",
+            json={"provider": "deepseek", "api_key": "sk-deepseek-right"},
+        )
+
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content='{"pairs":[{"question":"Q","answer":"A"}]}',
+                model="deepseek-chat",
+                prompt_tokens=10,
+                completion_tokens=10,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "deepseek-chat",
+                    "count": 1,
+                    "api_url": "https://api.deepseek.com/v1/chat/completions",
+                    # api_key omitted — stored deepseek key must be used.
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(captured.get("api_key"), "sk-deepseek-right")
+
+
 if __name__ == "__main__":
     unittest.main()
