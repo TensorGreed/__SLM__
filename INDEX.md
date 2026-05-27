@@ -413,6 +413,7 @@ session-start guidance.
 - `frontend/src/components/data/DatasetVersionPanel.tsx` — Panel listing prepared dataset versions with record counts, types, and creation timestamps.
 - `frontend/src/components/data/DocumentSampleAccordion.tsx` — Inline 10-random-rows preview for the Ingested Documents table.
 - `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
+- `frontend/src/components/data/GoldEntryAddForm.tsx` — GoldEntryAddForm — per-recipe inline form for manually adding a
 - `frontend/src/components/data/GoldEntryRowBody.tsx` — GoldEntryRowBody — shared per-recipe body renderer for a single
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
@@ -528,6 +529,7 @@ session-start guidance.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
+- `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).

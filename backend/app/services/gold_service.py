@@ -52,6 +52,53 @@ async def get_or_create_gold_dataset(
     return ds
 
 
+async def add_gold_row(
+    db: AsyncSession,
+    project_id: int,
+    row: dict,
+    dataset_type: DatasetType = DatasetType.GOLD_DEV,
+) -> dict:
+    """Add a single gold row in any recipe shape.
+
+    Mirrors ``import_qa_pairs`` for single-row inserts: preserves
+    every caller-supplied field (recipe-shaped or otherwise), overlays
+    system-owned ``id`` + ``created_at``, and backfills QA-era
+    defaults (``difficulty`` / ``criticality`` / ``is_hallucination_trap`` /
+    ``metadata``) so existing eval surfaces that read them on qa-sft
+    rows keep working.
+
+    Used by ``POST /api/projects/{id}/gold/add`` for both manual
+    inline additions (any recipe) and the legacy ``add_qa_pair``
+    wrapper below.
+    """
+    ds = await get_or_create_gold_dataset(db, project_id, dataset_type)
+    if ds.is_locked:
+        raise ValueError("Gold dataset is locked. Cannot add new entries.")
+
+    gold_dir = _gold_dir(project_id)
+    filename = f"{dataset_type.value}.jsonl"
+    file_path = gold_dir / filename
+
+    entry: dict = dict(row)
+    entry.setdefault("difficulty", "medium")
+    entry.setdefault("criticality", "normal")
+    entry.setdefault("is_hallucination_trap", False)
+    entry.setdefault("metadata", {})
+    # System-owned fields ALWAYS win — never let the caller override
+    # id / created_at.
+    entry["id"] = ds.record_count + 1
+    entry["created_at"] = datetime.now(timezone.utc).isoformat()
+
+    with open(file_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    ds.record_count += 1
+    ds.file_path = str(file_path)
+    await db.flush()
+
+    return entry
+
+
 async def add_qa_pair(
     db: AsyncSession,
     project_id: int,
@@ -63,34 +110,22 @@ async def add_qa_pair(
     is_hallucination_trap: bool = False,
     metadata: dict | None = None,
 ) -> dict:
-    """Add a single Q&A pair to the gold dataset."""
-    ds = await get_or_create_gold_dataset(db, project_id, dataset_type)
-    if ds.is_locked:
-        raise ValueError("Gold dataset is locked. Cannot add new entries.")
-
-    gold_dir = _gold_dir(project_id)
-    filename = f"{dataset_type.value}.jsonl"
-    file_path = gold_dir / filename
-
-    entry = {
-        "id": ds.record_count + 1,
-        "question": question,
-        "answer": answer,
-        "difficulty": difficulty,
-        "criticality": criticality,
-        "is_hallucination_trap": is_hallucination_trap,
-        "metadata": metadata or {},
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    with open(file_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
-    ds.record_count += 1
-    ds.file_path = str(file_path)
-    await db.flush()
-
-    return entry
+    """Add a single qa-sft pair. Thin wrapper over ``add_gold_row`` —
+    kept for backward compat with callers (tests, scripts) that pass
+    QA fields by keyword argument."""
+    return await add_gold_row(
+        db,
+        project_id,
+        {
+            "question": question,
+            "answer": answer,
+            "difficulty": difficulty,
+            "criticality": criticality,
+            "is_hallucination_trap": is_hallucination_trap,
+            "metadata": metadata or {},
+        },
+        dataset_type,
+    )
 
 
 async def import_qa_pairs(

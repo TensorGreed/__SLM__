@@ -10,6 +10,8 @@ import CoachStrip from '../coach/CoachStrip';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
+import GoldEntryAddForm from './GoldEntryAddForm';
+import type { GoldAddPayload } from './GoldEntryAddForm';
 import './GoldSetPanel.css';
 
 
@@ -47,10 +49,6 @@ interface GoldSetPanelProps {
 
 export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProps) {
     const [entries, setEntries] = useState<any[]>([]);
-    const [question, setQuestion] = useState('');
-    const [answer, setAnswer] = useState('');
-    const [difficulty, setDifficulty] = useState('medium');
-    const [isHallucTrap, setIsHallucTrap] = useState(false);
     const [datasetType, setDatasetType] = useState('gold_dev');
     // Recipe id flows down to the LLM-generate panel so it can build
     // the right prompt shape + render per-recipe row previews. The
@@ -75,6 +73,37 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     useEffect(() => {
         setEntryFilter('all');
     }, [recipeId]);
+
+    /** Known classification labels — pulled from the current entries
+     *  so the add-form's combobox lets the user reuse the existing
+     *  label vocabulary instead of inventing new tokens per row.
+     *  Empty list when the recipe isn't classification (the form
+     *  branch doesn't render a label input in that case). */
+    const knownClassificationLabels = useMemo(() => {
+        if (recipeId !== 'classification') return [];
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const e of entries) {
+            const candidates: unknown[] = [
+                e.label,
+                // Some import paths write the label nested under
+                // ``expected.label`` (template-instantiated rows).
+                (e.expected && typeof e.expected === 'object')
+                    ? (e.expected as { label?: unknown }).label
+                    : undefined,
+            ];
+            for (const c of candidates) {
+                if (typeof c !== 'string') continue;
+                const trimmed = c.trim();
+                if (!trimmed) continue;
+                const key = trimmed.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(trimmed);
+            }
+        }
+        return out.sort();
+    }, [entries, recipeId]);
 
     /** Mix summary + filtered entries. qa-sft only — for other recipes
      *  the summary is null + the filter is a no-op (filter dropdown
@@ -126,13 +155,15 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
         return () => { cancelled = true; };
     }, [projectId]);
 
-    const handleAdd = async () => {
-        if (!question.trim() || !answer.trim()) return;
+    /** Submit handler passed down to ``GoldEntryAddForm``. The form
+     *  builds the recipe-shaped payload; we attach ``dataset_type``
+     *  and re-fetch on success. Errors surface inside the form. */
+    const handleAddRow = async (payload: GoldAddPayload) => {
         await api.post(`/projects/${projectId}/gold/add`, {
-            question, answer, dataset_type: datasetType, difficulty, is_hallucination_trap: isHallucTrap,
+            ...payload,
+            dataset_type: datasetType,
         });
-        setQuestion(''); setAnswer('');
-        fetchEntries();
+        await fetchEntries();
     };
 
     const handleLock = async () => {
@@ -165,28 +196,31 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     />
                 )}
 
-                <div className="qa-form">
-                    <div className="form-group">
-                        <label className="form-label">Question</label>
-                        <input className="input" placeholder="Enter a question..." value={question} onChange={e => setQuestion(e.target.value)} />
+                {/* Per-recipe add form. Hidden entirely when no
+                    recipe is set — the row shape is undecided so a
+                    Q/A form would mislead the user. Recipe narrowing
+                    matches GoldEntryRowBody's: anything unsupported
+                    or null hides the form. */}
+                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) ? (
+                    <GoldEntryAddForm
+                        recipeId={recipeId as GoldRowRecipe}
+                        knownLabels={knownClassificationLabels}
+                        onAdd={handleAddRow}
+                    />
+                ) : (
+                    <div
+                        data-testid="gold-add-form-hidden-hint"
+                        style={{
+                            padding: 'var(--space-md)',
+                            color: 'var(--text-tertiary)',
+                            fontSize: '0.9rem',
+                        }}
+                    >
+                        Pick a recipe (Project Settings → Recipe) to
+                        unlock manual gold-row entry. The form's
+                        fields depend on the recipe shape.
                     </div>
-                    <div className="form-group">
-                        <label className="form-label">Expected Answer</label>
-                        <textarea className="input gold-textarea" placeholder="Expected answer..." value={answer} onChange={e => setAnswer(e.target.value)} />
-                    </div>
-                    <div className="form-row">
-                        <select className="input" value={difficulty} onChange={e => setDifficulty(e.target.value)} style={{ width: 'auto' }}>
-                            <option value="easy">Easy</option>
-                            <option value="medium">Medium</option>
-                            <option value="hard">Hard</option>
-                        </select>
-                        <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <input type="checkbox" checked={isHallucTrap} onChange={e => setIsHallucTrap(e.target.checked)} />
-                            Hallucination Trap
-                        </label>
-                        <button className="btn btn-primary" onClick={handleAdd}>+ Add Pair</button>
-                    </div>
-                </div>
+                )}
             </div>
 
             <div className="card">

@@ -3,7 +3,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,7 @@ from app.services.gold_llm_service import (
 )
 from app.services.synthetic_service import _load_project_cleaned_chunks
 from app.services.gold_service import (
-    add_qa_pair,
+    add_gold_row,
     get_gold_entries,
     import_qa_pairs,
     lock_gold_dataset,
@@ -92,9 +92,18 @@ async def _fetch_secret_obj(
     return result.scalar_one_or_none()
 
 
-class QAPairCreate(BaseModel):
-    question: str = Field(..., min_length=1)
-    answer: str = Field(..., min_length=1)
+class GoldRowCreate(BaseModel):
+    """Generic per-recipe gold-row creator. Required fields differ
+    by recipe and are validated here (one of qa-sft's question+answer,
+    classification's text+label, span-extraction's text+entities,
+    summarization's document+summary). Extra recipe-shaped fields
+    are preserved verbatim into the JSONL via Pydantic's ``extra=allow``.
+
+    The legacy ``{question, answer, ...}`` qa-sft wire shape still
+    works — extras carry the recipe-specific keys when the panel
+    sends classification / span / summarization rows."""
+    model_config = ConfigDict(extra="allow")
+
     dataset_type: str = "gold_dev"
     difficulty: str = "medium"
     criticality: str = "normal"
@@ -106,19 +115,57 @@ class QAPairBatchImport(BaseModel):
     dataset_type: str = "gold_dev"
 
 
+def _validate_row_shape(payload: dict) -> None:
+    """Reject obviously empty rows early. Service-level recipe-shape
+    validation could go further (e.g. require question+answer for
+    qa-sft) but the JSONL is recipe-agnostic on disk + the evaluator
+    tolerates aliased field names, so a soft "at least one non-system
+    field is non-empty" check is the right floor."""
+    system_keys = {
+        "dataset_type", "difficulty", "criticality",
+        "is_hallucination_trap", "metadata",
+    }
+    has_content = any(
+        k not in system_keys
+        and v is not None
+        and (not isinstance(v, str) or v.strip())
+        for k, v in payload.items()
+    )
+    if not has_content:
+        raise HTTPException(
+            400,
+            detail={
+                "error_code": "EMPTY_GOLD_ROW",
+                "message": (
+                    "Gold row has no recipe-shaped content — provide at "
+                    "least one of: question+answer (qa-sft), text+label "
+                    "(classification), text+entities (span-extraction), "
+                    "or document+summary (summarization)."
+                ),
+            },
+        )
+
+
 @router.post("/add", status_code=201)
 async def add_pair(
     project_id: int,
-    data: QAPairCreate,
+    data: GoldRowCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Add a Q&A pair to the gold dataset."""
-    ds_type = DatasetType.GOLD_DEV if data.dataset_type == "gold_dev" else DatasetType.GOLD_TEST
+    """Add a single gold row in any recipe shape (qa-sft Q+A,
+    classification text+label, span-extraction text+entities,
+    summarization document+summary). Recipe-shaped extras flow
+    through ``extra=allow`` and round-trip into the JSONL."""
+    payload = data.model_dump()
+    dataset_type_str = payload.pop("dataset_type", "gold_dev")
+    ds_type = (
+        DatasetType.GOLD_DEV
+        if dataset_type_str == "gold_dev"
+        else DatasetType.GOLD_TEST
+    )
+    _validate_row_shape(payload)
     try:
-        entry = await add_qa_pair(
-            db, project_id, data.question, data.answer,
-            ds_type, data.difficulty, data.criticality, data.is_hallucination_trap,
-        )
+        entry = await add_gold_row(db, project_id, payload, ds_type)
         return entry
     except ValueError as e:
         raise HTTPException(400, str(e))
