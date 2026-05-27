@@ -1491,6 +1491,135 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         await screen.findByTestId('gold-add-span-chip-0');
     });
 
+    // ── Bug fix: legacy template rows feed knownClassificationLabels ──
+    //
+    // Templates flatten the classification label into the legacy
+    // ``answer`` field. Before the fix, the `knownClassificationLabels`
+    // extractor only checked ``e.label`` / ``e.expected.label``, so
+    // the vocab computed as empty on template projects → the
+    // combobox ``(existing: …)`` hint disappeared AND every typed
+    // label triggered the drift warning. The fix runs each entry
+    // through ``normalizeEntryForRecipe`` first, parallel to how
+    // `knownSpanTypes` already worked.
+
+    it('classification labels: legacy "answer:label" rows populate the existing-labels hint', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                // Template-shape: label flattened into ``answer``.
+                {
+                    id: 1,
+                    question: 'Charge me again?',
+                    answer: 'billing',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+                {
+                    id: 2,
+                    question: 'App crashes on Android.',
+                    answer: 'technical',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        // The (existing: ...) hint MUST surface for legacy rows now.
+        const hint = await screen.findByTestId('gold-add-label-hint');
+        expect(hint.textContent).toMatch(/billing/);
+        expect(hint.textContent).toMatch(/technical/);
+
+        // And typing an EXISTING label must NOT flag drift — earlier
+        // it falsely fired because vocab was empty.
+        fireEvent.change(screen.getByTestId('gold-add-label'), {
+            target: { value: 'billing' },
+        });
+        expect(
+            (screen.getByTestId('gold-add-label') as HTMLInputElement)
+                .getAttribute('data-new-label'),
+        ).toBe('false');
+        expect(
+            screen.queryByTestId('gold-add-label-new-hint'),
+        ).not.toBeInTheDocument();
+    });
+
+    // ── Bug fix: add-form surfaces backend detail on submit error ───
+    //
+    // Before the fix, the form caught the axios rejection and set
+    // ``setSubmitError(err.message)`` — for HTTP errors that produces
+    // "Request failed with status code 400" instead of the human-
+    // readable backend detail (e.g. "Gold dataset is locked",
+    // EMPTY_GOLD_ROW). The fix calls the shared
+    // ``extractApiErrorMessage`` helper which prefers the backend's
+    // structured ``detail.message`` / plain ``detail`` over the
+    // bare axios message.
+
+    it('add-form surfaces the backend detail.message (not "Request failed with status...")', async () => {
+        // Template-instantiated projects have a locked gold set;
+        // the backend returns 400 with detail "Gold dataset is locked...".
+        installGetRouter({ recipeId: 'qa-sft', entries: [] });
+        apiMock.post.mockRejectedValueOnce({
+            isAxiosError: true,
+            message: 'Request failed with status code 400',
+            response: {
+                status: 400,
+                data: { detail: 'Gold dataset is locked. Cannot add new entries.' },
+            },
+        });
+
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+        fireEvent.change(screen.getByTestId('gold-add-question'), {
+            target: { value: 'Q?' },
+        });
+        fireEvent.change(screen.getByTestId('gold-add-answer'), {
+            target: { value: 'A.' },
+        });
+        await userEvent.click(screen.getByTestId('gold-add-submit'));
+
+        const err = await screen.findByTestId('gold-add-error');
+        // Friendly backend detail surfaced — NOT the bare axios message.
+        expect(err.textContent).toMatch(/Gold dataset is locked/);
+        expect(err.textContent).not.toMatch(/Request failed with status code/);
+    });
+
+    it('add-form surfaces structured {error_code, message} detail too', async () => {
+        // The EMPTY_GOLD_ROW guard returns 400 with a structured detail.
+        installGetRouter({ recipeId: 'classification', entries: [] });
+        apiMock.post.mockRejectedValueOnce({
+            isAxiosError: true,
+            message: 'Request failed with status code 400',
+            response: {
+                status: 400,
+                data: {
+                    detail: {
+                        error_code: 'EMPTY_GOLD_ROW',
+                        message:
+                            'Gold row has no recipe-shaped content — provide at '
+                            + 'least one of: question+answer (qa-sft), text+label '
+                            + '(classification), text+entities (span-extraction), '
+                            + 'or document+summary (summarization).',
+                    },
+                },
+            },
+        });
+
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+        fireEvent.change(screen.getByTestId('gold-add-text'), {
+            target: { value: 'sample text' },
+        });
+        fireEvent.change(screen.getByTestId('gold-add-label'), {
+            target: { value: 'whatever' },
+        });
+        await userEvent.click(screen.getByTestId('gold-add-submit'));
+
+        const err = await screen.findByTestId('gold-add-error');
+        expect(err.textContent).toMatch(/no recipe-shaped content/);
+    });
+
     // ── Classification Label drift warning (mirrors span-type) ─────
 
     it('classification label: typing an existing label does NOT trigger the warning', async () => {
@@ -1646,6 +1775,96 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         expect(
             screen.queryByTestId('gold-add-label-new-hint'),
         ).not.toBeInTheDocument();
+    });
+
+    // ── Enter-key shortcuts on Type / Label inputs ──────────────────
+
+    it('Enter in the span-type Type input fires "+ Add highlighted span"', async () => {
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
+        fireEvent.change(textarea, { target: { value: 'Contact jane@example.com today' } });
+        selectRange(textarea, 8, 24);
+        const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
+        fireEvent.change(typeInput, { target: { value: 'email' } });
+
+        // Enter — equivalent to clicking the button. Chip lands.
+        fireEvent.keyDown(typeInput, { key: 'Enter' });
+        const chip = await screen.findByTestId('gold-add-span-chip-0');
+        expect(chip.textContent).toContain('email');
+        expect(chip.textContent).toContain('jane@example.com');
+        // Type input cleared (same post-add behavior as the button).
+        expect(
+            (screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement).value,
+        ).toBe('');
+    });
+
+    it('Enter in span-type input is a no-op when there is no selection', async () => {
+        installGetRouter({ recipeId: 'span-extraction', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        // No selection captured — just typing a type alone.
+        const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
+        fireEvent.change(typeInput, { target: { value: 'email' } });
+        fireEvent.keyDown(typeInput, { key: 'Enter' });
+
+        // No chip appeared.
+        expect(
+            screen.queryByTestId('gold-add-span-chip-0'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('Enter in the classification Label input submits the row', async () => {
+        // Two field tabs + Enter == row added, no mouse needed.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    text: 'seed',
+                    label: 'positive',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 2 } });
+        render(<GoldSetPanel projectId={42} />);
+        await screen.findByTestId('gold-add-form');
+
+        fireEvent.change(screen.getByTestId('gold-add-text'), {
+            target: { value: 'I love this app!' },
+        });
+        const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
+        fireEvent.change(labelInput, { target: { value: 'positive' } });
+        fireEvent.keyDown(labelInput, { key: 'Enter' });
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/42/gold/add',
+                expect.objectContaining({
+                    text: 'I love this app!',
+                    label: 'positive',
+                    dataset_type: 'gold_dev',
+                }),
+            );
+        });
+    });
+
+    it('Enter in classification Label input is a no-op when the text field is empty', async () => {
+        installGetRouter({ recipeId: 'classification', entries: [] });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        // Text empty, label filled — submit guard fails.
+        const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
+        fireEvent.change(labelInput, { target: { value: 'positive' } });
+        fireEvent.keyDown(labelInput, { key: 'Enter' });
+
+        expect(apiMock.post).not.toHaveBeenCalled();
     });
 
     it('form resets after a successful submit', async () => {

@@ -144,13 +144,39 @@ GET    /api/projects/{id}/eval/{eval_id}/remediation
 GET    /api/projects/{id}/eval/compare?a=X&b=Y     Side-by-side
 GET    /api/projects/{id}/evaluation/gates/{experiment_id}
 
-# Gold sets
+# Gold sets — workbench (sampling + review)
 POST   /api/projects/{id}/gold-sets                       Create
 POST   /api/projects/{id}/gold-sets/{gid}/sample          Sample rows
 PATCH  /api/projects/{id}/gold-sets/{gid}/rows/{row_id}   Label one
 POST   /api/projects/{id}/gold-sets/{gid}/submit          Lock draft
 GET    /api/projects/{id}/gold-sets/{gid}/queue           Reviewer queue
+
+# Gold rows — direct CRUD (JSONL-backed, all recipes)
+GET    /api/projects/{id}/gold/entries?dataset_type=gold_dev   List rows
+POST   /api/projects/{id}/gold/add                             Add one row (any recipe)
+POST   /api/projects/{id}/gold/import                          Bulk import (any recipe)
+POST   /api/projects/{id}/gold/lock?dataset_type=gold_dev      Lock the set
+
+# LLM-assisted gold generation (qa-sft, classification, span-extraction, summarization)
+POST   /api/projects/{id}/gold/generate-via-llm                Fire generation
+POST   /api/projects/{id}/gold/generate-via-llm/preview-prompt Preview the would-be prompt
+POST   /api/projects/{id}/gold/generate-via-llm/cost-estimate  Pre-call cost badge
+GET    /api/projects/{id}/gold/generate-via-llm/saved-key      Has stored key + hint?
+PUT    /api/projects/{id}/gold/generate-via-llm/saved-key      Store / replace
+DELETE /api/projects/{id}/gold/generate-via-llm/saved-key      Clear
 ```
+
+The `/gold/add` and `/gold/import` endpoints accept arbitrary recipe-shaped fields
+(qa-sft `{question, answer}`, classification `{text, label}`, span-extraction
+`{text, entities}`, summarization `{document, summary}`) plus optional
+`difficulty`/`is_hallucination_trap`/`criticality` metadata. Extras round-trip
+verbatim into the JSONL; system-owned `id` / `created_at` always win over
+caller-supplied values.
+
+`/gold/generate-via-llm` accepts optional `user_prompt_override` /
+`system_prompt_override` (the "Review & edit prompt before sending" UX path) and
+an optional `distribution: {easy, medium, hard, hallucination_traps}` block
+(qa-sft only — silently ignored elsewhere).
 
 ## Export
 

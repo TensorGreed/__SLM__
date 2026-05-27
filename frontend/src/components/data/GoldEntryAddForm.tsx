@@ -23,6 +23,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { extractApiErrorMessage } from '../../utils/apiError';
 import type { GoldRowRecipe, GoldRowSpan } from './GoldEntryRowBody';
 
 
@@ -418,8 +419,16 @@ export default function GoldEntryAddForm({
             setSpanText(''); setEntitiesJson('');
             setDoc(''); setSummary('');
         } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Failed to add row';
-            setSubmitError(msg);
+            // Pull the backend's structured ``detail.message`` when
+            // present — without this the user sees "Request failed
+            // with status code 400" for cases like "Gold dataset is
+            // locked" / EMPTY_GOLD_ROW, which they have no way to
+            // act on. The shared helper handles both structured
+            // detail and plain-string detail; falls back to the
+            // axios message (or the literal "Failed to add row")
+            // for network-level failures.
+            const { message } = extractApiErrorMessage(err, 'Failed to add row');
+            setSubmitError(message);
         } finally {
             setSubmitting(false);
         }
@@ -520,6 +529,16 @@ export default function GoldEntryAddForm({
                             placeholder="e.g. positive, billing, spam"
                             value={label}
                             onChange={(e) => setLabel(e.target.value)}
+                            onKeyDown={(e) => {
+                                // Enter == submit the row when the
+                                // form would be enabled. Two field
+                                // tabs (text → label) + Enter ==
+                                // entire row added — no mouse needed.
+                                if (e.key === 'Enter' && canSubmit) {
+                                    e.preventDefault();
+                                    handleSubmit();
+                                }
+                            }}
                             list={knownLabels.length > 0 ? 'gold-add-known-labels' : undefined}
                             data-testid="gold-add-label"
                             data-new-label={labelIsNew ? 'true' : 'false'}
@@ -636,6 +655,17 @@ export default function GoldEntryAddForm({
                                 placeholder="e.g. email, phone, person"
                                 value={selectionType}
                                 onChange={(e) => setSelectionType(e.target.value)}
+                                onKeyDown={(e) => {
+                                    // Enter == "+ Add highlighted span"
+                                    // when the button would be enabled.
+                                    // Saves the round-trip back to the
+                                    // mouse when adding 4-5 spans on a
+                                    // single row.
+                                    if (e.key === 'Enter' && canAddHighlightedSpan) {
+                                        e.preventDefault();
+                                        handleAddHighlightedSpan();
+                                    }
+                                }}
                                 list={
                                     unionedSpanTypes.length > 0
                                         ? 'gold-add-span-helper-known-types'

@@ -86,7 +86,42 @@ Rules on eval metrics that determine whether a model passes a stage or is allowe
 
 ## Gold set
 
-The ground-truth labelled set you trust for evaluation. Versioned (draft → locked) and immutable once locked. Sampled stratified / random / targeted from the cleaned dataset. See [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
+The ground-truth labelled set you trust for evaluation. Two parallel surfaces:
+
+- **Gold workbench** (Pipeline → Gold workbench) — sampling + reviewer-queue
+  flow with versioned `draft → locked` state machine. DB-backed
+  (`GoldSetRow` / `GoldSetVersion`). Best for hand-labelling at scale.
+- **Gold set tab** (Pipeline → Gold set) — direct row CRUD + LLM-assisted
+  generation. JSONL-backed on disk at `data/projects/{id}/gold/gold_dev.jsonl`.
+  Best for bootstrapping a small set fast.
+
+Both surfaces share the same on-disk JSONL — workbench rows materialize
+into it, gold-set-tab rows append to it. The evaluator reads either path.
+See [Evaluation + remediation](../workflows/evaluation-and-remediation.md).
+
+## Hallucination trap
+
+A gold row whose reference answer is *"I don't know"* / *"that's not in the
+source"* — designed to test whether the model refuses fabrication. Tagged
+via `is_hallucination_trap: true` on the row. The LLM-gen panel accepts an
+explicit count of traps in its row-mix distribution (qa-sft only). See
+[Step 1b — LLM-assisted gold](../workflows/evaluation-and-remediation.md#step-1b--or-build-the-gold-set-with-a-cloud-llm).
+
+## Row mix (gold set)
+
+The difficulty + hallucination-trap distribution across a qa-sft gold set.
+The panel surfaces it as `N entries: X easy / Y medium / Z hard · W traps`
+with a filter dropdown to scan a single bucket. The LLM-gen path accepts
+an explicit `{easy, medium, hard, hallucination_traps}` distribution and
+asks the LLM to craft + tag rows accordingly.
+
+## Label drift
+
+When a project's gold set accumulates `positive` / `Positive` / `Positive (with sentiment)`
+as separate labels — silently fragmenting eval metrics. The classification add-form
+surfaces a soft amber-border warning on the Label input when you type a value not
+in the existing vocabulary (case-insensitive). Same soft-warning pattern on the
+span-extraction Type input.
 
 ## Manifest (training)
 

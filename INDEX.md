@@ -772,6 +772,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectWizardPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
+- `frontend/src/utils/apiError.test.ts` — _(no docstring)_
 
 ---
 _Regenerate: `python scripts/regenerate_index.py`. A missing description means the file lacks a header docstring.

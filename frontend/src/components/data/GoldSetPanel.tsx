@@ -238,6 +238,15 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     /** Known classification labels — pulled from the current entries
      *  so the add-form's combobox lets the user reuse the existing
      *  label vocabulary instead of inventing new tokens per row.
+     *
+     *  Runs each entry through ``normalizeEntryForRecipe`` first so
+     *  legacy template rows (label flattened into ``answer``) DO
+     *  contribute to the vocab — without this normalization, the
+     *  ``(existing: …)`` hint goes missing for template-instantiated
+     *  classification projects, AND every typed label is flagged as
+     *  drift (the vocab computes as empty). Parallel to how
+     *  ``knownSpanTypes`` already normalizes for span-extraction.
+     *
      *  Empty list when the recipe isn't classification (the form
      *  branch doesn't render a label input in that case). */
     const knownClassificationLabels = useMemo(() => {
@@ -245,23 +254,14 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
         const seen = new Set<string>();
         const out: string[] = [];
         for (const e of entries) {
-            const candidates: unknown[] = [
-                e.label,
-                // Some import paths write the label nested under
-                // ``expected.label`` (template-instantiated rows).
-                (e.expected && typeof e.expected === 'object')
-                    ? (e.expected as { label?: unknown }).label
-                    : undefined,
-            ];
-            for (const c of candidates) {
-                if (typeof c !== 'string') continue;
-                const trimmed = c.trim();
-                if (!trimmed) continue;
-                const key = trimmed.toLowerCase();
-                if (seen.has(key)) continue;
-                seen.add(key);
-                out.push(trimmed);
-            }
+            const normalized = normalizeEntryForRecipe('classification', e);
+            if (typeof normalized.label !== 'string') continue;
+            const trimmed = normalized.label.trim();
+            if (!trimmed) continue;
+            const key = trimmed.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(trimmed);
         }
         return out.sort();
     }, [entries, recipeId]);

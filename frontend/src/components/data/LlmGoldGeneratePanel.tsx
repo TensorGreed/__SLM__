@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 
 import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
+import { parseApiErrorDetail } from '../../utils/apiError';
 import GoldEntryRowBody from './GoldEntryRowBody';
 
 
@@ -187,26 +188,28 @@ const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 
 
 function extractErrorMessage(err: unknown): { code: string; message: string } {
-    const detail = (
-        err as { response?: { data?: { detail?: unknown } } }
-    )?.response?.data?.detail;
-    if (detail && typeof detail === 'object') {
-        const d = detail as { error_code?: unknown; message?: unknown };
-        return {
-            code: String(d.error_code || 'UNKNOWN'),
-            message: String(d.message || 'Generation failed'),
-        };
+    // Structured backend detail → done. ``parseApiErrorDetail`` handles
+    // both ``detail: {error_code, message}`` and plain-string ``detail``.
+    const parsed = parseApiErrorDetail(err);
+    if (parsed) {
+        // Tweak the default fallback message to the LLM-gen context
+        // when parseApiErrorDetail's structured branch had to backfill
+        // its generic "Request failed" placeholder.
+        if (parsed.code !== 'UPSTREAM_ERROR' && parsed.message === 'Request failed') {
+            return { ...parsed, message: 'Generation failed' };
+        }
+        return parsed;
     }
-    if (typeof detail === 'string') {
-        return { code: 'UPSTREAM_ERROR', message: detail };
-    }
+
     // No HTTP response body — axios produces ``message: "Network Error"``
     // for connection-level failures (server unreachable, request
     // cancelled, proxy dropped the connection mid-response). When the
     // user has burned LLM tokens on a long reasoning model and gets
     // this back, the most likely cause is the request taking longer
     // than the frontend's axios timeout. Surface that explicitly so
-    // they're not guessing.
+    // they're not guessing. This LLM-specific copy is why the helper
+    // is local to this panel — the shared ``parseApiErrorDetail`` is
+    // recipe-agnostic, but the network-error framing is LLM-flavored.
     const rawMessage = (err as { message?: string })?.message || '';
     const axiosCode = (err as { code?: string })?.code || '';
     if (
