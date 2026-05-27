@@ -10,6 +10,7 @@ import ArchetypeComparisonPanel from '../components/training/ArchetypeComparison
 import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import CoachStrip from '../components/coach/CoachStrip';
+import { recordRemediationEvent } from '../api/remediation';
 import { routeForecastAction } from '../utils/forecastActionRouter';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectTrainingConfigPage.css';
@@ -71,6 +72,15 @@ export default function ProjectTrainingConfigPage() {
             <TrainabilityForecastPanel
                 projectId={projectId}
                 onActionClicked={(kind, params) => {
+                    // E2: fire-and-forget remediation telemetry so the
+                    // post-eval pipeline can later stamp this click
+                    // with the pass-rate lift. Never blocks the
+                    // navigation; the API client swallows errors.
+                    void recordRemediationEvent(projectId, {
+                        kind,
+                        params,
+                        outcome: 'clicked',
+                    });
                     // routeForecastAction encodes the kind + params
                     // into a destination URL. The destination panel
                     // reads the query string and prefills its form

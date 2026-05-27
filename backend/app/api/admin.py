@@ -60,3 +60,29 @@ async def get_forecast_calibration(
     )
 
     return await compute_calibration_buckets(db, recipe_id=recipe)
+
+
+@router.get("/remediation/outcomes")
+async def get_remediation_outcomes(
+    request: Request,
+    kind: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Aggregated outcomes of suggested-action clicks. E2.
+
+    Counts the events grouped by ``action_kind`` and, where post-eval
+    lift has been stamped, summarises the median / mean lift +
+    positive-lift rate (% of resolved events where the lift was
+    strictly above zero). Filter by ``kind`` to drill into one
+    suggestion source.
+
+    Use case: spot suggestions that get clicked often but never
+    correlate with an improvement — those need their prompt /
+    parameters retuned. v1 has no UI; admin reads the JSON.
+    """
+    _require_admin(request)
+    from app.services.remediation_tracking_service import (
+        aggregate_outcomes_by_kind,
+    )
+
+    return await aggregate_outcomes_by_kind(db, kind=kind)

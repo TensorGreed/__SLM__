@@ -19,12 +19,27 @@ export interface SuggestedAction {
     params: Record<string, unknown>;
 }
 
+/** Cost-of-fix estimate attached to a signal that carries a
+ *  ``suggested_action`` (T1). Two costs that matter to the user:
+ *  wall-clock minutes and (for synth_* kinds) LLM token spend.
+ *  ``llm_cost_usd`` is explicitly nullable so fix_gold_rows can
+ *  signal "no $" rather than "$0". */
+export interface CostEstimate {
+    time_minutes: number;
+    llm_cost_usd: number | null;
+    confidence: 'rough' | 'calibrated';
+}
+
 export interface ForecastSignal {
     id: string;
     severity: ForecastSeverity;
     headline: string;
     detail: string;
     suggested_action: SuggestedAction | null;
+    /** Present when ``suggested_action`` is not null. ``null`` when
+     *  the signal carries no action (so the panel doesn't have to
+     *  special-case undefined-vs-null). */
+    cost_estimate: CostEstimate | null;
 }
 
 export interface ForecastResult {

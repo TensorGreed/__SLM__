@@ -147,17 +147,59 @@ SUMMARY_DOC_RATIO_WARN = 0.70
 SNAPSHOT_RETENTION_DAYS = 60
 
 
+# Cost-of-fix heuristics (T1). Wall-clock minutes + dollars per row
+# for each action kind. Calibrated against synth-playbook telemetry —
+# the LLM-bound kinds average ~30s/row including review-queue
+# handling, and ~$0.0001/row is the steady-state cost for the
+# default OpenAI / Ollama backends at the prompt sizes the playbooks
+# emit. Manual fixes (fix_gold_rows) get a 2-min-per-row floor that
+# accounts for opening the gold workbench, finding the row, and
+# making the edit. These are deliberately conservative — we'd
+# rather over-quote and have the user be pleasantly surprised than
+# under-quote and burn trust.
+COST_LLM_USD_PER_ROW = 0.0001
+COST_LLM_SECONDS_PER_ROW = 30
+COST_FIX_MINUTES_PER_ROW = 2
+# Floor a synth action at 1 minute even when target_rows is tiny —
+# the UI navigation + provider picker takes longer than the actual
+# generation for a 5-row request.
+COST_LLM_MIN_MINUTES = 1
+# Floor a manual fix at 1 minute when there are zero rows to fix
+# (defensive — shouldn't happen since the signal wouldn't fire).
+COST_FIX_MIN_MINUTES = 1
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Typed payloads.
 # ─────────────────────────────────────────────────────────────────────
 
 
-class ForecastSignal(TypedDict):
+class CostEstimate(TypedDict, total=False):
+    """ROI estimate attached to a signal's suggested_action (T1).
+
+    Two costs that matter to the user:
+    - ``time_minutes``: wall-clock minutes they should expect to spend
+      including UI navigation + reviewing results / merging labels.
+    - ``llm_cost_usd``: token cost when the action fires an LLM
+      (synth_* kinds only). ``None`` for purely manual actions like
+      fix_gold_rows so the panel can render "no $" rather than "$0".
+
+    ``confidence`` separates the rough heuristic costs we ship today
+    from learned calibrated costs a future iteration could plug in
+    against telemetry. v1 always returns ``"rough"``.
+    """
+    time_minutes: int
+    llm_cost_usd: float | None
+    confidence: Literal["rough", "calibrated"]
+
+
+class ForecastSignal(TypedDict, total=False):
     id: str
     severity: Literal["ok", "warn", "block"]
     headline: str
     detail: str
     suggested_action: dict | None
+    cost_estimate: CostEstimate | None
 
 
 class ForecastResult(TypedDict):
@@ -1333,6 +1375,122 @@ def _build_summarization_signals(
 # ─────────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Cost-of-fix estimator (T1).
+#
+# One pure function: ``estimate_action_cost(action)``. Called once for
+# every signal that carries a ``suggested_action`` so the panel can
+# render "~3 min · $0.04" next to the button + sort multiple firing
+# actions by ROI.
+#
+# Per-kind logic:
+#   synth_augment / synth_diversify:
+#     rows = params["target_rows"] (clamped to >=1)
+#     time = max(1, rows * 30s)
+#     cost = rows * $0.0001
+#   synth_balance:
+#     rows = sum(target_rows_per_class for each under-class)
+#         OR len(under_classes) * 10 when target_rows_per_class missing
+#     same formula as synth_augment for time + cost
+#   fix_gold_rows:
+#     rows = len(invalid_row_ids) OR len(fragment_groups)
+#     time = max(1, rows * 2 min)
+#     cost = None (manual fix, no LLM)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _coerce_target_rows(value: Any) -> int:
+    """Coerce a params["target_rows"]-style value to a positive int.
+    Falls back to 1 when the value is missing or malformed — the
+    estimate is still useful at the floor, and the time-floor
+    constant ensures we don't render "0 min"."""
+    if isinstance(value, bool):
+        return 1
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, n)
+
+
+def estimate_action_cost(action: dict | None) -> CostEstimate | None:
+    """Return a ``CostEstimate`` for a signal's ``suggested_action``,
+    or ``None`` when the action is missing or its kind is not
+    recognised. The panel renders the chip only when this returns
+    a value, so unknown kinds (e.g. a backend hint shipped before the
+    frontend learns about it) silently skip rather than render "0 min"
+    or crash.
+    """
+    if not isinstance(action, dict):
+        return None
+    kind = action.get("kind")
+    params = action.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+
+    if kind in ("synth_augment", "synth_diversify"):
+        rows = _coerce_target_rows(params.get("target_rows"))
+        seconds = rows * COST_LLM_SECONDS_PER_ROW
+        minutes = max(COST_LLM_MIN_MINUTES, int(round(seconds / 60)))
+        return {
+            "time_minutes": minutes,
+            "llm_cost_usd": round(rows * COST_LLM_USD_PER_ROW, 4),
+            "confidence": "rough",
+        }
+
+    if kind == "synth_balance":
+        per_class = _coerce_target_rows(params.get("target_rows_per_class"))
+        under = params.get("underrepresented_classes")
+        n_classes = len(under) if isinstance(under, list) else 0
+        # When the user didn't pin target_rows_per_class explicitly,
+        # default to 10 rows/class — matches the synth backend's
+        # default fill target for class_balance_fill.
+        if "target_rows_per_class" not in params:
+            per_class = 10
+        rows = max(1, per_class * max(1, n_classes))
+        seconds = rows * COST_LLM_SECONDS_PER_ROW
+        minutes = max(COST_LLM_MIN_MINUTES, int(round(seconds / 60)))
+        return {
+            "time_minutes": minutes,
+            "llm_cost_usd": round(rows * COST_LLM_USD_PER_ROW, 4),
+            "confidence": "rough",
+        }
+
+    if kind == "fix_gold_rows":
+        invalid = params.get("invalid_row_ids")
+        fragments = params.get("fragment_groups")
+        n = 0
+        if isinstance(invalid, list):
+            n += len(invalid)
+        if isinstance(fragments, list):
+            n += len(fragments)
+        if n == 0:
+            n = 1
+        return {
+            "time_minutes": max(COST_FIX_MIN_MINUTES, n * COST_FIX_MINUTES_PER_ROW),
+            # Manual fix → no LLM cost. Explicit None preserves the
+            # distinction from "$0" so the panel can render the line
+            # as "~6 min · no $".
+            "llm_cost_usd": None,
+            "confidence": "rough",
+        }
+
+    return None
+
+
+def _attach_cost_estimates(signals: list[ForecastSignal]) -> None:
+    """Mutate each signal in place to set ``cost_estimate`` for any
+    signal with a ``suggested_action``. Called once at the end of
+    ``forecast_training`` so the estimator runs in a single pass and
+    individual signal builders don't have to know about T1."""
+    for signal in signals:
+        action = signal.get("suggested_action") if isinstance(signal, dict) else None
+        if action is None:
+            signal["cost_estimate"] = None
+            continue
+        signal["cost_estimate"] = estimate_action_cost(action)
+
+
 def _overall_verdict(
     *,
     signals: list[ForecastSignal],
@@ -1449,6 +1607,13 @@ async def forecast_training(
         diversity_score=diversity_score,
     )
     signals.append(prob_signal)
+
+    # T1 — attach a CostEstimate to every signal carrying an action.
+    # Done in one pass at the end so individual signal builders stay
+    # focused on the diagnostic and the estimator logic lives in one
+    # place. Non-actionable signals get cost_estimate=None so the
+    # frontend renders no chip rather than guessing.
+    _attach_cost_estimates(signals)
 
     overall = _overall_verdict(signals=signals, confidence_pct=confidence_pct)
 

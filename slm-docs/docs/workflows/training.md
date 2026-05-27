@@ -101,7 +101,7 @@ Dispatched by the recipe's `task_profile`. A non-classification project never se
 | `span-extraction` | `negative_examples_missing` | No rows have an empty entities list. Without negatives the model learns "always extract something" and over-fires. |
 | `summarization` | `summary_doc_ratio_outliers` | Rows where the summary is more than 70% of the document length — usually a mislabeled paraphrase or the wrong column loaded into the summary slot. |
 
-Suggested actions on every signal map to one of `synth_augment` / `synth_balance` / `synth_diversify` / `fix_gold_rows`, surfaced as a one-click button next to the signal row.
+Suggested actions on every signal map to one of `synth_augment` / `synth_balance` / `synth_diversify` / `fix_gold_rows`, surfaced as a one-click button next to the signal row. Each actionable signal also carries a `cost_estimate: {time_minutes, llm_cost_usd | null, confidence}` payload — the panel renders it as a chip ("~25 min · $0.01" or "~6 min · no $" for manual fixes) and, when ≥2 signals carry actions, surfaces a "Cheapest fix first" hint ranking by wall-clock then LLM cost. The estimator is heuristic ("rough" confidence); it'll move to "calibrated" once enough T5 telemetry lands to retune the per-row constants.
 
 ### Snapshot history + sparkline
 

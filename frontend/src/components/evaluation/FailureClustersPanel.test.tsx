@@ -525,4 +525,63 @@ describe('FailureClustersPanel', () => {
         expect(params.get('focus_hint')).toMatch(/hallucination/);
         expect(params.get('focus_hint')).toMatch(/Low reference overlap/);
     });
+
+    // ── E2 — remediation event telemetry ─────────────────────────────
+
+    it('POSTs a cluster_fix remediation event before navigating', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        // The remediation POST is fire-and-forget; resolve it cleanly.
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url.includes('/remediation/events')) {
+                return { data: { id: 1, project_id: 3, action_kind: 'cluster_fix', params_hash: 'x', outcome: 'clicked', observed_at: '2026-05-27T20:00:00Z' } };
+            }
+            return { data: {} };
+        });
+        navigateMock.mockReset();
+
+        renderPanel(<FailureClustersPanel projectId={3} evalResults={EVAL_RESULTS} />);
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) => btn.textContent?.includes('hallucination'));
+        await userEvent.click(targetHead!);
+        await userEvent.click(screen.getByTestId('failure-cluster-fix-in-gold-cluster-1'));
+
+        // The event endpoint was hit with the cluster context.
+        const eventCalls = apiMock.post.mock.calls.filter(
+            (c) => typeof c[0] === 'string' && c[0].includes('/remediation/events'),
+        );
+        expect(eventCalls).toHaveLength(1);
+        const [url, body] = eventCalls[0];
+        expect(url).toBe('/projects/3/remediation/events');
+        expect(body).toMatchObject({
+            kind: 'cluster_fix',
+            outcome: 'clicked',
+            params: expect.objectContaining({
+                cluster_id: 'cluster-1',
+                reason_code: 'hallucination',
+                eval_result_id: 501,
+            }),
+        });
+        // Navigation still happened.
+        expect(navigateMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('navigates even when the remediation POST rejects (best-effort telemetry)', async () => {
+        apiMock.get.mockResolvedValue({ data: CLUSTER_RESPONSE });
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url.includes('/remediation/events')) {
+                throw new Error('telemetry down');
+            }
+            return { data: {} };
+        });
+        navigateMock.mockReset();
+
+        renderPanel(<FailureClustersPanel projectId={3} evalResults={EVAL_RESULTS} />);
+        const headButtons = await screen.findAllByRole('button', { expanded: false });
+        const targetHead = headButtons.find((btn) => btn.textContent?.includes('hallucination'));
+        await userEvent.click(targetHead!);
+        await userEvent.click(screen.getByTestId('failure-cluster-fix-in-gold-cluster-1'));
+
+        // Navigation must still happen — telemetry failures are silent.
+        expect(navigateMock).toHaveBeenCalledTimes(1);
+    });
 });

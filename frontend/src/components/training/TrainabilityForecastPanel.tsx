@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type {
+    CostEstimate,
     ForecastResult,
     ForecastSeverity,
     ForecastSignal,
@@ -53,6 +54,42 @@ const SUGGESTED_ACTION_LABEL: Record<SuggestedActionKind, string> = {
     synth_diversify: 'Diversify gold set',
     fix_gold_rows: 'Fix invalid gold rows',
 };
+
+
+/** Render a cost estimate as a single short chip. The format mirrors
+ *  the backend's two-axis pricing: "~3 min · $0.04" for LLM actions,
+ *  "~6 min · no $" for manual ones. T1. */
+function formatCostChip(estimate: CostEstimate): string {
+    const time = `~${estimate.time_minutes} min`;
+    if (estimate.llm_cost_usd === null) {
+        return `${time} · no $`;
+    }
+    const cost = estimate.llm_cost_usd < 0.01
+        ? `<$0.01`
+        : `$${estimate.llm_cost_usd.toFixed(2)}`;
+    return `${time} · ${cost}`;
+}
+
+
+/** Cheapest action wins, where "cheapest" is wall-clock time first
+ *  (the user's most expensive resource) then LLM cost. Returns the
+ *  signal id that should be ranked first when ≥2 signals carry
+ *  actions — used to drive the ROI sort hint above the signal list. */
+function cheapestActionSignalId(signals: ForecastSignal[]): string | null {
+    const actionable = signals.filter(
+        (s) => s.suggested_action !== null && s.cost_estimate !== null,
+    );
+    if (actionable.length < 2) return null;
+    const sorted = [...actionable].sort((a, b) => {
+        const at = a.cost_estimate?.time_minutes ?? Number.MAX_SAFE_INTEGER;
+        const bt = b.cost_estimate?.time_minutes ?? Number.MAX_SAFE_INTEGER;
+        if (at !== bt) return at - bt;
+        const ac = a.cost_estimate?.llm_cost_usd ?? 0;
+        const bc = b.cost_estimate?.llm_cost_usd ?? 0;
+        return ac - bc;
+    });
+    return sorted[0].id;
+}
 
 export default function TrainabilityForecastPanel({ projectId, onActionClicked }: Props) {
     const [result, setResult] = useState<ForecastResult | null>(null);
@@ -164,6 +201,7 @@ export default function TrainabilityForecastPanel({ projectId, onActionClicked }
                 </button>
             </header>
             <ForecastHistoryStrip history={history} />
+            <ForecastRoiHint signals={result.signals} />
             <ul className="trainability-forecast__signals">
                 {result.signals.map((signal) => (
                     <SignalRow
@@ -309,6 +347,7 @@ function ForecastHistoryStrip({ history }: { history: ForecastSnapshot[] }) {
 
 function SignalRow({ signal, onActionClicked }: SignalRowProps) {
     const action = signal.suggested_action;
+    const cost = signal.cost_estimate;
     return (
         <li
             className={`trainability-forecast__signal trainability-forecast__signal--${signal.severity}`}
@@ -328,14 +367,56 @@ function SignalRow({ signal, onActionClicked }: SignalRowProps) {
                 )}
             </div>
             {action && onActionClicked && (
-                <button
-                    type="button"
-                    className="trainability-forecast__action"
-                    onClick={() => onActionClicked(action.kind, action.params)}
-                >
-                    {SUGGESTED_ACTION_LABEL[action.kind] || 'Take action'}
-                </button>
+                <div className="trainability-forecast__action-wrap">
+                    {cost && (
+                        <span
+                            className="trainability-forecast__cost"
+                            data-testid={`trainability-forecast-cost-${signal.id}`}
+                            title={
+                                cost.confidence === 'rough'
+                                    ? 'Rough estimate — calibration improves once T5 telemetry lands.'
+                                    : 'Calibrated against past runs.'
+                            }
+                        >
+                            {formatCostChip(cost)}
+                        </span>
+                    )}
+                    <button
+                        type="button"
+                        className="trainability-forecast__action"
+                        onClick={() => onActionClicked(action.kind, action.params)}
+                    >
+                        {SUGGESTED_ACTION_LABEL[action.kind] || 'Take action'}
+                    </button>
+                </div>
             )}
         </li>
+    );
+}
+
+
+/** ROI hint banner above the signal list. Renders only when ≥2
+ *  signals carry actions — a single action card is already the
+ *  "cheapest", so the hint would be noise. T1. */
+function ForecastRoiHint({ signals }: { signals: ForecastSignal[] }) {
+    const cheapestId = cheapestActionSignalId(signals);
+    if (!cheapestId) return null;
+    const cheapest = signals.find((s) => s.id === cheapestId);
+    if (!cheapest || !cheapest.cost_estimate || !cheapest.suggested_action) return null;
+    const label = SUGGESTED_ACTION_LABEL[cheapest.suggested_action.kind]
+        || 'this action';
+    return (
+        <p
+            className="trainability-forecast__roi-hint"
+            data-testid="trainability-forecast-roi-hint"
+        >
+            <strong>Cheapest fix first:</strong>
+            {' '}
+            <code data-testid="trainability-forecast-roi-cheapest-id">{cheapestId}</code>
+            {' → '}
+            {label.toLowerCase()} ({formatCostChip(cheapest.cost_estimate)}).
+            Address it before the others to move the needle for the least
+            time + spend.
+        </p>
     );
 }

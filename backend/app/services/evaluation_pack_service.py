@@ -1310,6 +1310,39 @@ async def evaluate_experiment_auto_gates(
             flush=True,
         )
 
+    # E2: stamp pending remediation-action events with the lift
+    # between this eval's pass_rate and the previous eval's pass_rate
+    # so we can aggregate "did the suggested fix help?" by kind.
+    # Pull the pass_rate from the most recent EvalResult for this
+    # experiment (the metric_values dict aggregates several metrics
+    # across alias resolution — using the row directly is simpler +
+    # less ambiguous about which metric is the "headline").
+    try:
+        from app.services.remediation_tracking_service import (
+            stamp_evaluation_lift,
+        )
+
+        # Pick the freshest eval result (by created_at) whose pass_rate
+        # is non-null. metric_values aggregates several metrics; using
+        # the EvalResult row directly is unambiguous about which
+        # eval the lift is anchored to.
+        latest_eval = max(
+            (evr for evr in latest_by_type.values() if evr.pass_rate is not None),
+            key=lambda r: r.created_at,
+            default=None,
+        )
+        await stamp_evaluation_lift(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+            current_pass_rate=latest_eval.pass_rate if latest_eval else None,
+        )
+    except Exception as evt_exc:
+        print(
+            f"[remediation_tracking] stamp_failed experiment_id={experiment_id}: {evt_exc}",
+            flush=True,
+        )
+
     return {
         "project_id": project_id,
         "experiment_id": experiment_id,

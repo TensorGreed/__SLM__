@@ -57,6 +57,7 @@ session-start guidance.
 - `backend/app/api/quickstart.py` — Project-guide quickstart endpoints (Theme 1 Epic 4 + Theme 8 Epic 1).
 - `backend/app/api/recipes.py` — Recipe catalog + shape-sniffer API routes.
 - `backend/app/api/registry.py` — Model registry API routes.
+- `backend/app/api/remediation.py` — Remediation event tracking API (E2).
 - `backend/app/api/run_event_clusters.py` — Project-wide failure-cluster API (priority.md P33, Wave G).
 - `backend/app/api/run_events.py` — Run-events + timeline API (priority.md P31 + P32, Wave G).
 - `backend/app/api/secrets.py` — Project secret management API routes.
@@ -170,6 +171,7 @@ session-start guidance.
 - `backend/app/services/recipe_service.py` — Task-shape recipe registry.
 - `backend/app/services/record_normalization.py` — Generic record normalization utilities for arbitrary tabular/text datasets.
 - `backend/app/services/registry_service.py` — Model registry and promotion governance service.
+- `backend/app/services/remediation_tracking_service.py` — Remediation tracking service (E2).
 - `backend/app/services/rerun_service.py` — P15 — Rerun-from-manifest + clone-from-run services.
 - `backend/app/services/run_event_clustering_service.py` — Failure clustering over RunEvents (priority.md P33, Wave G).
 - `backend/app/services/run_event_service.py` — Canonical RunEvent emission + read service (priority.md P31, Wave G).
@@ -253,6 +255,7 @@ session-start guidance.
 - `backend/app/models/project.py` — Project ORM model — top-level entity for the SLM pipeline.
 - `backend/app/models/reason_codes.py` — Canonical reason-code taxonomy (priority.md P33, Wave G).
 - `backend/app/models/registry.py` — Model registry ORM models for lifecycle and promotion tracking.
+- `backend/app/models/remediation_action_event.py` — Remediation action events — track whether suggested fixes worked (E2).
 - `backend/app/models/run_event.py` — Canonical RunEvent schema (priority.md P31, Wave G).
 - `backend/app/models/secret.py` — Project-level secret storage ORM model.
 - `backend/app/models/support_bundle.py` — Persisted support bundles (priority.md P34, Wave G).
@@ -328,6 +331,7 @@ session-start guidance.
 - `backend/alembic/versions/20260526_0037_jobs_table.py` — Jobs table for the background-task framework (Hardening Phase H1).
 - `backend/alembic/versions/20260527_0038_training_forecast_snapshots.py` — Training-forecast snapshot history table (USER-SUCCESS Epic 1, T2).
 - `backend/alembic/versions/20260527_0039_forecast_calibration_observations.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
+- `backend/alembic/versions/20260527_0040_remediation_action_events.py` — Remediation action event tracking (E2).
 
 ## Frontend · API clients
 
@@ -344,6 +348,7 @@ session-start guidance.
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
 - `frontend/src/api/recipes.ts` — Typed wrappers around the Theme 2 recipe registry + shape sniffer.
+- `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
@@ -667,6 +672,7 @@ session-start guidance.
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
+- `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_

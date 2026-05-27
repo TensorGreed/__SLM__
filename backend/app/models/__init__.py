@@ -44,6 +44,10 @@ from app.models.training_forecast_snapshot import TrainingForecastSnapshot
 from app.models.forecast_calibration_observation import (
     ForecastCalibrationObservation,
 )
+from app.models.remediation_action_event import (
+    RemediationActionEvent,
+    RemediationOutcome,
+)
 
 __all__ = [
     "Project",
@@ -95,5 +99,7 @@ __all__ = [
     "Job",
     "TrainingForecastSnapshot",
     "ForecastCalibrationObservation",
+    "RemediationActionEvent",
+    "RemediationOutcome",
     "JobStatus",
 ]

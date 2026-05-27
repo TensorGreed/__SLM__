@@ -17,6 +17,7 @@ from app.security import authorize_request, ensure_bootstrap_auth, extract_proje
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.audit import router as audit_router
+from app.api.remediation import router as remediation_router
 from app.api.settings import router as settings_router
 from app.api.projects import router as projects_router
 from app.api.pipeline import router as pipeline_router
@@ -265,6 +266,7 @@ API_DEPENDENCIES = [Depends(authorize_request)]
 # Mount API routers
 app.include_router(auth_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(admin_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(remediation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(audit_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(settings_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(projects_router, prefix="/api", dependencies=API_DEPENDENCIES)

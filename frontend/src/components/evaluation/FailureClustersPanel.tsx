@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
+import { recordRemediationEvent } from '../../api/remediation';
 import { augmentFromCluster } from '../../api/synthPlaybook';
 import { routeClusterFix } from '../../utils/clusterFixRouter';
 import './FailureClustersPanel.css';
@@ -372,6 +373,21 @@ export default function FailureClustersPanel({
                                             className="btn btn-secondary failure-cluster-fix-in-gold"
                                             data-testid={`failure-cluster-fix-in-gold-${cluster.cluster_id}`}
                                             onClick={() => {
+                                                // E2: telemetry first (best-effort,
+                                                // fire-and-forget). The post-eval
+                                                // pipeline later stamps this event
+                                                // with the pass-rate lift so admins
+                                                // can see whether the suggested
+                                                // fix actually helped.
+                                                void recordRemediationEvent(projectId, {
+                                                    kind: 'cluster_fix',
+                                                    params: {
+                                                        cluster_id: cluster.cluster_id,
+                                                        reason_code: cluster.reason_code,
+                                                        eval_result_id: selectedResultId,
+                                                    },
+                                                    outcome: 'clicked',
+                                                });
                                                 // E1 — deep-link into the gold-set
                                                 // tab's LLM-gen panel with the
                                                 // cluster's focus_hint + 5 traps

@@ -15,7 +15,7 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import TrainabilityForecastPanel from './TrainabilityForecastPanel';
-import type { ForecastResult } from '../../api/trainabilityForecast';
+import type { ForecastResult, ForecastSignal, SuggestedActionKind } from '../../api/trainabilityForecast';
 
 
 function makeForecast(overrides: Partial<ForecastResult> = {}): ForecastResult {
@@ -318,6 +318,161 @@ describe('TrainabilityForecastPanel', () => {
         expect(titleEl?.textContent).toMatch(/borderline @ 55%/);
         expect(titleEl?.textContent).toMatch(/warn: row_count_below_minimum/);
         expect(titleEl?.textContent).toMatch(/ok: class_imbalance/);
+    });
+
+    // ── T1 — cost-of-fix chip + ROI hint ────────────────────────────
+
+    /** Build a forecast with N actionable signals, each carrying a
+     *  cost estimate. Used by the chip/ROI tests below so the fixture
+     *  isn't repeated per case. */
+    function makeForecastWithCosts(
+        actions: Array<{
+            id: string;
+            kind: SuggestedActionKind;
+            params: Record<string, unknown>;
+            cost: ForecastSignal['cost_estimate'];
+        }>,
+    ): ForecastResult {
+        return makeForecast({
+            overall: 'borderline',
+            confidence_pct: 55,
+            signals: actions.map((a) => ({
+                id: a.id,
+                severity: 'warn',
+                headline: `Headline for ${a.id}`,
+                detail: '',
+                suggested_action: { kind: a.kind, params: a.params },
+                cost_estimate: a.cost,
+            })),
+        });
+    }
+
+    it('renders the cost chip next to the action button for an actionable signal', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return {
+                    data: makeForecastWithCosts([{
+                        id: 'row_count_below_minimum',
+                        kind: 'synth_augment',
+                        params: { target_rows: 50 },
+                        cost: { time_minutes: 25, llm_cost_usd: 0.005, confidence: 'rough' },
+                    }]),
+                };
+            }
+            return { data: { project_id: 1, snapshots: [] } };
+        });
+        render(<TrainabilityForecastPanel projectId={1} onActionClicked={() => {}} />);
+        const chip = await screen.findByTestId('trainability-forecast-cost-row_count_below_minimum');
+        // LLM cost under $0.01 collapses to "<$0.01".
+        expect(chip.textContent).toMatch(/~25 min/);
+        expect(chip.textContent).toMatch(/<\$0\.01/);
+    });
+
+    it('renders "no $" for manual fix_gold_rows actions (llm_cost_usd is null)', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return {
+                    data: makeForecastWithCosts([{
+                        id: 'label_vocab_fragmented',
+                        kind: 'fix_gold_rows',
+                        params: { fragment_groups: [['a', 'A'], ['b', 'B']] },
+                        cost: { time_minutes: 4, llm_cost_usd: null, confidence: 'rough' },
+                    }]),
+                };
+            }
+            return { data: { project_id: 1, snapshots: [] } };
+        });
+        render(<TrainabilityForecastPanel projectId={1} onActionClicked={() => {}} />);
+        const chip = await screen.findByTestId('trainability-forecast-cost-label_vocab_fragmented');
+        expect(chip.textContent).toMatch(/~4 min/);
+        expect(chip.textContent).toMatch(/no \$/);
+    });
+
+    it('does NOT render the ROI hint when only one signal carries an action', async () => {
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return {
+                    data: makeForecastWithCosts([{
+                        id: 'row_count_below_minimum',
+                        kind: 'synth_augment',
+                        params: { target_rows: 50 },
+                        cost: { time_minutes: 25, llm_cost_usd: 0.005, confidence: 'rough' },
+                    }]),
+                };
+            }
+            return { data: { project_id: 1, snapshots: [] } };
+        });
+        render(<TrainabilityForecastPanel projectId={1} onActionClicked={() => {}} />);
+        await screen.findByTestId('trainability-forecast');
+        expect(screen.queryByTestId('trainability-forecast-roi-hint')).not.toBeInTheDocument();
+    });
+
+    it('ranks the cheapest action first in the ROI hint when ≥2 carry actions', async () => {
+        // 3 actionable signals — the 2-min fix beats the 4-min and 25-min
+        // synth runs even though it has no LLM cost.
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return {
+                    data: makeForecastWithCosts([
+                        {
+                            id: 'row_count_below_minimum',
+                            kind: 'synth_augment',
+                            params: { target_rows: 50 },
+                            cost: { time_minutes: 25, llm_cost_usd: 0.005, confidence: 'rough' },
+                        },
+                        {
+                            id: 'label_vocab_fragmented',
+                            kind: 'fix_gold_rows',
+                            params: { fragment_groups: [['a', 'A']] },
+                            cost: { time_minutes: 2, llm_cost_usd: null, confidence: 'rough' },
+                        },
+                        {
+                            id: 'goldset_diversity_low',
+                            kind: 'synth_diversify',
+                            params: { target_rows: 8 },
+                            cost: { time_minutes: 4, llm_cost_usd: 0.0008, confidence: 'rough' },
+                        },
+                    ]),
+                };
+            }
+            return { data: { project_id: 1, snapshots: [] } };
+        });
+        render(<TrainabilityForecastPanel projectId={1} onActionClicked={() => {}} />);
+        const hint = await screen.findByTestId('trainability-forecast-roi-hint');
+        // Wall-clock time wins → label_vocab_fragmented is cheapest.
+        expect(screen.getByTestId('trainability-forecast-roi-cheapest-id').textContent)
+            .toBe('label_vocab_fragmented');
+        expect(hint.textContent).toMatch(/~2 min/);
+    });
+
+    it('breaks time-tie ties on llm_cost_usd (lower cost wins)', async () => {
+        // Two actions land at the same time_minutes — the one with
+        // lower llm_cost_usd should rank first.
+        apiMock.get.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/forecast')) {
+                return {
+                    data: makeForecastWithCosts([
+                        {
+                            id: 'expensive',
+                            kind: 'synth_augment',
+                            params: { target_rows: 50 },
+                            cost: { time_minutes: 25, llm_cost_usd: 0.05, confidence: 'rough' },
+                        },
+                        {
+                            id: 'cheaper',
+                            kind: 'synth_diversify',
+                            params: { target_rows: 50 },
+                            cost: { time_minutes: 25, llm_cost_usd: 0.005, confidence: 'rough' },
+                        },
+                    ]),
+                };
+            }
+            return { data: { project_id: 1, snapshots: [] } };
+        });
+        render(<TrainabilityForecastPanel projectId={1} onActionClicked={() => {}} />);
+        await screen.findByTestId('trainability-forecast-roi-hint');
+        expect(screen.getByTestId('trainability-forecast-roi-cheapest-id').textContent)
+            .toBe('cheaper');
     });
 
     it('survives a 5xx history fetch without breaking the live forecast render', async () => {

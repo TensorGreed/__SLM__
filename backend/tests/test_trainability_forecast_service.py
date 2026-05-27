@@ -34,6 +34,7 @@ from app.main import app
 from app.services.trainability_forecast_service import (
     DEFAULT_BASE_MODEL_PARAMS_M,
     KNOWN_BASE_MODEL_PARAMS_M,
+    _attach_cost_estimates,
     _build_classification_signals,
     _build_per_recipe_signals,
     _build_span_extraction_signals,
@@ -51,6 +52,7 @@ from app.services.trainability_forecast_service import (
     _signal_single_class_dominance,
     _signal_span_offset_invalid,
     _signal_summary_doc_ratio,
+    estimate_action_cost,
     estimate_gate_pass_prob,
     _overall_verdict,
 )
@@ -576,6 +578,153 @@ class RecipeDispatchTests(unittest.TestCase):
         )
         self.assertEqual(signals, [])
         self.assertIsNone(entropy)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# T1 — cost-of-fix estimator.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class CostEstimateTests(unittest.TestCase):
+    """estimate_action_cost + _attach_cost_estimates."""
+
+    def test_estimate_returns_None_for_missing_action(self):
+        self.assertIsNone(estimate_action_cost(None))
+        self.assertIsNone(estimate_action_cost({}))
+        self.assertIsNone(estimate_action_cost({"kind": "nope", "params": {}}))
+
+    def test_synth_augment_scales_linearly_with_target_rows(self):
+        # 50 rows × 30s = 1500s = 25 min, × $0.0001 = $0.005.
+        est = estimate_action_cost({"kind": "synth_augment", "params": {"target_rows": 50}})
+        self.assertIsNotNone(est)
+        self.assertEqual(est["time_minutes"], 25)
+        self.assertEqual(est["llm_cost_usd"], 0.005)
+        self.assertEqual(est["confidence"], "rough")
+
+    def test_synth_augment_tiny_target_floors_at_one_minute(self):
+        # 1 row × 30s = 0 minutes (rounded); floor at 1 min so the chip
+        # never renders "0 min".
+        est = estimate_action_cost({"kind": "synth_augment", "params": {"target_rows": 1}})
+        self.assertEqual(est["time_minutes"], 1)
+
+    def test_synth_diversify_uses_same_curve_as_augment(self):
+        a = estimate_action_cost({"kind": "synth_augment", "params": {"target_rows": 50}})
+        d = estimate_action_cost({"kind": "synth_diversify", "params": {"target_rows": 50}})
+        self.assertEqual(a, d)
+
+    def test_synth_augment_falls_back_to_1_row_on_missing_param(self):
+        # The synth path never ships without target_rows, but be
+        # defensive in case the frontend hits a brand-new signal
+        # whose params haven't been validated yet.
+        est = estimate_action_cost({"kind": "synth_augment", "params": {}})
+        self.assertEqual(est["time_minutes"], 1)
+        self.assertEqual(est["llm_cost_usd"], 0.0001)
+
+    def test_synth_balance_scales_with_classes_and_per_class_rows(self):
+        # 3 under-classes × 10 rows/class = 30 rows → 15 min · $0.003.
+        est = estimate_action_cost({
+            "kind": "synth_balance",
+            "params": {
+                "underrepresented_classes": ["a", "b", "c"],
+                "target_rows_per_class": 10,
+            },
+        })
+        self.assertEqual(est["time_minutes"], 15)
+        self.assertEqual(est["llm_cost_usd"], 0.003)
+
+    def test_synth_balance_defaults_to_10_per_class_when_unspecified(self):
+        # The single_class_dominance / class_imbalance signals don't
+        # carry target_rows_per_class — they just name the under-classes.
+        # We default to 10 rows/class (matches the synth backend's
+        # class_balance_fill default).
+        est = estimate_action_cost({
+            "kind": "synth_balance",
+            "params": {"underrepresented_classes": ["a", "b"]},
+        })
+        # 2 classes × 10 rows = 20 rows → 10 min · $0.002.
+        self.assertEqual(est["time_minutes"], 10)
+        self.assertEqual(est["llm_cost_usd"], 0.002)
+
+    def test_fix_gold_rows_counts_invalid_ids_at_2min_each_with_no_llm_cost(self):
+        # 4 invalid rows × 2 min = 8 min. llm_cost_usd MUST be None
+        # (manual fix), not 0 — preserves the "no $" distinction.
+        est = estimate_action_cost({
+            "kind": "fix_gold_rows",
+            "params": {"invalid_row_ids": [1, 2, 3, 4]},
+        })
+        self.assertEqual(est["time_minutes"], 8)
+        self.assertIsNone(est["llm_cost_usd"])
+
+    def test_fix_gold_rows_counts_fragment_groups_too(self):
+        # Each label-fragment group requires a separate merge decision;
+        # counts the same way invalid_row_ids does.
+        est = estimate_action_cost({
+            "kind": "fix_gold_rows",
+            "params": {"fragment_groups": [["a", "A"], ["b", "B"], ["c", "C"]]},
+        })
+        # 3 groups × 2 min = 6 min.
+        self.assertEqual(est["time_minutes"], 6)
+        self.assertIsNone(est["llm_cost_usd"])
+
+    def test_fix_gold_rows_combined_params_sum(self):
+        # Real signals can carry both (e.g. label_vocab_fragmented +
+        # invalid_row_ids if we ever bundle them). Both contribute.
+        est = estimate_action_cost({
+            "kind": "fix_gold_rows",
+            "params": {
+                "invalid_row_ids": [1, 2],
+                "fragment_groups": [["x", "X"]],
+            },
+        })
+        # 2 + 1 = 3 rows × 2 min = 6 min.
+        self.assertEqual(est["time_minutes"], 6)
+
+    def test_fix_gold_rows_floors_above_zero_with_no_rows(self):
+        # Defensive — the signal wouldn't fire without rows to fix.
+        # When it does, we still quote a non-zero estimate (treat
+        # "no rows" as "one row × 2 min minimum review" so the chip
+        # is never "0 min").
+        est = estimate_action_cost({"kind": "fix_gold_rows", "params": {}})
+        self.assertGreaterEqual(est["time_minutes"], 1)
+
+    def test_attach_cost_estimates_sets_None_for_non_actionable_signals(self):
+        signals = [
+            {"id": "ok1", "severity": "ok", "headline": "", "detail": "", "suggested_action": None},
+            {"id": "warn1", "severity": "warn", "headline": "", "detail": "",
+             "suggested_action": {"kind": "synth_augment", "params": {"target_rows": 50}}},
+        ]
+        _attach_cost_estimates(signals)
+        self.assertIsNone(signals[0]["cost_estimate"])
+        self.assertIsNotNone(signals[1]["cost_estimate"])
+        self.assertEqual(signals[1]["cost_estimate"]["time_minutes"], 25)
+
+    def test_forecast_payload_carries_cost_estimate_on_actionable_signals(self):
+        # End-to-end: every actionable signal in a fresh forecast must
+        # carry a CostEstimate, and ok-severity signals must not.
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        with TestClient(app) as client:
+            # Bare classification project → row_count signal blocks
+            # with a synth_augment action → must carry a cost estimate.
+            create = client.post("/api/projects", json={"name": f"T1 Cost Smoke {os.getpid()}"})
+            pid = create.json()["id"]
+            client.put(f"/api/projects/{pid}/recipe", json={"recipe_id": "classification"})
+            payload = client.get(f"/api/projects/{pid}/training/forecast").json()
+            actionable = [s for s in payload["signals"] if s.get("suggested_action")]
+            self.assertGreater(len(actionable), 0)
+            for sig in actionable:
+                self.assertIn("cost_estimate", sig)
+                est = sig["cost_estimate"]
+                self.assertIsNotNone(est, f"actionable signal {sig['id']} has no cost_estimate")
+                self.assertGreaterEqual(est["time_minutes"], 1)
+                self.assertEqual(est["confidence"], "rough")
+            # ok signals carry an explicit None so the frontend doesn't
+            # have to special-case missing-vs-null.
+            for sig in payload["signals"]:
+                if sig.get("suggested_action") is None:
+                    self.assertIn("cost_estimate", sig)
+                    self.assertIsNone(sig["cost_estimate"])
 
 
 # ─────────────────────────────────────────────────────────────────────
