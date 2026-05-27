@@ -10,6 +10,17 @@ import CoachStrip from '../coach/CoachStrip';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import './GoldSetPanel.css';
 
+
+/** Recipes the LLM-assisted gold-gen panel handles. Mirrors
+ *  ``SUPPORTED_RECIPES`` in ``backend/app/services/gold_llm_service.py``
+ *  — keep in sync when extending. */
+const SUPPORTED_LLM_GOLD_RECIPES = new Set([
+    'qa-sft',
+    'classification',
+    'span-extraction',
+    'summarization',
+]);
+
 interface GoldSetPanelProps {
     projectId: number;
     onNextStep?: () => void;
@@ -22,9 +33,9 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     const [difficulty, setDifficulty] = useState('medium');
     const [isHallucTrap, setIsHallucTrap] = useState(false);
     const [datasetType, setDatasetType] = useState('gold_dev');
-    // Recipe id powers the qa-sft-only gate on the LLM generation
-    // panel. v1 supports qa-sft; other recipes will get their own
-    // generation paths in follow-up phases.
+    // Recipe id flows down to the LLM-generate panel so it can build
+    // the right prompt shape + render per-recipe row previews. The
+    // panel handles its own self-hiding for unsupported recipes.
     const [recipeId, setRecipeId] = useState<string | null>(null);
 
     const fetchEntries = useCallback(async () => {
@@ -82,10 +93,11 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
 
                 <CoachStrip projectId={projectId} stage="gold_set" />
 
-                {recipeId === 'qa-sft' && (
+                {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) && (
                     <LlmGoldGeneratePanel
                         projectId={projectId}
                         datasetType={datasetType}
+                        recipeId={recipeId}
                         onRowsSaved={fetchEntries}
                     />
                 )}

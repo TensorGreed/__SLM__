@@ -140,7 +140,7 @@ session-start guidance.
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
 - `backend/app/services/gamification/achievements.py` — Declarative achievement catalog (Lab Journal).
 - `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
-- `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation for qa-sft projects.
+- `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.

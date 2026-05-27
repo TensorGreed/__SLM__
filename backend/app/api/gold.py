@@ -257,16 +257,12 @@ async def generate_via_llm(
         # UI can distinguish "you broke" (400) from "OpenAI broke" (502).
         raise HTTPException(status_code=502, detail=str(exc))
 
+    # Rows are already per-recipe dicts from the service. The frontend
+    # branches its render on ``recipe_id`` — qa-sft rows carry
+    # `question`/`answer`, classification carries `text`/`label`, etc.
     return {
-        "rows": [
-            {
-                "question": r.question,
-                "answer": r.answer,
-                "rationale": r.rationale,
-                "source_excerpt": r.source_excerpt,
-            }
-            for r in result.rows
-        ],
+        "rows": list(result.rows),
+        "recipe_id": result.recipe_id,
         "provider": result.provider,
         "model": result.model,
         "usage": {

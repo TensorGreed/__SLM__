@@ -409,8 +409,43 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
         detail = resp.json().get("detail") or {}
         self.assertEqual(detail.get("error_code"), "API_KEY_REQUIRED")
 
-    def test_classification_project_returns_recipe_not_supported(self):
-        pid = self._make_classification_project("Gold LLM Wrong Recipe")
+    def test_unsupported_recipe_returns_recipe_not_supported(self):
+        # qa-sft / classification / span-extraction / summarization are
+        # supported; other recipes (e.g. code-review, generic-sft) are
+        # not yet. Use a code-review project to hit the gate.
+        resp = self.client.post(
+            "/api/project-templates/code-review-style/instantiate",
+            json={"project_name": "Gold LLM Code Review Recipe"},
+        )
+        # Some test fixtures don't ship a code-review template; fall
+        # back to direct project creation + recipe set if so.
+        if resp.status_code != 201:
+            # Create a project then force-set an unsupported recipe.
+            import asyncio
+            from app.database import async_session_factory
+            from app.services.recipe_apply_service import apply_recipe_to_project
+            from app.models.project import Project
+
+            create = self.client.post(
+                "/api/projects",
+                json={"name": "Gold LLM Unsupported Recipe"},
+            )
+            self.assertEqual(create.status_code, 201, create.text)
+            pid = int(create.json()["id"])
+
+            async def _force_unsupported() -> None:
+                async with async_session_factory() as db:
+                    try:
+                        await apply_recipe_to_project(db, pid, "code-review")
+                    except Exception:
+                        # No code-review recipe → set raw selected_recipe.
+                        project = await db.get(Project, pid)
+                        project.selected_recipe = {"recipe_id": "code-review"}
+                    await db.commit()
+            asyncio.run(_force_unsupported())
+        else:
+            pid = int(resp.json()["id"])
+
         resp = self.client.post(
             f"/api/projects/{pid}/gold/generate-via-llm",
             json={
@@ -423,7 +458,50 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400, resp.text)
         detail = resp.json().get("detail") or {}
         self.assertEqual(detail.get("error_code"), "RECIPE_NOT_SUPPORTED")
-        self.assertIn("qa-sft", detail.get("message", ""))
+        # Error message lists the supported recipes so the user knows
+        # what to switch to.
+        msg = detail.get("message", "")
+        self.assertIn("qa-sft", msg)
+        self.assertIn("classification", msg)
+
+    def test_classification_project_now_supported_happy_path(self):
+        # Classification was previously gated as RECIPE_NOT_SUPPORTED.
+        # Now it generates classification-shape rows. The ticket-router
+        # template seeds gold rows with labels {billing, account,
+        # sales, technical, legal} — when the LLM is told to stay in
+        # vocabulary, the parser will only accept rows using those
+        # labels. The mock has to match.
+        pid = self._make_classification_project("Gold LLM Classification Happy")
+        fake_content = json.dumps({
+            "rows": [
+                {"text": "Charge me again for last month?", "label": "billing"},
+                {"text": "App crashes on Android.", "label": "technical"},
+                {"text": "How do I close my account?", "label": "account"},
+            ],
+        })
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=self._patched_openai(fake_content),
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 3,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "classification")
+        self.assertEqual(len(body["rows"]), 3)
+        self.assertEqual(body["rows"][0]["text"], "Charge me again for last month?")
+        self.assertEqual(body["rows"][0]["label"], "billing")
+        # qa-sft fields should NOT appear on classification rows.
+        self.assertNotIn("question", body["rows"][0])
+        self.assertNotIn("answer", body["rows"][0])
 
     def test_null_recipe_project_returns_recipe_required(self):
         import asyncio
@@ -936,6 +1014,415 @@ class CostEstimateEndpointTests(unittest.TestCase):
         self.assertEqual(body["ground_in_source_requested"], True)
         self.assertEqual(body["ground_in_source_effective"], False)
         self.assertEqual(body["reference_chunk_count"], 0)
+
+
+class ClassificationParserTests(unittest.TestCase):
+    """Per-recipe parser tests for classification rows."""
+
+    def _parse(self, content: str, expected_count: int = 2, known_labels=None):
+        from app.services.gold_llm_service import _parse_classification_rows
+        return _parse_classification_rows(
+            content, expected_count, known_labels=known_labels,
+        )
+
+    def test_canonical_text_label_shape(self):
+        rows = self._parse(
+            '{"rows":[{"text":"good","label":"pos"},'
+            '{"text":"bad","label":"neg"}]}',
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["text"], "good")
+        self.assertEqual(rows[0]["label"], "pos")
+
+    def test_input_label_alias(self):
+        rows = self._parse(
+            '{"rows":[{"input":"x","label":"a"},{"input":"y","label":"b"}]}',
+        )
+        self.assertEqual(rows[0]["text"], "x")
+
+    def test_known_labels_filters_out_of_vocab(self):
+        # LLM emitted 3 rows but only 2 use vocab labels.
+        rows = self._parse(
+            '{"rows":[{"text":"a","label":"pos"},'
+            '{"text":"b","label":"weird-new-label"},'
+            '{"text":"c","label":"neg"}]}',
+            expected_count=2,
+            known_labels=["pos", "neg"],
+        )
+        self.assertEqual(len(rows), 2)
+        labels = sorted(r["label"] for r in rows)
+        self.assertEqual(labels, ["neg", "pos"])
+
+    def test_missing_text_or_label_skipped(self):
+        # First row has no label, second has no text — both dropped.
+        # Use the smallest expected_count compatible with the
+        # off-by-25% drift rule (1 row out of 2 expected is within
+        # the soft tolerance of max(2, expected//4) = 2).
+        rows = self._parse(
+            '{"rows":[{"text":"a"},{"label":"x"},'
+            '{"text":"c","label":"good"}]}',
+            expected_count=2,
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["text"], "c")
+
+    def test_empty_payload_raises_structured_error(self):
+        from app.services.gold_llm_service import GoldGenerationError
+        with self.assertRaises(GoldGenerationError) as cm:
+            self._parse('{"rows":[]}')
+        self.assertEqual(cm.exception.error_code, "LLM_RESPONSE_UNPARSEABLE")
+
+
+class SpanExtractionParserTests(unittest.TestCase):
+    """Per-recipe parser tests for span-extraction rows. Most edge
+    cases here are about offset validation — getting these wrong
+    poisons eval."""
+
+    def _parse(self, content: str, expected_count: int = 1):
+        from app.services.gold_llm_service import _parse_span_rows
+        return _parse_span_rows(content, expected_count)
+
+    def test_canonical_text_entities_shape(self):
+        rows = self._parse(
+            json.dumps({
+                "rows": [{
+                    "text": "Contact jane@example.com today",
+                    "entities": [
+                        {"type": "email", "start": 8, "end": 24, "text": "jane@example.com"},
+                    ],
+                }],
+            }),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows[0]["entities"]), 1)
+        self.assertEqual(rows[0]["entities"][0]["type"], "email")
+        self.assertEqual(rows[0]["entities"][0]["text"], "jane@example.com")
+
+    def test_offset_mismatch_drops_span(self):
+        # ``text[start:end]`` doesn't match the claimed span text → drop.
+        # Row's only span is broken so the row itself is dropped, which
+        # makes the parser raise (0 rows, items=1 → unparseable).
+        from app.services.gold_llm_service import GoldGenerationError
+        bad = json.dumps({
+            "rows": [{
+                "text": "abcdefghij",
+                "entities": [
+                    # text[0:3] is "abc" but span claims "xyz" — off.
+                    {"type": "tag", "start": 0, "end": 3, "text": "xyz"},
+                ],
+            }],
+        })
+        with self.assertRaises(GoldGenerationError):
+            self._parse(bad)
+
+    def test_negative_or_end_lte_start_dropped(self):
+        # Bad offsets: end<=start, out-of-range → spans dropped.
+        # The row had a single bad span, so the row drops, parser errors.
+        from app.services.gold_llm_service import GoldGenerationError
+        bad = json.dumps({
+            "rows": [{
+                "text": "hello",
+                "entities": [
+                    {"type": "t", "start": 3, "end": 3, "text": ""},
+                ],
+            }],
+        })
+        with self.assertRaises(GoldGenerationError):
+            self._parse(bad)
+
+    def test_row_with_empty_entities_kept(self):
+        # No spans is a legitimate negative example.
+        rows = self._parse(
+            json.dumps({"rows": [{"text": "clean text, no PII", "entities": []}]}),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["entities"], [])
+
+    def test_canonicalizes_span_text_from_offsets(self):
+        # LLM emitted the span text with extra whitespace; parser
+        # canonicalizes to text[start:end].
+        rows = self._parse(
+            json.dumps({
+                "rows": [{
+                    "text": "  hello world  ",
+                    "entities": [
+                        {"type": "greet", "start": 2, "end": 7, "text": "hello"},
+                    ],
+                }],
+            }),
+        )
+        self.assertEqual(rows[0]["entities"][0]["text"], "hello")
+
+
+class SummarizationParserTests(unittest.TestCase):
+
+    def _parse(self, content: str, expected_count: int = 1):
+        from app.services.gold_llm_service import _parse_summarization_rows
+        return _parse_summarization_rows(content, expected_count)
+
+    def test_canonical_document_summary_shape(self):
+        rows = self._parse(
+            json.dumps({
+                "rows": [{
+                    "document": "Long document " * 20,
+                    "summary": "Short summary.",
+                }],
+            }),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["summary"], "Short summary.")
+
+    def test_summary_longer_than_document_dropped(self):
+        # A "summary" longer than the document is a guaranteed bad
+        # eval row — parser drops it. With only one bad row, the
+        # parser then errors (no valid rows).
+        from app.services.gold_llm_service import GoldGenerationError
+        bad = json.dumps({
+            "rows": [{
+                "document": "short",
+                "summary": "this summary is way longer than the document",
+            }],
+        })
+        with self.assertRaises(GoldGenerationError):
+            self._parse(bad)
+
+    def test_aliases_article_tldr_supported(self):
+        rows = self._parse(
+            json.dumps({
+                "rows": [{
+                    "article": "A long news story about something. " * 10,
+                    "tldr": "News story summary.",
+                }],
+            }),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertIn("news story", rows[0]["summary"].lower())
+
+
+class NonQaRecipeEndpointTests(unittest.TestCase):
+    """End-to-end through the API for the 3 new recipes — checks
+    response shape + recipe_id surfacing."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _instantiate(self, template_slug: str, name: str) -> int:
+        resp = self.client.post(
+            f"/api/project-templates/{template_slug}/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def _patched(self, content: str):
+        async def _fake(**kwargs):
+            return CloudLlmResponse(
+                content=content,
+                model=kwargs.get("model", "gpt-4o-mini"),
+                prompt_tokens=200,
+                completion_tokens=400,
+            )
+        return _fake
+
+    def test_classification_response_shape(self):
+        pid = self._instantiate("ticket-router", "Gold LLM Class Route")
+        # Use labels from the ticket-router template vocabulary so the
+        # parser's vocab filter keeps the rows.
+        content = json.dumps({
+            "rows": [
+                {"text": "Where's my refund?", "label": "billing"},
+                {"text": "App crashes on startup.", "label": "technical"},
+                {"text": "How do I cancel?", "label": "billing"},
+            ],
+        })
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=self._patched(content),
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 3,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "classification")
+        for row in body["rows"]:
+            self.assertIn("text", row)
+            self.assertIn("label", row)
+
+    def test_classification_prompt_includes_known_labels_when_seeded(self):
+        # ticket-router template seeds gold rows with labels
+        # {billing, account, sales, technical, legal}. The prompt
+        # builder reads those + locks the LLM to that vocabulary.
+        pid = self._instantiate("ticket-router", "Gold LLM Class Vocab")
+
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content=json.dumps({
+                    "rows": [{"text": "Login fails", "label": "technical"}],
+                }),
+                model="gpt-4o-mini",
+                prompt_tokens=200,
+                completion_tokens=80,
+            )
+
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        user_prompt = captured.get("user_prompt") or ""
+        # All template-seeded labels appear in the LABEL VOCABULARY section.
+        self.assertIn("LABEL VOCABULARY", user_prompt)
+        self.assertIn("billing", user_prompt)
+        self.assertIn("technical", user_prompt)
+        self.assertIn("legal", user_prompt)
+        # Labels appear in deterministic (sorted) order so prompt-cache
+        # behavior is stable across calls with the same vocab.
+        vocab_section = user_prompt.split("LABEL VOCABULARY")[1].split("\n\n")[0]
+        labels_in_order = [
+            label for label in ["account", "billing", "legal", "sales", "technical"]
+            if label in vocab_section
+        ]
+        self.assertEqual(labels_in_order, sorted(labels_in_order))
+
+    def test_span_extraction_response_shape(self):
+        # Look for a PII-style template; fall back to direct recipe set.
+        pid = self._make_recipe_project("span-extraction", "Gold LLM Spans")
+        content = json.dumps({
+            "rows": [{
+                "text": "Email me at user@example.com please.",
+                "entities": [
+                    {"type": "email", "start": 12, "end": 28, "text": "user@example.com"},
+                ],
+            }],
+        })
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=self._patched(content),
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "span-extraction")
+        self.assertEqual(body["rows"][0]["entities"][0]["type"], "email")
+
+    def test_summarization_response_shape(self):
+        pid = self._make_recipe_project("summarization", "Gold LLM Summary")
+        content = json.dumps({
+            "rows": [{
+                "document": "Board meeting on Tuesday covered hiring, "
+                            "budget, and the planned office relocation. "
+                            "Each item was reviewed in detail.",
+                "summary": "Tuesday board reviewed hiring, budget, and relocation.",
+            }],
+        })
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=self._patched(content),
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["recipe_id"], "summarization")
+        self.assertIn("document", body["rows"][0])
+        self.assertIn("summary", body["rows"][0])
+
+    def _make_recipe_project(self, recipe_id: str, name: str) -> int:
+        """Direct project creation + recipe override for recipes
+        that don't have a template (or where the template's recipe
+        differs from what the test needs)."""
+        import asyncio
+        from app.database import async_session_factory
+        from app.models.project import Project
+
+        create = self.client.post("/api/projects", json={"name": name})
+        self.assertEqual(create.status_code, 201, create.text)
+        pid = int(create.json()["id"])
+
+        async def _set_recipe() -> None:
+            async with async_session_factory() as db:
+                project = await db.get(Project, pid)
+                project.selected_recipe = {"recipe_id": recipe_id}
+                await db.commit()
+        asyncio.run(_set_recipe())
+        return pid
+
+    def test_import_preserves_non_qa_shape(self):
+        # When the panel saves non-QA rows back via /gold/import,
+        # the JSONL on disk must preserve text/label (not drop them
+        # like the old QA-only extractor did).
+        pid = self._make_recipe_project("classification", "Gold LLM Import Preserve")
+        save = self.client.post(
+            f"/api/projects/{pid}/gold/import",
+            json={
+                "pairs": [
+                    {"text": "good experience", "label": "positive"},
+                    {"text": "terrible app", "label": "negative"},
+                ],
+                "dataset_type": "gold_dev",
+            },
+        )
+        self.assertEqual(save.status_code, 200, save.text)
+        # Read back via the entries endpoint.
+        entries = self.client.get(
+            f"/api/projects/{pid}/gold/entries",
+            params={"dataset_type": "gold_dev"},
+        )
+        self.assertEqual(entries.status_code, 200, entries.text)
+        rows = entries.json()["entries"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["text"], "good experience")
+        self.assertEqual(rows[0]["label"], "positive")
+        # Backwards-compat QA-era fields should still be present as
+        # defaults (so old eval code that reads them doesn't crash).
+        self.assertIn("difficulty", rows[0])
+        # System fields are owned by the service, not the caller.
+        self.assertIn("id", rows[0])
+        self.assertIn("created_at", rows[0])
 
 
 class SavedKeyEndpointTests(unittest.TestCase):

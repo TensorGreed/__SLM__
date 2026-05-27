@@ -1,26 +1,31 @@
-"""LLM-assisted gold-set generation for qa-sft projects.
+"""LLM-assisted gold-set generation across all supported recipes.
 
-Crafts a project-aware prompt, calls a flagship cloud LLM (OpenAI or
-Anthropic), parses the response into Q&A pairs, and returns them to
-the caller for **preview-then-save** review. This service does NOT
-persist anything — the API endpoint shows the rows to the user, the
-user picks which to keep, and the existing
-``POST /api/projects/{id}/gold/import`` writes the accepted subset.
+Crafts a project + recipe-aware prompt, calls a flagship cloud LLM
+(OpenAI or Anthropic), parses the response into gold rows in the
+recipe's canonical shape, and returns them to the caller for
+**preview-then-save** review. This service does NOT persist anything
+— the API endpoint shows the rows to the user, the user picks which
+to keep, and the existing ``POST /api/projects/{id}/gold/import``
+writes the accepted subset.
 
-Scope:
-  * v1 supports qa-sft only. Recipe-shape check happens before the
-    LLM call — projects with a non-qa-sft recipe are rejected with a
-    structured error so the frontend can surface a useful message.
-  * Providers: OpenAI (incl. Deepseek + custom OpenAI-compatible
-    endpoints) and Anthropic. See ``cloud_llm_service``.
-  * Prompt incorporates the active domain blueprint's
-    ``problem_statement`` + ``brief_text`` + ``domain_name`` when
-    present so generated Q&A reflects the actual project, not
-    generic boilerplate.
+Supported recipes (each = its own prompt builder + parser):
+  * ``qa-sft`` — `{question, answer}` rows
+  * ``classification`` — `{text, label}` rows (labels seeded from
+    existing gold rows if any)
+  * ``span-extraction`` — `{text, entities: [{type, start, end, text}]}`
+  * ``summarization`` — `{document, summary}` rows
+
+Providers: OpenAI (incl. Deepseek + custom OpenAI-compatible
+endpoints) and Anthropic. See ``cloud_llm_service``.
+
+Prompt incorporates the active domain blueprint's ``problem_statement``
++ ``brief_text`` + ``domain_name`` when present so generated rows
+reflect the actual project, not generic boilerplate.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 from dataclasses import dataclass
@@ -32,6 +37,7 @@ _LOG = logging.getLogger("gold_llm")
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.domain_blueprint import DomainBlueprintRevision
 from app.models.project import Project
 from app.services.cloud_llm_service import (
@@ -48,9 +54,27 @@ from app.services.synthetic_service import _load_project_cleaned_chunks
 
 Provider = Literal["openai", "anthropic"]
 
+# Recipes the LLM-assisted gold-gen path supports. Each one has its
+# own prompt builder + parser; adding a fifth recipe is a 3-function
+# extension, not a refactor. Touched in three places:
+#   * ``_RECIPE_PROMPT_BUILDERS`` (prompt construction)
+#   * ``_RECIPE_PARSERS`` (LLM-response parsing)
+#   * ``_RECIPE_FOCUS_DEFAULTS`` (per-recipe focus-hint placeholders)
+SUPPORTED_RECIPES: tuple[str, ...] = (
+    "qa-sft",
+    "classification",
+    "span-extraction",
+    "summarization",
+)
+
 
 @dataclass
 class GeneratedQa:
+    """Legacy qa-sft row dataclass. Kept for backward compat with the
+    existing ``_parse_qa_payload`` tests and the qa-sft path. For
+    non-qa-sft recipes the service returns plain dicts in the
+    recipe's canonical shape — see ``_parse_classification_rows``
+    et al."""
     question: str
     answer: str
     rationale: str = ""
@@ -71,7 +95,13 @@ class ReferenceChunk:
 
 @dataclass
 class GenerationResult:
-    rows: list[GeneratedQa]
+    # Recipe-shaped rows: list[dict] across all recipes. Keys per
+    # recipe are documented at the parser level. qa-sft rows are also
+    # surfaced as ``GeneratedQa`` dataclasses internally before being
+    # converted to dicts at the API boundary — this preserves the
+    # tests that import the parser directly.
+    rows: list[dict[str, Any]]
+    recipe_id: str
     provider: Provider
     model: str
     prompt_tokens: int
@@ -205,13 +235,51 @@ class GoldGenerationError(ValueError):
 # ─────────────────────────────────────────────────────────────────────
 
 
-_SYSTEM_PROMPT = (
+# Per-recipe system prompts. The qa-sft prompt is the original one
+# — kept verbatim so existing snapshots / costs don't drift. The
+# others are tuned for each shape: classification reminds the LLM
+# that labels are categorical (not free-text), span-extraction is
+# warned about offset accuracy, summarization is warned about
+# faithfulness + length discipline.
+_SYSTEM_PROMPT_QA = (
     "You generate gold-standard question/answer pairs for fine-tuning a "
     "small language model. The pairs you generate become the EVALUATION "
     "ground truth for the model — quality + correctness matter more than "
     "volume. Avoid trivia; favor questions a real user of this product "
     "would ask. Ground every answer in plausible domain knowledge."
 )
+
+_SYSTEM_PROMPT_CLASSIFICATION = (
+    "You generate gold-standard classification examples for fine-tuning "
+    "a small language model. Each example is a short text snippet paired "
+    "with a SINGLE categorical label drawn from a fixed vocabulary. The "
+    "rows you generate become EVALUATION ground truth — label correctness "
+    "matters more than text variety. Stay strictly within the provided "
+    "label set; if you find yourself wanting to coin a new label, you "
+    "are off-task."
+)
+
+_SYSTEM_PROMPT_SPAN = (
+    "You generate gold-standard span-extraction examples for fine-tuning "
+    "a small language model. Each example is a text snippet paired with "
+    "a JSON list of entity spans — every span has type, start offset, "
+    "end offset, and the exact substring at those offsets. Offsets MUST "
+    "be character-accurate against the text you provide; off-by-one "
+    "errors render the row useless. The rows you generate become "
+    "EVALUATION ground truth — span boundaries are load-bearing."
+)
+
+_SYSTEM_PROMPT_SUMMARIZATION = (
+    "You generate gold-standard summarization examples for fine-tuning "
+    "a small language model. Each example pairs a longer document with "
+    "a SHORTER reference summary (1-5 sentences typically). Summaries "
+    "must be FAITHFUL — every claim grounded in the source document, "
+    "no fabricated facts. The rows you generate become EVALUATION "
+    "ground truth — faithfulness + concision matter more than fluency."
+)
+
+# Kept as an alias so any external import of the old name still works.
+_SYSTEM_PROMPT = _SYSTEM_PROMPT_QA
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -303,22 +371,15 @@ def _sample_reference_chunks(
     return chunks
 
 
-def _build_user_prompt(
+def _build_context_sections(
     *,
     project: Project,
     blueprint: DomainBlueprintRevision | None,
-    count: int,
     focus_hint: str,
-    reference_chunks: list[ReferenceChunk] | None = None,
-) -> str:
-    """Compose the user-facing prompt. Pulls project / blueprint
-    context inline so the LLM produces domain-relevant rows.
-
-    When ``reference_chunks`` is non-empty, the prompt instructs the
-    LLM to GROUND each answer in one of the provided excerpts and
-    include a ``source_excerpt`` field per row pointing at the
-    supporting passage. Otherwise the prompt asks for general
-    domain-relevant Q&A (legacy v1 behavior)."""
+) -> list[str]:
+    """Common project-context preamble shared across all recipe
+    prompt builders. Kept as one source of truth so adding fields to
+    the context preamble lands in all four recipe prompts at once."""
     domain = (getattr(blueprint, "domain_name", "") or "").strip()
     problem = (getattr(blueprint, "problem_statement", "") or "").strip()
     brief = (getattr(blueprint, "brief_text", "") or "").strip()
@@ -337,23 +398,76 @@ def _build_user_prompt(
         sections.append(f"USER'S BRIEF: {brief}")
     if focus_hint.strip():
         sections.append(f"FOCUS REQUEST: {focus_hint.strip()}")
+    return sections
 
+
+def _build_reference_section(
+    reference_chunks: list[ReferenceChunk] | None,
+    *,
+    label_pronoun: str = "answers",
+) -> str | None:
+    """When grounding is on + chunks exist, render the REFERENCE
+    MATERIAL prompt section. Returns None when not grounded so the
+    caller can skip the parts list cleanly."""
+    if not reference_chunks:
+        return None
+    ref_blocks = "\n\n".join(
+        chunk.to_prompt_block(i + 1)
+        for i, chunk in enumerate(reference_chunks)
+    )
+    return (
+        "REFERENCE MATERIAL (the model being trained will only learn "
+        f"from material like this — {label_pronoun} MUST be grounded "
+        "in these excerpts):\n\n" + ref_blocks
+    )
+
+
+def _build_user_prompt(
+    *,
+    project: Project,
+    blueprint: DomainBlueprintRevision | None,
+    count: int,
+    focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None = None,
+) -> str:
+    """Compose the user-facing prompt for the qa-sft path. Pulls
+    project / blueprint context inline so the LLM produces
+    domain-relevant rows.
+
+    When ``reference_chunks`` is non-empty, the prompt instructs the
+    LLM to GROUND each answer in one of the provided excerpts and
+    include a ``source_excerpt`` field per row pointing at the
+    supporting passage. Otherwise the prompt asks for general
+    domain-relevant Q&A (legacy v1 behavior).
+
+    Kept as a thin wrapper over ``_build_qa_prompt`` so external
+    callers / tests that monkeypatched this symbol still work."""
+    return _build_qa_prompt(
+        project=project,
+        blueprint=blueprint,
+        count=count,
+        focus_hint=focus_hint,
+        reference_chunks=reference_chunks,
+    )
+
+
+def _build_qa_prompt(
+    *,
+    project: Project,
+    blueprint: DomainBlueprintRevision | None,
+    count: int,
+    focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None = None,
+) -> str:
+    sections = _build_context_sections(
+        project=project, blueprint=blueprint, focus_hint=focus_hint,
+    )
     context_block = "\n".join(sections) if sections else "(no project context available)"
-
     grounded = bool(reference_chunks)
     parts: list[str] = [context_block]
-
-    if grounded:
-        ref_blocks = "\n\n".join(
-            chunk.to_prompt_block(i + 1)
-            for i, chunk in enumerate(reference_chunks or [])
-        )
-        parts.append(
-            "REFERENCE MATERIAL (the model being trained will only learn "
-            "from material like this — answers MUST be grounded in these "
-            "excerpts):\n\n" + ref_blocks,
-        )
-
+    ref_section = _build_reference_section(reference_chunks, label_pronoun="answers")
+    if ref_section:
+        parts.append(ref_section)
     parts.append(f"Generate exactly {count} question/answer pairs for the project above.")
 
     rules = [
@@ -383,6 +497,210 @@ def _build_user_prompt(
         f"Return EXACTLY {count} pairs in the ``pairs`` array.",
     ])
 
+    parts.append("Output rules:\n- " + "\n- ".join(rules))
+    return "\n\n".join(parts)
+
+
+def _build_classification_prompt(
+    *,
+    project: Project,
+    blueprint: DomainBlueprintRevision | None,
+    count: int,
+    focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None = None,
+    known_labels: list[str] | None = None,
+) -> str:
+    """Classification-shape prompt. When ``known_labels`` is non-empty
+    the LLM is locked to that vocabulary; otherwise it picks labels
+    from focus_hint or infers them from the source material (the
+    user can then edit + standardize during preview)."""
+    sections = _build_context_sections(
+        project=project, blueprint=blueprint, focus_hint=focus_hint,
+    )
+    context_block = "\n".join(sections) if sections else "(no project context available)"
+    grounded = bool(reference_chunks)
+    parts: list[str] = [context_block]
+
+    if known_labels:
+        # Stable order so the prompt cache + LLM behavior is
+        # deterministic across calls with the same vocabulary.
+        label_list = ", ".join(sorted({l.strip() for l in known_labels if l.strip()}))
+        parts.append(
+            "LABEL VOCABULARY (use ONLY these labels — coining new labels is "
+            f"off-task):\n{label_list}"
+        )
+
+    ref_section = _build_reference_section(reference_chunks, label_pronoun="text snippets")
+    if ref_section:
+        parts.append(ref_section)
+
+    parts.append(
+        f"Generate exactly {count} classification examples for the project above."
+    )
+
+    rules = [
+        "Return ONLY valid JSON. No markdown, no code fences, no commentary.",
+        'Shape: {"rows": [{"text": "...", "label": "..."}]}',
+    ]
+    if known_labels:
+        rules.append(
+            "Each ``label`` MUST be one of the labels listed in the "
+            "LABEL VOCABULARY above — verbatim, case-sensitive. Drop the "
+            "row entirely rather than emit a label not in the vocabulary."
+        )
+    else:
+        rules.append(
+            "If the FOCUS REQUEST names a label set, use ONLY those labels. "
+            "Otherwise pick a small consistent label set (3-6 labels) and "
+            "reuse the same labels across rows — DO NOT invent a new label "
+            "per row."
+        )
+    if grounded:
+        rules.extend([
+            "Prefer text snippets drawn from the REFERENCE MATERIAL above. "
+            "Paraphrasing is fine; do NOT invent details that contradict "
+            "the source.",
+            "Optionally include a ``source_excerpt`` field (≤200 chars) "
+            "quoting the supporting reference passage. Skip the field "
+            "when uncertain rather than fabricating a citation.",
+        ])
+    else:
+        rules.append(
+            "Each text MUST be specific to this project's domain — short "
+            "(1-3 sentences typical), realistic for the user being modeled."
+        )
+    rules.extend([
+        "Cover a mix of labels — class balance matters for eval reliability.",
+        "Include a few edge cases / ambiguous examples (clearly tagged via rationale).",
+        "Optionally include a ``rationale`` field — one short sentence on "
+        "why this label is correct.",
+        f"Return EXACTLY {count} rows in the ``rows`` array.",
+    ])
+    parts.append("Output rules:\n- " + "\n- ".join(rules))
+    return "\n\n".join(parts)
+
+
+def _build_span_prompt(
+    *,
+    project: Project,
+    blueprint: DomainBlueprintRevision | None,
+    count: int,
+    focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None = None,
+) -> str:
+    """Span-extraction prompt. Each row is text + a JSON list of
+    `{type, start, end, text}` entity spans. Strict on offset
+    accuracy because off-by-one renders the row useless for eval."""
+    sections = _build_context_sections(
+        project=project, blueprint=blueprint, focus_hint=focus_hint,
+    )
+    context_block = "\n".join(sections) if sections else "(no project context available)"
+    grounded = bool(reference_chunks)
+    parts: list[str] = [context_block]
+
+    ref_section = _build_reference_section(reference_chunks, label_pronoun="text snippets")
+    if ref_section:
+        parts.append(ref_section)
+
+    parts.append(
+        f"Generate exactly {count} span-extraction examples for the project above."
+    )
+
+    rules = [
+        "Return ONLY valid JSON. No markdown, no code fences, no commentary.",
+        'Shape: {"rows": [{"text": "...", "entities": [{"type": "...", '
+        '"start": <int>, "end": <int>, "text": "..."}]}]}',
+        "``start`` and ``end`` are 0-indexed character offsets into ``text``. "
+        "``text[start:end]`` MUST equal the span's ``text`` field — verify "
+        "by mentally slicing before emitting.",
+        "``end`` is EXCLUSIVE (Python slice convention). A span of \"foo\" "
+        "starting at offset 5 has end=8.",
+        "Entity ``type`` values: use a small consistent vocabulary across rows. "
+        "If the FOCUS REQUEST names span types, use ONLY those types.",
+        "Rows can have multiple spans; an empty ``entities`` list is allowed "
+        "(no-span examples are useful negative cases).",
+    ]
+    if grounded:
+        rules.extend([
+            "Prefer text snippets drawn from the REFERENCE MATERIAL above. "
+            "Paraphrasing OK; do NOT invent details contradicting the source.",
+            "Optionally include a ``source_excerpt`` field (≤200 chars) "
+            "quoting the supporting reference passage. Skip the field "
+            "when uncertain.",
+        ])
+    else:
+        rules.append(
+            "Each text MUST be realistic for this project's domain. Keep "
+            "snippets short (1-3 sentences) so offsets stay verifiable."
+        )
+    rules.extend([
+        "Mix span density: some rows with 1 entity, some with 2-4, some with 0.",
+        "Optionally include a ``rationale`` field — one short sentence on "
+        "what makes this row interesting (edge case, boundary, ambiguity).",
+        f"Return EXACTLY {count} rows in the ``rows`` array.",
+    ])
+    parts.append("Output rules:\n- " + "\n- ".join(rules))
+    return "\n\n".join(parts)
+
+
+def _build_summarization_prompt(
+    *,
+    project: Project,
+    blueprint: DomainBlueprintRevision | None,
+    count: int,
+    focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None = None,
+) -> str:
+    """Summarization prompt. Each row is a longer document + a
+    shorter faithful summary. Strict on faithfulness — fabricated
+    facts are the failure mode this gold set is designed to catch."""
+    sections = _build_context_sections(
+        project=project, blueprint=blueprint, focus_hint=focus_hint,
+    )
+    context_block = "\n".join(sections) if sections else "(no project context available)"
+    grounded = bool(reference_chunks)
+    parts: list[str] = [context_block]
+
+    ref_section = _build_reference_section(reference_chunks, label_pronoun="documents")
+    if ref_section:
+        parts.append(ref_section)
+
+    parts.append(
+        f"Generate exactly {count} (document, summary) pairs for the project above."
+    )
+
+    rules = [
+        "Return ONLY valid JSON. No markdown, no code fences, no commentary.",
+        'Shape: {"rows": [{"document": "...", "summary": "..."}]}',
+        "Each ``summary`` MUST be SHORTER than its ``document`` — typically "
+        "1-5 sentences. Avoid one-word summaries; avoid summaries that "
+        "exceed half the document length.",
+        "Every claim in ``summary`` MUST be supported by ``document``. "
+        "If a fact isn't in the document, it doesn't belong in the summary. "
+        "Faithfulness > fluency.",
+    ]
+    if grounded:
+        rules.extend([
+            "Prefer documents drawn from the REFERENCE MATERIAL above. "
+            "You may stitch reference excerpts together, but the resulting "
+            "``document`` is what the summary must be faithful to.",
+            "Optionally include a ``source_excerpt`` field (≤200 chars) "
+            "quoting the most relevant supporting passage. Skip the field "
+            "when uncertain.",
+        ])
+    else:
+        rules.append(
+            "Each ``document`` MUST be realistic for this project's domain "
+            "(meeting notes, article, ticket thread, etc. — match the "
+            "FOCUS REQUEST style if provided)."
+        )
+    rules.extend([
+        "Vary document length: mix short (1-2 paragraphs) and longer (3-6 "
+        "paragraphs) sources so eval covers both ends.",
+        "Optionally include a ``rationale`` field — one short sentence on "
+        "what makes this summary correct (key points covered, what to omit).",
+        f"Return EXACTLY {count} rows in the ``rows`` array.",
+    ])
     parts.append("Output rules:\n- " + "\n- ".join(rules))
     return "\n\n".join(parts)
 
@@ -558,6 +876,285 @@ def _parse_qa_payload(content: str, expected_count: int) -> list[GeneratedQa]:
     return rows
 
 
+# Field-name aliases for the non-QA recipes. Same case-insensitive
+# alias-walk as `_extract_field` for QA.
+_TEXT_FIELD_ALIASES = ("text", "input", "content", "snippet", "passage", "source_text")
+_LABEL_FIELD_ALIASES = ("label", "class", "category", "tag", "intent", "sentiment")
+_DOCUMENT_FIELD_ALIASES = ("document", "article", "source", "body", "transcript", "text", "input")
+_SUMMARY_FIELD_ALIASES = ("summary", "tldr", "abstract", "recap", "output", "answer")
+_ENTITIES_FIELD_ALIASES = ("entities", "spans", "annotations", "labels_json", "extractions")
+_RATIONALE_ALIASES = ("rationale", "explanation", "reasoning", "why", "notes")
+_SOURCE_EXCERPT_ALIASES = (
+    "source_excerpt", "source", "evidence", "quote", "citation",
+)
+
+
+def _extract_field_raw(item: dict[str, Any], aliases: tuple[str, ...]) -> str:
+    """Variant of ``_extract_field`` that does NOT strip whitespace
+    from the value. Used by the span-extraction parser where leading/
+    trailing whitespace is load-bearing — character offsets are
+    indexed against the original text, and stripping breaks them."""
+    lower_keys = {k.lower(): k for k in item.keys() if isinstance(k, str)}
+    for alias in aliases:
+        actual_key = lower_keys.get(alias)
+        if actual_key is None:
+            continue
+        value = item.get(actual_key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _extract_list(item: dict[str, Any], aliases: tuple[str, ...]) -> list[Any]:
+    """Variant of ``_extract_field`` that returns the first list-valued
+    match. Used for entity spans on the span-extraction parser."""
+    lower_keys = {k.lower(): k for k in item.keys() if isinstance(k, str)}
+    for alias in aliases:
+        actual_key = lower_keys.get(alias)
+        if actual_key is None:
+            continue
+        value = item.get(actual_key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _raise_parse_error(
+    *,
+    items: list[Any],
+    payload: Any,
+    content: str,
+    recipe_id: str,
+    required_field_summary: str,
+) -> None:
+    """Shared structured-error emission for the non-QA parsers. Mirrors
+    the diagnostic detail in ``_parse_qa_payload`` so the frontend
+    error UX is consistent across recipes."""
+    snippet = (content or "").strip()[:300]
+    _LOG.warning(
+        "gold_llm parse failed (%s) — payload kind=%s top_keys=%s items_seen=%d "
+        "raw_response_preview=%r",
+        recipe_id,
+        type(payload).__name__,
+        list(payload.keys())[:8] if isinstance(payload, dict) else "(not a dict)",
+        len(items),
+        (content or "")[:500],
+    )
+    if items:
+        first_item_keys = (
+            list(items[0].keys())[:8]
+            if isinstance(items[0], dict)
+            else "(first item not a dict)"
+        )
+        raise GoldGenerationError(
+            "LLM_RESPONSE_UNPARSEABLE",
+            f"Got {len(items)} item(s) back, but none had the required "
+            f"fields for {recipe_id} ({required_field_summary}). The "
+            f"first item's keys were: {first_item_keys}. Try a different "
+            f"model, or rephrase the focus hint. Raw response "
+            f"(first 300 chars): {snippet!r}",
+        )
+    raise GoldGenerationError(
+        "LLM_RESPONSE_UNPARSEABLE",
+        f"The LLM returned valid JSON but no usable {recipe_id} rows. "
+        "When grounding is on, this often means the model couldn't "
+        "anchor any examples to your reference material — try "
+        "ungrounded mode OR add more focused source content. "
+        f"Raw response (first 300 chars): {snippet!r}",
+    )
+
+
+def _check_count_drift(rows: list[Any], expected_count: int) -> None:
+    """Same count-drift rule as `_parse_qa_payload` — reject only on
+    egregious off-by-more-than-25% mismatch."""
+    if abs(len(rows) - expected_count) > max(2, expected_count // 4):
+        raise GoldGenerationError(
+            "LLM_RESPONSE_COUNT_MISMATCH",
+            f"Asked for {expected_count} rows but the LLM returned {len(rows)}. "
+            "Try a different model or reduce the count.",
+        )
+
+
+def _parse_classification_rows(
+    content: str,
+    expected_count: int,
+    *,
+    known_labels: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Parse classification rows. Returns a list of dicts with shape
+    `{text, label, rationale, source_excerpt}`. Rows missing text OR
+    label are skipped. When ``known_labels`` is non-empty rows with
+    out-of-vocabulary labels are silently dropped — the model is
+    asked to stay in vocabulary, and drift is a row-level rejection
+    rather than a hard fail."""
+    try:
+        payload = extract_json_payload(content)
+    except ValueError as exc:
+        raise GoldGenerationError(
+            "LLM_RESPONSE_UNPARSEABLE",
+            f"LLM response was not parseable JSON: {exc}",
+        ) from exc
+
+    items = _extract_items(payload)
+    vocab = {l.strip().lower() for l in (known_labels or []) if l.strip()}
+
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = _extract_field(item, _TEXT_FIELD_ALIASES)
+        label = _extract_field(item, _LABEL_FIELD_ALIASES)
+        if not text or not label:
+            continue
+        if vocab and label.lower() not in vocab:
+            continue
+        rows.append({
+            "text": text,
+            "label": label,
+            "rationale": _extract_field(item, _RATIONALE_ALIASES),
+            "source_excerpt": _extract_field(item, _SOURCE_EXCERPT_ALIASES),
+        })
+
+    if not rows:
+        _raise_parse_error(
+            items=items,
+            payload=payload,
+            content=content,
+            recipe_id="classification",
+            required_field_summary="text + label",
+        )
+    _check_count_drift(rows, expected_count)
+    return rows
+
+
+def _parse_span_rows(
+    content: str,
+    expected_count: int,
+) -> list[dict[str, Any]]:
+    """Parse span-extraction rows. Returns dicts with shape
+    `{text, entities, rationale, source_excerpt}` where ``entities``
+    is a list of `{type, start, end, text}` dicts. Per-span offsets
+    are validated against the row's text — spans where
+    ``text[start:end]`` doesn't match the span's claimed text are
+    dropped silently (off-by-one is the dominant LLM failure for
+    this shape; we don't poison eval with broken offsets)."""
+    try:
+        payload = extract_json_payload(content)
+    except ValueError as exc:
+        raise GoldGenerationError(
+            "LLM_RESPONSE_UNPARSEABLE",
+            f"LLM response was not parseable JSON: {exc}",
+        ) from exc
+
+    items = _extract_items(payload)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # Preserve original whitespace: span offsets are indexed
+        # against the raw text. Stripping would silently break valid
+        # spans whose offsets land inside the leading/trailing space.
+        text = _extract_field_raw(item, _TEXT_FIELD_ALIASES)
+        if not text:
+            continue
+        raw_entities = _extract_list(item, _ENTITIES_FIELD_ALIASES)
+        clean_entities: list[dict[str, Any]] = []
+        for ent in raw_entities:
+            if not isinstance(ent, dict):
+                continue
+            etype = str(ent.get("type") or ent.get("label") or "").strip()
+            try:
+                start = int(ent.get("start", -1))
+                end = int(ent.get("end", -1))
+            except (TypeError, ValueError):
+                continue
+            if start < 0 or end <= start or end > len(text) or not etype:
+                continue
+            span_text = str(ent.get("text") or text[start:end]).strip()
+            # Verify offsets actually match the claimed span text. We
+            # allow whitespace-tolerant equality because some LLMs
+            # emit the span text with surrounding spaces stripped.
+            actual = text[start:end]
+            if actual.strip() != span_text.strip():
+                continue
+            clean_entities.append({
+                "type": etype,
+                "start": start,
+                "end": end,
+                "text": actual,  # canonicalize to the offset-derived text
+            })
+        # Rows can legitimately have zero entities (negative examples).
+        # Accept the row as long as the text is present + any provided
+        # entities passed offset validation.
+        if raw_entities and not clean_entities:
+            # The model tried but all spans were broken — drop the row.
+            continue
+        rows.append({
+            "text": text,
+            "entities": clean_entities,
+            "rationale": _extract_field(item, _RATIONALE_ALIASES),
+            "source_excerpt": _extract_field(item, _SOURCE_EXCERPT_ALIASES),
+        })
+
+    if not rows:
+        _raise_parse_error(
+            items=items,
+            payload=payload,
+            content=content,
+            recipe_id="span-extraction",
+            required_field_summary="text + entities[]",
+        )
+    _check_count_drift(rows, expected_count)
+    return rows
+
+
+def _parse_summarization_rows(
+    content: str,
+    expected_count: int,
+) -> list[dict[str, Any]]:
+    """Parse summarization rows. Returns dicts with shape
+    `{document, summary, rationale, source_excerpt}`. Rows missing
+    document or summary are skipped; rows where summary >= document
+    in length are dropped (a "summary" longer than its document is
+    a guaranteed bad eval row)."""
+    try:
+        payload = extract_json_payload(content)
+    except ValueError as exc:
+        raise GoldGenerationError(
+            "LLM_RESPONSE_UNPARSEABLE",
+            f"LLM response was not parseable JSON: {exc}",
+        ) from exc
+
+    items = _extract_items(payload)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        document = _extract_field(item, _DOCUMENT_FIELD_ALIASES)
+        summary = _extract_field(item, _SUMMARY_FIELD_ALIASES)
+        if not document or not summary:
+            continue
+        if len(summary) >= len(document):
+            continue
+        rows.append({
+            "document": document,
+            "summary": summary,
+            "rationale": _extract_field(item, _RATIONALE_ALIASES),
+            "source_excerpt": _extract_field(item, _SOURCE_EXCERPT_ALIASES),
+        })
+
+    if not rows:
+        _raise_parse_error(
+            items=items,
+            payload=payload,
+            content=content,
+            recipe_id="summarization",
+            required_field_summary="document + summary (summary < document length)",
+        )
+    _check_count_drift(rows, expected_count)
+    return rows
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────
@@ -612,13 +1209,11 @@ async def generate_gold_qa_via_llm(
             "Project has no selected recipe — pick a recipe before "
             "generating gold Q&A.",
         )
-    if recipe_id != "qa-sft":
+    if recipe_id not in SUPPORTED_RECIPES:
         raise GoldGenerationError(
             "RECIPE_NOT_SUPPORTED",
-            f"LLM-assisted gold generation v1 only supports the "
-            f"'qa-sft' recipe (project is using '{recipe_id}'). "
-            "Classification + span-extraction will be added in a "
-            "follow-up phase.",
+            f"LLM-assisted gold generation supports {list(SUPPORTED_RECIPES)} "
+            f"(project is using '{recipe_id}').",
         )
 
     # Pull the active domain blueprint for richer prompting.
@@ -642,13 +1237,23 @@ async def generate_gold_qa_via_llm(
         pool = await _load_project_cleaned_chunks(project_id)
         reference_chunks = _sample_reference_chunks(pool)
 
-    user_prompt = _build_user_prompt(
+    # Classification needs the project's label space so the LLM stays
+    # in vocabulary. Pull from any existing gold rows on disk — empty
+    # is fine, the prompt has a fallback path.
+    known_labels: list[str] = []
+    if recipe_id == "classification":
+        known_labels = await _load_known_classification_labels(project_id)
+
+    user_prompt = _build_prompt_for_recipe(
+        recipe_id=recipe_id,
         project=project,
         blueprint=blueprint,
         count=count,
         focus_hint=focus_hint,
         reference_chunks=reference_chunks if reference_chunks else None,
+        known_labels=known_labels,
     )
+    system_prompt = _SYSTEM_PROMPTS_BY_RECIPE.get(recipe_id, _SYSTEM_PROMPT_QA)
 
     # Generous max_tokens for grounded calls: each row carries Q + A
     # + rationale + source_excerpt (4 fields × ~100 chars × 10 rows
@@ -670,7 +1275,7 @@ async def generate_gold_qa_via_llm(
         response = await call_openai_chat(
             api_key=api_key,
             model=model,
-            system_prompt=_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             api_url=api_url,
             max_tokens=grounded_max_tokens,
@@ -679,7 +1284,7 @@ async def generate_gold_qa_via_llm(
         response = await call_anthropic_chat(
             api_key=api_key,
             model=model,
-            system_prompt=_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=grounded_max_tokens,
         )
@@ -689,10 +1294,16 @@ async def generate_gold_qa_via_llm(
             f"Provider '{provider}' is not supported. Use 'openai' or 'anthropic'.",
         )
 
-    rows = _parse_qa_payload(response.content, count)
+    rows = _parse_rows_for_recipe(
+        recipe_id=recipe_id,
+        content=response.content,
+        expected_count=count,
+        known_labels=known_labels,
+    )
 
     return GenerationResult(
         rows=rows,
+        recipe_id=recipe_id,
         provider=provider,
         model=response.model,
         prompt_tokens=response.prompt_tokens,
@@ -705,3 +1316,146 @@ async def generate_gold_qa_via_llm(
             completion_tokens=response.completion_tokens,
         ),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-recipe dispatch tables + helpers
+# ─────────────────────────────────────────────────────────────────────
+
+
+_SYSTEM_PROMPTS_BY_RECIPE: dict[str, str] = {
+    "qa-sft": _SYSTEM_PROMPT_QA,
+    "classification": _SYSTEM_PROMPT_CLASSIFICATION,
+    "span-extraction": _SYSTEM_PROMPT_SPAN,
+    "summarization": _SYSTEM_PROMPT_SUMMARIZATION,
+}
+
+
+def _build_prompt_for_recipe(
+    *,
+    recipe_id: str,
+    project: Project,
+    blueprint: DomainBlueprintRevision | None,
+    count: int,
+    focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None,
+    known_labels: list[str],
+) -> str:
+    """Route to the per-recipe prompt builder. Caller guarantees the
+    recipe is in ``SUPPORTED_RECIPES`` (validated upstream)."""
+    if recipe_id == "qa-sft":
+        return _build_qa_prompt(
+            project=project,
+            blueprint=blueprint,
+            count=count,
+            focus_hint=focus_hint,
+            reference_chunks=reference_chunks,
+        )
+    if recipe_id == "classification":
+        return _build_classification_prompt(
+            project=project,
+            blueprint=blueprint,
+            count=count,
+            focus_hint=focus_hint,
+            reference_chunks=reference_chunks,
+            known_labels=known_labels,
+        )
+    if recipe_id == "span-extraction":
+        return _build_span_prompt(
+            project=project,
+            blueprint=blueprint,
+            count=count,
+            focus_hint=focus_hint,
+            reference_chunks=reference_chunks,
+        )
+    if recipe_id == "summarization":
+        return _build_summarization_prompt(
+            project=project,
+            blueprint=blueprint,
+            count=count,
+            focus_hint=focus_hint,
+            reference_chunks=reference_chunks,
+        )
+    raise GoldGenerationError(
+        "RECIPE_NOT_SUPPORTED",
+        f"No prompt builder registered for recipe '{recipe_id}'.",
+    )
+
+
+def _parse_rows_for_recipe(
+    *,
+    recipe_id: str,
+    content: str,
+    expected_count: int,
+    known_labels: list[str],
+) -> list[dict[str, Any]]:
+    """Route to the per-recipe parser. qa-sft returns ``GeneratedQa``
+    dataclasses internally — we convert them to dicts here so the API
+    surface is uniform across recipes."""
+    if recipe_id == "qa-sft":
+        qa_rows = _parse_qa_payload(content, expected_count)
+        return [
+            {
+                "question": r.question,
+                "answer": r.answer,
+                "rationale": r.rationale,
+                "source_excerpt": r.source_excerpt,
+            }
+            for r in qa_rows
+        ]
+    if recipe_id == "classification":
+        return _parse_classification_rows(
+            content, expected_count, known_labels=known_labels,
+        )
+    if recipe_id == "span-extraction":
+        return _parse_span_rows(content, expected_count)
+    if recipe_id == "summarization":
+        return _parse_summarization_rows(content, expected_count)
+    raise GoldGenerationError(
+        "RECIPE_NOT_SUPPORTED",
+        f"No parser registered for recipe '{recipe_id}'.",
+    )
+
+
+async def _load_known_classification_labels(project_id: int) -> list[str]:
+    """Read any existing gold rows for the project + extract labels.
+    Best-effort — returns ``[]`` when no gold rows exist yet. Done as
+    a soft read so a fresh project doesn't fail; the prompt has a
+    fallback path that asks the LLM to pick labels."""
+    from app.services.trainability_forecast_service import (
+        _extract_classification_labels,
+    )
+
+    # Both gold_dev + gold_test on disk. Use the JSONL files
+    # directly (gold_service reads + writes the same shape so this
+    # is cheap + side-effect-free).
+    base = settings.DATA_DIR / "projects" / str(project_id) / "gold"
+    rows: list[dict[str, Any]] = []
+    for fname in ("gold_dev.jsonl", "gold_test.jsonl"):
+        path = base / fname
+        if not path.exists():
+            continue
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    rows.append(parsed)
+        except OSError:
+            continue
+    labels = _extract_classification_labels(rows)
+    # De-dup while preserving order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for label in labels:
+        key = label.strip()
+        if not key or key.lower() in seen:
+            continue
+        seen.add(key.lower())
+        out.append(key)
+    return out

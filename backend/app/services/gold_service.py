@@ -99,7 +99,22 @@ async def import_qa_pairs(
     pairs: list[dict],
     dataset_type: DatasetType = DatasetType.GOLD_DEV,
 ) -> dict:
-    """Import multiple Q&A pairs at once."""
+    """Import gold rows in any recipe shape.
+
+    Despite the historic ``import_qa_pairs`` name, this is the
+    generic gold-import path used by all recipes. The function:
+      * preserves every caller-supplied field (spread ``**pair``)
+      * overlays system fields (``id``, ``created_at``) on top
+      * defaults QA-era flags (``difficulty`` / ``criticality`` /
+        ``is_hallucination_trap``) so existing eval surfaces that
+        read them on qa-sft rows keep working
+
+    Non-QA recipes (classification, span-extraction, summarization)
+    pass their own shapes (``text``+``label``, ``text``+``entities``,
+    ``document``+``summary``) and those fields round-trip cleanly
+    into the JSONL file. The evaluator's field-alias lookup picks
+    them up downstream.
+    """
     ds = await get_or_create_gold_dataset(db, project_id, dataset_type)
     if ds.is_locked:
         raise ValueError("Gold dataset is locked. Cannot add new entries.")
@@ -111,16 +126,21 @@ async def import_qa_pairs(
     count = 0
     with open(file_path, "a", encoding="utf-8") as f:
         for pair in pairs:
-            entry = {
-                "id": ds.record_count + count + 1,
-                "question": pair.get("question", ""),
-                "answer": pair.get("answer", ""),
-                "difficulty": pair.get("difficulty", "medium"),
-                "criticality": pair.get("criticality", "normal"),
-                "is_hallucination_trap": pair.get("is_hallucination_trap", False),
-                "metadata": pair.get("metadata", {}),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
+            # Preserve everything the caller sent (recipe-shape fields
+            # like text/label/entities/document/summary survive).
+            entry: dict = dict(pair)
+            # Backfill QA-era defaults only when the caller didn't
+            # supply them — eval handlers for non-QA recipes ignore
+            # these keys, so the cost of keeping them as defaults is
+            # zero.
+            entry.setdefault("difficulty", "medium")
+            entry.setdefault("criticality", "normal")
+            entry.setdefault("is_hallucination_trap", False)
+            entry.setdefault("metadata", {})
+            # System-owned fields ALWAYS win — never let the caller
+            # override id / created_at.
+            entry["id"] = ds.record_count + count + 1
+            entry["created_at"] = datetime.now(timezone.utc).isoformat()
             f.write(json.dumps(entry) + "\n")
             count += 1
 

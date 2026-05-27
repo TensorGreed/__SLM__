@@ -37,18 +37,45 @@ import { toast } from '../../stores/toastStore';
  */
 type Provider = 'openai' | 'anthropic' | 'deepseek';
 
+/** Recipe ids the panel renders for. Mirrors backend ``SUPPORTED_RECIPES``.
+ *  Each recipe gets its own row preview + save-payload mapping. */
+type RecipeId = 'qa-sft' | 'classification' | 'span-extraction' | 'summarization';
+
+/** Recipe-shaped generated row. Each recipe carries different keys:
+ *   * qa-sft: question + answer
+ *   * classification: text + label
+ *   * span-extraction: text + entities[]
+ *   * summarization: document + summary
+ *  Shared: rationale + source_excerpt (always optional). */
+interface GeneratedSpan {
+    type: string;
+    start: number;
+    end: number;
+    text: string;
+}
+
 interface GeneratedRow {
-    question: string;
-    answer: string;
-    rationale: string;
-    /** Present when grounding is on + the LLM included the field.
-     *  The user uses this to spot-check that each answer is anchored
-     *  to actual source material, not an LLM hallucination. */
+    // qa-sft
+    question?: string;
+    answer?: string;
+    // classification
+    text?: string;
+    label?: string;
+    // span-extraction
+    entities?: GeneratedSpan[];
+    // summarization
+    document?: string;
+    summary?: string;
+    // shared
+    rationale?: string;
     source_excerpt?: string;
 }
 
 interface GenerateResponse {
     rows: GeneratedRow[];
+    /** Recipe the rows are shaped for. Drives the per-recipe preview
+     *  render + the save-payload mapping. */
+    recipe_id: RecipeId;
     provider: Provider;
     model: string;
     usage: { prompt_tokens: number; completion_tokens: number };
@@ -74,6 +101,10 @@ interface SavedKeyResponse {
 interface Props {
     projectId: number;
     datasetType: string;
+    /** Recipe id from the parent. The panel branches its prompt
+     *  + row preview + save payload on this. Defaults to qa-sft
+     *  for backward compat with callers that haven't been updated. */
+    recipeId?: RecipeId;
     /** Called after rows are saved into the gold set so the parent
      *  panel can re-fetch its entries list. */
     onRowsSaved: () => void;
@@ -81,6 +112,31 @@ interface Props {
      *  for tests + future "remember the last picked model" plumbing. */
     initialProvider?: Provider;
 }
+
+/** Per-recipe UX copy: panel headline + focus-hint placeholder.
+ *  Centralized so adding a fifth recipe is a one-row edit. */
+const RECIPE_UX: Record<RecipeId, { headline: string; focusPlaceholder: string }> = {
+    'qa-sft': {
+        headline: '✨ Generate Q&A with a flagship LLM',
+        focusPlaceholder:
+            'e.g. focus on edge cases around refunds; cover questions a first-time customer would ask',
+    },
+    classification: {
+        headline: '✨ Generate classification examples with a flagship LLM',
+        focusPlaceholder:
+            'e.g. labels: positive, negative, neutral; cover sarcasm + mixed-sentiment edge cases',
+    },
+    'span-extraction': {
+        headline: '✨ Generate span-extraction examples with a flagship LLM',
+        focusPlaceholder:
+            'e.g. span types: email, phone, ssn; cover cases with multiple PII per row',
+    },
+    summarization: {
+        headline: '✨ Generate (document, summary) pairs with a flagship LLM',
+        focusPlaceholder:
+            'e.g. meeting transcripts → executive summaries; keep summaries to 2-3 sentences',
+    },
+};
 
 
 const DEFAULT_MODELS: Record<Provider, { value: string; label: string }[]> = {
@@ -150,12 +206,130 @@ function extractErrorMessage(err: unknown): { code: string; message: string } {
 }
 
 
+/**
+ * Per-recipe preview-row body. Renders the recipe's load-bearing
+ * fields with shape-appropriate framing:
+ *   * qa-sft → Q + A
+ *   * classification → text + label-as-badge
+ *   * span-extraction → text + entity-table
+ *   * summarization → document (collapsed) + summary
+ */
+function PreviewRowBody({
+    recipeId,
+    row,
+    idx,
+}: {
+    recipeId: RecipeId;
+    row: GeneratedRow;
+    idx: number;
+}) {
+    if (recipeId === 'classification') {
+        return (
+            <>
+                <div style={{ fontWeight: 600 }} data-testid={`llm-gold-preview-row-${idx}-text`}>
+                    {row.text}
+                </div>
+                <div style={{ marginTop: 4 }} data-testid={`llm-gold-preview-row-${idx}-label`}>
+                    <span
+                        className="badge badge-info"
+                        style={{ fontFamily: 'monospace' }}
+                    >
+                        {row.label}
+                    </span>
+                </div>
+            </>
+        );
+    }
+    if (recipeId === 'span-extraction') {
+        const entities = row.entities || [];
+        return (
+            <>
+                <div
+                    style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}
+                    data-testid={`llm-gold-preview-row-${idx}-text`}
+                >
+                    {row.text}
+                </div>
+                <div
+                    style={{ marginTop: 4, fontSize: '0.85rem' }}
+                    data-testid={`llm-gold-preview-row-${idx}-entities`}
+                >
+                    {entities.length === 0 ? (
+                        <em style={{ color: 'var(--text-tertiary)' }}>
+                            No entities (negative example)
+                        </em>
+                    ) : (
+                        <ul style={{ margin: 0, paddingLeft: 'var(--space-md)' }}>
+                            {entities.map((ent, ei) => (
+                                <li key={ei}>
+                                    <span className="badge badge-accent" style={{ marginRight: 4 }}>
+                                        {ent.type}
+                                    </span>
+                                    <span style={{ fontFamily: 'monospace' }}>
+                                        "{ent.text}"
+                                    </span>
+                                    <span style={{ color: 'var(--text-tertiary)', marginLeft: 6 }}>
+                                        [{ent.start}:{ent.end}]
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            </>
+        );
+    }
+    if (recipeId === 'summarization') {
+        // Document is potentially long — keep it readable but
+        // collapsed-by-default so the row preview stays scannable.
+        return (
+            <>
+                <details data-testid={`llm-gold-preview-row-${idx}-document`}>
+                    <summary style={{ fontWeight: 600, cursor: 'pointer' }}>
+                        Document ({(row.document || '').length} chars) — click to expand
+                    </summary>
+                    <div
+                        style={{
+                            marginTop: 4,
+                            whiteSpace: 'pre-wrap',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-secondary)',
+                        }}
+                    >
+                        {row.document}
+                    </div>
+                </details>
+                <div
+                    style={{ marginTop: 4 }}
+                    data-testid={`llm-gold-preview-row-${idx}-summary`}
+                >
+                    <strong>Summary:</strong> {row.summary}
+                </div>
+            </>
+        );
+    }
+    // Default: qa-sft.
+    return (
+        <>
+            <div style={{ fontWeight: 600 }}>
+                Q: {row.question}
+            </div>
+            <div style={{ marginTop: 4 }}>
+                A: {row.answer}
+            </div>
+        </>
+    );
+}
+
+
 export default function LlmGoldGeneratePanel({
     projectId,
     datasetType,
+    recipeId = 'qa-sft',
     onRowsSaved,
     initialProvider,
 }: Props) {
+    const recipeUx = RECIPE_UX[recipeId] || RECIPE_UX['qa-sft'];
     const [provider, setProvider] = useState<Provider>(initialProvider || 'openai');
     const [model, setModel] = useState<string>(DEFAULT_MODELS.openai[0].value);
     // Override slot for unusual / unreleased / private model ids
@@ -421,15 +595,28 @@ export default function LlmGoldGeneratePanel({
         }
         setSaving(true);
         try {
+            // Build the save payload per recipe — only the
+            // recipe-relevant fields are sent so the JSONL row stays
+            // clean. ``import_qa_pairs`` spreads ``**pair`` so any
+            // extra keys we send round-trip into the file unchanged.
+            // Rationale is dropped (the user already used it for
+            // review; no eval handler reads it today).
+            const previewRecipe = preview.recipe_id;
+            const pairs = selectedRows.map((r) => {
+                switch (previewRecipe) {
+                    case 'classification':
+                        return { text: r.text, label: r.label };
+                    case 'span-extraction':
+                        return { text: r.text, entities: r.entities || [] };
+                    case 'summarization':
+                        return { document: r.document, summary: r.summary };
+                    case 'qa-sft':
+                    default:
+                        return { question: r.question, answer: r.answer };
+                }
+            });
             await api.post(`/projects/${projectId}/gold/import`, {
-                pairs: selectedRows.map((r) => ({
-                    question: r.question,
-                    answer: r.answer,
-                    // Existing /gold/import accepts difficulty / criticality
-                    // / hallucination flags but lets them default. Rationale
-                    // doesn't have a column today — drop it (the user has
-                    // already used it for review).
-                })),
+                pairs,
                 dataset_type: datasetType,
             });
             toast.success(
@@ -462,7 +649,7 @@ export default function LlmGoldGeneratePanel({
             style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}
         >
             <header>
-                <h3 style={{ margin: 0 }}>✨ Generate Q&A with a flagship LLM</h3>
+                <h3 style={{ margin: 0 }}>{recipeUx.headline}</h3>
                 <p
                     style={{
                         margin: '4px 0 0',
@@ -699,7 +886,7 @@ export default function LlmGoldGeneratePanel({
                     rows={2}
                     value={focusHint}
                     onChange={(e) => setFocusHint(e.target.value)}
-                    placeholder="e.g. focus on edge cases around refunds; cover questions a first-time customer would ask"
+                    placeholder={recipeUx.focusPlaceholder}
                     data-testid="llm-gold-focus-hint"
                 />
             </div>
@@ -828,7 +1015,7 @@ export default function LlmGoldGeneratePanel({
                             }}
                             data-testid="llm-gold-preview-meta"
                         >
-                            {preview.provider} · {preview.model} ·{' '}
+                            {preview.recipe_id} · {preview.provider} · {preview.model} ·{' '}
                             {preview.usage.prompt_tokens + preview.usage.completion_tokens} tokens
                             {' · '}
                             <strong data-testid="llm-gold-preview-cost">
@@ -875,12 +1062,11 @@ export default function LlmGoldGeneratePanel({
                                     style={{ marginTop: 4 }}
                                 />
                                 <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 600 }}>
-                                        Q: {row.question}
-                                    </div>
-                                    <div style={{ marginTop: 4 }}>
-                                        A: {row.answer}
-                                    </div>
+                                    <PreviewRowBody
+                                        recipeId={preview.recipe_id}
+                                        row={row}
+                                        idx={idx}
+                                    />
                                     {row.rationale && (
                                         <div
                                             style={{

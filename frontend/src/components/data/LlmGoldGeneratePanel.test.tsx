@@ -30,6 +30,7 @@ function makeGenerateResponse(overrides: Record<string, unknown> = {}) {
             { question: 'Q2?', answer: 'A2.', rationale: '', source_excerpt: '' },
             { question: 'Q3?', answer: 'A3.', rationale: '', source_excerpt: '' },
         ],
+        recipe_id: 'qa-sft',
         provider: 'openai',
         model: 'gpt-4o-mini',
         usage: { prompt_tokens: 120, completion_tokens: 350 },
@@ -736,6 +737,277 @@ describe('LlmGoldGeneratePanel', () => {
         expect(screen.queryByTestId('llm-gold-stored-key-row')).not.toBeInTheDocument();
         // GET was called at least twice — initial mount + post-delete refetch.
         expect(getCallCount).toBeGreaterThanOrEqual(2);
+    });
+
+    // ── Per-recipe rendering + save payload ────────────────────────
+
+    it('classification: renders text + label badges + headline copy', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'classification',
+                rows: [
+                    { text: 'I love this app', label: 'positive' },
+                    { text: 'It crashes constantly', label: 'negative' },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="classification"
+                onRowsSaved={() => {}}
+            />,
+        );
+        // Recipe-specific headline copy.
+        expect(screen.getByText(/classification examples/i)).toBeInTheDocument();
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        // text + label appear via recipe-specific testids.
+        expect(screen.getByTestId('llm-gold-preview-row-0-text').textContent).toBe(
+            'I love this app',
+        );
+        expect(screen.getByTestId('llm-gold-preview-row-0-label').textContent).toContain(
+            'positive',
+        );
+        // No qa-sft framing on the row body.
+        expect(
+            screen.queryByText(/^Q:/),
+        ).not.toBeInTheDocument();
+    });
+
+    it('classification: Save sends pairs with text/label keys only', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'classification',
+                rows: [
+                    { text: 'good', label: 'positive' },
+                    { text: 'bad', label: 'negative' },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                recipeId="classification"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-save'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/42/gold/import',
+                expect.objectContaining({
+                    dataset_type: 'gold_dev',
+                    pairs: [
+                        { text: 'good', label: 'positive' },
+                        { text: 'bad', label: 'negative' },
+                    ],
+                }),
+            );
+        });
+    });
+
+    it('span-extraction: renders entities with type + offsets', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'span-extraction',
+                rows: [
+                    {
+                        text: 'Contact jane@example.com today',
+                        entities: [
+                            {
+                                type: 'email',
+                                start: 8,
+                                end: 24,
+                                text: 'jane@example.com',
+                            },
+                        ],
+                    },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="span-extraction"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        const entitiesBlock = screen.getByTestId('llm-gold-preview-row-0-entities');
+        expect(entitiesBlock.textContent).toContain('email');
+        expect(entitiesBlock.textContent).toContain('jane@example.com');
+        // Offsets surfaced inline so the user can sanity-check positions.
+        expect(entitiesBlock.textContent).toContain('[8:24]');
+    });
+
+    it('span-extraction: empty entities renders the negative-example hint', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'span-extraction',
+                rows: [{ text: 'clean text, no PII', entities: [] }],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="span-extraction"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('llm-gold-preview-row-0-entities').textContent,
+        ).toMatch(/negative example/i);
+    });
+
+    it('span-extraction: Save sends pairs with text + entities arrays', async () => {
+        const spans = [
+            { type: 'email', start: 8, end: 24, text: 'jane@example.com' },
+        ];
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'span-extraction',
+                rows: [
+                    { text: 'Contact jane@example.com today', entities: spans },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={7}
+                datasetType="gold_test"
+                recipeId="span-extraction"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-save'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/7/gold/import',
+                expect.objectContaining({
+                    dataset_type: 'gold_test',
+                    pairs: [
+                        {
+                            text: 'Contact jane@example.com today',
+                            entities: spans,
+                        },
+                    ],
+                }),
+            );
+        });
+    });
+
+    it('summarization: renders document (collapsed) + summary', async () => {
+        const longDoc = 'This is a long document. '.repeat(8);
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'summarization',
+                rows: [
+                    { document: longDoc, summary: 'Short summary.' },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                recipeId="summarization"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        // Document collapsed by default in a <details> element.
+        const docBlock = screen.getByTestId('llm-gold-preview-row-0-document');
+        expect(docBlock.tagName.toLowerCase()).toBe('details');
+        expect(docBlock.textContent).toMatch(/Document \(\d+ chars\)/);
+        // Summary visible.
+        expect(
+            screen.getByTestId('llm-gold-preview-row-0-summary').textContent,
+        ).toContain('Short summary.');
+    });
+
+    it('summarization: Save sends pairs with document/summary keys', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                recipe_id: 'summarization',
+                rows: [
+                    {
+                        document: 'Long document about the meeting.',
+                        summary: 'Meeting summary.',
+                    },
+                ],
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={42}
+                datasetType="gold_dev"
+                recipeId="summarization"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-save'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/42/gold/import',
+                expect.objectContaining({
+                    dataset_type: 'gold_dev',
+                    pairs: [{
+                        document: 'Long document about the meeting.',
+                        summary: 'Meeting summary.',
+                    }],
+                }),
+            );
+        });
     });
 
     it('source_excerpt renders per row when present', async () => {
