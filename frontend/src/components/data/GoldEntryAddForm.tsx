@@ -306,6 +306,20 @@ export default function GoldEntryAddForm({
         )
     );
 
+    /** Classification-side equivalent: drives the same amber-border
+     *  hint on the Label input when the user types a label that
+     *  doesn't already exist in the project's gold rows. Label drift
+     *  ("positive" vs "Positive (with sentiment)") silently fragments
+     *  eval metrics — surface it as a soft warning before the user
+     *  bakes it into the gold set. */
+    const labelIsNew = (
+        recipeId === 'classification'
+        && label.trim().length > 0
+        && !knownLabels.some(
+            (l) => l.toLowerCase() === label.trim().toLowerCase(),
+        )
+    );
+
     /** Remove the entity at ``idx`` from the JSON editor + re-
      *  pretty-print. When removing the last entity, clear the
      *  textarea to '' so the form returns to the empty-means-
@@ -508,7 +522,25 @@ export default function GoldEntryAddForm({
                             onChange={(e) => setLabel(e.target.value)}
                             list={knownLabels.length > 0 ? 'gold-add-known-labels' : undefined}
                             data-testid="gold-add-label"
-                            style={{ fontFamily: 'monospace' }}
+                            data-new-label={labelIsNew ? 'true' : 'false'}
+                            style={{
+                                fontFamily: 'monospace',
+                                // Soft amber tint when the typed
+                                // label isn't in the vocabulary —
+                                // signals "you're introducing a new
+                                // label" without blocking submit.
+                                // Label drift is a known eval-quality
+                                // hazard (five rows tagged ``positive``
+                                // and one stray ``Positive (with
+                                // sentiment)`` silently fragments
+                                // metrics).
+                                borderColor: labelIsNew
+                                    ? 'var(--color-warning)'
+                                    : undefined,
+                                boxShadow: labelIsNew
+                                    ? '0 0 0 2px var(--color-warning-bg)'
+                                    : undefined,
+                            }}
                         />
                         {knownLabels.length > 0 && (
                             <datalist id="gold-add-known-labels">
@@ -516,6 +548,19 @@ export default function GoldEntryAddForm({
                                     <option key={l} value={l} />
                                 ))}
                             </datalist>
+                        )}
+                        {labelIsNew && (
+                            <div
+                                data-testid="gold-add-label-new-hint"
+                                style={{
+                                    marginTop: 4,
+                                    fontSize: '0.8rem',
+                                    color: 'var(--color-warning)',
+                                }}
+                            >
+                                New label — not seen in this project's
+                                gold rows yet.
+                            </div>
                         )}
                     </div>
                 </>

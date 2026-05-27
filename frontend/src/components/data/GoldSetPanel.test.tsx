@@ -1491,6 +1491,163 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         await screen.findByTestId('gold-add-span-chip-0');
     });
 
+    // ── Classification Label drift warning (mirrors span-type) ─────
+
+    it('classification label: typing an existing label does NOT trigger the warning', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    text: 'seed',
+                    label: 'positive',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
+        fireEvent.change(labelInput, { target: { value: 'positive' } });
+        expect(labelInput.getAttribute('data-new-label')).toBe('false');
+        expect(
+            screen.queryByTestId('gold-add-label-new-hint'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('classification label: typing a brand-new label tints amber + shows the hint', async () => {
+        // The drift case the user spec explicitly named: existing
+        // labels are ``positive`` / ``negative``; user types
+        // ``Positive (with sentiment)``. Different string → warning.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    text: 'seed',
+                    label: 'positive',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+                {
+                    id: 2,
+                    text: 'seed2',
+                    label: 'negative',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
+        fireEvent.change(labelInput, {
+            target: { value: 'Positive (with sentiment)' },
+        });
+        expect(labelInput.getAttribute('data-new-label')).toBe('true');
+        const hint = await screen.findByTestId('gold-add-label-new-hint');
+        expect(hint.textContent).toMatch(/New label/);
+    });
+
+    it('classification label match is case-insensitive (POSITIVE == positive)', async () => {
+        // The drift-warning false-positive case: the user just
+        // re-capitalized an existing label. NOT a new label.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    text: 'seed',
+                    label: 'positive',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
+        fireEvent.change(labelInput, { target: { value: 'POSITIVE' } });
+        expect(labelInput.getAttribute('data-new-label')).toBe('false');
+    });
+
+    it('classification label warning does not block submit (soft hint only)', async () => {
+        // Plenty of legitimate flows still need to introduce a new
+        // label (first-time bootstrapping, expanding the taxonomy,
+        // etc.). The warning surfaces signal, doesn't block.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    text: 'seed',
+                    label: 'positive',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        apiMock.post.mockResolvedValue({ data: { id: 2 } });
+        render(<GoldSetPanel projectId={42} />);
+        await screen.findByTestId('gold-add-form');
+
+        fireEvent.change(screen.getByTestId('gold-add-text'), {
+            target: { value: 'It\'s fine, nothing special.' },
+        });
+        // Brand-new label — warning fires.
+        fireEvent.change(screen.getByTestId('gold-add-label'), {
+            target: { value: 'neutral' },
+        });
+        expect(
+            screen.getByTestId('gold-add-label-new-hint'),
+        ).toBeInTheDocument();
+        // Submit still enabled.
+        const submit = screen.getByTestId('gold-add-submit') as HTMLButtonElement;
+        expect(submit.disabled).toBe(false);
+        await userEvent.click(submit);
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/42/gold/add',
+                expect.objectContaining({
+                    text: "It's fine, nothing special.",
+                    label: 'neutral',
+                    dataset_type: 'gold_dev',
+                }),
+            );
+        });
+    });
+
+    it('classification label: empty input does not fire the warning', async () => {
+        // Falsy non-warning case: hint only appears when something
+        // is actually typed. Otherwise the form looks alarming on
+        // initial render.
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                {
+                    id: 1,
+                    text: 'seed',
+                    label: 'positive',
+                    difficulty: 'medium',
+                    is_hallucination_trap: false,
+                },
+            ],
+        });
+        render(<GoldSetPanel projectId={1} />);
+        await screen.findByTestId('gold-add-form');
+
+        const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
+        expect(labelInput.value).toBe('');
+        expect(labelInput.getAttribute('data-new-label')).toBe('false');
+        expect(
+            screen.queryByTestId('gold-add-label-new-hint'),
+        ).not.toBeInTheDocument();
+    });
+
     it('form resets after a successful submit', async () => {
         installGetRouter({ recipeId: 'qa-sft', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 1 } });
