@@ -73,6 +73,46 @@ curl -X POST http://localhost:8000/api/projects/1/experiments \
   }'
 ```
 
+## Trainability forecast
+
+The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".
+
+### Recipe-agnostic signals (always run)
+
+| Signal | Fires when |
+|---|---|
+| `row_count_below_minimum` | Labeled-corpus size is below the recipe's `min_rows_recommended` (block) or below 1.5× (warn). |
+| `goldset_diversity_low` | Mean pairwise token-Jaccard over gold rows is above 0.40 — rows look too similar to each other. |
+| `gate_pass_probability` | The overall heuristic; combines row count, base-model capacity, recipe difficulty, diversity, and (for classification) class entropy. |
+
+### Per-recipe signals
+
+Dispatched by the recipe's `task_profile`. A non-classification project never sees the classification signals and vice versa — the forecast was previously qa-sft-flavored and now adapts per recipe.
+
+| Recipe | Signal | Fires when |
+|---|---|---|
+| `classification` | `class_imbalance` | Shannon entropy of the label distribution is low (warn at `<1.0`, block at `<0.5`). |
+| `classification` | `per_class_minimum_unmet` | Any class has fewer than 5 examples (warn) or fewer than 2 (block). The corpus-wide minimum doesn't catch per-class starvation. |
+| `classification` | `label_vocab_fragmented` | Two or more labels collapse to the same canonical (lowercased + stripped) form — `"positive"` vs `"Positive"`. Same drift class the gold-set add form already warns about. |
+| `classification` | `single_class_dominance` | Any one class is more than 80% of the gold set. The model defaults to that class regardless of other signals. |
+| `span-extraction` | `format_inconsistency` | Some gold rows have missing/invalid span structures (non-dict, non-int offsets, `start > end`). |
+| `span-extraction` | `entity_type_coverage_thin` | Fewer than 3 distinct entity types across the gold set (warn). Single-type tasks block. |
+| `span-extraction` | `span_offset_invalid` | `text[start:end]` doesn't match `span.text` on some rows — silent offset rot that tanks exact-match scoring. Block when more than 10% of rows are bad. |
+| `span-extraction` | `negative_examples_missing` | No rows have an empty entities list. Without negatives the model learns "always extract something" and over-fires. |
+| `summarization` | `summary_doc_ratio_outliers` | Rows where the summary is more than 70% of the document length — usually a mislabeled paraphrase or the wrong column loaded into the summary slot. |
+
+Suggested actions on every signal map to one of `synth_augment` / `synth_balance` / `synth_diversify` / `fix_gold_rows`, surfaced as a one-click button next to the signal row.
+
+### API
+
+```sh
+curl http://localhost:8000/api/projects/1/training/forecast
+# Cached by default on `Project.training_forecast_cache`. Recipe + dataset + base-model changes invalidate.
+curl http://localhost:8000/api/projects/1/training/forecast?refresh=true
+```
+
+The forecast reads the project's `selected_recipe.recipe_id` and dispatches signals through a per-recipe builder — see [`backend/app/services/trainability_forecast_service.py`](https://github.com/anugram/__SLM__/blob/main/backend/app/services/trainability_forecast_service.py).
+
 ## Preflight blockers
 
 The preflight endpoint catches the common "this won't work" cases **before** the runner starts burning compute.

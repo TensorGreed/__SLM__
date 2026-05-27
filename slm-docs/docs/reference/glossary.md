@@ -269,6 +269,10 @@ Deployment-environment shape: `mobile_cpu`, `browser_webgpu`, `edge_gpu`, `vllm_
 
 One inference observation pushed to BrewSLM by your serving runtime (status, latency_ms, prompt_tokens, completion_tokens, TTFT). Rolls up into the deployment telemetry window. See [Post-deploy telemetry](../deployment/telemetry.md).
 
+## Trainability forecast
+
+Pre-training "will this clear gates?" prediction shown above the Preflight button on the Training Config page. Combines recipe-agnostic signals (row count, gold-set diversity, gate-pass probability heuristic) with per-recipe signals dispatched by `task_profile`. Classification adds class-imbalance, per-class minimums, label-vocab fragmentation, and single-class dominance. Span-extraction adds span-offset validity, entity-type coverage, and negative-example presence. Summarization adds summary/document length-ratio outlier detection. Advisory only — never blocks training; the Train button shifts to "Train anyway" when the verdict is amber/red. See [Training workflow](../workflows/training.md#trainability-forecast).
+
 ## Training mode
 
 What kind of fine-tuning the trainer runs: `sft` (instruction), `dpo` (direct preference), `orpo` (odds-ratio preference), `classification`, `seq2seq`. Filtered by the chosen base model's capabilities.

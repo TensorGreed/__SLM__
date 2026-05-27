@@ -34,11 +34,23 @@ from app.main import app
 from app.services.trainability_forecast_service import (
     DEFAULT_BASE_MODEL_PARAMS_M,
     KNOWN_BASE_MODEL_PARAMS_M,
+    _build_classification_signals,
+    _build_per_recipe_signals,
+    _build_span_extraction_signals,
+    _build_summarization_signals,
     _compute_cache_key,
+    _extract_summary_pair,
     _signal_class_imbalance,
+    _signal_entity_type_coverage,
     _signal_format_consistency,
     _signal_goldset_diversity,
+    _signal_label_vocab_fragmented,
+    _signal_negative_examples_missing,
+    _signal_per_class_minimum,
     _signal_row_count,
+    _signal_single_class_dominance,
+    _signal_span_offset_invalid,
+    _signal_summary_doc_ratio,
     estimate_gate_pass_prob,
     _overall_verdict,
 )
@@ -205,6 +217,365 @@ class HeuristicAndSignalUnitTests(unittest.TestCase):
         self.assertEqual(KNOWN_BASE_MODEL_PARAMS_M["HuggingFaceTB/SmolLM2-135M-Instruct"], 135)
         # Unknown model falls back to the conservative 135M assumption.
         self.assertEqual(DEFAULT_BASE_MODEL_PARAMS_M, 135)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-recipe signal tests (T3 — per-recipe trainability forecast).
+#
+# Each new signal gets two tests:
+#   1. Triggering-condition test: signal fires at the right severity
+#      with the right action params.
+#   2. Clean-state-doesn't-fire test: signal returns None / "ok" when
+#      the gold set is healthy for that recipe.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class ClassificationSignalTests(unittest.TestCase):
+    """Per-recipe builder + the three new classification signals."""
+
+    def test_per_class_minimum_blocks_when_a_class_has_zero_examples_floor(self):
+        # "billing"=8, "tech"=8, "rare"=1 → "rare" has < PER_CLASS_BLOCK.
+        counts = {"billing": 8, "tech": 8, "rare": 1}
+        signal = _signal_per_class_minimum(counts)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "block")
+        self.assertEqual(signal["id"], "per_class_minimum_unmet")
+        self.assertIn("rare", signal["suggested_action"]["params"]["underrepresented_classes"])
+
+    def test_per_class_minimum_warns_on_thin_but_nonzero_classes(self):
+        # "rare"=3 is below 5-floor but above 2-block.
+        counts = {"a": 20, "b": 20, "rare": 3}
+        signal = _signal_per_class_minimum(counts)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "warn")
+        self.assertIn("rare", signal["suggested_action"]["params"]["underrepresented_classes"])
+
+    def test_per_class_minimum_silent_when_every_class_clears_floor(self):
+        counts = {"a": 50, "b": 30, "c": 25}
+        self.assertIsNone(_signal_per_class_minimum(counts))
+
+    def test_label_vocab_fragmented_warns_on_case_dupes(self):
+        # "positive" + "Positive" collapse to the same canonical key.
+        counts = {"positive": 30, "Positive": 5, "negative": 20}
+        signal = _signal_label_vocab_fragmented(counts)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "warn")
+        self.assertEqual(signal["id"], "label_vocab_fragmented")
+        # Action carries the fragmented groups so the UI can render the merge UX.
+        groups = signal["suggested_action"]["params"]["fragment_groups"]
+        flattened = {label for group in groups for label in group}
+        self.assertIn("positive", flattened)
+        self.assertIn("Positive", flattened)
+
+    def test_label_vocab_fragmented_silent_on_clean_vocab(self):
+        counts = {"billing": 50, "tech": 30, "feature_request": 20}
+        self.assertIsNone(_signal_label_vocab_fragmented(counts))
+
+    def test_single_class_dominance_warns_when_one_class_above_80pct(self):
+        # 85/10/5 split → "a" dominates at 0.85.
+        counts = {"a": 85, "b": 10, "c": 5}
+        signal = _signal_single_class_dominance(counts)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "warn")
+        self.assertEqual(signal["id"], "single_class_dominance")
+        # Other classes carried in the action so synth_balance knows
+        # which classes to top up.
+        under = signal["suggested_action"]["params"]["underrepresented_classes"]
+        self.assertIn("b", under)
+        self.assertIn("c", under)
+
+    def test_single_class_dominance_silent_on_balanced_distribution(self):
+        # 70/30 binary — high imbalance but no single class above 80%.
+        counts = {"a": 70, "b": 30}
+        self.assertIsNone(_signal_single_class_dominance(counts))
+
+    def test_classification_builder_skips_signals_on_empty_gold(self):
+        # No rows → no signals + None entropy. The orchestrator falls
+        # back to recipe-agnostic signals only.
+        signals, entropy = _build_classification_signals([])
+        self.assertEqual(signals, [])
+        self.assertIsNone(entropy)
+
+    def test_classification_builder_emits_entropy_on_balanced_gold(self):
+        rows = [{"label": label} for label in ["a"] * 10 + ["b"] * 10 + ["c"] * 10]
+        signals, entropy = _build_classification_signals(rows)
+        self.assertIsNotNone(entropy)
+        # 3 equal classes → entropy ≈ ln(3) ≈ 1.1.
+        self.assertGreater(entropy, 1.0)
+        # All three new signals are quiet (none above their threshold);
+        # only the existing class_imbalance signal lands at "ok".
+        signal_ids = {s["id"] for s in signals}
+        self.assertIn("class_imbalance", signal_ids)
+        self.assertNotIn("per_class_minimum_unmet", signal_ids)
+        self.assertNotIn("label_vocab_fragmented", signal_ids)
+        self.assertNotIn("single_class_dominance", signal_ids)
+
+    def test_classification_builder_normalises_legacy_template_rows(self):
+        # Legacy {question, answer} rows from the template materializer
+        # (see demo_project_service._canonical_prepared_row) must feed
+        # the classification signals or template-instantiated projects
+        # get no per-recipe diagnostics.
+        rows = [
+            {"question": "Charge me $5", "answer": "billing"} for _ in range(20)
+        ] + [
+            {"question": "App crashes", "answer": "tech"} for _ in range(2)
+        ]
+        signals, entropy = _build_classification_signals(rows)
+        self.assertIsNotNone(entropy)
+        # 20:2 split puts "tech" below PER_CLASS_MINIMUM.
+        ids = {s["id"] for s in signals}
+        self.assertIn("per_class_minimum_unmet", ids)
+
+
+class SpanExtractionSignalTests(unittest.TestCase):
+    """The three new span-extraction signals + the recipe builder."""
+
+    def test_entity_type_coverage_blocks_on_single_type(self):
+        rows = [
+            {"input": {"text": f"row {i}"}, "expected": {"entities": [{"type": "email", "start": 0, "end": 5, "text": "row 0"}]}}
+            for i in range(10)
+        ]
+        signal = _signal_entity_type_coverage(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["id"], "entity_type_coverage_thin")
+        self.assertEqual(signal["severity"], "block")
+
+    def test_entity_type_coverage_ok_when_three_or_more_types(self):
+        rows = [
+            {"input": {"text": "x"}, "expected": {"entities": [{"type": t, "start": 0, "end": 1, "text": "x"}]}}
+            for t in ("email", "phone", "ssn", "name")
+        ]
+        signal = _signal_entity_type_coverage(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "ok")
+
+    def test_entity_type_coverage_skips_when_no_spans_recoverable(self):
+        # All rows lack any recognizable span payload — let the
+        # format_inconsistency signal drive the diagnostic instead.
+        rows = [{"foo": "bar"}, {"baz": "qux"}]
+        self.assertIsNone(_signal_entity_type_coverage(rows))
+
+    def test_span_offset_invalid_warns_when_text_slice_mismatches(self):
+        rows = [
+            {
+                "input": {"text": "Contact me at jane@example.com today."},
+                "expected": {"entities": [
+                    # Correct offsets: "jane@example.com" is at [14, 30].
+                    {"type": "email", "start": 14, "end": 30, "text": "jane@example.com"}
+                ]},
+            },
+            {
+                "input": {"text": "Contact me at jane@example.com today."},
+                "expected": {"entities": [
+                    # Bad offset — claims "jane" lives at [0, 4] but
+                    # source text at [0, 4] is "Cont".
+                    {"type": "email", "start": 0, "end": 4, "text": "jane"}
+                ]},
+            },
+        ]
+        signal = _signal_span_offset_invalid(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["id"], "span_offset_invalid")
+        # 50% bad → block.
+        self.assertEqual(signal["severity"], "block")
+        self.assertIn(1, signal["suggested_action"]["params"]["invalid_row_ids"])
+
+    def test_span_offset_invalid_silent_on_clean_offsets(self):
+        rows = [
+            {
+                "input": {"text": "Email jane@example.com or bob@example.com."},
+                "expected": {"entities": [
+                    {"type": "email", "start": 6, "end": 22, "text": "jane@example.com"},
+                    {"type": "email", "start": 26, "end": 41, "text": "bob@example.com"},
+                ]},
+            },
+        ]
+        signal = _signal_span_offset_invalid(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "ok")
+
+    def test_negative_examples_missing_warns_when_no_empty_entities(self):
+        rows = [
+            {"input": {"text": f"row {i}"}, "expected": {"entities": [{"type": "x", "start": 0, "end": 1, "text": "r"}]}}
+            for i in range(8)
+        ]
+        signal = _signal_negative_examples_missing(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["id"], "negative_examples_missing")
+        self.assertEqual(signal["severity"], "warn")
+
+    def test_negative_examples_missing_ok_when_some_empty_entities_present(self):
+        rows = [
+            {"input": {"text": f"row {i}"}, "expected": {"entities": [{"type": "x", "start": 0, "end": 1, "text": "r"}]}}
+            for i in range(7)
+        ] + [
+            {"input": {"text": "Just plain text with nothing to extract."}, "expected": {"entities": []}}
+        ]
+        signal = _signal_negative_examples_missing(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "ok")
+
+    def test_negative_examples_missing_silent_on_tiny_gold_set(self):
+        # < 5 rows with spans → skip rather than false-positive.
+        rows = [
+            {"input": {"text": f"row {i}"}, "expected": {"entities": [{"type": "x", "start": 0, "end": 1, "text": "r"}]}}
+            for i in range(3)
+        ]
+        self.assertIsNone(_signal_negative_examples_missing(rows))
+
+    def test_span_extraction_builder_handles_legacy_answer_shape(self):
+        # Legacy materialised rows have entities JSON-encoded in
+        # `answer` — the new signals must still see them. Build a 10-
+        # row set with a single entity type so entity_type_coverage
+        # fires.
+        rows = [
+            {
+                "question": f"Source text row {i} with phone +1-555-0100.",
+                "answer": json.dumps({
+                    "entities": [{"type": "phone", "start": 0, "end": 5, "text": "Sourc"}]
+                }),
+            }
+            for i in range(10)
+        ]
+        signals = _build_span_extraction_signals(rows)
+        ids = {s["id"] for s in signals}
+        # entity_type_coverage_thin fires because every row uses
+        # "phone" only. negative_examples_missing also fires because
+        # no row carries an empty entities list. These are the kinds
+        # of legacy-row gaps that would silently miss without the
+        # JSON-string normaliser.
+        self.assertIn("entity_type_coverage_thin", ids)
+        self.assertIn("negative_examples_missing", ids)
+
+
+class SummarizationSignalTests(unittest.TestCase):
+    """The new summarization signals + summary/doc extraction."""
+
+    def test_summary_doc_ratio_outliers_warns_when_summary_too_long(self):
+        # Each row has a "summary" that's actually longer than the
+        # document — clear mislabeling.
+        rows = [
+            {
+                "input": {"document": "A short doc."},
+                "expected": {"summary": "A summary that runs much longer than the source document"},
+            },
+            {
+                "input": {"document": "Another short doc here."},
+                "expected": {"summary": "Yet another summary that goes on and on and exceeds the source"},
+            },
+            {
+                "input": {"document": "Third short doc."},
+                "expected": {"summary": "A third even longer summary that exceeds the source document by a lot"},
+            },
+        ]
+        signal = _signal_summary_doc_ratio(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["id"], "summary_doc_ratio_outliers")
+        # 100% of rows mislabeled → block (≥30%).
+        self.assertEqual(signal["severity"], "block")
+
+    def test_summary_doc_ratio_outliers_ok_when_summaries_are_shorter(self):
+        rows = [
+            {
+                "input": {"document": "Long document " * 50},
+                "expected": {"summary": "Short summary."},
+            },
+            {
+                "input": {"document": "Another long document " * 40},
+                "expected": {"summary": "Another short summary."},
+            },
+        ]
+        signal = _signal_summary_doc_ratio(rows)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["severity"], "ok")
+
+    def test_summary_doc_ratio_silent_when_no_summary_pairs_recoverable(self):
+        # qa-sft rows with no summary column shouldn't trigger the
+        # signal even if the recipe dispatcher feeds them through.
+        rows = [{"foo": "bar"}, {"baz": "qux"}]
+        self.assertIsNone(_signal_summary_doc_ratio(rows))
+
+    def test_extract_summary_pair_handles_legacy_question_answer_shape(self):
+        # The summary materializer encodes summary as a JSON dict in
+        # `answer` for some template runs; other times it's plain text.
+        row_json = {
+            "question": "A long source document with multiple sentences explaining the topic.",
+            "answer": json.dumps({"summary": "Short recap."}),
+        }
+        pair = _extract_summary_pair(row_json)
+        self.assertIsNotNone(pair)
+        doc, summary = pair
+        self.assertIn("long source document", doc)
+        self.assertEqual(summary, "Short recap.")
+
+        # Plain text answer path.
+        row_plain = {
+            "question": "A long source document explaining the topic.",
+            "answer": "Short plaintext summary.",
+        }
+        pair = _extract_summary_pair(row_plain)
+        self.assertIsNotNone(pair)
+        _, summary_plain = pair
+        self.assertEqual(summary_plain, "Short plaintext summary.")
+
+    def test_summarization_builder_skips_when_pairs_unrecoverable(self):
+        # Gold rows that don't carry recoverable doc/summary pairs
+        # should produce no signals — the row_count signal still
+        # fires at the orchestrator level.
+        rows = [{"foo": "bar"}]
+        self.assertEqual(_build_summarization_signals(rows), [])
+
+
+class RecipeDispatchTests(unittest.TestCase):
+    """The orchestrator's per-recipe dispatcher."""
+
+    def test_dispatch_classification_routes_to_classification_builder(self):
+        rows = [{"label": "a"}, {"label": "b"}, {"label": "b"}]
+        signals, entropy = _build_per_recipe_signals(
+            task_profile="classification", gold_rows=rows
+        )
+        self.assertIsNotNone(entropy)
+        ids = {s["id"] for s in signals}
+        self.assertIn("class_imbalance", ids)
+
+    def test_dispatch_structured_extraction_routes_to_span_builder(self):
+        rows = [
+            {"input": {"text": "x"}, "expected": {"entities": [{"type": "t", "start": 0, "end": 1, "text": "x"}]}}
+            for _ in range(6)
+        ]
+        signals, entropy = _build_per_recipe_signals(
+            task_profile="structured_extraction", gold_rows=rows
+        )
+        # Span builder doesn't carry entropy back to the heuristic.
+        self.assertIsNone(entropy)
+        ids = {s["id"] for s in signals}
+        # All-one-type, no negatives — both signals expected.
+        self.assertIn("entity_type_coverage_thin", ids)
+        self.assertIn("negative_examples_missing", ids)
+
+    def test_dispatch_summarization_routes_to_summary_builder(self):
+        rows = [
+            {"input": {"document": "A long source doc going on for many words."},
+             "expected": {"summary": "Short recap."}}
+        ]
+        signals, entropy = _build_per_recipe_signals(
+            task_profile="summarization", gold_rows=rows
+        )
+        self.assertIsNone(entropy)
+        ids = {s["id"] for s in signals}
+        # Summary much shorter than doc → ok signal lands.
+        self.assertIn("summary_doc_ratio_outliers", ids)
+
+    def test_dispatch_instruction_sft_returns_no_recipe_signals(self):
+        # qa-sft + generic-sft + code-review all share
+        # task_profile="instruction_sft" and should produce no
+        # recipe-specific signals beyond the recipe-agnostic three.
+        rows = [{"question": "q", "answer": "a"} for _ in range(10)]
+        signals, entropy = _build_per_recipe_signals(
+            task_profile="instruction_sft", gold_rows=rows
+        )
+        self.assertEqual(signals, [])
+        self.assertIsNone(entropy)
 
 
 # ─────────────────────────────────────────────────────────────────────

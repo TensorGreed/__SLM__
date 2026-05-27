@@ -193,6 +193,10 @@ curl -X POST http://localhost:8000/api/projects/1/gold/add \
   -d '{"text":"Where is my refund?","label":"billing","dataset_type":"gold_dev"}'
 ```
 
+## Catch problems before training: trainability forecast
+
+The gold set is also the input to the **trainability forecast** (Training Config page). The forecast runs the same recipe-aware signal sweep on the gold set *before* training so you can patch the data shape upfront instead of waiting for the eval to surface it. Signals overlap with the failure clusters below (per-class starvation, label-vocab drift, span-offset rot, summary/doc mismatch) but trigger at design time, not post-mortem. See [Training → Trainability forecast](training.md#trainability-forecast) for the full signal list.
+
 ## Step 2 — Pick an eval pack
 
 An **eval pack** bundles task-aware metric schemas + gate policies. Built-in packs cover the common cases; you can scaffold custom packs via [Extensions → Scaffold](../extensions/scaffold.md).
