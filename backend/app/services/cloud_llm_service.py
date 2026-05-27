@@ -309,19 +309,65 @@ async def call_anthropic_chat(
 
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
+# Reasoning models (DeepSeek-R1 family, Qwen3 "/think", Claude's
+# extended thinking, the openai o-series) wrap their internal chain
+# of thought in ``<think>...</think>`` / ``<reasoning>...</reasoning>``
+# / ``<scratchpad>...</scratchpad>`` blocks BEFORE emitting the
+# user-facing answer. Many of them do this even when response_format
+# is set to json_object, since the format constraint only applies to
+# the final answer. The thinking text often contains JSON-shaped
+# fragments (the model rehearses the output mid-reasoning), so a
+# naïve "slice from first { to last }" picks up nonsense. Strip
+# these blocks BEFORE looking for JSON.
+_THINK_TAG_PATTERN = re.compile(
+    r"<\s*(think|thinking|reasoning|reflection|scratchpad|analysis)\s*>"
+    r".*?"
+    r"<\s*/\s*\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# Unterminated opening tags happen on streaming truncation — strip
+# everything from the open tag to end-of-text so the partial think
+# block doesn't poison the JSON slice path either.
+_UNTERMINATED_THINK_PATTERN = re.compile(
+    r"<\s*(think|thinking|reasoning|reflection|scratchpad|analysis)\s*>.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove ``<think>...</think>`` and friends. Idempotent + safe
+    to call on non-reasoning model output (no tags → no change)."""
+    cleaned = _THINK_TAG_PATTERN.sub("", text)
+    cleaned = _UNTERMINATED_THINK_PATTERN.sub("", cleaned)
+    return cleaned
+
 
 def extract_json_payload(raw: str) -> Any:
     """Pull a JSON object/array out of an LLM response.
 
     Real responses from both providers occasionally wrap the JSON in
     triple-backtick fences, prefix it with a sentence ("Here are the
-    Q&A pairs:"), or both. This helper strips the most common
-    wrappers and tries ``json.loads``; raises ``ValueError`` if no
-    parseable JSON is found.
+    Q&A pairs:"), include a ``<think>...</think>`` reasoning preamble
+    (R1-style models), or any combination. This helper strips the
+    most common wrappers and tries ``json.loads``; raises
+    ``ValueError`` if no parseable JSON is found.
     """
     text = (raw or "").strip()
     if not text:
         raise ValueError("LLM returned an empty response.")
+
+    # Strip reasoning blocks FIRST — their content frequently
+    # contains JSON-shaped fragments that would derail the slice
+    # path below.
+    text = _strip_thinking(text).strip()
+    if not text:
+        # Whole response was inside an unterminated <think> — common
+        # when the model ran out of tokens mid-thought.
+        raise ValueError(
+            "LLM response was entirely a reasoning preamble — no "
+            "JSON output was reached. Raise max_tokens or pick a "
+            f"non-reasoning model. First 200 chars: {raw[:200]!r}",
+        )
 
     # Prefer the first code-fenced block when present.
     fence_match = _CODE_FENCE_RE.search(text)

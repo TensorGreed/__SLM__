@@ -80,6 +80,53 @@ class ExtractJsonPayloadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_json_payload("not json at all just words")
 
+    def test_think_block_stripped_before_json_extraction(self):
+        # Reasoning models (deepseek-reasoner, R1 family, o-series)
+        # emit <think>...</think> preambles even with response_format
+        # set to json_object. Those blocks frequently contain {} and
+        # [] chars (rehearsing the output mid-reasoning), which would
+        # derail the naïve "slice from first { to last }" fallback.
+        raw = (
+            '<think>\nLet me think about the user\'s request. They '
+            'want pairs like {"question": "...", "answer": "..."}, '
+            'maybe 3 of them. Let me draft them.\n</think>\n\n'
+            '{"pairs":[{"question":"Q","answer":"A"}]}'
+        )
+        parsed = extract_json_payload(raw)
+        self.assertEqual(parsed, {"pairs": [{"question": "Q", "answer": "A"}]})
+
+    def test_unterminated_think_block_stripped(self):
+        # Streaming truncation / max_tokens hit mid-thought leaves an
+        # unterminated <think> — if it's all we have, fail with a
+        # helpful message; if real JSON came after, parse it.
+        from app.services.cloud_llm_service import extract_json_payload as _e
+
+        # Case A: everything was the think block — clear error.
+        with self.assertRaises(ValueError) as cm:
+            _e('<think>\nI was thinking but ran out of tokens before')
+        self.assertIn("reasoning preamble", str(cm.exception))
+
+        # Case B: think block followed by valid JSON, but the closing
+        # tag is missing. The unterminated stripper takes everything
+        # from <think> to EOF, so JSON after the think block is also
+        # lost. That's correct behavior — without the closing tag we
+        # can't tell where reasoning ended and answer began.
+        with self.assertRaises(ValueError):
+            _e('<think>thinking...\n{"pairs":[{"question":"Q","answer":"A"}]}')
+
+    def test_reasoning_with_code_fence_combo(self):
+        # Worst-case real-world shape: think block + code fence
+        # around the JSON. Both wrappers must strip cleanly.
+        raw = (
+            '<reasoning>analyzing the project context</reasoning>\n'
+            'Here are the pairs:\n```json\n'
+            '{"pairs":[{"question":"Q1","answer":"A1"}]}\n```'
+        )
+        parsed = extract_json_payload(raw)
+        self.assertEqual(
+            parsed, {"pairs": [{"question": "Q1", "answer": "A1"}]},
+        )
+
 
 class ParserToleranceTests(unittest.TestCase):
     """Direct tests of ``_parse_qa_payload`` — the alias map + container
@@ -778,9 +825,12 @@ class GroundingIntegrationTests(unittest.TestCase):
         user_prompt = captured.get("user_prompt") or ""
         self.assertIn("REFERENCE MATERIAL", user_prompt)
         self.assertIn("Topic A", user_prompt)
-        # Grounding-mode instructions tell the LLM to skip
-        # unsupported questions.
-        self.assertIn("SKIP that question", user_prompt)
+        # Grounding-mode instructions prefer source-grounded answers
+        # but allow fallback to project-domain knowledge when refs
+        # are thin (softened from the v1 "SKIP that question" wording
+        # which made some models return empty pairs / refusal text).
+        self.assertIn("Prefer answers grounded in the REFERENCE MATERIAL", user_prompt)
+        self.assertIn("source_excerpt", user_prompt)
 
     def test_ground_in_source_false_does_not_load_chunks(self):
         pid = self._make_qa_sft_project("Grounding Off")

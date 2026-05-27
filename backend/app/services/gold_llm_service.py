@@ -358,32 +358,29 @@ def _build_user_prompt(
 
     rules = [
         "Return ONLY valid JSON. No markdown, no code fences, no commentary.",
+        'Shape: {"pairs": [{"question": "...", "answer": "..."}]}',
     ]
     if grounded:
         rules.extend([
-            'Shape: {"pairs": [{"question": "...", "answer": "...", '
-            '"rationale": "...", "source_excerpt": "..."}]}',
-            "Each answer MUST be supported by one of the REFERENCE MATERIAL "
-            "blocks above. Quote or close-paraphrase the supporting text in "
-            '"source_excerpt" (≤200 chars).',
-            "If the reference material doesn't support a particular question, "
-            "SKIP that question — do NOT fabricate answers from general "
-            "knowledge.",
+            "Prefer answers grounded in the REFERENCE MATERIAL above. "
+            "Use the project's domain knowledge where the material is "
+            "thin — do NOT invent contradictions.",
+            "Optionally include a ``source_excerpt`` field (≤200 chars) "
+            "quoting the supporting reference passage when grounding is "
+            "clear. Skip the field when uncertain rather than fabricating "
+            "a citation.",
         ])
     else:
         rules.append(
-            'Shape: {"pairs": [{"question": "...", "answer": "...", '
-            '"rationale": "..."}]}',
+            "Each answer MUST be self-contained and factually defensible.",
         )
-        rules.append("Each answer MUST be self-contained and factually defensible.")
 
     rules.extend([
         "Each question MUST be specific to this project's domain.",
         "Vary difficulty: mix factual lookups, edge cases, and judgment calls.",
-        "``rationale`` is optional but helpful — one short sentence on why "
-        "this is the right answer (used by some evaluators).",
-        f"Return EXACTLY {count} pairs in the ``pairs`` array (or fewer if "
-        "REFERENCE MATERIAL doesn't support all of them).",
+        "Optionally include a ``rationale`` field — one short sentence on "
+        "why this is the right answer (used by some evaluators).",
+        f"Return EXACTLY {count} pairs in the ``pairs`` array.",
     ])
 
     parts.append("Output rules:\n- " + "\n- ".join(rules))
@@ -653,6 +650,22 @@ async def generate_gold_qa_via_llm(
         reference_chunks=reference_chunks if reference_chunks else None,
     )
 
+    # Generous max_tokens for grounded calls: each row carries Q + A
+    # + rationale + source_excerpt (4 fields × ~100 chars × 10 rows
+    # ≈ 1000 tokens output minimum), AND reasoning-style models
+    # (deepseek-reasoner / o-series / claude extended thinking) can
+    # spend 3-8K tokens on <think> preambles before emitting any
+    # user-facing JSON. The previous default (4096) silently
+    # truncated grounded responses on those models, leaving the
+    # parser to fail on broken JSON with no obvious cause.
+    #
+    # Cost is still bounded by chunk-char cap on the prompt side
+    # (max ~2K reference tokens) + the per-call ceiling the cost
+    # estimate badge surfaces. Worst-case 50-row grounded sonnet
+    # call now ~25¢ instead of ~13¢ — still well within the "do
+    # not shoot" guard for an opt-in user action.
+    grounded_max_tokens = 8192 if reference_chunks else 4096
+
     if provider == "openai":
         response = await call_openai_chat(
             api_key=api_key,
@@ -660,6 +673,7 @@ async def generate_gold_qa_via_llm(
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             api_url=api_url,
+            max_tokens=grounded_max_tokens,
         )
     elif provider == "anthropic":
         response = await call_anthropic_chat(
@@ -667,6 +681,7 @@ async def generate_gold_qa_via_llm(
             model=model,
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=user_prompt,
+            max_tokens=grounded_max_tokens,
         )
     else:
         raise GoldGenerationError(
