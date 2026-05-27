@@ -164,7 +164,7 @@ describe('LlmGoldGeneratePanel', () => {
                 focus_hint: 'edge cases around refunds',
                 ground_in_source: true,
             }),
-            expect.objectContaining({ timeout: 180_000 }),
+            expect.objectContaining({ timeout: 420_000 }),
         );
 
         // Save button reflects the all-selected default.
@@ -292,6 +292,37 @@ describe('LlmGoldGeneratePanel', () => {
         );
         // No preview rendered.
         expect(screen.queryByTestId('llm-gold-preview')).not.toBeInTheDocument();
+    });
+
+    it('surfaces axios "Network Error" with actionable explanation (NETWORK_ERROR)', async () => {
+        // axios produces ``{message: "Network Error"}`` with no
+        // response when the connection drops mid-request — common
+        // after burning LLM tokens on a slow reasoning model that
+        // outlasted the frontend timeout. User MUST be told what
+        // likely happened + where to look for the actual outcome,
+        // not just "UNKNOWN".
+        installPostRouter({
+            generateError: { message: 'Network Error' },
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-error')).toBeInTheDocument();
+        });
+        const text = screen.getByTestId('llm-gold-error').textContent || '';
+        expect(text).toMatch(/NETWORK_ERROR/);
+        // Useful diagnostics in the message body.
+        expect(text).toMatch(/tokens were billed/);
+        expect(text).toMatch(/uvicorn\.log/);
     });
 
     it('renders the upstream provider error (502) as a plain string', async () => {

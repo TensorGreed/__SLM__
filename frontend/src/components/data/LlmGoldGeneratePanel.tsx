@@ -113,8 +113,35 @@ function extractErrorMessage(err: unknown): { code: string; message: string } {
     if (typeof detail === 'string') {
         return { code: 'UPSTREAM_ERROR', message: detail };
     }
-    const message = (err as { message?: string })?.message || 'Generation failed';
-    return { code: 'UNKNOWN', message };
+    // No HTTP response body — axios produces ``message: "Network Error"``
+    // for connection-level failures (server unreachable, request
+    // cancelled, proxy dropped the connection mid-response). When the
+    // user has burned LLM tokens on a long reasoning model and gets
+    // this back, the most likely cause is the request taking longer
+    // than the frontend's axios timeout. Surface that explicitly so
+    // they're not guessing.
+    const rawMessage = (err as { message?: string })?.message || '';
+    const axiosCode = (err as { code?: string })?.code || '';
+    if (
+        rawMessage === 'Network Error'
+        || axiosCode === 'ECONNABORTED'
+        || axiosCode === 'ERR_NETWORK'
+    ) {
+        return {
+            code: 'NETWORK_ERROR',
+            message:
+                'The browser couldn\'t complete the request. If LLM tokens '
+                + 'were billed, the call reached the provider but the response '
+                + 'didn\'t come back in time. Common causes: (a) reasoning / '
+                + '"Pro" models took longer than the 7-min frontend timeout, '
+                + '(b) Vite dev proxy or VPN dropped the connection, '
+                + '(c) backend logged an error mid-write — check '
+                + '`tail -f /tmp/uvicorn.log | grep cloud_llm` for the LLM '
+                + 'call\'s actual duration + outcome. Try again with a '
+                + 'lighter model (gpt-4o-mini, deepseek-chat) to isolate.',
+        };
+    }
+    return { code: 'UNKNOWN', message: rawMessage || 'Generation failed' };
 }
 
 
@@ -239,10 +266,17 @@ export default function LlmGoldGeneratePanel({
                     api_key: apiKey.trim() || undefined,
                     ground_in_source: groundInSource,
                 },
-                // Generation is sync; cap at 3 min so users on slower
-                // models / larger counts aren't cut off by a default
-                // axios timeout.
-                { timeout: 180_000 },
+                // Generation is sync. Frontend timeout (7 min) sits
+                // ABOVE the backend's per-LLM-call timeout (5 min, see
+                // ``_DEFAULT_TIMEOUT_SECONDS`` in cloud_llm_service.py).
+                // Earlier both were 180s, so a slow reasoning model
+                // could race the two timeouts and the frontend would
+                // give up with "Network Error" before the backend
+                // could return a structured 502. Vite proxy is 10 min
+                // so it stays above this whole chain. See
+                // ``extractErrorMessage`` for the Network-Error branch
+                // that fires when this chain still gets exceeded.
+                { timeout: 420_000 },
             );
             setPreview(res.data);
             // Default to all rows selected — the user opted into

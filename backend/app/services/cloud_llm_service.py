@@ -29,11 +29,16 @@ hallucinations slip into evals.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+
+_LOG = logging.getLogger("cloud_llm")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -62,7 +67,14 @@ class CloudLlmError(RuntimeError):
 
 
 _OPENAI_DEFAULT_URL = "https://api.openai.com/v1/chat/completions"
-_DEFAULT_TIMEOUT_SECONDS = 180.0
+# Bumped from 180s → 300s. Reasoning-style models (DeepSeek-R1, o-series,
+# any "Pro/Reasoner" Deepseek variant) routinely take 60-120s on grounded
+# 10-pair requests because they emit a long ``<think>`` preamble before
+# the actual JSON. The frontend's axios timeout is now 420s, so this
+# stays below it — the backend will surface a structured 502
+# (CloudLlmError) before the frontend gives up with "Network Error",
+# which used to happen when both timeouts were 180s and raced.
+_DEFAULT_TIMEOUT_SECONDS = 300.0
 
 
 async def call_openai_chat(
@@ -98,6 +110,11 @@ async def call_openai_chat(
     if force_json:
         payload["response_format"] = {"type": "json_object"}
 
+    started = time.monotonic()
+    _LOG.info(
+        "openai-compat call → url=%s model=%s max_tokens=%d force_json=%s",
+        url, model, max_tokens, force_json,
+    )
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT_SECONDS) as client:
         try:
             resp = await client.post(
@@ -109,9 +126,20 @@ async def call_openai_chat(
                 },
             )
         except httpx.HTTPError as exc:
+            elapsed = time.monotonic() - started
+            _LOG.warning(
+                "openai-compat FAILED after %.1fs: %s url=%s model=%s",
+                elapsed, type(exc).__name__, url, model,
+            )
             raise CloudLlmError(
-                f"OpenAI request failed: {type(exc).__name__}",
+                f"OpenAI-compat request failed after {elapsed:.0f}s: "
+                f"{type(exc).__name__}. "
+                "The provider may be slow / unreachable, or the model id is "
+                "rejected. Try a known-good model (gpt-4o-mini / deepseek-chat) "
+                "to isolate.",
             ) from exc
+
+    elapsed = time.monotonic() - started
 
     if resp.status_code >= 400:
         # OpenAI returns ``{"error": {"message": "..."}}``. Surface
@@ -119,22 +147,44 @@ async def call_openai_chat(
         # ``request`` so we don't ``str(resp.request)`` the whole
         # thing; just the body).
         body = resp.text[:400]
+        _LOG.warning(
+            "openai-compat returned HTTP %d after %.1fs: %s",
+            resp.status_code, elapsed, body[:200],
+        )
         raise CloudLlmError(
-            f"OpenAI returned {resp.status_code}: {body}",
+            f"OpenAI-compat returned {resp.status_code} after {elapsed:.0f}s: "
+            f"{body}",
         )
 
     data = resp.json()
     choices = data.get("choices") or []
     content = ""
+    finish_reason = ""
     if choices:
         message = choices[0].get("message") or {}
         content = str(message.get("content") or "")
+        finish_reason = str(choices[0].get("finish_reason") or "")
     usage = data.get("usage") or {}
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    _LOG.info(
+        "openai-compat OK after %.1fs: model=%s prompt_tokens=%d "
+        "completion_tokens=%d finish_reason=%s content_chars=%d",
+        elapsed, data.get("model") or model, prompt_tokens,
+        completion_tokens, finish_reason, len(content),
+    )
+    if finish_reason == "length":
+        _LOG.warning(
+            "openai-compat hit max_tokens (%d) on model=%s — response was "
+            "truncated; downstream parse will likely fail. Consider raising "
+            "max_tokens or reducing the count.",
+            max_tokens, data.get("model") or model,
+        )
     return CloudLlmResponse(
         content=content,
         model=str(data.get("model") or model),
-        prompt_tokens=int(usage.get("prompt_tokens") or 0),
-        completion_tokens=int(usage.get("completion_tokens") or 0),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
 
 
@@ -178,6 +228,11 @@ async def call_anthropic_chat(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    started = time.monotonic()
+    _LOG.info(
+        "anthropic call → model=%s max_tokens=%d",
+        model, max_tokens,
+    )
     async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT_SECONDS) as client:
         try:
             resp = await client.post(
@@ -190,14 +245,28 @@ async def call_anthropic_chat(
                 },
             )
         except httpx.HTTPError as exc:
+            elapsed = time.monotonic() - started
+            _LOG.warning(
+                "anthropic FAILED after %.1fs: %s model=%s",
+                elapsed, type(exc).__name__, model,
+            )
             raise CloudLlmError(
-                f"Anthropic request failed: {type(exc).__name__}",
+                f"Anthropic request failed after {elapsed:.0f}s: "
+                f"{type(exc).__name__}. The provider may be slow / "
+                "unreachable, or the model id is rejected.",
             ) from exc
+
+    elapsed = time.monotonic() - started
 
     if resp.status_code >= 400:
         body = resp.text[:400]
+        _LOG.warning(
+            "anthropic returned HTTP %d after %.1fs: %s",
+            resp.status_code, elapsed, body[:200],
+        )
         raise CloudLlmError(
-            f"Anthropic returned {resp.status_code}: {body}",
+            f"Anthropic returned {resp.status_code} after {elapsed:.0f}s: "
+            f"{body}",
         )
 
     data = resp.json()
@@ -209,12 +278,27 @@ async def call_anthropic_chat(
         if isinstance(b, dict) and b.get("type") == "text"
     ]
     content = "".join(text_parts)
+    stop_reason = str(data.get("stop_reason") or "")
     usage = data.get("usage") or {}
+    prompt_tokens = int(usage.get("input_tokens") or 0)
+    completion_tokens = int(usage.get("output_tokens") or 0)
+    _LOG.info(
+        "anthropic OK after %.1fs: model=%s prompt_tokens=%d "
+        "completion_tokens=%d stop_reason=%s content_chars=%d",
+        elapsed, data.get("model") or model, prompt_tokens,
+        completion_tokens, stop_reason, len(content),
+    )
+    if stop_reason == "max_tokens":
+        _LOG.warning(
+            "anthropic hit max_tokens (%d) on model=%s — response was "
+            "truncated; downstream parse will likely fail.",
+            max_tokens, data.get("model") or model,
+        )
     return CloudLlmResponse(
         content=content,
         model=str(data.get("model") or model),
-        prompt_tokens=int(usage.get("input_tokens") or 0),
-        completion_tokens=int(usage.get("output_tokens") or 0),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
 
 
