@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
@@ -12,6 +13,7 @@ import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
 import GoldEntryAddForm from './GoldEntryAddForm';
 import type { GoldAddPayload } from './GoldEntryAddForm';
+import { decodeFragmentGroups, decodeRowIds } from '../../utils/forecastActionRouter';
 import './GoldSetPanel.css';
 
 
@@ -188,6 +190,31 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
     // the recipe changes.
     const [entryFilter, setEntryFilter] = useState<EntryFilter>('all');
 
+    // Trainability-forecast deep link: the fix_gold_rows action lands
+    // here with ?fix_rows=1,7,12 (row indices to highlight) and/or
+    // ?fragment_groups=positive|Positive;billing|Billing (label
+    // collisions the user should reconcile). We treat both as
+    // dismissible affordances over the existing entries list — we
+    // never edit data on the user's behalf.
+    const location = useLocation();
+    const forecastFix = useMemo(() => {
+        const params = new URLSearchParams(location.search);
+        return {
+            rowIds: decodeRowIds(params.get('fix_rows')),
+            fragments: decodeFragmentGroups(params.get('fragment_groups')),
+        };
+    }, [location.search]);
+    const [forecastFixDismissed, setForecastFixDismissed] = useState(false);
+    const [forecastRowFilterActive, setForecastRowFilterActive] = useState(false);
+    useEffect(() => {
+        // Auto-activate the row filter when the user lands with
+        // ?fix_rows=…. The filter is a toggle so the user can flip back
+        // to the full list without losing the banner.
+        if (forecastFix.rowIds.length > 0 && !forecastFixDismissed) {
+            setForecastRowFilterActive(true);
+        }
+    }, [forecastFix.rowIds.length, forecastFixDismissed]);
+
     const fetchEntries = useCallback(async () => {
         const res = await api.get(`/projects/${projectId}/gold/entries?dataset_type=${datasetType}`);
         setEntries(res.data.entries || []);
@@ -297,6 +324,25 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
         });
         return { mixSummary: summary, filteredEntries: filtered };
     }, [entries, entryFilter, recipeId]);
+
+    /** Forecast-fix row filter: applied on top of whatever
+     *  ``filteredEntries`` already produced. When the user toggles the
+     *  filter off (or dismisses the banner) this passes through. Index
+     *  is the row's position in the unfiltered ``entries`` list — this
+     *  matches the indices the backend emits in ``invalid_row_ids``. */
+    const fixRowIdSet = useMemo(
+        () => new Set(forecastFix.rowIds),
+        [forecastFix.rowIds],
+    );
+    const displayEntries = useMemo(() => {
+        if (!forecastRowFilterActive || fixRowIdSet.size === 0) {
+            return filteredEntries;
+        }
+        const filteredSet = new Set(filteredEntries);
+        return entries.filter(
+            (e, idx) => fixRowIdSet.has(idx) && filteredSet.has(e),
+        );
+    }, [filteredEntries, entries, fixRowIdSet, forecastRowFilterActive]);
 
     // One-shot fetch of the project's selected_recipe so we can
     // gate the LLM-generate panel without changing this component's
@@ -461,6 +507,82 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                     </div>
                 )}
 
+                {/* Forecast-fix banner: surfaces when the user landed
+                    via TrainabilityForecastPanel's fix_gold_rows action.
+                    Shows the row-id filter toggle when ``fix_rows`` was
+                    passed, the fragmented-label groups when
+                    ``fragment_groups`` was passed, or both. Dismissible
+                    — the URL params stay but the banner hides + the
+                    row filter clears. */}
+                {!forecastFixDismissed
+                    && (forecastFix.rowIds.length > 0 || forecastFix.fragments.length > 0) && (
+                    <div
+                        data-testid="gold-forecast-fix-banner"
+                        style={{
+                            margin: '0 0 var(--space-sm)',
+                            padding: 'var(--space-sm) var(--space-md)',
+                            background: 'var(--color-warning-bg, rgba(240, 160, 32, 0.10))',
+                            border: '1px solid var(--color-warning, #f0a020)',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: '0.9rem',
+                            color: 'var(--text-primary)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '6px',
+                        }}
+                    >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-sm)' }}>
+                            <strong>Trainability forecast flagged this gold set.</strong>
+                            <button
+                                type="button"
+                                className="btn btn-link"
+                                onClick={() => {
+                                    setForecastFixDismissed(true);
+                                    setForecastRowFilterActive(false);
+                                }}
+                                data-testid="gold-forecast-fix-dismiss"
+                                style={{ padding: 0 }}
+                                aria-label="Dismiss forecast fix banner"
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                        {forecastFix.rowIds.length > 0 && (
+                            <div data-testid="gold-forecast-fix-rows">
+                                {forecastFix.rowIds.length} row{forecastFix.rowIds.length === 1 ? '' : 's'} flagged for review:{' '}
+                                <code>{forecastFix.rowIds.slice(0, 10).join(', ')}{forecastFix.rowIds.length > 10 ? '…' : ''}</code>
+                                {' · '}
+                                <button
+                                    type="button"
+                                    className="btn btn-link"
+                                    onClick={() => setForecastRowFilterActive((v) => !v)}
+                                    data-testid="gold-forecast-fix-toggle"
+                                    style={{ padding: 0 }}
+                                >
+                                    {forecastRowFilterActive ? 'Show all rows' : 'Show flagged only'}
+                                </button>
+                            </div>
+                        )}
+                        {forecastFix.fragments.length > 0 && (
+                            <div data-testid="gold-forecast-fix-fragments">
+                                Label vocabulary fragments to merge:
+                                <ul style={{ margin: '4px 0 0 var(--space-md)', padding: 0 }}>
+                                    {forecastFix.fragments.map((group, idx) => (
+                                        <li key={idx}>
+                                            {group.map((label, j) => (
+                                                <span key={j}>
+                                                    {j > 0 && <span style={{ color: 'var(--text-tertiary)' }}> ↔ </span>}
+                                                    <code>{label}</code>
+                                                </span>
+                                            ))}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Active-filter banner: when filtered, surface how
                     many of the total are showing so the user isn't
                     confused by the truncated list. */}
@@ -489,7 +611,7 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                 )}
 
                 <div className="entries-list">
-                    {filteredEntries.map((e, i) => {
+                    {displayEntries.map((e, i) => {
                         // Recipe narrowing: anything unsupported or
                         // null falls back to qa-sft for backward
                         // compat with rows saved before recipe-aware

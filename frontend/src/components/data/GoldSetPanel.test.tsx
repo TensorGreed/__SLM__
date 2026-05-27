@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -23,6 +25,20 @@ vi.mock('../coach/CoachStrip', () => ({
 }));
 
 import GoldSetPanel from './GoldSetPanel';
+
+
+/** Render the panel inside a MemoryRouter so the trainability-forecast
+ *  prefill reader (``useLocation``) can mount. Pass ``search`` to
+ *  simulate a deep-link from the forecast panel's fix_gold_rows
+ *  action. */
+function renderPanel(element: ReactElement, opts: { search?: string } = {}) {
+    const path = `/route${opts.search ?? ''}`;
+    return render(
+        <MemoryRouter initialEntries={[path]}>
+            {element}
+        </MemoryRouter>,
+    );
+}
 
 
 function makeQaEntry(
@@ -91,7 +107,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 makeQaEntry({ difficulty: 'medium', is_hallucination_trap: true }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
 
         const summary = await screen.findByTestId('gold-entries-mix-summary');
         expect(summary.textContent).toMatch(/6 entries/);
@@ -121,7 +137,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 makeQaEntry({ difficulty: 'expert' }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entries-mix-summary');
         expect(
             screen.getByTestId('gold-entries-mix-medium').textContent,
@@ -144,7 +160,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 makeQaEntry({ question: 'hard-2', difficulty: 'hard' }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entries-filter');
 
         // Default: all 4 visible, no banner.
@@ -197,7 +213,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entries-filter');
 
         await userEvent.selectOptions(
@@ -222,7 +238,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 makeQaEntry({ difficulty: 'medium' }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entries-filter');
 
         await userEvent.selectOptions(
@@ -257,7 +273,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         // The LLM-generate stub renders → indicates the recipe lookup
         // completed. After that, the qa-sft-only controls should be
         // absent.
@@ -292,7 +308,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         // Row 0: difficulty badge present, trap absent, Q/A visible.
@@ -332,7 +348,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         // text + label render via the recipe-specific path.
@@ -379,7 +395,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         // Row 0: text + entity badge + offsets visible.
@@ -406,7 +422,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         const docBlock = screen.getByTestId('gold-entry-row-0-document');
@@ -428,7 +444,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 makeQaEntry({ question: 'Legacy Q?', answer: 'Legacy A.' }),
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
         expect(screen.getByText(/Legacy Q\?/)).toBeInTheDocument();
         expect(screen.getByText(/Legacy A\./)).toBeInTheDocument();
@@ -440,7 +456,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('empty gold set hides the filter dropdown (nothing to filter)', async () => {
         installGetRouter({ recipeId: 'qa-sft', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         // Wait for the LLM-generate stub so we know the recipe lookup
         // completed and the entries fetch landed.
         await screen.findByTestId('llm-gold-generate-stub');
@@ -457,7 +473,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('no recipe set: add form is hidden + a recipe-hint banner shows', async () => {
         installGetRouter({ recipeId: null, entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         // Banner present, telling the user where to pick a recipe.
         // The recipe-lookup GET resolves async, so wait on the
         // hint itself (the LLM-generate stub is gated off too in
@@ -471,7 +487,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
     it('qa-sft: form submits a Q+A pair with difficulty + trap flag', async () => {
         installGetRouter({ recipeId: 'qa-sft', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 1 } });
-        render(<GoldSetPanel projectId={42} />);
+        renderPanel(<GoldSetPanel projectId={42} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-question'), {
@@ -515,7 +531,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             ],
         });
         apiMock.post.mockResolvedValue({ data: { id: 2 } });
-        render(<GoldSetPanel projectId={42} />);
+        renderPanel(<GoldSetPanel projectId={42} />);
         await screen.findByTestId('gold-add-form');
 
         // Combobox hint surfaces known labels.
@@ -554,7 +570,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction: invalid JSON disables submit + shows error', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-span-text'), {
@@ -576,7 +592,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction: offset mismatch disables submit + names the bad span', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-span-text'), {
@@ -597,7 +613,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
     it('span-extraction: valid JSON shows the verified-entities hint', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 3 } });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-span-text'), {
@@ -633,7 +649,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
     it('span-extraction: empty entities JSON is treated as a valid negative example', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 4 } });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-span-text'), {
@@ -660,7 +676,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
     it('summarization: form submits document + summary', async () => {
         installGetRouter({ recipeId: 'summarization', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 5 } });
-        render(<GoldSetPanel projectId={42} />);
+        renderPanel(<GoldSetPanel projectId={42} />);
         await screen.findByTestId('gold-add-form');
 
         const longDoc = 'The board met on March 14 to review three topics. '.repeat(3);
@@ -688,7 +704,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('submit is disabled until required fields are filled (qa-sft)', async () => {
         installGetRouter({ recipeId: 'qa-sft', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
         const submit = screen.getByTestId('gold-add-submit') as HTMLButtonElement;
         expect(submit.disabled).toBe(true);
@@ -737,7 +753,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         // Text mapped from ``question``, label mapped from ``answer``.
@@ -776,7 +792,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         // Text mapped from ``question``.
@@ -806,7 +822,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
         expect(
             screen.getByTestId('gold-entry-row-0-entities').textContent,
@@ -830,7 +846,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
 
         // Document collapses behind <details> by default — its
@@ -861,7 +877,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
         expect(
             screen.getByTestId('gold-entry-row-0-text').textContent,
@@ -890,7 +906,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-entry-row-0');
         expect(
             screen.getByTestId('gold-entry-row-0-label').textContent,
@@ -914,7 +930,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: starts with no selection + button disabled', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
         const addBtn = screen.getByTestId('gold-add-span-helper-add') as HTMLButtonElement;
         expect(addBtn.disabled).toBe(true);
@@ -926,7 +942,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: highlighting + type fills the preview + enables the button', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const text = 'Contact jane@example.com today';
@@ -952,7 +968,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: click appends the span to entities JSON', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const text = 'Contact jane@example.com today';
@@ -986,7 +1002,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: appending preserves existing hand-edited entries', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const text = 'Email me at user@host.com or call +1-555-0100.';
@@ -1031,7 +1047,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: editing the source text clears the captured selection', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1057,7 +1073,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: refuses to add when the JSON editor is broken', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1083,7 +1099,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction helper: cursor-only "selection" (start == end) does not enable add', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1105,7 +1121,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction chips: list derives from parsed JSON; one chip per entity', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const initialJson = JSON.stringify(
@@ -1135,7 +1151,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction chips: clicking ✕ removes the entity + re-pretty-prints', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const initialJson = JSON.stringify(
@@ -1177,7 +1193,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         // state — matches the form's initial state + the
         // "empty = negative example" handling.
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-entities'), {
@@ -1208,7 +1224,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         // intermediate states (mid-typing). Chips should disappear
         // until the JSON re-parses — they never render stale state.
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-entities'), {
@@ -1229,7 +1245,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         // is empty when validation fails), so chips remain
         // actionable in this state.
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-span-text'), {
@@ -1263,7 +1279,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('span-extraction chips: helper-added span appears as a chip immediately', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1307,7 +1323,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         // Existing-types hint renders next to the Type label.
@@ -1345,7 +1361,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
         expect(
             screen.getByTestId('gold-add-span-helper-type-hint').textContent,
@@ -1367,7 +1383,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
@@ -1393,7 +1409,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
@@ -1418,7 +1434,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const typeInput = screen.getByTestId('gold-add-span-helper-type') as HTMLInputElement;
@@ -1435,7 +1451,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         // to the gold set yet. "person" should ALREADY show up in
         // the datalist for the next add.
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1468,7 +1484,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         // selection + a brand-new type, the helper add button
         // stays enabled and the click still succeeds.
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1523,7 +1539,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         // The (existing: ...) hint MUST surface for legacy rows now.
@@ -1569,7 +1585,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             },
         });
 
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
         fireEvent.change(screen.getByTestId('gold-add-question'), {
             target: { value: 'Q?' },
@@ -1606,7 +1622,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             },
         });
 
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
         fireEvent.change(screen.getByTestId('gold-add-text'), {
             target: { value: 'sample text' },
@@ -1635,7 +1651,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
@@ -1669,7 +1685,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
@@ -1696,7 +1712,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
@@ -1721,7 +1737,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             ],
         });
         apiMock.post.mockResolvedValue({ data: { id: 2 } });
-        render(<GoldSetPanel projectId={42} />);
+        renderPanel(<GoldSetPanel projectId={42} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-text'), {
@@ -1766,7 +1782,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
                 },
             ],
         });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const labelInput = screen.getByTestId('gold-add-label') as HTMLInputElement;
@@ -1781,7 +1797,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('Enter in the span-type Type input fires "+ Add highlighted span"', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         const textarea = screen.getByTestId('gold-add-span-text') as HTMLTextAreaElement;
@@ -1803,7 +1819,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('Enter in span-type input is a no-op when there is no selection', async () => {
         installGetRouter({ recipeId: 'span-extraction', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         // No selection captured — just typing a type alone.
@@ -1832,7 +1848,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
             ],
         });
         apiMock.post.mockResolvedValue({ data: { id: 2 } });
-        render(<GoldSetPanel projectId={42} />);
+        renderPanel(<GoldSetPanel projectId={42} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-text'), {
@@ -1856,7 +1872,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
 
     it('Enter in classification Label input is a no-op when the text field is empty', async () => {
         installGetRouter({ recipeId: 'classification', entries: [] });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         // Text empty, label filled — submit guard fails.
@@ -1870,7 +1886,7 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
     it('form resets after a successful submit', async () => {
         installGetRouter({ recipeId: 'qa-sft', entries: [] });
         apiMock.post.mockResolvedValue({ data: { id: 1 } });
-        render(<GoldSetPanel projectId={1} />);
+        renderPanel(<GoldSetPanel projectId={1} />);
         await screen.findByTestId('gold-add-form');
 
         fireEvent.change(screen.getByTestId('gold-add-question'), {
@@ -1889,5 +1905,152 @@ describe('GoldSetPanel — entries filter + mix summary', () => {
         expect(
             (screen.getByTestId('gold-add-answer') as HTMLTextAreaElement).value,
         ).toBe('');
+    });
+});
+
+
+describe('GoldSetPanel — trainability-forecast prefill (T4)', () => {
+    // The TrainabilityForecastPanel's fix_gold_rows action lands here
+    // with ?fix_rows=<csv> and/or ?fragment_groups=<encoded>. The
+    // panel surfaces a dismissible banner over the existing entries
+    // list + a row-id filter toggle.
+
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+    });
+
+    it('renders the fix-banner with the row count + flagged ids when ?fix_rows is set', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                { question: 'q0', answer: 'a' },
+                { question: 'q1', answer: 'b' },
+                { question: 'q2', answer: 'c' },
+                { question: 'q3', answer: 'd' },
+                { question: 'q4', answer: 'e' },
+            ],
+        });
+        renderPanel(<GoldSetPanel projectId={1} />, {
+            search: '?fix_rows=0,2,4',
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-forecast-fix-banner')).toBeInTheDocument();
+        });
+        const rowLine = screen.getByTestId('gold-forecast-fix-rows');
+        expect(rowLine.textContent).toMatch(/3 rows flagged/);
+        expect(rowLine.textContent).toMatch(/0, 2, 4/);
+    });
+
+    it('filters the entries list to flagged rows by default and toggles back to all', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                { question: 'q0', answer: 'a' },
+                { question: 'q1', answer: 'b' },
+                { question: 'q2', answer: 'c' },
+                { question: 'q3', answer: 'd' },
+            ],
+        });
+        renderPanel(<GoldSetPanel projectId={1} />, {
+            search: '?fix_rows=1,3',
+        });
+
+        // Auto-applies the filter — only the flagged rows are rendered.
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-entry-row-0')).toBeInTheDocument();
+        });
+        // Two rows visible (index 0 + 1 in the filtered list = entries[1] + entries[3]).
+        expect(screen.getByTestId('gold-entry-row-1')).toBeInTheDocument();
+        expect(screen.queryByTestId('gold-entry-row-2')).not.toBeInTheDocument();
+
+        // Toggle off — all four rows reappear.
+        await userEvent.click(screen.getByTestId('gold-forecast-fix-toggle'));
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-entry-row-3')).toBeInTheDocument();
+        });
+    });
+
+    it('renders the fragment_groups list when ?fragment_groups is set', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [{ question: 'q', answer: 'positive' }],
+        });
+        // routeForecastAction's pipe-within-group encoding.
+        const fragments = `${encodeURIComponent('positive')}|${encodeURIComponent('Positive')};${encodeURIComponent('billing')}|${encodeURIComponent('Billing')}`;
+        renderPanel(<GoldSetPanel projectId={1} />, {
+            search: `?fragment_groups=${fragments}`,
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-forecast-fix-fragments')).toBeInTheDocument();
+        });
+        const fragsBlock = screen.getByTestId('gold-forecast-fix-fragments');
+        expect(fragsBlock.textContent).toContain('positive');
+        expect(fragsBlock.textContent).toContain('Positive');
+        expect(fragsBlock.textContent).toContain('billing');
+        expect(fragsBlock.textContent).toContain('Billing');
+    });
+
+    it('renders no banner when the URL carries no forecast params', async () => {
+        installGetRouter({
+            recipeId: 'qa-sft',
+            entries: [{ question: 'q', answer: 'a' }],
+        });
+        renderPanel(<GoldSetPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-entry-row-0')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('gold-forecast-fix-banner')).not.toBeInTheDocument();
+    });
+
+    it('dismiss button hides the banner and clears the row filter', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                { question: 'q0', answer: 'a' },
+                { question: 'q1', answer: 'b' },
+                { question: 'q2', answer: 'c' },
+            ],
+        });
+        renderPanel(<GoldSetPanel projectId={1} />, {
+            search: '?fix_rows=0',
+        });
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-forecast-fix-banner')).toBeInTheDocument();
+        });
+        // Banner is visible + filter is active (only one row rendered).
+        expect(screen.getByTestId('gold-entry-row-0')).toBeInTheDocument();
+        expect(screen.queryByTestId('gold-entry-row-1')).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByTestId('gold-forecast-fix-dismiss'));
+
+        // Banner gone, all rows back.
+        expect(screen.queryByTestId('gold-forecast-fix-banner')).not.toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-entry-row-2')).toBeInTheDocument();
+        });
+    });
+
+    it('ignores malformed fix_rows tokens but keeps the well-formed ones', async () => {
+        installGetRouter({
+            recipeId: 'classification',
+            entries: [
+                { question: 'q0', answer: 'a' },
+                { question: 'q1', answer: 'b' },
+            ],
+        });
+        // ",bogus,,1" should decode to [1] (the trailing empty + bogus
+        // string drop, the integer 1 survives).
+        renderPanel(<GoldSetPanel projectId={1} />, {
+            search: '?fix_rows=,bogus,,1',
+        });
+        await waitFor(() => {
+            expect(screen.getByTestId('gold-forecast-fix-banner')).toBeInTheDocument();
+        });
+        const rowLine = screen.getByTestId('gold-forecast-fix-rows');
+        expect(rowLine.textContent).toMatch(/1 row flagged/);
+        expect(rowLine.textContent).toMatch(/\b1\b/);
     });
 });

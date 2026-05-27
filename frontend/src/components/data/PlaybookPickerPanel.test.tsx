@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -16,6 +18,18 @@ vi.mock('../../api/client', () => ({ default: apiMock }));
 
 import PlaybookPickerPanel from './PlaybookPickerPanel';
 
+/** Render the panel inside a MemoryRouter so the
+ *  trainability-forecast prefill reader (``useLocation``) can mount.
+ *  Pass ``search`` to simulate a deep-link from the forecast panel. */
+function renderPanel(element: ReactElement, opts: { search?: string } = {}) {
+    const path = `/route${opts.search ?? ''}`;
+    return render(
+        <MemoryRouter initialEntries={[path]}>
+            {element}
+        </MemoryRouter>,
+    );
+}
+
 
 describe('PlaybookPickerPanel', () => {
     beforeEach(() => {
@@ -31,7 +45,7 @@ describe('PlaybookPickerPanel', () => {
                 playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
 
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker')).toBeInTheDocument();
@@ -51,7 +65,7 @@ describe('PlaybookPickerPanel', () => {
         apiMock.get.mockResolvedValue({
             data: { project_id: 1, recipe_id: null, playbooks: [] },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-empty')).toBeInTheDocument();
         });
@@ -75,7 +89,7 @@ describe('PlaybookPickerPanel', () => {
                 playbooks: [],
             },
         });
-        render(<PlaybookPickerPanel projectId={7} />);
+        renderPanel(<PlaybookPickerPanel projectId={7} />);
         await waitFor(() => {
             expect(
                 screen.getByTestId('playbook-picker-empty-recipe-required'),
@@ -126,7 +140,7 @@ describe('PlaybookPickerPanel', () => {
             },
         });
 
-        render(<PlaybookPickerPanel projectId={5} />);
+        renderPanel(<PlaybookPickerPanel projectId={5} />);
 
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
@@ -161,7 +175,7 @@ describe('PlaybookPickerPanel', () => {
         apiMock.post.mockRejectedValue({
             response: { status: 503, data: { detail: 'No synth backend available.' } },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
         });
@@ -180,7 +194,7 @@ describe('PlaybookPickerPanel', () => {
                 playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
 
         const countInput = await screen.findByTestId('playbook-picker-count') as HTMLInputElement;
         // Default is 30.
@@ -227,7 +241,7 @@ describe('PlaybookPickerPanel', () => {
                 playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
         });
@@ -250,7 +264,7 @@ describe('PlaybookPickerPanel', () => {
                 ],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
         });
@@ -282,7 +296,7 @@ describe('PlaybookPickerPanel', () => {
                 ],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
         });
@@ -324,7 +338,7 @@ describe('PlaybookPickerPanel', () => {
                 ],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
         });
@@ -354,7 +368,7 @@ describe('PlaybookPickerPanel', () => {
                 ],
             },
         });
-        render(<PlaybookPickerPanel projectId={1} />);
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
         });
@@ -400,7 +414,7 @@ describe('PlaybookPickerPanel', () => {
             },
         });
 
-        render(<PlaybookPickerPanel projectId={3} />);
+        renderPanel(<PlaybookPickerPanel projectId={3} />);
         await waitFor(() => {
             expect(screen.getByTestId('playbook-picker-backend')).toBeInTheDocument();
         });
@@ -421,5 +435,141 @@ describe('PlaybookPickerPanel', () => {
                 }),
             );
         });
+    });
+
+    // ── Trainability-forecast prefill (T4) ────────────────────────────
+    // The TrainabilityForecastPanel emits suggested_action clicks via
+    // routeForecastAction, which lands here with
+    // ?prefill_mode=<SynthMode>&prefill_count=<N>. The picker honors
+    // the prefill ONLY when the requested mode is in the recipe's
+    // catalog — silently falls back to the catalog default otherwise.
+
+    it('applies prefill_mode + prefill_count when the requested mode is in the catalog', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [
+                    { recipe_id: 'classification', mode: 'positives_paraphrase' },
+                    { recipe_id: 'classification', mode: 'class_balance_fill' },
+                ],
+            },
+        });
+
+        renderPanel(<PlaybookPickerPanel projectId={1} />, {
+            search: '?prefill_mode=class_balance_fill&prefill_count=80',
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-prefill-banner')).toBeInTheDocument();
+        });
+
+        // The class_balance_fill radio is selected (not the catalog default).
+        const balanceRadio = screen
+            .getByTestId('playbook-picker-mode-class_balance_fill')
+            .querySelector('input[type="radio"]') as HTMLInputElement;
+        expect(balanceRadio.checked).toBe(true);
+
+        // Target count carries through.
+        expect((screen.getByTestId('playbook-picker-count') as HTMLInputElement).value).toBe('80');
+
+        // Banner carries the prefilled mode label + count.
+        const banner = screen.getByTestId('playbook-picker-prefill-banner');
+        expect(banner.textContent).toMatch(/Balance class distribution/);
+        expect(banner.textContent).toMatch(/80/);
+    });
+
+    it('warns when the requested mode is not in the recipe catalog and falls back', async () => {
+        // qa-sft doesn't ship class_balance_fill — the picker should
+        // fall back to the catalog's default mode and surface the
+        // fallback note in the banner so the user knows what happened.
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 2,
+                recipe_id: 'qa-sft',
+                playbooks: [
+                    { recipe_id: 'qa-sft', mode: 'positives_paraphrase' },
+                ],
+            },
+        });
+
+        renderPanel(<PlaybookPickerPanel projectId={2} />, {
+            search: '?prefill_mode=class_balance_fill&prefill_count=40',
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-prefill-banner')).toBeInTheDocument();
+        });
+
+        // Catalog default (the only one available) is selected.
+        const paraphraseRadio = screen
+            .getByTestId('playbook-picker-mode-positives_paraphrase')
+            .querySelector('input[type="radio"]') as HTMLInputElement;
+        expect(paraphraseRadio.checked).toBe(true);
+
+        // Count still applies independently of the mode fallback.
+        expect((screen.getByTestId('playbook-picker-count') as HTMLInputElement).value).toBe('40');
+
+        // Banner explains the fallback so the user isn't confused.
+        const banner = screen.getByTestId('playbook-picker-prefill-banner');
+        expect(banner.textContent).toMatch(/isn't in this recipe/);
+    });
+
+    it('renders no prefill banner when the URL carries no prefill params', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker')).toBeInTheDocument();
+        });
+        expect(screen.queryByTestId('playbook-picker-prefill-banner')).not.toBeInTheDocument();
+    });
+
+    it('dismisses the prefill banner when the dismiss button is clicked', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />, {
+            search: '?prefill_mode=positives_paraphrase&prefill_count=25',
+        });
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-prefill-banner')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('playbook-picker-prefill-dismiss'));
+        expect(screen.queryByTestId('playbook-picker-prefill-banner')).not.toBeInTheDocument();
+    });
+
+    it('ignores an unknown prefill_mode value (forward-compat with future backend hints)', async () => {
+        apiMock.get.mockResolvedValue({
+            data: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+        });
+        // ``some_future_mode`` isn't in VALID_SYNTH_MODES — the panel
+        // must fall through to the catalog default rather than crash
+        // or pre-select a non-existent radio.
+        renderPanel(<PlaybookPickerPanel projectId={1} />, {
+            search: '?prefill_mode=some_future_mode&prefill_count=10',
+        });
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker')).toBeInTheDocument();
+        });
+        const radio = screen
+            .getByTestId('playbook-picker-mode-positives_paraphrase')
+            .querySelector('input[type="radio"]') as HTMLInputElement;
+        expect(radio.checked).toBe(true);
+        // Count still applied (independent of the rejected mode).
+        expect((screen.getByTestId('playbook-picker-count') as HTMLInputElement).value).toBe('10');
     });
 });

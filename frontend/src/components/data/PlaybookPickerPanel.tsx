@@ -10,7 +10,8 @@
  * Hard-negatives + cluster-targeted come in Epic 2b.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 
 import type {
     PlaybookCatalogEntry,
@@ -27,6 +28,16 @@ import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import './PlaybookPickerPanel.css';
+
+const VALID_SYNTH_MODES: ReadonlySet<SynthMode> = new Set([
+    'positives_paraphrase',
+    'hard_negatives',
+    'class_balance_fill',
+    'edge_cases',
+    'refusals',
+    'format_robustness',
+    'cluster_targeted',
+]);
 
 interface Props {
     projectId: number;
@@ -69,6 +80,31 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     const [recipeRequired, setRecipeRequired] = useState(false);
     const [selectedMode, setSelectedMode] = useState<SynthMode | null>(null);
     const [targetCount, setTargetCount] = useState(30);
+    // Forecast-prefill banner: when the user clicks a forecast action,
+    // the TrainabilityForecastPanel routes here with
+    // ?prefill_mode=<SynthMode>&prefill_count=<N>. We honor the prefill
+    // ONLY when the requested mode is actually in the recipe's
+    // catalog — silently fall back to the catalog default otherwise so
+    // the user isn't dropped on an empty form.
+    const location = useLocation();
+    const prefill = useMemo(() => {
+        const params = new URLSearchParams(location.search);
+        const modeToken = (params.get('prefill_mode') || '').trim();
+        const countToken = (params.get('prefill_count') || '').trim();
+        const mode = VALID_SYNTH_MODES.has(modeToken as SynthMode)
+            ? (modeToken as SynthMode)
+            : null;
+        const count = Number(countToken);
+        return {
+            mode,
+            count: Number.isFinite(count) && count > 0
+                ? Math.max(1, Math.min(500, Math.round(count)))
+                : null,
+            raw: modeToken,
+        };
+    }, [location.search]);
+    const [prefillApplied, setPrefillApplied] = useState(false);
+    const [prefillDismissed, setPrefillDismissed] = useState(false);
     const [catalogLoading, setCatalogLoading] = useState(true);
     const [catalogError, setCatalogError] = useState<string | null>(null);
     const [running, setRunning] = useState(false);
@@ -111,8 +147,25 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 setAvailable(data.playbooks);
                 setRecipeId(data.recipe_id);
                 setRecipeRequired(Boolean(data.recipe_required));
-                if (data.playbooks.length > 0 && !selectedMode) {
-                    setSelectedMode(data.playbooks[0].mode);
+                // Resolve the prefill *now* that we know which modes
+                // the recipe actually ships. Honors the requested mode
+                // only when it's in the catalog; falls back to the
+                // catalog default otherwise. The count is independent
+                // — applied whether the requested mode resolves or not.
+                const requestedModeAvailable = prefill.mode
+                    ? data.playbooks.some((p) => p.mode === prefill.mode)
+                    : false;
+                const targetMode: SynthMode | null = requestedModeAvailable
+                    ? prefill.mode
+                    : data.playbooks[0]?.mode ?? null;
+                if (targetMode && !selectedMode) {
+                    setSelectedMode(targetMode);
+                }
+                if (prefill.count !== null) {
+                    setTargetCount(prefill.count);
+                }
+                if (prefill.mode || prefill.count !== null) {
+                    setPrefillApplied(true);
                 }
             })
             .catch((err) => {
@@ -235,6 +288,14 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         );
     }
 
+    const requestedModeAvailable = prefill.mode
+        ? available.some((p) => p.mode === prefill.mode)
+        : false;
+    const showPrefillBanner =
+        prefillApplied
+        && !prefillDismissed
+        && (prefill.mode !== null || prefill.count !== null);
+
     return (
         <section className="playbook-picker" data-testid="playbook-picker">
             <header className="playbook-picker__head">
@@ -247,6 +308,36 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     {available.length} mode{available.length === 1 ? '' : 's'} available
                 </p>
             </header>
+
+            {showPrefillBanner && (
+                <div
+                    className="playbook-picker__prefill-banner"
+                    role="status"
+                    data-testid="playbook-picker-prefill-banner"
+                >
+                    <span>
+                        Prefilled from trainability forecast
+                        {prefill.mode && requestedModeAvailable
+                            ? <>: mode <strong>{MODE_LABELS[prefill.mode]?.label || prefill.mode}</strong></>
+                            : prefill.mode && !requestedModeAvailable
+                                ? <> — requested mode <code>{prefill.raw}</code> isn't in this recipe; using the catalog default</>
+                                : null}
+                        {prefill.count !== null
+                            ? <>, target <strong>{prefill.count}</strong> rows</>
+                            : null}
+                        .
+                    </span>
+                    <button
+                        type="button"
+                        className="playbook-picker__prefill-dismiss"
+                        onClick={() => setPrefillDismissed(true)}
+                        data-testid="playbook-picker-prefill-dismiss"
+                        aria-label="Dismiss forecast prefill banner"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
 
             <fieldset className="playbook-picker__modes" data-testid="playbook-picker-modes">
                 <legend>Mode</legend>

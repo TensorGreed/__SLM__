@@ -10,6 +10,7 @@ import ArchetypeComparisonPanel from '../components/training/ArchetypeComparison
 import TrainabilityForecastPanel from '../components/training/TrainabilityForecastPanel';
 import TrainingPanel from '../components/training/TrainingPanel';
 import CoachStrip from '../components/coach/CoachStrip';
+import { routeForecastAction } from '../utils/forecastActionRouter';
 import type { ProjectWorkspaceContextValue } from './ProjectWorkspaceContext';
 import './ProjectTrainingConfigPage.css';
 
@@ -69,15 +70,15 @@ export default function ProjectTrainingConfigPage() {
 
             <TrainabilityForecastPanel
                 projectId={projectId}
-                onActionClicked={(kind) => {
-                    // Suggested-action one-click router. Each action
-                    // routes to the surface that resolves it: synth_*
-                    // → Synthetic tab; fix_gold_rows → Gold Set tab.
-                    if (kind === 'fix_gold_rows') {
-                        navigate(`/project/${projectId}/pipeline/goldset`);
-                    } else {
-                        navigate(`/project/${projectId}/pipeline/synthetic`);
-                    }
+                onActionClicked={(kind, params) => {
+                    // routeForecastAction encodes the kind + params
+                    // into a destination URL. The destination panel
+                    // reads the query string and prefills its form
+                    // (synthetic playbook mode + count, gold-set row
+                    // filter + label-fragment banner).
+                    const route = routeForecastAction(projectId, kind, params);
+                    if (!route) return;
+                    navigate(route.search ? `${route.path}?${route.search}` : route.path);
                 }}
             />
             <TrainingPanel
