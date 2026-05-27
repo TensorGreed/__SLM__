@@ -48,6 +48,10 @@ from app.models.remediation_action_event import (
     RemediationActionEvent,
     RemediationOutcome,
 )
+from app.models.gold_drift_review_queue import (
+    GoldDriftQueueStatus,
+    GoldDriftReviewQueueRow,
+)
 
 __all__ = [
     "Project",
@@ -101,5 +105,7 @@ __all__ = [
     "ForecastCalibrationObservation",
     "RemediationActionEvent",
     "RemediationOutcome",
+    "GoldDriftQueueStatus",
+    "GoldDriftReviewQueueRow",
     "JobStatus",
 ]

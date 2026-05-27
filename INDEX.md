@@ -40,6 +40,7 @@ session-start guidance.
 - `backend/app/api/domain_blueprints.py` — Domain blueprint API routes for beginner-mode onboarding.
 - `backend/app/api/domain_packs.py` — Domain pack API routes.
 - `backend/app/api/domain_profiles.py` — Domain profile API routes.
+- `backend/app/api/drift.py` — Project-scoped drift API (E4).
 - `backend/app/api/evaluation.py` — Evaluation API routes.
 - `backend/app/api/export.py` — Export API routes.
 - `backend/app/api/extensions.py` — Extensions API — plugin contract validators + scaffold generator
@@ -132,6 +133,7 @@ session-start guidance.
 - `backend/app/services/domain_pack_service.py` — Domain pack service for pack persistence and project assignment.
 - `backend/app/services/domain_profile_service.py` — Domain profile service for contract persistence and project assignment.
 - `backend/app/services/domain_runtime_service.py` — Runtime resolution for effective domain defaults (core + profile + pack overlay).
+- `backend/app/services/drift_trap_refresh_service.py` — Drift-triggered hallucination-trap refresh (E4).
 - `backend/app/services/eval_jobs_service.py` — Job-runner wrappers for long-running evaluation endpoints.
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
 - `backend/app/services/evaluation_pack_service.py` — Evaluation pack catalog + task-aware auto-gate evaluation helpers.
@@ -249,6 +251,7 @@ session-start guidance.
 - `backend/app/models/export.py` — Export ORM model for tracking model exports.
 - `backend/app/models/failure_cluster.py` — Persisted failure clusters (priority.md P33, Wave G).
 - `backend/app/models/forecast_calibration_observation.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
+- `backend/app/models/gold_drift_review_queue.py` — Gold-drift review queue — fresh hallucination traps awaiting triage (E4).
 - `backend/app/models/gold_set_annotation.py` — Gold-set annotation workbench tables — versions, rows, and reviewer queue.
 - `backend/app/models/job.py` — Generic background job record (Hardening Phase H1).
 - `backend/app/models/label_job.py` — Annotation foundation (Story 1.1) — label jobs + per-row work units.
@@ -333,6 +336,7 @@ session-start guidance.
 - `backend/alembic/versions/20260527_0038_training_forecast_snapshots.py` — Training-forecast snapshot history table (USER-SUCCESS Epic 1, T2).
 - `backend/alembic/versions/20260527_0039_forecast_calibration_observations.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
 - `backend/alembic/versions/20260527_0040_remediation_action_events.py` — Remediation action event tracking (E2).
+- `backend/alembic/versions/20260527_0041_gold_drift_review_queue.py` — Gold-drift review queue table (E4).
 
 ## Frontend · API clients
 
@@ -541,6 +545,7 @@ session-start guidance.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.

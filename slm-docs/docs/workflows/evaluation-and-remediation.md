@@ -212,6 +212,29 @@ When you've run eval against two experiments in the same project, the Eval tab s
 
 When B regressed, a red **Fix the gap** banner offers a one-click "Rerun experiment #A" button that posts to the existing `rerun-from-manifest` endpoint. The rerun spawns a NEW experiment that replays A's resolved config + dataset snapshot — A and B both stay untouched. If A never produced a manifest (e.g. it failed mid-training), the click surfaces a toast explaining only completed runs can be rolled back to.
 
+## Drift-triggered hallucination-trap refresh (admin opt-in)
+
+Projects can opt into automatic hallucination-trap refresh by setting `runtime_config.drift_refresh_traps.enabled = true` (and optionally `count`, default 5, clamped to [1, 20]). When opted-in, every per-deployment drift check fires the trap-refresh runner alongside its normal eval, populating a per-project review queue with fresh traps targeting the last 7 days of failure-cluster patterns.
+
+Manual trigger:
+
+```sh
+# Generate N traps targeting recent cluster patterns. ?simulate=true
+# bypasses the LLM for dev where no API key is wired.
+curl -X POST "http://localhost:8000/api/projects/1/drift/refresh-traps?count=5&simulate=true"
+
+# Triage queue — newest-first list of pending rows.
+curl "http://localhost:8000/api/projects/1/drift/review-queue"
+
+# Accept (→ appends to gold_test.jsonl) or reject one row.
+curl -X POST "http://localhost:8000/api/projects/1/drift/review-queue/42/triage" \
+  -d '{"accept": true, "note": "good trap"}'
+```
+
+Each queue row carries the cluster pattern (`reason_code`, `signature`) that motivated the trap so the reviewer sees *why* it was generated. Accepted rows are appended to the project's `gold_test.jsonl` and the dataset's `record_count` is bumped; rejected rows stay in the queue with the user's reason for audit. Re-triaging a row returns `409 queue_row_already_triaged` — once triaged, always triaged.
+
+The runner falls back to deterministic placeholder traps when no LLM API key is stored on the project, so a weekly drift-check tick still populates the queue if the user opted in without wiring credentials.
+
 ## Remediation outcome tracking (admin)
 
 Every click on a suggested-action button — from the trainability forecast panel and from the failure-cluster cards — fires a fire-and-forget `POST /api/projects/{id}/remediation/events` with `{kind, params, outcome}`. When the next eval result lands for the project, `evaluate_experiment_auto_gates` stamps every pending event in the window with `evaluation_lift_pct = (current_pass_rate - previous_pass_rate) × 100`. `GET /api/admin/remediation/outcomes?kind=<action_kind>` aggregates by kind with median + mean lift, positive-lift count, and a positive-lift rate so admins can spot suggestion sources that get clicked but don't correlate with improvements. No UI in v1 — admin reads the JSON.

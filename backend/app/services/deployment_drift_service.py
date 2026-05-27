@@ -471,6 +471,30 @@ async def run_drift_check(
     await db.flush()
     await db.refresh(row_obj)
 
+    # E4: when the project has opted into automatic hallucination-trap
+    # refresh, fire one alongside the drift check so the queue stays
+    # populated as the deployed model evolves. Best-effort — never
+    # block the drift response on a trap-refresh failure.
+    try:
+        from app.models.project import Project as _ProjectModel
+        from app.services.drift_trap_refresh_service import (
+            is_trap_refresh_enabled,
+            refresh_traps_for_project,
+        )
+
+        project_obj = await db.get(_ProjectModel, row_obj.project_id)
+        if project_obj is not None and is_trap_refresh_enabled(project_obj):
+            await refresh_traps_for_project(
+                db,
+                project_id=row_obj.project_id,
+                source_drift_check_id=row_obj.id,
+            )
+    except Exception as trap_exc:
+        print(
+            f"[drift_trap_refresh] failed for deployment drift {row_obj.id}: {trap_exc}",
+            flush=True,
+        )
+
     return _serialize(row_obj)
 
 
