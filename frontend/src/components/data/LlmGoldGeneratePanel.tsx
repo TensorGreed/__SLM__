@@ -28,7 +28,14 @@ import api from '../../api/client';
 import { toast } from '../../stores/toastStore';
 
 
-type Provider = 'openai' | 'anthropic';
+/**
+ * UI-level provider tag. ``deepseek`` is a UX label only — at the
+ * wire layer it maps to ``provider=openai`` + the Deepseek host
+ * via ``api_url`` (their API is OpenAI-compatible). Keeping the
+ * three-way distinction in the UI gives the user clear model
+ * defaults + a recognizable "I'm using Deepseek" affordance.
+ */
+type Provider = 'openai' | 'anthropic' | 'deepseek';
 
 interface GeneratedRow {
     question: string;
@@ -80,7 +87,16 @@ const DEFAULT_MODELS: Record<Provider, { value: string; label: string }[]> = {
         { value: 'claude-haiku-4-5-20251001', label: 'claude-haiku-4-5 (fast, cheap)' },
         { value: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6 (smarter, ~5× the cost)' },
     ],
+    deepseek: [
+        { value: 'deepseek-chat', label: 'deepseek-chat (V3 family — cheap, general purpose)' },
+        { value: 'deepseek-reasoner', label: 'deepseek-reasoner (R1 family — slower, stronger reasoning)' },
+    ],
 };
+
+
+/** Deepseek's API is OpenAI-compatible; we send ``provider=openai``
+ *  + this URL on the wire when the user picks Deepseek in the UI. */
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 
 
 function extractErrorMessage(err: unknown): { code: string; message: string } {
@@ -110,6 +126,11 @@ export default function LlmGoldGeneratePanel({
 }: Props) {
     const [provider, setProvider] = useState<Provider>(initialProvider || 'openai');
     const [model, setModel] = useState<string>(DEFAULT_MODELS.openai[0].value);
+    // Override slot for unusual / unreleased / private model ids
+    // (e.g. a Deepseek "DeepSeek-V4-Pro" the dropdown doesn't carry,
+    // or a fresh OpenAI / Anthropic SKU). When non-empty, this is
+    // what gets sent on the wire — the dropdown becomes informational.
+    const [customModel, setCustomModel] = useState('');
     const [apiKey, setApiKey] = useState('');
     const [count, setCount] = useState(10);
     const [focusHint, setFocusHint] = useState('');
@@ -131,10 +152,39 @@ export default function LlmGoldGeneratePanel({
     const [costEstimateLoading, setCostEstimateLoading] = useState(false);
 
     // Reset the model dropdown when provider changes so the user never
-    // sees a stale model string from the other provider.
+    // sees a stale model string from the other provider. Custom-model
+    // override is also cleared — they're per-provider tokens.
     useEffect(() => {
         setModel(DEFAULT_MODELS[provider][0].value);
+        setCustomModel('');
     }, [provider]);
+
+    /**
+     * Effective model — custom override wins when the user has typed
+     * something (after trimming). Otherwise the dropdown value flows
+     * to the wire + the cost-estimate badge.
+     */
+    const effectiveModel = customModel.trim() || model;
+
+    /**
+     * The backend's ``/generate-via-llm`` payload uses
+     * provider=openai|anthropic. Deepseek (and any future
+     * OpenAI-compatible host) maps to provider=openai +
+     * api_url=<that host>. Kept in one place so the cost-estimate
+     * fetch + the real generate POST agree on the wire shape.
+     */
+    const wirePayloadDefaults = () => {
+        if (provider === 'deepseek') {
+            return {
+                provider: 'openai' as const,
+                api_url: DEEPSEEK_API_URL,
+            };
+        }
+        return {
+            provider: provider as 'openai' | 'anthropic',
+            api_url: undefined as string | undefined,
+        };
+    };
 
     // Refetch the cost estimate whenever inputs that affect price
     // change. Debounced via the dependency list — React will batch
@@ -144,11 +194,12 @@ export default function LlmGoldGeneratePanel({
     useEffect(() => {
         let cancelled = false;
         setCostEstimateLoading(true);
+        const wire = wirePayloadDefaults();
         api.post<CostEstimateResponse>(
             `/projects/${projectId}/gold/generate-via-llm/cost-estimate`,
             {
-                provider,
-                model,
+                provider: wire.provider,
+                model: effectiveModel,
                 count,
                 ground_in_source: groundInSource,
             },
@@ -166,7 +217,8 @@ export default function LlmGoldGeneratePanel({
                 if (!cancelled) setCostEstimateLoading(false);
             });
         return () => { cancelled = true; };
-    }, [projectId, provider, model, count, groundInSource]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId, provider, model, customModel, count, groundInSource]);
 
     const handleGenerate = async () => {
         if (generating) return;
@@ -175,11 +227,13 @@ export default function LlmGoldGeneratePanel({
         setPreview(null);
         setSelectedIndexes(new Set());
         try {
+            const wire = wirePayloadDefaults();
             const res = await api.post<GenerateResponse>(
                 `/projects/${projectId}/gold/generate-via-llm`,
                 {
-                    provider,
-                    model,
+                    provider: wire.provider,
+                    api_url: wire.api_url,
+                    model: effectiveModel,
                     count,
                     focus_hint: focusHint.trim() || undefined,
                     api_key: apiKey.trim() || undefined,
@@ -296,6 +350,7 @@ export default function LlmGoldGeneratePanel({
                     >
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
+                        <option value="deepseek">Deepseek</option>
                     </select>
                 </div>
                 <div className="form-group" style={{ margin: 0 }}>
@@ -305,6 +360,12 @@ export default function LlmGoldGeneratePanel({
                         value={model}
                         onChange={(e) => setModel(e.target.value)}
                         data-testid="llm-gold-model"
+                        disabled={!!customModel.trim()}
+                        title={
+                            customModel.trim()
+                                ? "Custom model override is active — clear it to use a dropdown choice."
+                                : undefined
+                        }
                     >
                         {DEFAULT_MODELS[provider].map((m) => (
                             <option key={m.value} value={m.value}>
@@ -342,11 +403,49 @@ export default function LlmGoldGeneratePanel({
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder={
-                        provider === 'openai' ? 'sk-...' : 'sk-ant-...'
+                        provider === 'openai' ? 'sk-...'
+                            : provider === 'anthropic' ? 'sk-ant-...'
+                                : 'sk-...'
                     }
                     data-testid="llm-gold-api-key"
                     style={{ fontFamily: 'monospace' }}
                 />
+            </div>
+
+            <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">
+                    Custom model id{' '}
+                    <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
+                        (optional — overrides the dropdown)
+                    </span>
+                </label>
+                <input
+                    className="input"
+                    type="text"
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    placeholder={
+                        provider === 'deepseek'
+                            ? 'e.g. DeepSeek-V4-Pro, deepseek-coder, your private SKU'
+                            : provider === 'openai'
+                                ? 'e.g. gpt-5, o4-mini, your fine-tuned SKU'
+                                : 'e.g. claude-opus-4-7, your private SKU'
+                    }
+                    data-testid="llm-gold-custom-model"
+                    style={{ fontFamily: 'monospace' }}
+                />
+                <div
+                    style={{
+                        marginTop: 4,
+                        fontSize: '0.8rem',
+                        color: 'var(--text-tertiary)',
+                    }}
+                >
+                    Drop in any model the provider accepts — useful for
+                    SKUs the dropdown doesn't carry yet (unreleased, regional,
+                    fine-tuned). Cost estimate falls back to the cheapest-tier
+                    price when the model id is unrecognized.
+                </div>
             </div>
 
             <div className="form-group" style={{ margin: 0 }}>

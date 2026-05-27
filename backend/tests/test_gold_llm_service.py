@@ -436,6 +436,23 @@ class CostHelpersTests(unittest.TestCase):
             (1.00, 5.00),
         )
 
+    def test_lookup_pricing_deepseek_models(self):
+        # Deepseek's API is OpenAI-compatible so the frontend sends
+        # provider=openai + api_url=<deepseek host>; cost-estimate
+        # must price the model string correctly even though provider
+        # is "openai" on the wire.
+        from app.services.gold_llm_service import _lookup_pricing
+        self.assertEqual(_lookup_pricing("deepseek-chat"), (0.27, 1.10))
+        self.assertEqual(_lookup_pricing("deepseek-reasoner"), (0.55, 2.19))
+
+    def test_lookup_pricing_unknown_deepseek_variant_falls_back(self):
+        # An unconfirmed model like the "DeepSeek-V4-Pro" some users
+        # ask about — prefix doesn't match a known SKU, so falls back
+        # to the cheapest-tier estimate (defensive under-estimate
+        # rather than wrong-direction over-estimate).
+        from app.services.gold_llm_service import _lookup_pricing
+        self.assertEqual(_lookup_pricing("DeepSeek-V4-Pro"), (0.15, 0.60))
+
     def test_lookup_pricing_unknown_falls_back_to_cheapest(self):
         # Falling back to the cheapest tier means an unknown model
         # under-estimates rather than over-estimates — defensible

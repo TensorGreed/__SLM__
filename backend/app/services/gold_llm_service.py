@@ -102,6 +102,13 @@ _MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.00, 5.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-opus-4-7": (15.00, 75.00),
+    # Deepseek (V3 pricing as of late 2025; deepseek-reasoner is the
+    # R1 family). Prefix-match means future deepseek-* variants
+    # (including the unconfirmed "deepseek-v4-pro" some users have
+    # asked about) resolve to the cheapest-tier fallback below if
+    # they don't match a known prefix — never the wrong way.
+    "deepseek-chat": (0.27, 1.10),
+    "deepseek-reasoner": (0.55, 2.19),
 }
 
 # Approximate-token heuristic: 1 token ≈ 4 chars for English. We use

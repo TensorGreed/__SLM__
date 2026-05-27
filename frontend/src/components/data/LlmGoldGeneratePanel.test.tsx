@@ -409,6 +409,127 @@ describe('LlmGoldGeneratePanel', () => {
         });
     });
 
+    // ── Deepseek + custom model override (Deepseek-V4-Pro etc) ───
+
+    it('selecting Deepseek sends provider=openai + api_url=Deepseek host on the wire', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.selectOptions(
+            screen.getByTestId('llm-gold-provider'),
+            'deepseek',
+        );
+        // Default Deepseek model is deepseek-chat.
+        await waitFor(() => {
+            expect(
+                (screen.getByTestId('llm-gold-model') as HTMLSelectElement).value,
+            ).toBe('deepseek-chat');
+        });
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-deepseek-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+            const body = generateCalls[generateCalls.length - 1][1];
+            // Deepseek maps to provider=openai (their API is OpenAI-
+            // compatible) + the Deepseek host via api_url.
+            expect(body).toEqual(
+                expect.objectContaining({
+                    provider: 'openai',
+                    api_url: 'https://api.deepseek.com/v1/chat/completions',
+                    model: 'deepseek-chat',
+                }),
+            );
+        });
+    });
+
+    it('custom model override beats the dropdown — e.g. DeepSeek-V4-Pro', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await userEvent.selectOptions(
+            screen.getByTestId('llm-gold-provider'),
+            'deepseek',
+        );
+        // Type a model the dropdown doesn't carry.
+        fireEvent.change(screen.getByTestId('llm-gold-custom-model'), {
+            target: { value: 'DeepSeek-V4-Pro' },
+        });
+        // Dropdown becomes disabled to signal the override is in
+        // charge.
+        await waitFor(() => {
+            expect(
+                (screen.getByTestId('llm-gold-model') as HTMLSelectElement).disabled,
+            ).toBe(true);
+        });
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-deepseek-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            const body = generateCalls[generateCalls.length - 1][1];
+            // Custom override wins; api_url still points at Deepseek.
+            expect(body).toEqual(
+                expect.objectContaining({
+                    provider: 'openai',
+                    api_url: 'https://api.deepseek.com/v1/chat/completions',
+                    model: 'DeepSeek-V4-Pro',
+                }),
+            );
+        });
+    });
+
+    it('switching provider clears any custom-model override', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-custom-model'), {
+            target: { value: 'gpt-5' },
+        });
+        expect((screen.getByTestId('llm-gold-custom-model') as HTMLInputElement).value)
+            .toBe('gpt-5');
+
+        await userEvent.selectOptions(
+            screen.getByTestId('llm-gold-provider'),
+            'anthropic',
+        );
+        // Effect that resets the dropdown also clears the custom
+        // override — the gpt-5 string would be nonsense for Anthropic.
+        await waitFor(() => {
+            expect(
+                (screen.getByTestId('llm-gold-custom-model') as HTMLInputElement).value,
+            ).toBe('');
+        });
+        // Anthropic dropdown re-enabled.
+        expect(
+            (screen.getByTestId('llm-gold-model') as HTMLSelectElement).disabled,
+        ).toBe(false);
+    });
+
     it('source_excerpt renders per row when present', async () => {
         installPostRouter({
             generate: makeGenerateResponse({
