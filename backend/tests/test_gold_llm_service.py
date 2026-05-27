@@ -368,5 +368,369 @@ class GenerateGoldQaServiceTests(unittest.TestCase):
         self.assertIn("Return ONLY valid JSON", user_prompt)
 
 
+class ChunkSamplerTests(unittest.TestCase):
+    """Pure-function tests for ``_sample_reference_chunks`` — the
+    cost-control guard. Caps MUST hold so the cost estimator's
+    math stays trustworthy."""
+
+    def test_empty_pool_returns_empty_list(self):
+        from app.services.gold_llm_service import _sample_reference_chunks
+        self.assertEqual(_sample_reference_chunks([]), [])
+
+    def test_stratified_pick_spans_first_and_last(self):
+        from app.services.gold_llm_service import _sample_reference_chunks
+        # 100-chunk pool, ask for 5 — should include first + last.
+        pool = [f"chunk-{i}" for i in range(100)]
+        sampled = _sample_reference_chunks(pool, max_chunks=5)
+        self.assertEqual(len(sampled), 5)
+        # First and last chunks of the pool both made it in.
+        labels = [c.source_label for c in sampled]
+        self.assertIn("chunk-1-of-100", labels)
+        self.assertIn("chunk-100-of-100", labels)
+
+    def test_per_chunk_char_cap_is_enforced(self):
+        from app.services.gold_llm_service import _sample_reference_chunks
+        # One huge chunk — must be truncated to max_chars_per_chunk.
+        huge = "x" * 10_000
+        sampled = _sample_reference_chunks(
+            [huge], max_chars_per_chunk=500,
+        )
+        self.assertEqual(len(sampled), 1)
+        self.assertEqual(len(sampled[0].text), 500)
+
+    def test_total_chars_cap_is_enforced_across_chunks(self):
+        from app.services.gold_llm_service import _sample_reference_chunks
+        pool = ["a" * 3000 for _ in range(10)]
+        sampled = _sample_reference_chunks(
+            pool,
+            max_chunks=10,
+            max_chars_per_chunk=3000,
+            max_total_chars=5000,
+        )
+        total_chars = sum(len(c.text) for c in sampled)
+        self.assertLessEqual(total_chars, 5000)
+        # And there's at least one chunk (i.e. the cap kicked in
+        # mid-iteration, didn't return empty).
+        self.assertGreaterEqual(len(sampled), 1)
+
+    def test_pool_smaller_than_max_chunks_returns_all(self):
+        from app.services.gold_llm_service import _sample_reference_chunks
+        pool = ["a", "b", "c"]
+        sampled = _sample_reference_chunks(pool, max_chunks=10)
+        self.assertEqual(len(sampled), 3)
+
+
+class CostHelpersTests(unittest.TestCase):
+
+    def test_lookup_pricing_known_model(self):
+        from app.services.gold_llm_service import _lookup_pricing
+        self.assertEqual(_lookup_pricing("gpt-4o-mini"), (0.15, 0.60))
+        self.assertEqual(_lookup_pricing("gpt-4o"), (2.50, 10.00))
+
+    def test_lookup_pricing_date_stamped_anthropic_model(self):
+        # Production Anthropic model strings include a date suffix —
+        # the prefix-match path must still resolve them.
+        from app.services.gold_llm_service import _lookup_pricing
+        self.assertEqual(
+            _lookup_pricing("claude-haiku-4-5-20251001"),
+            (1.00, 5.00),
+        )
+
+    def test_lookup_pricing_unknown_falls_back_to_cheapest(self):
+        # Falling back to the cheapest tier means an unknown model
+        # under-estimates rather than over-estimates — defensible
+        # since the user only cares about the ceiling.
+        from app.services.gold_llm_service import _lookup_pricing
+        self.assertEqual(_lookup_pricing("unknown-model"), (0.15, 0.60))
+
+    def test_compute_estimated_cost_usd_known_numbers(self):
+        # 100K input + 50K output on gpt-4o-mini:
+        # (100000/1e6)*0.15 + (50000/1e6)*0.60 = 0.015 + 0.03 = 0.045
+        from app.services.gold_llm_service import compute_estimated_cost_usd
+        cost = compute_estimated_cost_usd(
+            model="gpt-4o-mini",
+            prompt_tokens=100_000,
+            completion_tokens=50_000,
+        )
+        self.assertAlmostEqual(cost, 0.045, places=4)
+
+    def test_estimate_call_cost_grounded_vs_ungrounded(self):
+        from app.services.gold_llm_service import estimate_call_cost_usd
+        # Grounding adds reference-material tokens to the prompt
+        # estimate, so cost should be strictly higher than ungrounded
+        # for the same model + count.
+        ungrounded = estimate_call_cost_usd(
+            model="gpt-4o-mini",
+            count=10,
+            grounded=False,
+            reference_chunk_count=0,
+            reference_total_chars=0,
+        )
+        grounded = estimate_call_cost_usd(
+            model="gpt-4o-mini",
+            count=10,
+            grounded=True,
+            reference_chunk_count=5,
+            reference_total_chars=6000,
+        )
+        self.assertGreater(
+            grounded["estimated_cost_usd"],
+            ungrounded["estimated_cost_usd"],
+        )
+        # Sanity: grounded 10-row call on gpt-4o-mini should still
+        # cost well under 1¢ — the worst-case spend the user is
+        # exposed to per Generate click on the default model.
+        self.assertLess(grounded["estimated_cost_usd"], 0.01)
+
+    def test_estimate_call_cost_sonnet_50_rows_stays_bounded(self):
+        # The "do not shoot too much" ceiling: max 50 rows on the
+        # priciest supported model (sonnet) with full grounding
+        # context. The realistic ceiling is ~12¢ — opt-in, deliberate,
+        # and surfaced to the user via the cost badge BEFORE clicking
+        # Generate. We assert <20¢ as the meaningful guardrail (catches
+        # accidental price-table 10× errors without being arbitrary).
+        from app.services.gold_llm_service import estimate_call_cost_usd
+        out = estimate_call_cost_usd(
+            model="claude-sonnet-4-6",
+            count=50,
+            grounded=True,
+            reference_chunk_count=6,
+            reference_total_chars=8000,
+        )
+        self.assertLess(out["estimated_cost_usd"], 0.20)
+
+    def test_estimate_default_call_is_sub_cent(self):
+        # Default UX (10 rows, gpt-4o-mini, grounded, typical chunk
+        # context) MUST be sub-cent so first-click cost isn't scary.
+        from app.services.gold_llm_service import estimate_call_cost_usd
+        out = estimate_call_cost_usd(
+            model="gpt-4o-mini",
+            count=10,
+            grounded=True,
+            reference_chunk_count=6,
+            reference_total_chars=8000,
+        )
+        self.assertLess(out["estimated_cost_usd"], 0.01)
+
+
+class GroundingIntegrationTests(unittest.TestCase):
+    """End-to-end through the endpoint: confirms grounding context
+    flows into the prompt + falls back gracefully when no source
+    material exists."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_qa_sft_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def test_grounded_call_when_no_chunks_falls_back_gracefully(self):
+        """Fresh project with no cleaned chunks — grounding requested
+        but pool is empty. Must not crash; payload reports
+        reference_chunk_count=0 so the UI knows grounding was
+        ineffective."""
+        pid = self._make_qa_sft_project("Grounding Empty Pool")
+
+        async def _fake(**kwargs):
+            return CloudLlmResponse(
+                content='{"pairs":[{"question":"Q","answer":"A"}]}',
+                model="gpt-4o-mini",
+                prompt_tokens=200,
+                completion_tokens=80,
+            )
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_fake,
+        ), patch(
+            "app.services.gold_llm_service._load_project_cleaned_chunks",
+            return_value=[],
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": True,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["reference_chunk_count"], 0)
+        # Cost still reported, computed from the returned usage.
+        self.assertGreater(body["estimated_cost_usd"], 0)
+
+    def test_grounded_call_with_chunks_passes_them_into_the_prompt(self):
+        pid = self._make_qa_sft_project("Grounding With Chunks")
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return CloudLlmResponse(
+                content=(
+                    '{"pairs":[{"question":"Q","answer":"A",'
+                    '"source_excerpt":"chunk text snippet"}]}'
+                ),
+                model="gpt-4o-mini",
+                prompt_tokens=300,
+                completion_tokens=80,
+            )
+
+        fake_chunks = [
+            "This is the first cleaned chunk about Topic A.",
+            "Second chunk discussing the same Topic A in more detail.",
+            "Third chunk introduces Topic B.",
+        ]
+        with patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_capture,
+        ), patch(
+            "app.services.gold_llm_service._load_project_cleaned_chunks",
+            return_value=fake_chunks,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": True,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        # All 3 chunks made it (pool < MAX_REFERENCE_CHUNKS).
+        self.assertEqual(body["reference_chunk_count"], 3)
+        # Source excerpt round-tripped from the LLM response.
+        self.assertEqual(
+            body["rows"][0]["source_excerpt"], "chunk text snippet",
+        )
+        # Prompt actually included the REFERENCE MATERIAL section.
+        user_prompt = captured.get("user_prompt") or ""
+        self.assertIn("REFERENCE MATERIAL", user_prompt)
+        self.assertIn("Topic A", user_prompt)
+        # Grounding-mode instructions tell the LLM to skip
+        # unsupported questions.
+        self.assertIn("SKIP that question", user_prompt)
+
+    def test_ground_in_source_false_does_not_load_chunks(self):
+        pid = self._make_qa_sft_project("Grounding Off")
+        loader_calls = {"n": 0}
+
+        async def _fake_loader(project_id):
+            loader_calls["n"] += 1
+            return ["should not be loaded"]
+
+        async def _fake_llm(**kwargs):
+            return CloudLlmResponse(
+                content='{"pairs":[{"question":"Q","answer":"A"}]}',
+                model="gpt-4o-mini",
+                prompt_tokens=120,
+                completion_tokens=50,
+            )
+
+        with patch(
+            "app.services.gold_llm_service._load_project_cleaned_chunks",
+            side_effect=_fake_loader,
+        ), patch(
+            "app.services.gold_llm_service.call_openai_chat",
+            side_effect=_fake_llm,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 1,
+                    "api_key": "sk-test",
+                    "ground_in_source": False,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(loader_calls["n"], 0)
+        self.assertEqual(resp.json()["reference_chunk_count"], 0)
+
+
+class CostEstimateEndpointTests(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._client_cm = TestClient(app)
+        cls.client = cls._client_cm.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._client_cm.__exit__(None, None, None)
+
+    def _make_qa_sft_project(self, name: str) -> int:
+        resp = self.client.post(
+            "/api/project-templates/policy-qa-style/instantiate",
+            json={"project_name": name},
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return int(resp.json()["id"])
+
+    def test_estimate_endpoint_reports_cost_and_chunk_count(self):
+        pid = self._make_qa_sft_project("Cost Estimate Endpoint")
+        fake_chunks = [f"chunk text {i}" * 100 for i in range(20)]
+
+        with patch(
+            "app.api.gold._load_project_cleaned_chunks",
+            return_value=fake_chunks,
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm/cost-estimate",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 10,
+                    "ground_in_source": True,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        # 20-chunk pool, cap at MAX_REFERENCE_CHUNKS (6).
+        self.assertEqual(body["ground_in_source_effective"], True)
+        self.assertEqual(body["reference_chunk_count"], 6)
+        self.assertGreater(body["estimated_cost_usd"], 0)
+        # Sanity ceiling — gpt-4o-mini × 10 rows × grounded should be
+        # solidly under 1¢.
+        self.assertLess(body["estimated_cost_usd"], 0.01)
+
+    def test_estimate_when_no_chunks_marks_effective_false(self):
+        pid = self._make_qa_sft_project("Cost Estimate Empty Pool")
+        with patch(
+            "app.api.gold._load_project_cleaned_chunks",
+            return_value=[],
+        ):
+            resp = self.client.post(
+                f"/api/projects/{pid}/gold/generate-via-llm/cost-estimate",
+                json={
+                    "provider": "openai",
+                    "model": "gpt-4o-mini",
+                    "count": 5,
+                    "ground_in_source": True,
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["ground_in_source_requested"], True)
+        self.assertEqual(body["ground_in_source_effective"], False)
+        self.assertEqual(body["reference_chunk_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

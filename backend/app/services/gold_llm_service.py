@@ -21,6 +21,7 @@ Scope:
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Literal
 
@@ -35,6 +36,10 @@ from app.services.cloud_llm_service import (
     call_openai_chat,
     extract_json_payload,
 )
+# Imported at module level (not inside the function) so tests can
+# patch ``app.services.gold_llm_service._load_project_cleaned_chunks``.
+# No import cycle — synthetic_service doesn't import from this module.
+from app.services.synthetic_service import _load_project_cleaned_chunks
 
 
 Provider = Literal["openai", "anthropic"]
@@ -45,6 +50,19 @@ class GeneratedQa:
     question: str
     answer: str
     rationale: str = ""
+    # When grounding is on, the LLM is asked to include the source
+    # excerpt that backs each answer. Empty string when grounding
+    # was off OR when the LLM omitted the field.
+    source_excerpt: str = ""
+
+
+@dataclass
+class ReferenceChunk:
+    text: str
+    source_label: str  # short tag like "doc-3/chunk-12" so the user can locate
+
+    def to_prompt_block(self, idx: int) -> str:
+        return f"[REF-{idx}] ({self.source_label})\n{self.text}"
 
 
 @dataclass
@@ -55,6 +73,109 @@ class GenerationResult:
     prompt_tokens: int
     completion_tokens: int
     prompt_preview: str
+    # New fields for grounding + cost transparency.
+    reference_chunk_count: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pricing — approximate per-token prices (USD per 1M tokens) for the
+# models we expose in the UI. Used to compute ``estimated_cost_usd``
+# both for the pre-call estimate the UI shows next to the Generate
+# button AND the post-call actual figure based on returned usage.
+#
+# Numbers tracked are *list prices as of late 2025*; they drift, but
+# the order-of-magnitude is what matters for the user-facing "≈ $X.YY"
+# label. A stale price by 20% doesn't change the "is this safe?"
+# verdict for a $0.02 generation. Update when models / prices shift.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# (input_per_1m_usd, output_per_1m_usd). Keys are normalized to lower
+# and matched as a prefix (so "claude-haiku-4-5-20251001" matches
+# "claude-haiku-4-5") so future date-stamped variants Just Work.
+_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # OpenAI
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+    # Anthropic
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-opus-4-7": (15.00, 75.00),
+}
+
+# Approximate-token heuristic: 1 token ≈ 4 chars for English. We use
+# this for the *pre-call* estimate (where we have no actual token
+# count yet); post-call uses the provider's returned usage figures.
+_CHARS_PER_TOKEN = 4.0
+
+
+def _lookup_pricing(model: str) -> tuple[float, float]:
+    """Return (input_per_1m, output_per_1m) USD prices. Falls back
+    to the cheapest tier when the model is unknown so the estimate
+    is never wildly low (defensive — the user only cares about ceiling)."""
+    token = (model or "").strip().lower()
+    for prefix, prices in _MODEL_PRICING.items():
+        if token.startswith(prefix):
+            return prices
+    return (0.15, 0.60)  # cheapest-tier fallback
+
+
+def compute_estimated_cost_usd(
+    *,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> float:
+    """USD cost for a single call given actual usage from the provider."""
+    in_per_1m, out_per_1m = _lookup_pricing(model)
+    return round(
+        (prompt_tokens / 1_000_000) * in_per_1m
+        + (completion_tokens / 1_000_000) * out_per_1m,
+        6,
+    )
+
+
+def estimate_call_cost_usd(
+    *,
+    model: str,
+    count: int,
+    grounded: bool,
+    reference_chunk_count: int,
+    reference_total_chars: int,
+) -> dict[str, float | int]:
+    """Pre-call cost estimate the UI surfaces next to the Generate
+    button. Deliberately *generous* on the prompt side so users
+    aren't surprised by a higher post-call number.
+
+    Token model:
+      * Prompt fixed overhead (system + instructions + project ctx):
+        ~600 tokens.
+      * Per-row overhead in prompt (count appears in instructions):
+        ~5 tokens × count.
+      * Reference material (when grounded): chars/4 across all chunks.
+      * Completion: ~120 tokens per row (Q + A + rationale + maybe
+        source_excerpt). Grounded responses are longer because of
+        the excerpt — bumps to ~160.
+    """
+    fixed_prompt_tokens = 600 + 5 * count
+    reference_tokens = (
+        int(reference_total_chars / _CHARS_PER_TOKEN) if grounded else 0
+    )
+    completion_per_row = 160 if grounded else 120
+    completion_tokens = completion_per_row * count
+    prompt_tokens = fixed_prompt_tokens + reference_tokens
+    estimated = compute_estimated_cost_usd(
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+    return {
+        "estimated_cost_usd": estimated,
+        "estimated_prompt_tokens": prompt_tokens,
+        "estimated_completion_tokens": completion_tokens,
+        "reference_chunk_count": reference_chunk_count,
+    }
 
 
 class GoldGenerationError(ValueError):
@@ -82,15 +203,111 @@ _SYSTEM_PROMPT = (
 )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Reference-material sampling — strict char/total budget for cost
+# control. Grounding sends excerpts of the project's actual source
+# data (cleaned chunks) to the LLM so the answers are anchored to
+# what the trained model could plausibly have learned. Without these
+# caps a 500-chunk project could push the prompt to 100K+ tokens —
+# a few cents per call on the cheap models, but a few dollars on
+# Sonnet / gpt-4o for high counts. The caps keep a worst-case call
+# well under 3¢ on the priciest supported model.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Hard caps (also surfaced to the UI via the cost estimator).
+MAX_REFERENCE_CHUNKS = 6
+MAX_CHARS_PER_REFERENCE_CHUNK = 1500
+MAX_REFERENCE_TOTAL_CHARS = 8000
+
+
+def _sample_reference_chunks(
+    pool: list[str],
+    *,
+    max_chunks: int = MAX_REFERENCE_CHUNKS,
+    max_chars_per_chunk: int = MAX_CHARS_PER_REFERENCE_CHUNK,
+    max_total_chars: int = MAX_REFERENCE_TOTAL_CHARS,
+    seed: int = 0,
+) -> list[ReferenceChunk]:
+    """Stratified sample of cleaned-chunk text for the prompt.
+
+    Picks first + last + a few in between (deterministic via ``seed``)
+    so the LLM sees representative material without the prompt blowing
+    up. Each chunk is hard-truncated to ``max_chars_per_chunk``; the
+    total across all chunks is capped at ``max_total_chars``.
+
+    Returns ``[]`` when the pool is empty so the caller can gracefully
+    fall back to ungrounded generation (e.g. a fresh project that
+    hasn't imported data yet).
+    """
+    if not pool:
+        return []
+
+    n = len(pool)
+    # Pick stratified indexes: first, last, plus evenly spaced fillers.
+    # Cap at min(max_chunks, len(pool)).
+    target = min(max_chunks, n)
+    if target == 1:
+        indexes = [0]
+    elif target == 2:
+        indexes = [0, n - 1]
+    else:
+        step = (n - 1) / (target - 1)
+        indexes = sorted({round(i * step) for i in range(target)})
+        # Round-collapse can drop us below target on very small pools;
+        # backfill from a fresh shuffle until we hit it.
+        if len(indexes) < target:
+            rng = random.Random(seed)
+            remaining = [i for i in range(n) if i not in indexes]
+            rng.shuffle(remaining)
+            for i in remaining:
+                indexes.append(i)
+                if len(indexes) >= target:
+                    break
+            indexes = sorted(set(indexes))
+
+    chunks: list[ReferenceChunk] = []
+    total_chars = 0
+    for idx in indexes:
+        if idx < 0 or idx >= n:
+            continue
+        raw = (pool[idx] or "").strip()
+        if not raw:
+            continue
+        # Hard-truncate per-chunk before checking the global budget.
+        text = raw[:max_chars_per_chunk]
+        if total_chars + len(text) > max_total_chars:
+            text = text[: max(0, max_total_chars - total_chars)]
+            if not text:
+                break
+        chunks.append(
+            ReferenceChunk(
+                text=text,
+                source_label=f"chunk-{idx + 1}-of-{n}",
+            ),
+        )
+        total_chars += len(text)
+        if total_chars >= max_total_chars:
+            break
+    return chunks
+
+
 def _build_user_prompt(
     *,
     project: Project,
     blueprint: DomainBlueprintRevision | None,
     count: int,
     focus_hint: str,
+    reference_chunks: list[ReferenceChunk] | None = None,
 ) -> str:
     """Compose the user-facing prompt. Pulls project / blueprint
-    context inline so the LLM produces domain-relevant rows."""
+    context inline so the LLM produces domain-relevant rows.
+
+    When ``reference_chunks`` is non-empty, the prompt instructs the
+    LLM to GROUND each answer in one of the provided excerpts and
+    include a ``source_excerpt`` field per row pointing at the
+    supporting passage. Otherwise the prompt asks for general
+    domain-relevant Q&A (legacy v1 behavior)."""
     domain = (getattr(blueprint, "domain_name", "") or "").strip()
     problem = (getattr(blueprint, "problem_statement", "") or "").strip()
     brief = (getattr(blueprint, "brief_text", "") or "").strip()
@@ -112,21 +329,54 @@ def _build_user_prompt(
 
     context_block = "\n".join(sections) if sections else "(no project context available)"
 
-    return (
-        f"{context_block}\n\n"
-        f"Generate exactly {count} question/answer pairs for the project above.\n\n"
-        "Output rules:\n"
-        "- Return ONLY valid JSON. No markdown, no code fences, no commentary.\n"
-        '- Shape: {"pairs": [{"question": "...", "answer": "...", '
-        '"rationale": "..."}]}\n'
-        "- Each question MUST be specific to this project's domain.\n"
-        "- Each answer MUST be self-contained and factually defensible.\n"
-        "- Vary difficulty: mix factual lookups, edge cases, and "
-        "judgment calls.\n"
-        "- ``rationale`` is optional but helpful — one short sentence on "
-        "why this is the right answer (used by some evaluators).\n"
-        f"- Return EXACTLY {count} pairs in the ``pairs`` array."
-    )
+    grounded = bool(reference_chunks)
+    parts: list[str] = [context_block]
+
+    if grounded:
+        ref_blocks = "\n\n".join(
+            chunk.to_prompt_block(i + 1)
+            for i, chunk in enumerate(reference_chunks or [])
+        )
+        parts.append(
+            "REFERENCE MATERIAL (the model being trained will only learn "
+            "from material like this — answers MUST be grounded in these "
+            "excerpts):\n\n" + ref_blocks,
+        )
+
+    parts.append(f"Generate exactly {count} question/answer pairs for the project above.")
+
+    rules = [
+        "Return ONLY valid JSON. No markdown, no code fences, no commentary.",
+    ]
+    if grounded:
+        rules.extend([
+            'Shape: {"pairs": [{"question": "...", "answer": "...", '
+            '"rationale": "...", "source_excerpt": "..."}]}',
+            "Each answer MUST be supported by one of the REFERENCE MATERIAL "
+            "blocks above. Quote or close-paraphrase the supporting text in "
+            '"source_excerpt" (≤200 chars).',
+            "If the reference material doesn't support a particular question, "
+            "SKIP that question — do NOT fabricate answers from general "
+            "knowledge.",
+        ])
+    else:
+        rules.append(
+            'Shape: {"pairs": [{"question": "...", "answer": "...", '
+            '"rationale": "..."}]}',
+        )
+        rules.append("Each answer MUST be self-contained and factually defensible.")
+
+    rules.extend([
+        "Each question MUST be specific to this project's domain.",
+        "Vary difficulty: mix factual lookups, edge cases, and judgment calls.",
+        "``rationale`` is optional but helpful — one short sentence on why "
+        "this is the right answer (used by some evaluators).",
+        f"Return EXACTLY {count} pairs in the ``pairs`` array (or fewer if "
+        "REFERENCE MATERIAL doesn't support all of them).",
+    ])
+
+    parts.append("Output rules:\n- " + "\n- ".join(rules))
+    return "\n\n".join(parts)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -174,9 +424,15 @@ def _parse_qa_payload(content: str, expected_count: int) -> list[GeneratedQa]:
         q = str(item.get("question") or "").strip()
         a = str(item.get("answer") or "").strip()
         r = str(item.get("rationale") or "").strip()
+        # ``source_excerpt`` only appears when grounding is on; the
+        # parser stays tolerant of its absence so ungrounded
+        # responses don't fail this check.
+        src = str(item.get("source_excerpt") or "").strip()
         if not q or not a:
             continue
-        rows.append(GeneratedQa(question=q, answer=a, rationale=r))
+        rows.append(
+            GeneratedQa(question=q, answer=a, rationale=r, source_excerpt=src),
+        )
 
     if not rows:
         raise GoldGenerationError(
@@ -210,11 +466,19 @@ async def generate_gold_qa_via_llm(
     count: int,
     focus_hint: str = "",
     api_url: str | None = None,
+    ground_in_source: bool = True,
 ) -> GenerationResult:
     """Generate ``count`` Q&A pairs for the project using the named
     cloud provider. Returns the parsed rows for preview — does NOT
     persist. The caller saves accepted rows via the existing
     ``/gold/import`` endpoint.
+
+    When ``ground_in_source`` is True (default), pulls a strict-budget
+    sample of the project's cleaned chunks and asks the LLM to ground
+    each answer in them. Gracefully falls back to ungrounded
+    generation when no cleaned chunks exist (fresh project that hasn't
+    imported data yet) — the response payload reflects the actual
+    chunk count used.
 
     Raises ``GoldGenerationError`` for caller-fixable problems
     (recipe missing / wrong shape / API key missing / response
@@ -263,11 +527,20 @@ async def generate_gold_qa_via_llm(
         )
         blueprint = bp_result.scalar_one_or_none()
 
+    # Grounding — pull a strict-budget sample of cleaned chunks when
+    # requested. Graceful fallback to ungrounded when the project
+    # hasn't imported any data yet (fresh project, empty chunk pool).
+    reference_chunks: list[ReferenceChunk] = []
+    if ground_in_source:
+        pool = await _load_project_cleaned_chunks(project_id)
+        reference_chunks = _sample_reference_chunks(pool)
+
     user_prompt = _build_user_prompt(
         project=project,
         blueprint=blueprint,
         count=count,
         focus_hint=focus_hint,
+        reference_chunks=reference_chunks if reference_chunks else None,
     )
 
     if provider == "openai":
@@ -300,4 +573,10 @@ async def generate_gold_qa_via_llm(
         prompt_tokens=response.prompt_tokens,
         completion_tokens=response.completion_tokens,
         prompt_preview=user_prompt[:500],
+        reference_chunk_count=len(reference_chunks),
+        estimated_cost_usd=compute_estimated_cost_usd(
+            model=response.model,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+        ),
     )

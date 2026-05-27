@@ -34,6 +34,10 @@ interface GeneratedRow {
     question: string;
     answer: string;
     rationale: string;
+    /** Present when grounding is on + the LLM included the field.
+     *  The user uses this to spot-check that each answer is anchored
+     *  to actual source material, not an LLM hallucination. */
+    source_excerpt?: string;
 }
 
 interface GenerateResponse {
@@ -42,6 +46,17 @@ interface GenerateResponse {
     model: string;
     usage: { prompt_tokens: number; completion_tokens: number };
     prompt_preview: string;
+    reference_chunk_count: number;
+    estimated_cost_usd: number;
+}
+
+interface CostEstimateResponse {
+    estimated_cost_usd: number;
+    estimated_prompt_tokens: number;
+    estimated_completion_tokens: number;
+    reference_chunk_count: number;
+    ground_in_source_requested: boolean;
+    ground_in_source_effective: boolean;
 }
 
 interface Props {
@@ -98,17 +113,60 @@ export default function LlmGoldGeneratePanel({
     const [apiKey, setApiKey] = useState('');
     const [count, setCount] = useState(10);
     const [focusHint, setFocusHint] = useState('');
+    // Grounding: when ON, backend pulls a strict-budget sample of the
+    // project's cleaned chunks into the prompt + asks the LLM to anchor
+    // each answer in them. Default ON because ungrounded rows look
+    // plausible but aren't tied to what the model could actually learn
+    // — the exact failure mode "gold standard" exists to prevent.
+    const [groundInSource, setGroundInSource] = useState(true);
     const [generating, setGenerating] = useState(false);
     const [genError, setGenError] = useState<{ code: string; message: string } | null>(null);
     const [preview, setPreview] = useState<GenerateResponse | null>(null);
     const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(new Set());
     const [saving, setSaving] = useState(false);
+    // Pre-call cost estimate — refetched whenever the inputs that
+    // affect cost change (provider, model, count, grounding). Cheap
+    // call: no LLM involvement, just chunk-char counting + pricing math.
+    const [costEstimate, setCostEstimate] = useState<CostEstimateResponse | null>(null);
+    const [costEstimateLoading, setCostEstimateLoading] = useState(false);
 
     // Reset the model dropdown when provider changes so the user never
     // sees a stale model string from the other provider.
     useEffect(() => {
         setModel(DEFAULT_MODELS[provider][0].value);
     }, [provider]);
+
+    // Refetch the cost estimate whenever inputs that affect price
+    // change. Debounced via the dependency list — React will batch
+    // back-to-back changes (e.g. typing in the count input) but we
+    // accept a slightly chatty endpoint here because the backend
+    // does no LLM work (just chunk-char counting + price math).
+    useEffect(() => {
+        let cancelled = false;
+        setCostEstimateLoading(true);
+        api.post<CostEstimateResponse>(
+            `/projects/${projectId}/gold/generate-via-llm/cost-estimate`,
+            {
+                provider,
+                model,
+                count,
+                ground_in_source: groundInSource,
+            },
+        )
+            .then((res) => {
+                if (!cancelled) setCostEstimate(res.data);
+            })
+            .catch(() => {
+                // Estimate is best-effort — if the endpoint errors
+                // (network blip, project not found mid-render), just
+                // suppress the badge rather than block Generate.
+                if (!cancelled) setCostEstimate(null);
+            })
+            .finally(() => {
+                if (!cancelled) setCostEstimateLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [projectId, provider, model, count, groundInSource]);
 
     const handleGenerate = async () => {
         if (generating) return;
@@ -125,6 +183,7 @@ export default function LlmGoldGeneratePanel({
                     count,
                     focus_hint: focusHint.trim() || undefined,
                     api_key: apiKey.trim() || undefined,
+                    ground_in_source: groundInSource,
                 },
                 // Generation is sync; cap at 3 min so users on slower
                 // models / larger counts aren't cut off by a default
@@ -307,7 +366,49 @@ export default function LlmGoldGeneratePanel({
                 />
             </div>
 
-            <div>
+            <label
+                style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 'var(--space-sm)',
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                }}
+                data-testid="llm-gold-ground-toggle-label"
+            >
+                <input
+                    type="checkbox"
+                    checked={groundInSource}
+                    onChange={(e) => setGroundInSource(e.target.checked)}
+                    data-testid="llm-gold-ground-toggle"
+                    style={{ marginTop: 3 }}
+                />
+                <span>
+                    <strong>Ground in this project's source material</strong>
+                    {' '}<span style={{ color: 'var(--text-tertiary)' }}>(recommended)</span>
+                    <div
+                        style={{
+                            color: 'var(--text-secondary)',
+                            fontSize: '0.85rem',
+                            marginTop: 2,
+                        }}
+                    >
+                        Pulls a small sample of your cleaned chunks into the
+                        prompt so the LLM anchors each answer to actual
+                        source text (not its own training data). Adds a few
+                        cents to the cost — still capped per the badge below.
+                    </div>
+                </span>
+            </label>
+
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--space-md)',
+                    flexWrap: 'wrap',
+                }}
+            >
                 <button
                     className="btn btn-primary"
                     onClick={handleGenerate}
@@ -316,6 +417,31 @@ export default function LlmGoldGeneratePanel({
                 >
                     {generating ? '⏳ Generating…' : `✨ Generate ${count} Q&A pair${count === 1 ? '' : 's'}`}
                 </button>
+                <span
+                    data-testid="llm-gold-cost-estimate"
+                    style={{
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.85rem',
+                    }}
+                >
+                    {costEstimateLoading
+                        ? 'Estimating cost…'
+                        : costEstimate
+                            ? (
+                                <>
+                                    ≈ <strong data-testid="llm-gold-cost-amount">
+                                        ${costEstimate.estimated_cost_usd.toFixed(4)}
+                                    </strong>{' '}
+                                    estimated
+                                    {costEstimate.ground_in_source_requested
+                                        && !costEstimate.ground_in_source_effective
+                                        && ' · grounding off (no cleaned chunks)'}
+                                    {costEstimate.ground_in_source_effective
+                                        && ` · grounded in ${costEstimate.reference_chunk_count} chunks`}
+                                </>
+                            )
+                            : 'cost estimate unavailable'}
+                </span>
             </div>
 
             {genError && (
@@ -366,6 +492,12 @@ export default function LlmGoldGeneratePanel({
                         >
                             {preview.provider} · {preview.model} ·{' '}
                             {preview.usage.prompt_tokens + preview.usage.completion_tokens} tokens
+                            {' · '}
+                            <strong data-testid="llm-gold-preview-cost">
+                                ${preview.estimated_cost_usd.toFixed(4)}
+                            </strong> spent
+                            {preview.reference_chunk_count > 0
+                                && ` · grounded in ${preview.reference_chunk_count} chunks`}
                         </span>
                     </div>
                     <p
@@ -421,6 +553,22 @@ export default function LlmGoldGeneratePanel({
                                             }}
                                         >
                                             Why: {row.rationale}
+                                        </div>
+                                    )}
+                                    {row.source_excerpt && (
+                                        <div
+                                            data-testid={`llm-gold-preview-row-${idx}-source`}
+                                            style={{
+                                                marginTop: 4,
+                                                padding: '4px 8px',
+                                                fontSize: '0.8rem',
+                                                color: 'var(--text-secondary)',
+                                                background: 'var(--bg-subtle)',
+                                                borderLeft: '3px solid var(--accent-primary)',
+                                                borderRadius: 'var(--radius-sm)',
+                                            }}
+                                        >
+                                            <strong>From source:</strong> "{row.source_excerpt}"
                                         </div>
                                     )}
                                 </div>

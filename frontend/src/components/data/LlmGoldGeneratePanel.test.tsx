@@ -26,16 +26,67 @@ import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 function makeGenerateResponse(overrides: Record<string, unknown> = {}) {
     return {
         rows: [
-            { question: 'Q1?', answer: 'A1.', rationale: 'because' },
-            { question: 'Q2?', answer: 'A2.', rationale: '' },
-            { question: 'Q3?', answer: 'A3.', rationale: '' },
+            { question: 'Q1?', answer: 'A1.', rationale: 'because', source_excerpt: '' },
+            { question: 'Q2?', answer: 'A2.', rationale: '', source_excerpt: '' },
+            { question: 'Q3?', answer: 'A3.', rationale: '', source_excerpt: '' },
         ],
         provider: 'openai',
         model: 'gpt-4o-mini',
         usage: { prompt_tokens: 120, completion_tokens: 350 },
         prompt_preview: 'PROJECT: …',
+        reference_chunk_count: 0,
+        estimated_cost_usd: 0.00023,
         ...overrides,
     };
+}
+
+
+function makeCostEstimateResponse(overrides: Record<string, unknown> = {}) {
+    return {
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        count: 10,
+        ground_in_source_requested: true,
+        ground_in_source_effective: true,
+        estimated_cost_usd: 0.0009,
+        estimated_prompt_tokens: 2900,
+        estimated_completion_tokens: 1600,
+        reference_chunk_count: 6,
+        ...overrides,
+    };
+}
+
+
+/**
+ * Route-aware POST mock — the panel fires:
+ *   * /cost-estimate on mount + on any cost-relevant input change
+ *   * /generate-via-llm on the Generate button click
+ *   * /gold/import on Save
+ * Tests that don't override return sensible defaults so the cost
+ * badge renders cleanly without interfering with assertions on
+ * the other two endpoints.
+ */
+function installPostRouter(opts: {
+    generate?: unknown;
+    generateError?: unknown;
+    import?: unknown;
+    importError?: unknown;
+    estimate?: unknown;
+} = {}) {
+    apiMock.post.mockImplementation(async (url: string) => {
+        if (url.includes('/gold/generate-via-llm/cost-estimate')) {
+            return { data: opts.estimate ?? makeCostEstimateResponse() };
+        }
+        if (url.includes('/gold/generate-via-llm')) {
+            if (opts.generateError) throw opts.generateError;
+            return { data: opts.generate ?? makeGenerateResponse() };
+        }
+        if (url.includes('/gold/import')) {
+            if (opts.importError) throw opts.importError;
+            return { data: opts.import ?? { imported: 0 } };
+        }
+        return { data: {} };
+    });
 }
 
 
@@ -49,6 +100,7 @@ describe('LlmGoldGeneratePanel', () => {
     });
 
     it('Anthropic model dropdown swaps when provider switches', async () => {
+        installPostRouter();
         render(
             <LlmGoldGeneratePanel
                 projectId={1}
@@ -69,7 +121,7 @@ describe('LlmGoldGeneratePanel', () => {
     });
 
     it('POSTs the right payload + renders preview rows on happy path', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: makeGenerateResponse() });
+        installPostRouter();
         const onRowsSaved = vi.fn();
         render(
             <LlmGoldGeneratePanel
@@ -101,7 +153,7 @@ describe('LlmGoldGeneratePanel', () => {
             expect(cb.checked).toBe(true);
         }
 
-        // POST body shape.
+        // POST body shape — grounding default ON, focus hint flows through.
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/42/gold/generate-via-llm',
             expect.objectContaining({
@@ -110,6 +162,7 @@ describe('LlmGoldGeneratePanel', () => {
                 count: 3,
                 api_key: 'sk-test',
                 focus_hint: 'edge cases around refunds',
+                ground_in_source: true,
             }),
             expect.objectContaining({ timeout: 180_000 }),
         );
@@ -118,15 +171,14 @@ describe('LlmGoldGeneratePanel', () => {
         expect(screen.getByTestId('llm-gold-save').textContent).toMatch(
             /Save 3 of 3/,
         );
-        // Meta line surfaces provider + model + token total.
-        expect(screen.getByTestId('llm-gold-preview-meta').textContent).toMatch(
-            /openai · gpt-4o-mini · 470 tokens/,
-        );
+        // Meta line surfaces provider + model + token total + cost spent.
+        const metaText = screen.getByTestId('llm-gold-preview-meta').textContent || '';
+        expect(metaText).toMatch(/openai · gpt-4o-mini · 470 tokens/);
+        expect(metaText).toMatch(/\$0\.0002 spent/);
     });
 
     it('Save selected calls /gold/import with only the checked rows', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: makeGenerateResponse() });
-        apiMock.post.mockResolvedValueOnce({ data: { imported: 2 } });
+        installPostRouter({ import: { imported: 2 } });
         const onRowsSaved = vi.fn();
         render(
             <LlmGoldGeneratePanel
@@ -175,7 +227,7 @@ describe('LlmGoldGeneratePanel', () => {
     });
 
     it('Discard wipes the preview without POSTing /gold/import', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: makeGenerateResponse() });
+        installPostRouter();
         render(
             <LlmGoldGeneratePanel
                 projectId={1}
@@ -190,22 +242,30 @@ describe('LlmGoldGeneratePanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
         });
-        // 1 POST so far (generate). After discard, should still be 1.
-        expect(apiMock.post).toHaveBeenCalledTimes(1);
+        // Generate is the load-bearing call; cost-estimate fires on
+        // mount + on form changes (don't pin a hard count there since
+        // React's render schedule makes it brittle). Discard must NOT
+        // POST anything new — assert by checking no /gold/import URL
+        // shows up in the call list.
         await userEvent.click(screen.getByTestId('llm-gold-discard'));
-        expect(apiMock.post).toHaveBeenCalledTimes(1);
+        const importCalls = apiMock.post.mock.calls.filter(
+            (call: unknown[]) => String(call[0] || '').includes('/gold/import'),
+        );
+        expect(importCalls).toHaveLength(0);
         expect(screen.queryByTestId('llm-gold-preview')).not.toBeInTheDocument();
     });
 
     it('renders structured error code + message on 400 RECIPE_NOT_SUPPORTED', async () => {
-        apiMock.post.mockRejectedValueOnce({
-            response: {
-                status: 400,
-                data: {
-                    detail: {
-                        error_code: 'RECIPE_NOT_SUPPORTED',
-                        message:
-                            "LLM-assisted gold generation v1 only supports the 'qa-sft' recipe.",
+        installPostRouter({
+            generateError: {
+                response: {
+                    status: 400,
+                    data: {
+                        detail: {
+                            error_code: 'RECIPE_NOT_SUPPORTED',
+                            message:
+                                "LLM-assisted gold generation v1 only supports the 'qa-sft' recipe.",
+                        },
                     },
                 },
             },
@@ -235,10 +295,12 @@ describe('LlmGoldGeneratePanel', () => {
     });
 
     it('renders the upstream provider error (502) as a plain string', async () => {
-        apiMock.post.mockRejectedValueOnce({
-            response: {
-                status: 502,
-                data: { detail: 'OpenAI returned 401: invalid API key' },
+        installPostRouter({
+            generateError: {
+                response: {
+                    status: 502,
+                    data: { detail: 'OpenAI returned 401: invalid API key' },
+                },
             },
         });
         render(
@@ -261,6 +323,7 @@ describe('LlmGoldGeneratePanel', () => {
     });
 
     it('clamps the count input to [1, 50]', async () => {
+        installPostRouter();
         render(
             <LlmGoldGeneratePanel
                 projectId={1}
@@ -273,5 +336,114 @@ describe('LlmGoldGeneratePanel', () => {
         expect(count.value).toBe('50');
         fireEvent.change(count, { target: { value: '0' } });
         expect(count.value).toBe('1');
+    });
+
+    // ── Grounding + cost transparency (new) ─────────────────────
+
+    it('grounding is on by default + cost badge renders with chunk count', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        const toggle = await screen.findByTestId('llm-gold-ground-toggle') as HTMLInputElement;
+        expect(toggle.checked).toBe(true);
+        // Cost badge resolves with the estimate from the router.
+        await waitFor(() => {
+            const amount = screen.getByTestId('llm-gold-cost-amount');
+            expect(amount.textContent).toMatch(/\$0\.0009/);
+        });
+        const badge = screen.getByTestId('llm-gold-cost-estimate');
+        expect(badge.textContent).toMatch(/grounded in 6 chunks/);
+    });
+
+    it('unchecking grounding sends ground_in_source=false', async () => {
+        installPostRouter();
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await screen.findByTestId('llm-gold-ground-toggle');
+        await userEvent.click(screen.getByTestId('llm-gold-ground-toggle'));
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            const generateCalls = apiMock.post.mock.calls.filter(
+                (call: unknown[]) =>
+                    String(call[0] || '').endsWith('/gold/generate-via-llm'),
+            );
+            expect(generateCalls.length).toBeGreaterThanOrEqual(1);
+            const lastBody = generateCalls[generateCalls.length - 1][1];
+            expect(lastBody).toEqual(
+                expect.objectContaining({ ground_in_source: false }),
+            );
+        });
+    });
+
+    it('cost badge shows "grounding off (no cleaned chunks)" when pool is empty', async () => {
+        installPostRouter({
+            estimate: makeCostEstimateResponse({
+                ground_in_source_effective: false,
+                reference_chunk_count: 0,
+                estimated_cost_usd: 0.0003,
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        await waitFor(() => {
+            const badge = screen.getByTestId('llm-gold-cost-estimate');
+            expect(badge.textContent).toMatch(/grounding off \(no cleaned chunks\)/);
+        });
+    });
+
+    it('source_excerpt renders per row when present', async () => {
+        installPostRouter({
+            generate: makeGenerateResponse({
+                rows: [
+                    {
+                        question: 'Q?',
+                        answer: 'A.',
+                        rationale: '',
+                        source_excerpt: 'this is the supporting passage',
+                    },
+                ],
+                reference_chunk_count: 5,
+                estimated_cost_usd: 0.0012,
+            }),
+        });
+        render(
+            <LlmGoldGeneratePanel
+                projectId={1}
+                datasetType="gold_dev"
+                onRowsSaved={() => {}}
+            />,
+        );
+        fireEvent.change(screen.getByTestId('llm-gold-api-key'), {
+            target: { value: 'sk-test' },
+        });
+        await userEvent.click(screen.getByTestId('llm-gold-generate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-gold-preview')).toBeInTheDocument();
+        });
+        const source = screen.getByTestId('llm-gold-preview-row-0-source');
+        expect(source.textContent).toMatch(/From source/);
+        expect(source.textContent).toMatch(/this is the supporting passage/);
+        // Meta line shows the actual cost + chunk count.
+        const meta = screen.getByTestId('llm-gold-preview-meta').textContent || '';
+        expect(meta).toMatch(/\$0\.0012 spent/);
+        expect(meta).toMatch(/grounded in 5 chunks/);
     });
 });

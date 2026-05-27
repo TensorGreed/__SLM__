@@ -11,8 +11,12 @@ from app.models.dataset import DatasetType
 from app.services.cloud_llm_service import CloudLlmError
 from app.services.gold_llm_service import (
     GoldGenerationError,
+    MAX_REFERENCE_CHUNKS,
+    MAX_REFERENCE_TOTAL_CHARS,
+    estimate_call_cost_usd,
     generate_gold_qa_via_llm,
 )
+from app.services.synthetic_service import _load_project_cleaned_chunks
 from app.services.gold_service import (
     add_qa_pair,
     get_gold_entries,
@@ -113,6 +117,21 @@ class GenerateViaLlmRequest(BaseModel):
         description="Override for OpenAI-compatible endpoints "
                     "(e.g. Deepseek). Ignored for Anthropic.",
     )
+    ground_in_source: bool = Field(
+        default=True,
+        description="When True (recommended), include a strict-budget "
+                    "sample of the project's cleaned chunks in the "
+                    "prompt and ask the LLM to ground each answer in "
+                    "them. Falls back to ungrounded when the project "
+                    "hasn't imported any data yet.",
+    )
+
+
+class CostEstimateRequest(BaseModel):
+    provider: Literal["openai", "anthropic"]
+    model: str = Field(..., min_length=1, max_length=128)
+    count: int = Field(default=10, ge=1, le=50)
+    ground_in_source: bool = Field(default=True)
 
 
 @router.post("/generate-via-llm")
@@ -169,6 +188,7 @@ async def generate_via_llm(
             count=req.count,
             focus_hint=req.focus_hint,
             api_url=req.api_url,
+            ground_in_source=req.ground_in_source,
         )
     except GoldGenerationError as exc:
         raise HTTPException(
@@ -186,6 +206,7 @@ async def generate_via_llm(
                 "question": r.question,
                 "answer": r.answer,
                 "rationale": r.rationale,
+                "source_excerpt": r.source_excerpt,
             }
             for r in result.rows
         ],
@@ -196,6 +217,66 @@ async def generate_via_llm(
             "completion_tokens": result.completion_tokens,
         },
         "prompt_preview": result.prompt_preview,
+        "reference_chunk_count": result.reference_chunk_count,
+        "estimated_cost_usd": result.estimated_cost_usd,
+    }
+
+
+@router.post("/generate-via-llm/cost-estimate")
+async def generate_via_llm_cost_estimate(
+    project_id: int,
+    req: CostEstimateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Pre-call cost estimate for the LLM-assisted generate flow —
+    powers the "≈ $X.YY" badge next to the Generate button so the
+    user has price awareness before clicking.
+
+    Cheap: no provider calls. Counts characters in the project's
+    cleaned chunks (capped at the same budget the real call uses)
+    and prices the resulting prompt + projected completion against
+    the model's per-token price. Approximate (≈ ±25%) — actual cost
+    surfaces in the response after the real call lands.
+    """
+    chars = 0
+    chunk_count = 0
+    if req.ground_in_source:
+        pool = await _load_project_cleaned_chunks(project_id)
+        # Mirror the sampler's per-chunk + total budgets exactly so
+        # the estimate matches the actual call's reference-material
+        # size, not the raw pool's.
+        from app.services.gold_llm_service import (
+            MAX_CHARS_PER_REFERENCE_CHUNK,
+        )
+        capped = min(len(pool), MAX_REFERENCE_CHUNKS)
+        for text in pool[:capped]:
+            chars_for_chunk = min(
+                len(text or ""),
+                MAX_CHARS_PER_REFERENCE_CHUNK,
+            )
+            if chars + chars_for_chunk > MAX_REFERENCE_TOTAL_CHARS:
+                chars_for_chunk = max(0, MAX_REFERENCE_TOTAL_CHARS - chars)
+                if chars_for_chunk == 0:
+                    break
+            chars += chars_for_chunk
+            chunk_count += 1
+            if chars >= MAX_REFERENCE_TOTAL_CHARS:
+                break
+
+    estimate = estimate_call_cost_usd(
+        model=req.model,
+        count=req.count,
+        grounded=req.ground_in_source and chunk_count > 0,
+        reference_chunk_count=chunk_count,
+        reference_total_chars=chars,
+    )
+    return {
+        "provider": req.provider,
+        "model": req.model,
+        "count": req.count,
+        "ground_in_source_requested": req.ground_in_source,
+        "ground_in_source_effective": req.ground_in_source and chunk_count > 0,
+        **estimate,
     }
 
 
