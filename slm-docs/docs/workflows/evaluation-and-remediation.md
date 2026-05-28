@@ -229,7 +229,7 @@ When you expand a failure-cluster card on the Eval tab, a **Fix in gold set** bu
 
 ## Eval comparison + "Fix the gap" rollback
 
-When you've run eval against two experiments in the same project, the Eval tab shows a **Compare to #<id>** button that deep-links into a side-by-side comparison page at `/project/{id}/eval/compare?a=<exp>&b=<exp>`. The page renders:
+When you've run eval against two experiments in the same project, the Eval tab shows a **Compare to #\<id\>** button that deep-links into a side-by-side comparison page at `/project/{id}/eval/compare?a=<exp>&b=<exp>`. The page renders:
 
 - Two side cards with pass-rate badges and a winner marker.
 - A metric-delta table with regressions sorted to the top (direction-coded against `higher_is_better` so `eval_loss` is graded inverted).
