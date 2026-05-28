@@ -24,7 +24,7 @@ Training rail → **Configurations**.
 
 1. Pick a **Recipe** from the dropdown. Recipes are pre-tuned config templates: `safe-balanced-sft`, `lora-fast`, `classification`, `seq2seq`, etc. The picker shows their key knobs at a glance.
 2. **Base model** — defaults to the project default; override here.
-3. **Training mode** — `sft` / `dpo` / `orpo` / `classification` / `seq2seq` (filtered to what the recipe + model support).
+3. **Training mode** — `sft` / `dpo` / `orpo` / `classification` / `seq2seq` / `distillation` (filtered to what the recipe + model support). `distillation` trains against captured teacher logits — see [Distillation](distillation.md).
 4. **Resolved defaults panel** below shows every field that will be applied with provenance (`recipe` / `domain_pack` / `model_metadata` / `default`).
 5. **Cost estimate card** — gpu_hours, USD, CO2, provenance, confidence band. Pulled from real history when available; estimated otherwise. See [Measured vs estimated](../reliability/measured-vs-estimated.md).
 6. Click **Preflight**. If green, click **Start training**.

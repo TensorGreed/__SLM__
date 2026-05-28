@@ -104,6 +104,20 @@ POST   /api/projects/{id}/training/recipes/resolve      Recipe + defaults previe
 GET    /api/projects/{id}/training/runtimes             Runtime catalog
 ```
 
+## Distillation (knowledge distillation)
+
+```
+POST   /api/projects/{id}/distillation/capture           Capture teacher top-k
+                                                         logprobs for a dataset
+                                                         → 202 + task envelope
+GET    /api/projects/{id}/distillation/tasks/{task_id}   Poll capture progress
+```
+
+Offline KD training is then a normal training run with `training_mode="distillation"`
+(recipes `recipe.kd.classification` / `recipe.kd.qa` / `recipe.kd.span_extraction`);
+it reads the captured artifact rather than loading a live teacher. See
+[Distillation workflow](../workflows/distillation.md).
+
 ## Autopilot
 
 ```
@@ -143,6 +157,11 @@ GET    /api/projects/{id}/eval/{eval_id}/clusters  Failure clusters
 GET    /api/projects/{id}/eval/{eval_id}/remediation
 GET    /api/projects/{id}/eval/compare?a=X&b=Y     Side-by-side
 GET    /api/projects/{id}/evaluation/gates/{experiment_id}
+GET    /api/projects/{id}/evaluation/sft-lift-summary       Baseline → trained lift
+GET    /api/projects/{id}/evaluation/student-teacher-comparison/{eid}
+                                                  Distillation quality retained
+                                                  (student/teacher); optional
+                                                  ?teacher_run_id=N
 
 # Gold sets — workbench (sampling + review)
 POST   /api/projects/{id}/gold-sets                       Create

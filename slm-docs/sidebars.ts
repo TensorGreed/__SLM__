@@ -48,6 +48,7 @@ const sidebars: SidebarsConfig = {
         'workflows/data-ingestion',
         'workflows/newbie-autopilot',
         'workflows/training',
+        'workflows/distillation',
         'workflows/evaluation-and-remediation',
         'workflows/export-and-deployment',
       ],

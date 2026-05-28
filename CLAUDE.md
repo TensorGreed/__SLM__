@@ -264,6 +264,16 @@ token into `localStorage.slm_token` via `ctx.addInitScript` before
 - **Evaluation** — `evaluation_service` runs eval packs; results land in
   `EvalResult` rows. Failure clusters, remediation plans, post-eval
   decision engine for reroute recommendations.
+- **Distillation (offline KD)** — `services/distillation/`: slice 1
+  captures a teacher's top-k logprobs (`teacher_capture.py`, `POST
+  .../distillation/capture` → bg task) to
+  `data/projects/<id>/distillation/teacher_capture.jsonl`; slice 2 trains
+  `training_mode="distillation"` via the pure `kd_loss.py`
+  (`α·CE+(1−α)·T²·KL`) + `kd_trainer.py` offline trainer (wired in
+  `scripts/train.py`, recipes `recipe.kd.*`); slice 3 reports
+  `quality_retained=student/teacher` (`student_teacher_comparison_service.py`,
+  `StudentTeacherComparisonPanel`). Same-tokenizer assumption. See
+  `slm-docs/docs/workflows/distillation.md`.
 
 ---
 

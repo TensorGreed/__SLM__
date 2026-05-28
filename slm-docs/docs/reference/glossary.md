@@ -115,6 +115,21 @@ with a filter dropdown to scan a single bucket. The LLM-gen path accepts
 an explicit `{easy, medium, hard, hallucination_traps}` distribution and
 asks the LLM to craft + tag rows accordingly.
 
+## Knowledge distillation (KD)
+
+Training a small *student* model to match a strong *teacher*'s output
+distribution, not just the hard labels — the single biggest quality lever an SLM
+has. BrewSLM does **offline** KD: first capture the teacher's top-k token
+log-probabilities for your dataset (`POST .../distillation/capture`), then train
+with `training_mode="distillation"` so the loss mixes cross-entropy on the gold
+label with KL on the teacher's soft targets:
+`α·CE + (1−α)·T²·KL(student/T ‖ teacher/T)` (defaults α=0.5, temperature T=2.0).
+No teacher model is loaded at train time — it reads the captured artifact. After
+training, **quality retained** (`student/teacher` per metric + slice) shows how
+much of the teacher you kept. Recipes: `recipe.kd.classification` / `recipe.kd.qa`
+/ `recipe.kd.span_extraction`. Offline alignment is exact when teacher and
+student share a tokenizer. See [Distillation workflow](../workflows/distillation.md).
+
 ## Label drift
 
 When a project's gold set accumulates `positive` / `Positive` / `Positive (with sentiment)`
@@ -275,7 +290,7 @@ Pre-training "will this clear gates?" prediction shown above the Preflight butto
 
 ## Training mode
 
-What kind of fine-tuning the trainer runs: `sft` (instruction), `dpo` (direct preference), `orpo` (odds-ratio preference), `classification`, `seq2seq`. Filtered by the chosen base model's capabilities.
+What kind of fine-tuning the trainer runs: `sft` (instruction), `dpo` (direct preference), `orpo` (odds-ratio preference), `classification`, `seq2seq`, `distillation` (offline KD against captured teacher logits — see [Knowledge distillation](#knowledge-distillation-kd)). Filtered by the chosen base model's capabilities.
 
 ## See also
 
