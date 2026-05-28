@@ -248,6 +248,8 @@ While a run is in flight:
 - **CLI** — `brewslm logs tail --project 1 --run-id exp-42` streams events.
 - **API** — `GET /api/run-events/run/exp-42`.
 
+**Warm-start delta curve.** When a run [warm-started](#warm-start-checkpoints) from a checkpoint (`_warm_start.source=checkpoint`), the active-run view adds a **Δ-vs-baseline** chart: the live loss curve plus a second series of `loss(step) − the warm-start's initial loss on your data`, with a headline of how much your rows reduced loss below the pre-tuned base's starting point — so you can see your data's *marginal* contribution, not just the absolute loss the base already provided.
+
 ## Pause + resume + cancel
 
 Long runs can be paused (writes a checkpoint, releases GPU) and resumed from the same step later.

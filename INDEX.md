@@ -525,6 +525,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
 - `frontend/src/components/training/TrainingPanel.tsx` — Training orchestrator panel — config editor, run launcher, live metrics, checkpoints, and post-run review.
+- `frontend/src/components/training/WarmStartDeltaChart.tsx` — WarmStartDeltaChart — Track 1, Epic B/C.
 - `frontend/src/components/training/WhyThisPlanPanel.tsx` — WhyThisPlanPanel — P20 Training Planner reproducibility & cost view.
 - `frontend/src/components/video/TabVideoLink.tsx` — TabVideoLink — small "▶ Watch the 2-minute walkthrough" affordance
 - `frontend/src/components/video/YouTubeEmbedModal.tsx` — YouTubeEmbedModal — in-page modal for the inline-video-embed
@@ -809,6 +810,7 @@ session-start guidance.
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/WarmStartDeltaChart.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/WhyThisPlanPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/video/TabVideoLink.test.tsx` — _(no docstring)_
 - `frontend/src/components/video/YouTubeEmbedModal.test.tsx` — _(no docstring)_

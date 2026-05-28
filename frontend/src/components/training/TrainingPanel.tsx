@@ -15,6 +15,7 @@ import DatasetFitCard from './DatasetFitCard';
 import ExperimentCompare from './ExperimentCompare';
 import HyperparameterSweepPanel from './HyperparameterSweepPanel';
 import ParetoComparisonPanel from './ParetoComparisonPanel';
+import WarmStartDeltaChart from './WarmStartDeltaChart';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
 import WhyThisPlanPanel from './WhyThisPlanPanel';
@@ -3236,6 +3237,17 @@ export default function TrainingPanel({
               <span className="mb-value">{currentEvalLoss !== null ? Number(currentEvalLoss).toFixed(4) : '--'}</span>
             </div>
           </div>
+
+          {/* Track 1, Epic B/C — warm-started runs: what your rows added on top
+              of the pre-tuned base (delta vs the warm-start's starting loss). */}
+          <WarmStartDeltaChart
+            metrics={metrics}
+            warmStart={asRecord(activeExperiment.config?.['_warm_start']) as {
+              source?: string;
+              checkpoint_name?: string | null;
+              reason?: string;
+            }}
+          />
 
           {/* P20 — Why-this-plan + checkpoints (Wave D backend exposure). */}
           <WhyThisPlanPanel projectId={projectId} experiment={activeExperiment} />

@@ -1891,3 +1891,110 @@
     background: rgba(37, 99, 235, 0.18);
     color: var(--color-primary, #2563eb);
 }
+
+/* -- WarmStartDeltaChart (Epic B/C) ------------------------------------- */
+.warmstart-delta {
+    margin: var(--space-md) 0;
+    padding: var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary, var(--bg-tertiary));
+}
+
+.warmstart-delta--empty {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary, var(--text-muted));
+}
+
+.warmstart-delta__head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: var(--space-sm);
+}
+
+.warmstart-delta__hint {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary, var(--text-muted));
+}
+
+.warmstart-delta__chart {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.warmstart-delta__axis {
+    stroke: var(--border-color);
+    stroke-width: 1;
+}
+
+.warmstart-delta__zero {
+    stroke: var(--text-muted, #94a3b8);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+    opacity: 0.6;
+}
+
+.warmstart-delta__axis-label {
+    fill: var(--text-secondary, var(--text-muted));
+    font-size: 11px;
+}
+
+.warmstart-delta__line {
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+.warmstart-delta__line--loss {
+    stroke: var(--color-primary, #2563eb);
+}
+
+.warmstart-delta__line--delta {
+    stroke: var(--color-success, #22c55e);
+}
+
+.warmstart-delta__legend {
+    display: flex;
+    gap: var(--space-md);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary, var(--text-muted));
+    margin: 6px 0;
+}
+
+.warmstart-delta__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.warmstart-delta__swatch {
+    width: 14px;
+    height: 3px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.warmstart-delta__swatch.is-loss {
+    background: var(--color-primary, #2563eb);
+}
+
+.warmstart-delta__swatch.is-delta {
+    background: var(--color-success, #22c55e);
+}
+
+.warmstart-delta__summary {
+    font-size: var(--font-size-sm);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+}
+
+.warmstart-delta__summary.is-improved {
+    background: rgba(34, 197, 94, 0.14);
+    color: var(--color-success, #22c55e);
+}
+
+.warmstart-delta__summary.is-regressed {
+    background: rgba(234, 179, 8, 0.16);
+    color: var(--color-warning, #eab308);
+}
