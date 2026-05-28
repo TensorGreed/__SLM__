@@ -68,6 +68,14 @@ interface TrainingMetric {
   [key: string]: unknown;
 }
 
+interface WarmStartResolution {
+  source?: string;
+  effective_base_model?: string;
+  checkpoint_name?: string | null;
+  reason?: string;
+  manifest?: { display_name?: string; status?: string } | null;
+}
+
 interface TrainingEffectiveConfigResponse {
   domain_pack_applied?: string | null;
   domain_pack_source?: string | null;
@@ -77,6 +85,7 @@ interface TrainingEffectiveConfigResponse {
   resolved_training_config?: Record<string, unknown> | null;
   resolved_training_mode?: string;
   profile_defaults_applied?: string[];
+  warm_start?: WarmStartResolution | null;
 }
 
 interface TrainingPreflightReport {
@@ -231,6 +240,7 @@ interface TrainingRecipe {
   category?: string;
   tags?: string[];
   required_fields?: string[];
+  recommended_starting_checkpoint?: string;
 }
 
 interface TrainingRecipeCatalogResponse {
@@ -626,6 +636,31 @@ function asRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
   }
   return {};
+}
+
+/** Plain-language gloss of the warm-start resolution reason codes. */
+function describeWarmStartReason(reason: string | undefined): string {
+  const raw = (reason || '').trim();
+  if (!raw) return '';
+  const sep = raw.indexOf(':');
+  const code = sep === -1 ? raw : raw.slice(0, sep);
+  const name = sep === -1 ? '' : raw.slice(sep + 1);
+  switch (code) {
+    case 'warm_start':
+      return `Warm start from ${name || 'a pre-fine-tuned checkpoint'}`;
+    case 'no_checkpoint_recommended':
+      return 'Cold start — this recipe recommends no warm-start checkpoint';
+    case 'checkpoint_planned':
+      return `Cold start — warm start "${name}" is planned, not built yet`;
+    case 'checkpoint_not_registered':
+      return `Cold start — recommended warm start "${name}" is not registered`;
+    case 'checkpoint_base_model_mismatch':
+      return `Cold start — warm start "${name}" targets a different base model`;
+    case 'checkpoint_artifact_missing':
+      return `Cold start — warm start "${name}" weights not found locally`;
+    default:
+      return raw;
+  }
 }
 
 function asStringList(value: unknown): string[] {
@@ -1509,6 +1544,7 @@ export default function TrainingPanel({
         resolved_training_config: res.data?.resolved_training_config ?? null,
         resolved_training_mode: res.data?.resolved_training_mode ?? 'sft',
         profile_defaults_applied: res.data?.profile_defaults_applied ?? [],
+        warm_start: res.data?.warm_start ?? null,
       });
       setPreflightPreview(res.data?.preflight || null);
     } catch (err: any) {
@@ -1954,6 +1990,7 @@ export default function TrainingPanel({
         resolved_training_config: res.data?.resolved_training_config ?? null,
         resolved_training_mode: res.data?.resolved_training_mode ?? 'sft',
         profile_defaults_applied: res.data?.profile_defaults_applied ?? [],
+        warm_start: res.data?.warm_start ?? null,
       });
       const resolvedCfg =
         (res.data?.resolved_training_config && typeof res.data.resolved_training_config === 'object'
@@ -3548,6 +3585,22 @@ export default function TrainingPanel({
                       {recipeResolveError}
                     </div>
                   )}
+                  {effectivePreview?.warm_start && (
+                    <div
+                      className={`training-warm-start training-warm-start--${
+                        effectivePreview.warm_start.source === 'checkpoint' ? 'warm' : 'cold'
+                      }`}
+                    >
+                      <strong>Starting weights:</strong>{' '}
+                      {effectivePreview.warm_start.source === 'checkpoint'
+                        ? effectivePreview.warm_start.checkpoint_name ||
+                          effectivePreview.warm_start.manifest?.display_name ||
+                          'warm start'
+                        : 'base model (cold start)'}
+                      {' — '}
+                      {describeWarmStartReason(effectivePreview.warm_start.reason)}
+                    </div>
+                  )}
                 </div>
 
                 {!isSetupAdvancedMode && (
@@ -3655,6 +3708,21 @@ export default function TrainingPanel({
                       <span>Resolved Training Mode</span>
                       <strong>{effectivePreview.resolved_training_mode || 'sft'}</strong>
                     </div>
+                    {effectivePreview.warm_start && (
+                      <div className="resolved-defaults-panel__kv">
+                        <span>Starting Weights</span>
+                        <strong>
+                          {effectivePreview.warm_start.source === 'checkpoint'
+                            ? effectivePreview.warm_start.checkpoint_name ||
+                              effectivePreview.warm_start.manifest?.display_name ||
+                              'warm start'
+                            : 'base model (cold start)'}
+                          <span className="resolved-defaults-panel__warm-start-reason">
+                            {describeWarmStartReason(effectivePreview.warm_start.reason)}
+                          </span>
+                        </strong>
+                      </div>
+                    )}
                     <div className="resolved-defaults-panel__kv">
                       <span>Runtime Fields Applied</span>
                       <strong>

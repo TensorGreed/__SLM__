@@ -104,6 +104,7 @@ from app.services.playground_session_service import (
     serialize_playground_session_detail,
     serialize_playground_session_summary,
 )
+from app.services.checkpoint_registry_service import resolve_starting_checkpoint
 from app.services.training_recipe_service import (
     list_training_recipes,
     resolve_training_recipe,
@@ -3040,6 +3041,7 @@ async def resolve_training_recipe_config(
         "recipe": recipe_resolution.get("recipe"),
         "recipe_missing_required_fields": recipe_resolution.get("missing_required_fields", []),
         "recipe_config": candidate_config,
+        "warm_start": _warm_start_preview(resolved_config),
         "domain_pack_applied": runtime.get("domain_pack_applied"),
         "domain_pack_source": runtime.get("domain_pack_source"),
         "domain_profile_applied": runtime.get("domain_profile_applied"),
@@ -4502,6 +4504,21 @@ async def create(
         raise HTTPException(400, detail)
 
 
+def _warm_start_preview(resolved_config: dict[str, Any]) -> dict[str, Any]:
+    """Pre-launch preview of the warm-start resolution training will perform.
+
+    Advisory only — the authoritative resolution re-runs at launch in
+    ``training_service.start_training``.
+    """
+    return resolve_starting_checkpoint(
+        base_model=str(resolved_config.get("base_model", "")),
+        recommended_checkpoint=str(
+            resolved_config.get("recommended_starting_checkpoint") or ""
+        ).strip()
+        or None,
+    )
+
+
 @router.post("/experiments/effective-config")
 async def effective_training_config(
     project_id: int,
@@ -4533,6 +4550,7 @@ async def effective_training_config(
         "resolved_training_config": resolved_config,
         "resolved_training_mode": resolved_training_mode.value,
         "profile_defaults_applied": profile_defaults_applied,
+        "warm_start": _warm_start_preview(resolved_config),
     }
 
 
@@ -4745,6 +4763,7 @@ async def training_preflight(
         "resolved_training_config": resolved_config,
         "resolved_training_mode": resolved_training_mode.value,
         "profile_defaults_applied": profile_defaults_applied,
+        "warm_start": _warm_start_preview(resolved_config),
         "preflight": preflight,
     }
 

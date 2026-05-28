@@ -52,6 +52,14 @@
     text-align: right;
 }
 
+.resolved-defaults-panel__warm-start-reason {
+    display: block;
+    font-weight: 400;
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary, var(--text-muted));
+    margin-top: 2px;
+}
+
 .resolved-defaults-panel__grid {
     display: grid;
     gap: 10px;
@@ -973,6 +981,24 @@
 .training-alert--tight {
     margin-top: 8px;
     margin-bottom: 0;
+}
+
+.training-warm-start {
+    margin-top: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    line-height: 1.4;
+}
+
+.training-warm-start--warm {
+    background: rgba(34, 197, 94, 0.14);
+    color: var(--color-success);
+}
+
+.training-warm-start--cold {
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--text-secondary, var(--text-muted));
 }
 
 .metrics-grid {

@@ -368,9 +368,51 @@ class Phase65TrainingManifestTests(unittest.TestCase):
             "id", "experiment_id", "project_id", "schema_version", "captured_at",
             "base_model", "dataset_adapter", "blueprint", "datasets",
             "recipe_id", "runtime_id", "training_mode", "tokenizer", "seed",
-            "resolved_config", "env", "artifact_ids", "capture_warnings",
+            "resolved_config", "env", "artifact_ids", "warm_start", "capture_warnings",
         }
         self.assertEqual(set(payload.keys()), expected_keys)
+
+    def test_capture_lifts_warm_start_out_of_runtime_block(self):
+        # Track 1, Epic B: which starting weights the run used is provenance —
+        # it must be lifted out of the stripped ``_runtime`` block onto its own
+        # column + serialized field, while still being absent from resolved_config.
+        async def run():
+            project_id = self._create_project()
+            warm_start = {
+                "source": "base_model",
+                "effective_base_model": "microsoft/phi-2",
+                "checkpoint_name": "qa-base-135m",
+                "reason": "checkpoint_planned:qa-base-135m",
+                "manifest": {"display_name": "QABase", "status": "planned"},
+            }
+            exp_id = await self._create_experiment(
+                project_id,
+                config={
+                    "seed": 5,
+                    "recommended_starting_checkpoint": "qa-base-135m",
+                    "_runtime": {"task_id": "celery-xyz", "warm_start": warm_start},
+                },
+            )
+            async with async_session_factory() as db:
+                row = await capture_training_manifest(
+                    db, project_id=project_id, experiment_id=exp_id, collect_env=False
+                )
+            return project_id, exp_id, row
+
+        project_id, exp_id, row = asyncio.run(run())
+        self.assertEqual(row.warm_start.get("source"), "base_model")
+        self.assertEqual(row.warm_start.get("reason"), "checkpoint_planned:qa-base-135m")
+        # _runtime stripped, but the authored recommendation survives in config.
+        self.assertNotIn("_runtime", row.resolved_config)
+        self.assertEqual(
+            row.resolved_config.get("recommended_starting_checkpoint"), "qa-base-135m"
+        )
+        # Endpoint surfaces the warm_start block for the manifest UI.
+        resp = self.client.get(
+            f"/api/projects/{project_id}/training/runs/{exp_id}/manifest"
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["warm_start"]["reason"], "checkpoint_planned:qa-base-135m")
 
 
 if __name__ == "__main__":

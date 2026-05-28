@@ -279,6 +279,7 @@ def serialize_training_manifest(row: TrainingManifest) -> dict[str, Any]:
             "env_digest": row.env_digest,
         },
         "artifact_ids": dict(row.artifact_ids or {}),
+        "warm_start": dict(row.warm_start or {}),
         "capture_warnings": list(row.capture_warnings or []),
     }
 
@@ -313,6 +314,14 @@ async def capture_training_manifest(
     # Strip the transient ``_runtime`` sub-block from the snapshot so reruns
     # replay the authored config without task ids / worker PIDs.
     sanitized_config = {k: v for k, v in config.items() if k != "_runtime"}
+    # ...but lift the warm-start resolution out of ``_runtime`` first: which
+    # starting weights the run used is reproducibility-relevant provenance, not
+    # transient state. Falls back to the live experiment config when capture is
+    # handed a resolved_config without the runtime block.
+    runtime_block = dict((config.get("_runtime") or {}))
+    if not runtime_block:
+        runtime_block = dict(((exp_row.config or {}).get("_runtime")) or {})
+    warm_start_block = dict(runtime_block.get("warm_start") or {})
 
     warnings: list[str] = []
     registry_id, cache_fingerprint, source_ref = await _resolve_base_model_reference(
@@ -383,6 +392,7 @@ async def capture_training_manifest(
             pip_freeze_hash=pip_hash,
             env_digest=env_digest,
             artifact_ids=dict(artifact_ids or {}),
+            warm_start=warm_start_block,
             capture_warnings=warnings,
             schema_version=_MANIFEST_SCHEMA_VERSION,
         )
@@ -408,6 +418,7 @@ async def capture_training_manifest(
         existing.pip_freeze_hash = pip_hash
         existing.env_digest = env_digest
         existing.artifact_ids = dict(artifact_ids or {})
+        existing.warm_start = warm_start_block
         existing.capture_warnings = warnings
         existing.schema_version = _MANIFEST_SCHEMA_VERSION
         row = existing

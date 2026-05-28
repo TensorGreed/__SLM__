@@ -85,7 +85,12 @@ A recipe can recommend a **pre-fine-tuned warm-start checkpoint** — a base mod
 
 Checkpoints live in a local registry at `backend/data/pretrained_checkpoints/<name>/manifest.json` (only the small manifests are tracked; the ~200 MB weights are produced on first use). At launch, training resolves the recommended checkpoint to its local weights **only when** the checkpoint is registered, architecture-compatible with the chosen base model, and its weights exist on disk — otherwise it **falls back to the base model** and records the reason (`checkpoint_planned`, `checkpoint_base_model_mismatch`, `checkpoint_artifact_missing`, …) under `_runtime.warm_start` on the experiment.
 
-> **Status:** the registry, recipe field, and resolution are wired and tested. The four planned task bases (ClassifierBase / NERBase / QABase / SQLBase, all on the `SmolLM2-135M-Instruct` line) ship as `status: "planned"` manifests, so every run currently falls back to a clean base-model cold start. Training the actual checkpoints (~32 GPU-hours on a GB10, published to `TensorGreed/`) is follow-up work.
+**Where you see it.** The resolution is surfaced as a **Starting weights** line so you always know which weights a run used:
+
+- *Before launch* — applying a recipe (or running preflight) shows a Starting-weights chip in the Training Config setup, and a **Starting Weights** row in the advanced **Resolved Defaults** panel. The `/recipes/resolve`, `/experiments/effective-config`, and `/experiments/preflight` responses all carry a `warm_start` preview block.
+- *After launch* — the **Why this plan** panel's Strategy section shows it for the active run, and the captured **run manifest** records it under `warm_start` (lifted out of the transient `_runtime` block because *which weights a run used* is reproducibility-relevant provenance).
+
+> **Status:** the registry, recipe field, resolution, and UI/manifest surfacing are wired and tested. The four planned task bases (ClassifierBase / NERBase / QABase / SQLBase, all on the `SmolLM2-135M-Instruct` line) ship as `status: "planned"` manifests, so every run currently falls back to a clean base-model cold start. Training the actual checkpoints (~32 GPU-hours on a GB10, published to `TensorGreed/`) is follow-up work.
 
 ## Trainability forecast
 

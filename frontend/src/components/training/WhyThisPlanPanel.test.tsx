@@ -161,4 +161,76 @@ describe('WhyThisPlanPanel', () => {
         });
         expect(await screen.findByText('manifest_not_captured')).toBeInTheDocument();
     });
+
+    it('shows the cold-start fallback in Strategy when warm start was planned', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: ESTIMATED_COST });
+        const coldExperiment = {
+            ...EXPERIMENT,
+            config: {
+                ...EXPERIMENT.config,
+                recommended_starting_checkpoint: 'qa-base-135m',
+                _runtime: {
+                    warm_start: {
+                        source: 'base_model',
+                        effective_base_model: 'microsoft/phi-2',
+                        checkpoint_name: 'qa-base-135m',
+                        reason: 'checkpoint_planned:qa-base-135m',
+                    },
+                },
+            },
+        };
+        render(<WhyThisPlanPanel projectId={5} experiment={coldExperiment} />);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+
+        expect(screen.getByText('base model (cold start)')).toBeInTheDocument();
+        expect(
+            screen.getByText(/warm start "qa-base-135m" is planned, not built yet/i),
+        ).toBeInTheDocument();
+    });
+
+    it('shows the warm-start checkpoint in Strategy when one was used', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: ESTIMATED_COST });
+        const warmExperiment = {
+            ...EXPERIMENT,
+            config: {
+                ...EXPERIMENT.config,
+                _runtime: {
+                    warm_start: {
+                        source: 'checkpoint',
+                        effective_base_model: '/weights/qa-base-135m',
+                        checkpoint_name: 'qa-base-135m',
+                        reason: 'warm_start:qa-base-135m',
+                    },
+                },
+            },
+        };
+        render(<WhyThisPlanPanel projectId={5} experiment={warmExperiment} />);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+
+        expect(screen.getByText('qa-base-135m')).toBeInTheDocument();
+        expect(screen.getByText(/Warm start from qa-base-135m/i)).toBeInTheDocument();
+    });
+
+    it('renders the warm-start summary inside the expanded manifest', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: ESTIMATED_COST });
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                experiment_id: 7,
+                warm_start: {
+                    source: 'base_model',
+                    effective_base_model: 'microsoft/phi-2',
+                    checkpoint_name: 'qa-base-135m',
+                    reason: 'checkpoint_planned:qa-base-135m',
+                },
+            },
+        });
+
+        const user = userEvent.setup();
+        render(<WhyThisPlanPanel projectId={5} experiment={EXPERIMENT} />);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+
+        await user.click(screen.getByRole('button', { name: /Show the manifest/i }));
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        expect(await screen.findByText(/Starting weights:/i)).toBeInTheDocument();
+    });
 });

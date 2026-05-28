@@ -345,6 +345,7 @@ session-start guidance.
 - `backend/alembic/versions/20260527_0039_forecast_calibration_observations.py` — Forecast vs reality calibration observations (USER-SUCCESS Epic 1, T5).
 - `backend/alembic/versions/20260527_0040_remediation_action_events.py` — Remediation action event tracking (E2).
 - `backend/alembic/versions/20260527_0041_gold_drift_review_queue.py` — Gold-drift review queue table (E4).
+- `backend/alembic/versions/20260528_0042_training_manifest_warm_start.py` — Training manifest warm_start JSON column (Track 1, Epic B).
 
 ## Frontend · API clients
 

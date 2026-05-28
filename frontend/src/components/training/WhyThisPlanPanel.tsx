@@ -55,6 +55,46 @@ interface ManifestDump {
     [key: string]: unknown;
 }
 
+interface WarmStartResolution {
+    source?: string;
+    effective_base_model?: string;
+    checkpoint_name?: string | null;
+    reason?: string;
+    manifest?: { display_name?: string; status?: string; hf_repo_id?: string } | null;
+}
+
+function asWarmStart(value: unknown): WarmStartResolution | null {
+    if (!value || typeof value !== 'object') return null;
+    const ws = value as WarmStartResolution;
+    if (!ws.source) return null;
+    return ws;
+}
+
+/** Plain-language gloss of the warm-start resolution reason codes. */
+function describeWarmStartReason(reason: string | undefined): string {
+    const raw = (reason || '').trim();
+    if (!raw) return '';
+    const sep = raw.indexOf(':');
+    const code = sep === -1 ? raw : raw.slice(0, sep);
+    const name = sep === -1 ? '' : raw.slice(sep + 1);
+    switch (code) {
+        case 'warm_start':
+            return `Warm start from ${name || 'a pre-fine-tuned checkpoint'}`;
+        case 'no_checkpoint_recommended':
+            return 'Cold start — this recipe recommends no warm-start checkpoint';
+        case 'checkpoint_planned':
+            return `Cold start — warm start "${name}" is planned, not built yet`;
+        case 'checkpoint_not_registered':
+            return `Cold start — recommended warm start "${name}" is not registered`;
+        case 'checkpoint_base_model_mismatch':
+            return `Cold start — warm start "${name}" targets a different base model`;
+        case 'checkpoint_artifact_missing':
+            return `Cold start — warm start "${name}" weights not found locally`;
+        default:
+            return raw;
+    }
+}
+
 interface WhyThisPlanPanelProps {
     projectId: number;
     experiment: ExperimentSummary;
@@ -120,6 +160,19 @@ export default function WhyThisPlanPanel({
             recipe: typeof recipe === 'string' ? recipe : '—',
         };
     }, [config, experiment.training_mode]);
+
+    const warmStart = useMemo(() => {
+        const runtime = config['_runtime'];
+        if (!runtime || typeof runtime !== 'object') return null;
+        return asWarmStart((runtime as Record<string, unknown>)['warm_start']);
+    }, [config]);
+
+    const startingWeights = useMemo(() => {
+        if (warmStart && warmStart.source === 'checkpoint') {
+            return warmStart.checkpoint_name || warmStart.manifest?.display_name || 'warm start';
+        }
+        return 'base model (cold start)';
+    }, [warmStart]);
 
     const memoryBudget = useMemo(() => {
         const batchSize = Number(config['batch_size'] ?? 0);
@@ -213,7 +266,20 @@ export default function WhyThisPlanPanel({
                             <span>Recipe</span>
                             <strong>{strategy.recipe}</strong>
                         </li>
+                        <li>
+                            <span>Starting weights</span>
+                            <strong>{startingWeights}</strong>
+                        </li>
                     </ul>
+                    {warmStart && (
+                        <div
+                            className={`why-this-plan__warm-start why-this-plan__warm-start--${
+                                warmStart.source === 'checkpoint' ? 'warm' : 'cold'
+                            }`}
+                        >
+                            {describeWarmStartReason(warmStart.reason)}
+                        </div>
+                    )}
                 </section>
 
                 <section className="why-this-plan__section" aria-label="Memory budget">
@@ -312,6 +378,24 @@ export default function WhyThisPlanPanel({
                         {manifestError && !manifestLoading && (
                             <div className="why-this-plan__error">{manifestError}</div>
                         )}
+                        {manifest && (() => {
+                            const manifestWarmStart = asWarmStart(manifest['warm_start']);
+                            return manifestWarmStart ? (
+                                <div
+                                    className={`why-this-plan__warm-start why-this-plan__warm-start--${
+                                        manifestWarmStart.source === 'checkpoint' ? 'warm' : 'cold'
+                                    }`}
+                                >
+                                    <strong>Starting weights:</strong>{' '}
+                                    {manifestWarmStart.source === 'checkpoint'
+                                        ? manifestWarmStart.checkpoint_name ||
+                                          manifestWarmStart.manifest?.display_name ||
+                                          'warm start'
+                                        : manifestWarmStart.effective_base_model || 'base model'}{' '}
+                                    — {describeWarmStartReason(manifestWarmStart.reason)}
+                                </div>
+                            ) : null;
+                        })()}
                         {manifest && (
                             <pre className="why-this-plan__manifest-json">
                                 {JSON.stringify(manifest, null, 2)}

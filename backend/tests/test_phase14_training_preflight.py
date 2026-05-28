@@ -409,6 +409,52 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         preflight = payload.get("preflight", {})
         self.assertIn("ok", preflight)
 
+    def test_recipe_resolve_includes_warm_start_preview(self):
+        # Track 1, Epic B: the resolve response previews the warm-start
+        # resolution so the Resolved Defaults panel can show which starting
+        # weights the run will use. The recommended task base is planned (no
+        # weights yet), so the preview must fall back to the base model with a
+        # reason. (Passed via base_config to avoid the distillation-only KD
+        # recipes, which this endpoint's TrainingConfig enum rejects.)
+        project_id = self._create_project("phase14-warm-start")
+        self._create_prepared_split(project_id)
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/recipes/resolve",
+            json={
+                "recipe_id": "recipe.sft.balanced",
+                "base_config": {
+                    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+                    "recommended_starting_checkpoint": "qa-base-135m",
+                },
+                "include_preflight": False,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        warm_start = payload.get("warm_start")
+        self.assertIsNotNone(warm_start)
+        self.assertEqual(warm_start["source"], "base_model")
+        self.assertEqual(warm_start["checkpoint_name"], "qa-base-135m")
+        self.assertEqual(warm_start["reason"], "checkpoint_planned:qa-base-135m")
+
+    def test_recipe_resolve_warm_start_none_when_no_recommendation(self):
+        project_id = self._create_project("phase14-warm-start-none")
+        self._create_prepared_split(project_id)
+
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/recipes/resolve",
+            json={
+                "recipe_id": "recipe.sft.balanced",
+                "base_config": {"base_model": "microsoft/phi-2"},
+                "include_preflight": False,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        warm_start = resp.json().get("warm_start")
+        self.assertEqual(warm_start["source"], "base_model")
+        self.assertEqual(warm_start["reason"], "no_checkpoint_recommended")
+
     def test_adapter_preference_defaults_then_updates(self):
         project_id = self._create_project("phase14-adapter-pref-1")
 

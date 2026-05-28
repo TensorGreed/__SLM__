@@ -105,6 +105,13 @@ class TrainingManifest(Base):
     # demand instead of being copied in here.
     artifact_ids: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Warm-start resolution (Track 1, Epic B): which starting weights the run
+    # actually used. ``source`` is ``checkpoint`` (a registered pre-fine-tuned
+    # warm start) or ``base_model`` (cold start / fallback), with ``reason`` +
+    # ``effective_base_model`` recording why. Empty dict for runs captured
+    # before warm-start wiring existed.
+    warm_start: Mapped[dict] = mapped_column(JSON, default=dict)
+
     # Any soft failures during capture land here (e.g. "git unavailable";
     # "pip freeze timed out") so we can diagnose partial manifests without
     # blocking the training launch. Empty list on clean captures.
