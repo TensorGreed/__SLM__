@@ -18,6 +18,7 @@ import DriftReviewQueuePanel from './DriftReviewQueuePanel';
 import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
 import SftLiftPanel from './SftLiftPanel';
+import StudentTeacherComparisonPanel from './StudentTeacherComparisonPanel';
 import AutoRagComparisonPanel from './AutoRagComparisonPanel';
 import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import CoachStrip from '../coach/CoachStrip';
@@ -1692,6 +1693,14 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             {selectedExp && evalResults.length > 0 && (
                 <SftLiftPanel
                     projectId={projectId}
+                    refreshToken={evalResults.length}
+                />
+            )}
+
+            {selectedExp && evalResults.length > 0 && (
+                <StudentTeacherComparisonPanel
+                    projectId={projectId}
+                    experimentId={selectedExp}
                     refreshToken={evalResults.length}
                 />
             )}

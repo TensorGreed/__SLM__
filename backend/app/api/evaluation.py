@@ -1036,3 +1036,34 @@ async def get_sft_lift_summary(
         if detail.startswith("project_not_found:"):
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+@router.get("/student-teacher-comparison/{experiment_id}")
+async def get_student_teacher_comparison(
+    project_id: int,
+    experiment_id: int,
+    teacher_run_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare a student experiment's eval results against a teacher baseline
+    run (Track 1 Epic A slice 3). Returns `quality_retained = student/teacher`
+    per metric + per slice. Reuses stored EvalResult rows — no new model calls.
+
+    `?teacher_run_id=` overrides the teacher resolved from the student
+    experiment's config or the project's eval pack. Non-ready states come back
+    as `status` (`no_teacher_baseline` / `no_student_eval` / `no_teacher_eval`
+    / `no_overlap`) so the UI renders a soft fallback; 404 only for a missing
+    project or experiment."""
+    from app.services.student_teacher_comparison_service import (
+        compute_student_teacher_comparison,
+    )
+
+    try:
+        return await compute_student_teacher_comparison(
+            db, project_id, experiment_id, teacher_baseline_run_id=teacher_run_id
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith(("project_not_found:", "experiment_not_found:")):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)

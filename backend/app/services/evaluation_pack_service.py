@@ -279,6 +279,12 @@ def _build_pack_contract(pack: dict[str, Any]) -> dict[str, Any]:
     }
     if "derived_from_profile_id" in pack:
         payload["derived_from_profile_id"] = pack.get("derived_from_profile_id")
+    # Optional: a prior experiment id whose eval results are the "teacher"
+    # baseline for the student-vs-teacher comparison (Track 1 Epic A slice 3).
+    # Absent on built-in packs; a project/domain pack may declare it so the
+    # comparison surface resolves a teacher without an explicit request param.
+    if pack.get("teacher_baseline_run_id") is not None:
+        payload["teacher_baseline_run_id"] = pack.get("teacher_baseline_run_id")
     return payload
 
 

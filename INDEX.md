@@ -192,6 +192,7 @@ session-start guidance.
 - `backend/app/services/served_model_telemetry_service.py` — Post-deploy telemetry service (priority.md P26).
 - `backend/app/services/sft_lift_summary_service.py` — Did SFT help? — baseline vs trained eval lift summary (Theme 8 Epic 4).
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
+- `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).
 - `backend/app/services/synth_backends/base.py` — SynthBackend protocol + registry helpers (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_backends/nemo.py` — NVIDIA NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a + 5b).
@@ -365,6 +366,7 @@ session-start guidance.
 - `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
+- `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
 - `frontend/src/api/trainabilityForecast.ts` — Typed API wrapper for the trainability forecast endpoint
 
@@ -464,6 +466,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
+- `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
 - `frontend/src/components/extensions/ScaffoldForm.tsx` — ScaffoldForm — generate a contract-valid plugin scaffold from the
@@ -699,6 +702,7 @@ session-start guidance.
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_
+- `backend/tests/test_student_teacher_comparison.py` — Student-vs-teacher distillation comparison — Track 1, Epic A, slice 3.
 - `backend/tests/test_synth_backends_schema_aware.py` — Tests for the ``schema_aware`` backend flag (USER-SUCCESS Epic 5 Phase 5c).
 - `backend/tests/test_synth_nemo_backend.py` — Tests for the NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).
 - `backend/tests/test_synth_playbook_epic2b.py` — Tests for USER-SUCCESS Epic 2b — hard-negatives, class-balance,
@@ -765,6 +769,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.
 - `frontend/src/components/gamification/ProgressChip.test.tsx` — ProgressChip + LabJournalDrawer contract.
