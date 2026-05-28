@@ -25,7 +25,15 @@ class TrainingConfig(BaseModel):
         "auto",
         description="Training runtime plugin id (auto resolves server default).",
     )
-    
+    recommended_starting_checkpoint: str = Field(
+        "",
+        max_length=255,
+        description=(
+            "Registry name of a pre-fine-tuned warm-start checkpoint to resolve as the "
+            "effective starting weights. Falls back to base_model when absent/unavailable."
+        ),
+    )
+
     # Hyperparameters
     batch_size: int = Field(4, ge=1, le=256)
     gradient_accumulation_steps: int = Field(4, ge=1)

@@ -161,6 +161,7 @@ _BUILTIN_RECIPES: list[dict[str, Any]] = [
         "category": "distillation",
         "tags": ["distillation", "offline", "kd", "classification"],
         "required_fields": ["base_model"],
+        "recommended_starting_checkpoint": "classifier-base-135m",
         "config_patch": {
             "task_type": "causal_lm",
             "training_mode": "distillation",
@@ -202,6 +203,7 @@ _BUILTIN_RECIPES: list[dict[str, Any]] = [
         "category": "distillation",
         "tags": ["distillation", "offline", "kd", "qa", "instruction"],
         "required_fields": ["base_model"],
+        "recommended_starting_checkpoint": "qa-base-135m",
         "config_patch": {
             "task_type": "causal_lm",
             "training_mode": "distillation",
@@ -243,6 +245,7 @@ _BUILTIN_RECIPES: list[dict[str, Any]] = [
         "category": "distillation",
         "tags": ["distillation", "offline", "kd", "span-extraction", "structured"],
         "required_fields": ["base_model"],
+        "recommended_starting_checkpoint": "ner-base-135m",
         "config_patch": {
             "task_type": "causal_lm",
             "training_mode": "distillation",
@@ -351,6 +354,9 @@ def _recipe_summary(recipe: dict[str, Any], *, include_patch: bool) -> dict[str,
         "required_fields": [
             str(item) for item in list(recipe.get("required_fields") or []) if str(item).strip()
         ],
+        "recommended_starting_checkpoint": str(
+            recipe.get("recommended_starting_checkpoint") or ""
+        ).strip(),
     }
     if include_patch:
         payload["config_patch"] = _deepcopy(dict(recipe.get("config_patch") or {}))
@@ -391,6 +397,15 @@ def resolve_training_recipe(
     resolved_config.update(_deepcopy(dict(recipe.get("config_patch") or {})))
     if isinstance(overrides, dict):
         resolved_config.update(_deepcopy(overrides))
+
+    # Seed the recipe's recommended warm-start checkpoint into the resolved
+    # config (recipe metadata, not a config_patch key) so it flows through the
+    # experiment config into training, unless the caller explicitly set one.
+    recommended_checkpoint = str(recipe.get("recommended_starting_checkpoint") or "").strip()
+    if recommended_checkpoint and not str(
+        resolved_config.get("recommended_starting_checkpoint") or ""
+    ).strip():
+        resolved_config["recommended_starting_checkpoint"] = recommended_checkpoint
 
     missing_required: list[str] = []
     for field in list(recipe.get("required_fields") or []):

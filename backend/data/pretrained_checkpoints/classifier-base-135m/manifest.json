@@ -1,0 +1,15 @@
+{
+  "name": "classifier-base-135m",
+  "display_name": "ClassifierBase 135M (warm start)",
+  "description": "SmolLM2-135M task-pretuned on open mixed classification corpora so projects only learn the label-set delta. Planned artifact — produced by the deferred warm-start training job; until then training falls back to the base model.",
+  "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "task_shape": "classification",
+  "status": "planned",
+  "artifact_path": "weights",
+  "hf_repo_id": "TensorGreed/classifier-base-135m",
+  "metadata": {
+    "epic": "track1-epic-b",
+    "approx_size_mb": 200,
+    "license_audited": true
+  }
+}

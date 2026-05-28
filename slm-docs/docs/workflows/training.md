@@ -73,6 +73,20 @@ curl -X POST http://localhost:8000/api/projects/1/experiments \
   }'
 ```
 
+## Warm-start checkpoints
+
+A recipe can recommend a **pre-fine-tuned warm-start checkpoint** — a base model already task-pretuned on open corpora, so your rows only teach the *delta* (~3–5× fewer rows for the same quality). Recipes carry the recommendation as `recommended_starting_checkpoint`; the task-shaped offline-KD recipes already point at the planned task bases:
+
+| Recipe | Recommended checkpoint |
+| --- | --- |
+| `recipe.kd.classification` | `classifier-base-135m` |
+| `recipe.kd.qa` | `qa-base-135m` |
+| `recipe.kd.span_extraction` | `ner-base-135m` |
+
+Checkpoints live in a local registry at `backend/data/pretrained_checkpoints/<name>/manifest.json` (only the small manifests are tracked; the ~200 MB weights are produced on first use). At launch, training resolves the recommended checkpoint to its local weights **only when** the checkpoint is registered, architecture-compatible with the chosen base model, and its weights exist on disk — otherwise it **falls back to the base model** and records the reason (`checkpoint_planned`, `checkpoint_base_model_mismatch`, `checkpoint_artifact_missing`, …) under `_runtime.warm_start` on the experiment.
+
+> **Status:** the registry, recipe field, and resolution are wired and tested. The four planned task bases (ClassifierBase / NERBase / QABase / SQLBase, all on the `SmolLM2-135M-Instruct` line) ship as `status: "planned"` manifests, so every run currently falls back to a clean base-model cold start. Training the actual checkpoints (~32 GPU-hours on a GB10, published to `TensorGreed/`) is follow-up work.
+
 ## Trainability forecast
 
 The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".

@@ -1,0 +1,15 @@
+{
+  "name": "qa-base-135m",
+  "display_name": "QABase 135M (warm start)",
+  "description": "SmolLM2-135M task-pretuned on open instruction / question-answer corpora so projects only learn their answer-style delta. Planned artifact — produced by the deferred warm-start training job; until then training falls back to the base model.",
+  "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "task_shape": "qa",
+  "status": "planned",
+  "artifact_path": "weights",
+  "hf_repo_id": "TensorGreed/qa-base-135m",
+  "metadata": {
+    "epic": "track1-epic-b",
+    "approx_size_mb": 200,
+    "license_audited": true
+  }
+}

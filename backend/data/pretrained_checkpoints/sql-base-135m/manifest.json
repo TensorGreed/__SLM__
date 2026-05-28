@@ -1,0 +1,15 @@
+{
+  "name": "sql-base-135m",
+  "display_name": "SQLBase 135M (warm start)",
+  "description": "SmolLM2-135M task-pretuned on open text-to-SQL corpora so projects only learn their schema delta. Planned artifact — produced by the deferred warm-start training job; no recipe maps to it yet (a SQL recipe is follow-up work).",
+  "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "task_shape": "text-to-sql",
+  "status": "planned",
+  "artifact_path": "weights",
+  "hf_repo_id": "TensorGreed/sql-base-135m",
+  "metadata": {
+    "epic": "track1-epic-b",
+    "approx_size_mb": 200,
+    "license_audited": true
+  }
+}

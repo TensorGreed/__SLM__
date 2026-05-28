@@ -1,0 +1,3 @@
+# Heavyweight warm-start weights are produced by the deferred ~32 GPU-hour job
+# (and downloaded on first use) — never commit them. Only manifests are tracked.
+*/weights/

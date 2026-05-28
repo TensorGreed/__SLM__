@@ -19,6 +19,7 @@ from app.models.experiment import (
     TrainingMode,
 )
 from app.models.project import Project
+from app.services.checkpoint_registry_service import resolve_starting_checkpoint
 from app.services.training_data_gate import (
     DEFAULT_TARGET_FIELDS,
     verify_training_data_has_targets,
@@ -1107,6 +1108,18 @@ async def start_training(
     epochs = int((exp.config or {}).get("num_epochs", 3))
     steps_per_epoch = 100
 
+    # Track 1, Epic B — resolve a pre-fine-tuned warm-start checkpoint when the
+    # recipe/config recommends one and its weights are present + compatible;
+    # otherwise this is a no-op that returns exp.base_model unchanged.
+    warm_start = resolve_starting_checkpoint(
+        base_model=exp.base_model,
+        recommended_checkpoint=str(
+            resolved_config.get("recommended_starting_checkpoint") or ""
+        ).strip()
+        or None,
+    )
+    effective_base_model = str(warm_start.get("effective_base_model") or exp.base_model)
+
     message = ""
     task_id: str | None = None
     runtime_config: dict[str, object] = {
@@ -1115,6 +1128,7 @@ async def start_training(
         "runtime_label": runtime_spec.label,
         "execution_backend": runtime_spec.execution_backend,
         "preflight": preflight,
+        "warm_start": warm_start,
     }
     vibe_runtime_config = load_project_vibe_check_config(
         project_id,
@@ -1268,7 +1282,7 @@ async def start_training(
             TrainingRuntimeStartContext(
                 project_id=project_id,
                 experiment_id=exp.id,
-                base_model=exp.base_model,
+                base_model=effective_base_model,
                 config=resolved_config,
                 output_dir=output_dir,
                 config_path=config_path,

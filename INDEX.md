@@ -89,6 +89,7 @@ session-start guidance.
 - `backend/app/services/base_model_registry_service.py` — Universal base model registry normalization + compatibility engine.
 - `backend/app/services/brewslm_manifest_service.py` — Pipeline-as-code manifest serializer + deserializer (priority.md P21).
 - `backend/app/services/capability_contract_service.py` — Shared training capability contract helpers.
+- `backend/app/services/checkpoint_registry_service.py` — Local pre-fine-tuned warm-start checkpoint registry (Track 1, Epic B).
 - `backend/app/services/checkpoint_service.py` — P16 — Checkpoint browser backend (priority.md, RM3).
 - `backend/app/services/cleaning_service.py` — Data Cleaning service — deduplication, PII detection, quality scoring, chunking.
 - `backend/app/services/cloud_burst_service.py` — Cloud GPU burst planning: provider catalog, quote estimation, and launch plans.
@@ -543,6 +544,7 @@ session-start guidance.
 - `backend/tests/test_auto_rag_phase9b.py` — Tests for the Phase 9b inference + training-completion wiring.
 - `backend/tests/test_auto_rag_phase9d.py` — Tests for Phase 9d — auto-RAG default-on heuristic + target
 - `backend/tests/test_auto_rag_service.py` — Tests for the auto-RAG BM25 service (USER-SUCCESS Epic 9 Phase 9a).
+- `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
 - `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
 - `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.
 - `backend/tests/test_cluster_explanation_service.py` — Tests for the per-cluster failure explanation service
