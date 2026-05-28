@@ -129,6 +129,9 @@ session-start guidance.
 - `backend/app/services/deployment_score_service.py` — Deployability score (priority.md P28).
 - `backend/app/services/deployment_target_service.py` — Deployment Target SDK: artifact/runnable target validation + smoke checks.
 - `backend/app/services/deployment_version_service.py` — Deployment version + rollback service (priority.md P25).
+- `backend/app/services/distillation/kd_capture.py` — Read + align the slice-1 teacher-capture artifact for offline KD (slice 2).
+- `backend/app/services/distillation/kd_loss.py` — Knowledge-distillation loss math (Track 1, Epic A, slice 2).
+- `backend/app/services/distillation/kd_trainer.py` — Offline-KD HF Trainer + collator (Track 1, Epic A, slice 2).
 - `backend/app/services/distillation/teacher_capture.py` — Teacher logit capture for knowledge distillation (Track 1, Epic A, slice 1).
 - `backend/app/services/domain_blueprint_service.py` — Domain blueprint analysis, validation, versioning, and project-apply service.
 - `backend/app/services/domain_hook_service.py` — Domain hook registry, plugin loading, and safe execution helpers.
@@ -551,6 +554,8 @@ session-start guidance.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
+- `backend/tests/test_distillation_kd_math.py` — KD loss math + offline trainer compute_loss — Track 1, Epic A, slice 2.
+- `backend/tests/test_distillation_kd_offline.py` — Offline-KD data prep + readiness gate + recipes — Track 1, Epic A, slice 2.
 - `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).

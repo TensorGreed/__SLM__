@@ -1098,6 +1098,16 @@ def _run_training_attempt(
     distillation_hidden_state_loss = str(
         config.get("distillation_hidden_state_loss", "mse")
     ).strip().lower() or "mse"
+    # Offline KD (Track 1 Epic A slice 2): teacher distribution comes from the
+    # slice-1 capture artifact, not a live teacher. Triggered by
+    # training_mode=distillation or an explicit distillation_offline flag.
+    distillation_offline = _coerce_bool(config.get("distillation_offline"), False) or (
+        training_mode == "distillation"
+    )
+    distillation_capture_path = str(config.get("distillation_capture_path") or "").strip()
+    distillation_offline_top_k = _coerce_int(
+        config.get("distillation_offline_top_k"), 8, minimum=1
+    )
     observability_enabled = _coerce_bool(config.get("observability_enabled"), True)
     observability_log_steps = _coerce_int(config.get("observability_log_steps"), 50, minimum=5)
     observability_max_layers = _coerce_int(config.get("observability_max_layers"), 12, minimum=1)
@@ -1124,7 +1134,7 @@ def _run_training_attempt(
     set_seed = deps["set_seed"]
 
     warnings: list[str] = []
-    if training_mode not in {"sft", "domain_pretrain", "dpo", "orpo"}:
+    if training_mode not in {"sft", "domain_pretrain", "dpo", "orpo", "distillation"}:
         warnings.append(f"Unknown training_mode '{training_mode}', defaulting to sft.")
         training_mode = "sft"
     normalized_task_type = _normalize_task_type(task_type, warnings)
@@ -1162,6 +1172,35 @@ def _run_training_attempt(
         resolved_backend = "hf_trainer"
     if training_mode in {"dpo", "orpo"}:
         resolved_backend = f"trl_{training_mode}"
+    if distillation_offline:
+        # Offline KD is a causal-LM objective with a custom compute_loss; route
+        # it through the plain HF Trainer (not TRL-SFT) and gate on the capture
+        # artifact before the GPU spins up (mirrors the repo's other
+        # incident-driven pre-train gates).
+        from app.services.distillation.kd_capture import verify_capture_artifact
+
+        if distillation_enabled:
+            raise ValueError(
+                "training_mode=distillation (offline KD) is incompatible with "
+                "distillation_enabled (live-teacher KD). Pick one."
+            )
+        if not distillation_capture_path:
+            distillation_capture_path = str(
+                Path(args.data_dir).expanduser().resolve()
+                / "projects"
+                / str(args.project)
+                / "distillation"
+                / "teacher_capture.jsonl"
+            )
+        capture_gate = verify_capture_artifact(distillation_capture_path)
+        if not capture_gate["ok"]:
+            raise ValueError(capture_gate["message"])
+        if normalized_task_type != "causal_lm":
+            warnings.append(
+                "Offline KD supports task_type=causal_lm only; forcing causal_lm."
+            )
+            normalized_task_type = "causal_lm"
+        resolved_backend = "hf_trainer"
     set_seed(seed)
 
     data_contract = _build_data_adapter_contract(normalized_task_type, chat_template)
@@ -1573,7 +1612,11 @@ def _run_training_attempt(
         "seed": seed,
         "data_seed": seed,
         "dataloader_num_workers": 0,
-        "remove_unused_columns": bool(resolved_backend == "hf_trainer" and not use_multimodal_collator),
+        "remove_unused_columns": bool(
+            resolved_backend == "hf_trainer"
+            and not use_multimodal_collator
+            and not distillation_offline
+        ),
         "fp16": use_fp16,
         "bf16": use_bf16,
     }
@@ -2084,6 +2127,13 @@ def _run_training_attempt(
             trainer_kwargs["hidden_state_weight"] = distillation_hidden_state_weight
             trainer_kwargs["hidden_state_loss_type"] = distillation_hidden_state_loss
 
+        elif distillation_offline:
+            from app.services.distillation.kd_trainer import make_offline_kd_trainer
+
+            trainer_cls = make_offline_kd_trainer(Trainer)
+            trainer_kwargs["kd_alpha"] = distillation_alpha
+            trainer_kwargs["kd_temperature"] = distillation_temperature
+
         if use_multimodal_collator and normalized_task_type in {"causal_lm", "seq2seq"}:
             media_roots = [
                 train_file.parent,
@@ -2575,6 +2625,55 @@ def _run_training_attempt(
                     return {"accuracy": accuracy, "macro_f1": macro_f1}
 
                 trainer_kwargs["compute_metrics"] = compute_metrics
+        elif distillation_offline:
+            # Offline KD trains on the captured (prompt + teacher_completion)
+            # pairs with per-token teacher distributions attached. The dataset
+            # comes from the capture artifact, not the project's train split.
+            from datasets import Dataset as _HFDataset
+
+            from app.services.distillation.kd_capture import (
+                build_offline_kd_records,
+                load_teacher_capture,
+            )
+            from app.services.distillation.kd_trainer import OfflineKDCollator
+
+            def _kd_encode(text: str) -> list[int]:
+                return list(
+                    processor_tokenizer(text, add_special_tokens=False)["input_ids"]
+                )
+
+            _kd_unk_id = getattr(processor_tokenizer, "unk_token_id", None)
+
+            def _kd_token_to_id(token: str):
+                tid = processor_tokenizer.convert_tokens_to_ids(token)
+                if tid is None:
+                    return None
+                if _kd_unk_id is not None and int(tid) == int(_kd_unk_id):
+                    return None
+                return int(tid)
+
+            kd_capture_rows = load_teacher_capture(distillation_capture_path)
+            kd_records, kd_stats = build_offline_kd_records(
+                kd_capture_rows,
+                _kd_encode,
+                _kd_token_to_id,
+                top_k=distillation_offline_top_k,
+                max_seq_length=max_seq_length,
+            )
+            if not kd_records:
+                raise ValueError(
+                    "Offline KD: no usable training records built from the capture "
+                    f"artifact at {distillation_capture_path} (stats={kd_stats})."
+                )
+            warnings.append(f"Offline KD record stats: {kd_stats}")
+            runtime_environment["offline_kd_record_stats"] = kd_stats
+            trainer_kwargs["train_dataset"] = _HFDataset.from_list(kd_records)
+            trainer_kwargs["eval_dataset"] = None
+            trainer_kwargs["data_collator"] = OfflineKDCollator(
+                pad_token_id=int(getattr(processor_tokenizer, "pad_token_id", 0) or 0),
+                top_k=distillation_offline_top_k,
+            )
+
         else:
             def tokenize_rows(rows: dict[str, list[str]]) -> dict[str, Any]:
                 return processor_tokenizer(
@@ -2594,7 +2693,7 @@ def _run_training_attempt(
             trainer_kwargs["eval_dataset"] = tokenized_eval if has_eval_records else None
             trainer_kwargs["data_collator"] = DataCollatorForLanguageModeling(tokenizer=processor_tokenizer, mlm=False)
 
-        if distillation_enabled:
+        if distillation_enabled or distillation_offline:
             trainer = trainer_cls(**trainer_kwargs)
         else:
             safe_trainer_kwargs, dropped_trainer_keys = _coerce_trainer_kwargs(trainer_kwargs, trainer_cls)
