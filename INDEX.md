@@ -301,6 +301,7 @@ session-start guidance.
 - `backend/scripts/model_merge.py` — External model merge runtime (TIES/DEX model soup).
 - `backend/scripts/quantize.py` — External quantization runtime with real GGUF/ONNX support.
 - `backend/scripts/train.py` — External training runtime for real SLM finetuning.
+- `backend/scripts/train_warmstart_checkpoint.py` — Warm-start checkpoint trainer (Track 1, Epic B follow-up).
 
 ## Backend · Alembic migrations
 
@@ -516,6 +517,7 @@ session-start guidance.
 - `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
 - `frontend/src/components/training/HardwareRecommenderModal.tsx` — Configuration recommender modal based on available GPU profiles and task type.
 - `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
+- `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
@@ -574,6 +576,7 @@ session-start guidance.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
+- `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
 - `backend/tests/test_phase100_handler_stop_sequences.py` — Phase 100 — handler stop sequences.
 - `backend/tests/test_phase101_dataset_import_cli.py` — Phase A — CLI surface for the dataset import pipeline.
 - `backend/tests/test_phase101_dataset_import_foundation.py` — Phase A of DATASET_IMPORT_PLAN.md — foundation.
@@ -717,6 +720,7 @@ session-start guidance.
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
+- `backend/tests/test_warmstart_checkpoint.py` — Unit tests for the warm-start checkpoint trainer's non-GPU logic.
 
 ## Frontend · Tests
 
@@ -796,6 +800,7 @@ session-start guidance.
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_

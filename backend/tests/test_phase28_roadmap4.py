@@ -240,6 +240,16 @@ class Phase28Roadmap4Tests(unittest.TestCase):
         self.assertIn("estimated_accuracy_percent", matrix[0])
         self.assertIn("estimated_latency_ms", matrix[0])
 
+        # Epic C: every row is annotated with Pareto frontier membership, and at
+        # least one config is non-dominated.
+        for row in matrix:
+            self.assertIn("pareto_optimal", row)
+            self.assertIn("dominated_by", row)
+        pareto = payload.get("pareto", {})
+        self.assertEqual(pareto.get("cost_key"), "estimated_latency_ms")
+        self.assertGreaterEqual(len(pareto.get("optimal_model_ids", [])), 1)
+        self.assertTrue(any(row.get("pareto_optimal") for row in matrix))
+
         history_resp = self.client.get(
             f"/api/projects/{project_id}/training/model-selection/benchmark-sweep/history",
         )

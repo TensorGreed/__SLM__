@@ -13,6 +13,7 @@ import { Term } from '../shared/Term';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
 import DatasetFitCard from './DatasetFitCard';
 import ExperimentCompare from './ExperimentCompare';
+import ParetoComparisonPanel from './ParetoComparisonPanel';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
 import WhyThisPlanPanel from './WhyThisPlanPanel';
@@ -325,6 +326,9 @@ interface ModelBenchmarkRow {
   estimated_throughput_tps?: number;
   fits_available_vram?: boolean | null;
   benchmark_mode?: string;
+  pareto_optimal?: boolean;
+  dominated_by?: string[];
+  suggested_defaults?: ModelWizardRecommendation['suggested_defaults'];
 }
 
 interface ModelBenchmarkTradeoffSummary {
@@ -344,7 +348,14 @@ interface ModelBenchmarkSweepResponse {
   benchmark_window_minutes?: number;
   matrix?: ModelBenchmarkRow[];
   tradeoff_summary?: ModelBenchmarkTradeoffSummary;
+  pareto?: ModelBenchmarkParetoMeta;
   warnings?: string[];
+}
+
+interface ModelBenchmarkParetoMeta {
+  quality_key?: string;
+  cost_key?: string;
+  optimal_model_ids?: string[];
 }
 
 interface ModelBenchmarkHistoryRun {
@@ -4925,6 +4936,25 @@ export default function TrainingPanel({
                               </div>
                             ))}
                           </div>
+                          <ParetoComparisonPanel
+                            matrix={benchmarkResult.matrix}
+                            currentBaseModel={baseModel}
+                            bestBalanceModelId={benchmarkResult.tradeoff_summary?.best_balance_model_id}
+                            onPromote={(row) => {
+                              const winnerId = String(row.model_id || '').trim();
+                              if (!winnerId) return;
+                              const rankIndex = (benchmarkResult.matrix || []).findIndex(
+                                (r) => String(r.model_id || '').trim() === winnerId,
+                              );
+                              applyModelSelectionChoice({
+                                modelId: winnerId,
+                                rankIndex: rankIndex >= 0 ? rankIndex : 0,
+                                selectedScore: Number(row.estimated_quality_score),
+                                defaults: row.suggested_defaults,
+                                applySource: 'benchmark',
+                              });
+                            }}
+                          />
                         </div>
                       )}
                       {benchmarkHistory.length > 0 && (

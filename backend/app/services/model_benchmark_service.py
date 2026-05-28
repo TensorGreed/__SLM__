@@ -325,6 +325,37 @@ def _append_unique_warning(warnings: list[str], message: str) -> None:
         warnings.append(token)
 
 
+def annotate_pareto_frontier(
+    matrix: list[dict[str, Any]],
+    *,
+    quality_key: str = "estimated_quality_score",
+    cost_key: str = "estimated_latency_ms",
+) -> list[dict[str, Any]]:
+    """Mark each sweep row ``pareto_optimal`` / ``dominated_by``.
+
+    Dominance is on (quality ↑ better, cost ↓ better): row B is dominated when
+    some row A is at least as good on quality AND no worse on cost, with at
+    least one strict inequality. Pareto-optimal rows (the frontier) have an
+    empty ``dominated_by``. Mutates rows in place and returns them.
+    """
+    for row in matrix:
+        q = _coerce_float(row.get(quality_key), 0.0)
+        c = _coerce_float(row.get(cost_key), 0.0)
+        dominators: list[str] = []
+        for other in matrix:
+            if other is row:
+                continue
+            oq = _coerce_float(other.get(quality_key), 0.0)
+            oc = _coerce_float(other.get(cost_key), 0.0)
+            if oq >= q and oc <= c and (oq > q or oc < c):
+                model_id = _coerce_text(other.get("model_id"))
+                if model_id:
+                    dominators.append(model_id)
+        row["dominated_by"] = dominators
+        row["pareto_optimal"] = len(dominators) == 0
+    return matrix
+
+
 def benchmark_model_sweep(
     *,
     project_id: int,
@@ -496,6 +527,10 @@ def benchmark_model_sweep(
     for idx, row in enumerate(rows, start=1):
         row["rank"] = idx
 
+    # Epic C: annotate the Pareto frontier (quality vs latency) so the UI can
+    # dim dominated configs and surface the non-dominated set at a glance.
+    annotate_pareto_frontier(rows)
+
     benchmark_mode = "real_sampled_heuristic"
     if rows and tokenizer_used_count == len(rows):
         benchmark_mode = "real_sampled_tokenizer"
@@ -540,5 +575,14 @@ def benchmark_model_sweep(
         "sampled_total_tokens": int(sample_total_tokens),
         "matrix": rows,
         "tradeoff_summary": tradeoff_summary,
+        "pareto": {
+            "quality_key": "estimated_quality_score",
+            "cost_key": "estimated_latency_ms",
+            "optimal_model_ids": [
+                _coerce_text(row.get("model_id"))
+                for row in rows
+                if row.get("pareto_optimal") and _coerce_text(row.get("model_id"))
+            ],
+        },
         "warnings": warnings[:20],
     }
