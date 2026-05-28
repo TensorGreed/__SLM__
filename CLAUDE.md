@@ -68,9 +68,10 @@ Code changes touching CLI flags / API / glossary / workflows / demo
 behavior update docs in the same commit. Stale docs > no docs in cost.
 
 ### Roadmap workflow
-- `ROADMAP-USER-SUCCESS.md` is the active roadmap. It's **gitignored**
-  (per project preference) — never commit it. Update it after shipping
-  to keep the status accurate.
+- `ROADMAP.md` is the active roadmap (consolidated 2026-05-28 from the
+  older ROADMAP-*/SprintPlan/PLAN/CODEX_PROMPT docs, which are now
+  superseded). It's **gitignored** (per project preference) — never
+  commit it. Update it after shipping to keep the status accurate.
 - Always end your turn with a suggested next prompt.
 
 ### Picked-data provenance
@@ -283,8 +284,8 @@ auto-memory is Claude-Code-specific.
 
 1. Read this file (you're here).
 2. Read [INDEX.md](./INDEX.md) for module locations.
-3. Read [ROADMAP-USER-SUCCESS.md](./ROADMAP-USER-SUCCESS.md) for what's
-   shipped + what's next. (Gitignored — local only.)
+3. Read [ROADMAP.md](./ROADMAP.md) for what's shipped + what's next.
+   (Gitignored — local only.)
 4. Skip re-discovering the conventions above.
 5. If you need recent activity, prefer `git log --oneline -20` over
    re-reading old commits.

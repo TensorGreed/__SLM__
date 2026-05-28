@@ -37,6 +37,7 @@ session-start guidance.
 - `backend/app/api/dataset_import.py` — Dataset-import API surface (Phase A).
 - `backend/app/api/demo_projects.py` — Demo projects API — pre-loaded showcases for new ML engineers.
 - `backend/app/api/deployments.py` — Deployment versions + rollback + telemetry API (priority.md P25 + P26).
+- `backend/app/api/distillation.py` — Knowledge-distillation API routes (Track 1, Epic A).
 - `backend/app/api/domain_blueprints.py` — Domain blueprint API routes for beginner-mode onboarding.
 - `backend/app/api/domain_packs.py` — Domain pack API routes.
 - `backend/app/api/domain_profiles.py` — Domain profile API routes.
@@ -128,6 +129,7 @@ session-start guidance.
 - `backend/app/services/deployment_score_service.py` — Deployability score (priority.md P28).
 - `backend/app/services/deployment_target_service.py` — Deployment Target SDK: artifact/runnable target validation + smoke checks.
 - `backend/app/services/deployment_version_service.py` — Deployment version + rollback service (priority.md P25).
+- `backend/app/services/distillation/teacher_capture.py` — Teacher logit capture for knowledge distillation (Track 1, Epic A, slice 1).
 - `backend/app/services/domain_blueprint_service.py` — Domain blueprint analysis, validation, versioning, and project-apply service.
 - `backend/app/services/domain_hook_service.py` — Domain hook registry, plugin loading, and safe execution helpers.
 - `backend/app/services/domain_pack_service.py` — Domain pack service for pack persistence and project assignment.
@@ -549,6 +551,7 @@ session-start guidance.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
+- `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).

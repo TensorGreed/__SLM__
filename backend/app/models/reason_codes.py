@@ -62,6 +62,12 @@ into a downstream training dataset (synthetic or alignment).
 Severity is ``info``; payload carries job_id, label_type,
 promoted_count, skipped_already_promoted, and the target dataset
 id / type."""
+DISTILLATION_TEACHER_CAPTURE = "distillation_teacher_capture"
+"""Track 1 Epic A slice 1 — a teacher model's top-k token
+log-probabilities were captured for a source dataset's rows so a
+student can later train against soft targets. Severity is ``info``;
+payload carries dataset_id, teacher_model, top_k, captured_count,
+skipped_count, chunk_error_count, and written_path."""
 
 # -- cleaning -----------------------------------------------------------
 CLEANING_OUTLIER_THRESHOLD_EXCEEDED = "cleaning_outlier_threshold_exceeded"
@@ -142,6 +148,7 @@ REASON_CODES_BY_STAGE: dict[str, frozenset[str]] = {
         ANNOTATION_JOB_CREATED,
         ANNOTATION_LABEL_SUBMITTED,
         ANNOTATION_ROWS_PROMOTED,
+        DISTILLATION_TEACHER_CAPTURE,
     }),
     STAGE_CLEANING: frozenset({
         CLEANING_OUTLIER_THRESHOLD_EXCEEDED,
