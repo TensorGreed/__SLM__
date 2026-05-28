@@ -1701,6 +1701,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                 <StudentTeacherComparisonPanel
                     projectId={projectId}
                     experimentId={selectedExp}
+                    experiments={experiments}
                     refreshToken={evalResults.length}
                 />
             )}

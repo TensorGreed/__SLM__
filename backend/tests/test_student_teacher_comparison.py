@@ -213,6 +213,20 @@ class ComparisonEndpointTests(unittest.TestCase):
         resp = self._get(pid, 999_999, teacher_run_id=1)
         self.assertEqual(resp.status_code, 404)
 
+    def test_is_distillation_run_flag(self):
+        pid = self._create_project("st-isdistill")
+        # Non-distillation student → flag False.
+        plain = self._seed_experiment(pid, "plain", metrics={"f1": 0.5})
+        body = self._get(pid, plain).json()
+        self.assertFalse(body["is_distillation_run"])
+        # Offline-KD student → flag True (drives the UI self-hide).
+        kd = self._seed_experiment(
+            pid, "kd", metrics={"f1": 0.5},
+            config={"training_mode": "distillation"},
+        )
+        body = self._get(pid, kd).json()
+        self.assertTrue(body["is_distillation_run"])
+
 
 if __name__ == "__main__":
     unittest.main()

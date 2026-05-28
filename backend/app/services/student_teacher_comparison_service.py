@@ -167,6 +167,17 @@ def _serialize(exp: Experiment, eval_result: EvalResult, metrics: dict[str, floa
     }
 
 
+def _is_distillation_run(exp: Experiment) -> bool:
+    """True when the experiment was trained with offline KD — used by the UI to
+    decide whether the student-vs-teacher panel is relevant at all (it self-hides
+    on non-distillation runs so it doesn't nag every project's Eval tab)."""
+    cfg = exp.config or {}
+    if not isinstance(cfg, dict):
+        return False
+    mode = str(cfg.get("training_mode") or "").strip().lower()
+    return mode == "distillation" or bool(cfg.get("distillation_offline"))
+
+
 async def _experiment_in_project(
     db: AsyncSession, project_id: int, experiment_id: int,
 ) -> Experiment | None:
@@ -246,6 +257,7 @@ async def compute_student_teacher_comparison(
 
     base_payload: dict[str, Any] = {
         "project_id": project_id,
+        "is_distillation_run": _is_distillation_run(student_exp),
         "teacher_baseline_run_id": teacher_run_id,
         "student": None,
         "teacher": None,

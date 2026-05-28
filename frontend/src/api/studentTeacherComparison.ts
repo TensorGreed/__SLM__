@@ -52,6 +52,9 @@ export type StudentTeacherStatus =
 export interface StudentTeacherComparison {
     status: StudentTeacherStatus;
     project_id: number;
+    /** True when the student experiment was trained with offline KD; the panel
+     * self-hides on non-distillation runs. */
+    is_distillation_run: boolean;
     teacher_baseline_run_id: number | null;
     student: StudentTeacherExperimentRef | null;
     teacher: StudentTeacherExperimentRef | null;

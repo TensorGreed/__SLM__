@@ -70,10 +70,16 @@ GET /api/projects/{id}/evaluation/student-teacher-comparison/{student_eid}
 
 The teacher run is resolved from `?teacher_run_id=`, the student experiment's
 `config.teacher_baseline_run_id`, or the eval pack's optional
-`teacher_baseline_run_id` — in that order. This is a pure read over stored
-`EvalResult` rows; no new model or judge calls. A headline like
-`81% retained` tells you at a glance how much of the teacher you kept at a
-fraction of the size.
+`teacher_baseline_run_id` — in that order. In the UI you don't need any of
+those: when the selected run was trained in distillation mode, the panel shows a
+**Teacher run** dropdown — pick any other experiment in the project and it
+recomputes inline. This is a pure read over stored `EvalResult` rows; no new
+model or judge calls. A headline like `81% retained` tells you at a glance how
+much of the teacher you kept at a fraction of the size.
+
+> The panel **self-hides** on runs that weren't distilled (and when no teacher
+> is set), so it only appears where it's meaningful — it won't clutter the Eval
+> tab of an ordinary SFT project.
 
 ## See also
 
