@@ -67,6 +67,11 @@ from app.services.model_selection_service import (
     recommend_training_base_models,
 )
 from app.services.model_benchmark_service import benchmark_model_sweep
+from app.services.hyperparameter_sweep_service import (
+    get_sweep_pareto,
+    list_project_sweeps,
+    start_hyperparameter_sweep,
+)
 from app.services.training_telemetry_service import (
     build_model_acceptance_bias,
     build_model_benchmark_bias,
@@ -233,6 +238,14 @@ class ModelBenchmarkSweepRequest(BaseModel):
     sample_size: int = Field(default=96, ge=10, le=500)
     allow_network_tokenizer: bool = False
     persist_run: bool = True
+
+
+class HyperparameterSweepRequest(BaseModel):
+    base_model: str = Field(..., min_length=1, max_length=255)
+    base_config: dict[str, Any] = Field(default_factory=dict)
+    lora_r_values: list[int] = Field(default_factory=lambda: [8, 16])
+    learning_rate_values: list[float] = Field(default_factory=lambda: [2e-4])
+    base_model_values: list[str] = Field(default_factory=list)
 
 
 class ObservabilityTelemetryRequest(BaseModel):
@@ -3243,6 +3256,54 @@ async def model_selection_benchmark_sweep_summary(
     if project_result.scalar_one_or_none() is None:
         raise HTTPException(404, f"Project {project_id} not found")
     return summarize_model_benchmark_runs(project_id)
+
+
+@router.post("/sweeps")
+async def start_training_sweep(
+    project_id: int,
+    req: HyperparameterSweepRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Launch a hyperparameter grid bake-off: one real Experiment per cell."""
+    await _get_project_or_404(db, project_id)
+    try:
+        result = await start_hyperparameter_sweep(
+            db,
+            project_id,
+            base_model=req.base_model,
+            base_config=dict(req.base_config or {}),
+            lora_r_values=list(req.lora_r_values or []),
+            learning_rate_values=list(req.learning_rate_values or []),
+            base_model_values=list(req.base_model_values or []),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await db.commit()
+    return result
+
+
+@router.get("/sweeps")
+async def list_training_sweeps(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List hyperparameter sweeps for the project."""
+    await _get_project_or_404(db, project_id)
+    return await list_project_sweeps(db, project_id)
+
+
+@router.get("/sweeps/{sweep_id}")
+async def get_training_sweep(
+    project_id: int,
+    sweep_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a sweep's cells annotated with the quality-vs-cost Pareto frontier."""
+    await _get_project_or_404(db, project_id)
+    try:
+        return await get_sweep_pareto(db, project_id, sweep_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post("/model-selection/telemetry")

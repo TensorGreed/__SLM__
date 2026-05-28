@@ -13,6 +13,7 @@ import { Term } from '../shared/Term';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
 import DatasetFitCard from './DatasetFitCard';
 import ExperimentCompare from './ExperimentCompare';
+import HyperparameterSweepPanel from './HyperparameterSweepPanel';
 import ParetoComparisonPanel from './ParetoComparisonPanel';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
@@ -5033,6 +5034,13 @@ export default function TrainingPanel({
                         </div>
                       )}
                     </div>
+                    )}
+                    {showSetupPower && (
+                      <HyperparameterSweepPanel
+                        projectId={projectId}
+                        baseModel={baseModel}
+                        baseConfig={buildTrainingConfigPayload()}
+                      />
                     )}
                     {showSetupConfig && (
                       <>

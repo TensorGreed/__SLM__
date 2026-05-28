@@ -92,6 +92,13 @@ Checkpoints live in a local registry at `backend/data/pretrained_checkpoints/<na
 
 > **Status:** the registry, recipe field, resolution, and UI/manifest surfacing are wired and tested. The warm-start **trainer** (`backend/scripts/train_warmstart_checkpoint.py`) resolves a license-audited corpus for the checkpoint's `task_shape` (Dolly-15k, CC BY-SA 3.0, sliced by category), enforces a permissive-license gate, full-fine-tunes the base, runs an identity-swap fairness spot-check, and flips the manifest to `status: "available"` with training + fairness provenance. Run it with `python scripts/train_warmstart_checkpoint.py --checkpoint qa-base-135m` (add `--smoke` for a tiny synthetic-corpus dry run). **`qa-base-135m`, `classifier-base-135m`, and `ner-base-135m` are trained and available** (weights are gitignored; regenerate locally with the script); `sql-base-135m` stays `planned` until a text-to-SQL corpus is wired. Scaling the corpus beyond the Dolly slices and publishing under `TensorGreed/` is follow-up work.
 
+## Model + hyperparameter bake-off (Pareto)
+
+Two complementary sweeps help you pick a config, both surfaced in the Training Config **Power Tools** tab as a quality-vs-cost **Pareto** scatter (frontier points highlighted + connected, dominated configs dimmed):
+
+- **Model bake-off** — a fast *heuristic* sweep across candidate base models (`…/training/model-selection/benchmark-sweep`), comparing estimated quality vs latency/VRAM/size. The `ParetoComparisonPanel` lets you toggle the cost axis and **promote the winner** to the project's base model in one click.
+- **Hyperparameter grid bake-off** — a real sweep where **each grid cell is a normal `Experiment`**. Give it a set of LoRA ranks and learning rates (e.g. ranks `8, 16`, LRs `2e-4, 3e-4`); the platform materializes one experiment per cell under a shared `sweep_id`, trains each through the normal path (so all preflight / eval / gate machinery applies), and the `HyperparameterSweepPanel` plots **quality vs LoRA rank** as cells finish. Quality is the cell's eval pass-rate when available, else derived from eval/train loss; cost is the LoRA rank (adapter footprint), so the frontier surfaces the best learning rate per rank and the quality-vs-size trade-off. API: `POST .../training/sweeps` (start), `GET .../training/sweeps/{sweep_id}` (Pareto), `GET .../training/sweeps` (list). Grid is capped at 16 cells.
+
 ## Trainability forecast
 
 The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".

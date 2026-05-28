@@ -156,6 +156,7 @@ session-start guidance.
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.
+- `backend/app/services/hyperparameter_sweep_service.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/app/services/ingestion_service.py` — Data Ingestion service — handles file uploads, parsing, and storage.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
@@ -516,6 +517,7 @@ session-start guidance.
 - `frontend/src/components/training/DatasetFitCard.tsx` — DatasetFitCard — "Why this dataset isn't ready for SFT" explainer
 - `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
 - `frontend/src/components/training/HardwareRecommenderModal.tsx` — Configuration recommender modal based on available GPU profiles and task type.
+- `frontend/src/components/training/HyperparameterSweepPanel.tsx` — HyperparameterSweepPanel — Track 1, Epic C.
 - `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
 - `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
@@ -574,6 +576,7 @@ session-start guidance.
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
+- `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
@@ -800,6 +803,7 @@ session-start guidance.
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
