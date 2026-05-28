@@ -240,16 +240,31 @@ class CommittedRegistryTests(unittest.TestCase):
             {"classifier-base-135m", "ner-base-135m", "qa-base-135m", "sql-base-135m"} <= names
         )
 
-    def test_committed_bases_are_planned_and_fall_back(self):
-        for name in ("classifier-base-135m", "ner-base-135m", "qa-base-135m", "sql-base-135m"):
-            manifest = registry.load_checkpoint(name)
-            self.assertIsNotNone(manifest, name)
-            self.assertEqual(manifest["status"], "planned", name)
+    def test_committed_bases_resolve_consistently_with_status(self):
+        # Data-driven so it survives bases being trained over time. Each base's
+        # resolution must match its manifest status + on-disk weights:
+        #   planned                      -> cold-start fallback (checkpoint_planned)
+        #   available + weights present  -> warm start (checkpoint)
+        #   available + weights missing  -> clean fallback (checkpoint_artifact_missing)
+        # (weights are gitignored, so CI without them lands the last case.)
+        for manifest in registry.list_checkpoints():
+            name = manifest["name"]
             res = registry.resolve_starting_checkpoint(
                 base_model=BASE, recommended_checkpoint=name
             )
-            self.assertEqual(res["source"], "base_model", name)
-            self.assertEqual(res["reason"], f"checkpoint_planned:{name}", name)
+            if manifest["status"] == "planned":
+                self.assertEqual(res["source"], "base_model", name)
+                self.assertEqual(res["reason"], f"checkpoint_planned:{name}", name)
+            elif manifest["artifact_exists"]:
+                self.assertEqual(res["source"], "checkpoint", name)
+                self.assertEqual(res["reason"], f"warm_start:{name}", name)
+            else:
+                self.assertEqual(res["source"], "base_model", name)
+                self.assertEqual(res["reason"], f"checkpoint_artifact_missing:{name}", name)
+
+    def test_sql_base_still_planned(self):
+        # No text-to-SQL corpus is wired and no recipe maps to it yet.
+        self.assertEqual(registry.load_checkpoint("sql-base-135m")["status"], "planned")
 
 
 if __name__ == "__main__":

@@ -162,6 +162,10 @@ export default function WhyThisPlanPanel({
     }, [config, experiment.training_mode]);
 
     const warmStart = useMemo(() => {
+        // Prefer the stable launch-meta block; fall back to the legacy location
+        // inside the runtime-owned (and rewritten) `_runtime` block.
+        const stable = asWarmStart(config['_warm_start']);
+        if (stable) return stable;
         const runtime = config['_runtime'];
         if (!runtime || typeof runtime !== 'object') return null;
         return asWarmStart((runtime as Record<string, unknown>)['warm_start']);

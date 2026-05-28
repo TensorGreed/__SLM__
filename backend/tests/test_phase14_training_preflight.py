@@ -412,10 +412,11 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
     def test_recipe_resolve_includes_warm_start_preview(self):
         # Track 1, Epic B: the resolve response previews the warm-start
         # resolution so the Resolved Defaults panel can show which starting
-        # weights the run will use. The recommended task base is planned (no
-        # weights yet), so the preview must fall back to the base model with a
-        # reason. (Passed via base_config to avoid the distillation-only KD
-        # recipes, which this endpoint's TrainingConfig enum rejects.)
+        # weights the run will use. Uses an unregistered checkpoint name so the
+        # assertion is stable regardless of which task bases have been trained
+        # (a real base like qa-base-135m flips to a warm-start once trained).
+        # (Passed via base_config to avoid the distillation-only KD recipes,
+        # which this endpoint's TrainingConfig enum rejects.)
         project_id = self._create_project("phase14-warm-start")
         self._create_prepared_split(project_id)
 
@@ -425,7 +426,7 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
                 "recipe_id": "recipe.sft.balanced",
                 "base_config": {
                     "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
-                    "recommended_starting_checkpoint": "qa-base-135m",
+                    "recommended_starting_checkpoint": "no-such-base-135m",
                 },
                 "include_preflight": False,
             },
@@ -435,8 +436,8 @@ class Phase14TrainingPreflightTests(unittest.TestCase):
         warm_start = payload.get("warm_start")
         self.assertIsNotNone(warm_start)
         self.assertEqual(warm_start["source"], "base_model")
-        self.assertEqual(warm_start["checkpoint_name"], "qa-base-135m")
-        self.assertEqual(warm_start["reason"], "checkpoint_planned:qa-base-135m")
+        self.assertEqual(warm_start["checkpoint_name"], "no-such-base-135m")
+        self.assertEqual(warm_start["reason"], "checkpoint_not_registered:no-such-base-135m")
 
     def test_recipe_resolve_warm_start_none_when_no_recommendation(self):
         project_id = self._create_project("phase14-warm-start-none")

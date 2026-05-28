@@ -311,17 +311,22 @@ async def capture_training_manifest(
         raise ValueError("experiment_not_found")
 
     config = dict(resolved_config or exp_row.config or {})
-    # Strip the transient ``_runtime`` sub-block from the snapshot so reruns
-    # replay the authored config without task ids / worker PIDs.
-    sanitized_config = {k: v for k, v in config.items() if k != "_runtime"}
-    # ...but lift the warm-start resolution out of ``_runtime`` first: which
-    # starting weights the run used is reproducibility-relevant provenance, not
-    # transient state. Falls back to the live experiment config when capture is
-    # handed a resolved_config without the runtime block.
-    runtime_block = dict((config.get("_runtime") or {}))
-    if not runtime_block:
-        runtime_block = dict(((exp_row.config or {}).get("_runtime")) or {})
-    warm_start_block = dict(runtime_block.get("warm_start") or {})
+    # Strip the transient ``_runtime`` block and the launch-meta ``_warm_start``
+    # block from the snapshot so reruns replay the authored config without task
+    # ids / worker PIDs / resolution provenance.
+    sanitized_config = {k: v for k, v in config.items() if k not in ("_runtime", "_warm_start")}
+    # Lift the warm-start resolution onto its own column: which starting weights
+    # the run used is reproducibility-relevant provenance. Prefer the stable
+    # ``_warm_start`` block, fall back to the legacy ``_runtime.warm_start`` and
+    # then to the live experiment config.
+    live_config = dict(exp_row.config or {})
+    warm_start_block = dict(
+        config.get("_warm_start")
+        or live_config.get("_warm_start")
+        or (config.get("_runtime") or {}).get("warm_start")
+        or (live_config.get("_runtime") or {}).get("warm_start")
+        or {}
+    )
 
     warnings: list[str] = []
     registry_id, cache_fingerprint, source_ref = await _resolve_base_model_reference(

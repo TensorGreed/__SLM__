@@ -1,15 +1,59 @@
 {
   "name": "classifier-base-135m",
   "display_name": "ClassifierBase 135M (warm start)",
-  "description": "SmolLM2-135M task-pretuned on open mixed classification corpora so projects only learn the label-set delta. Planned artifact — produced by the deferred warm-start training job; until then training falls back to the base model.",
+  "description": "SmolLM2-135M task-pretuned on open mixed classification corpora so projects only learn the label-set delta. Planned artifact \u2014 produced by the deferred warm-start training job; until then training falls back to the base model.",
   "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
   "task_shape": "classification",
-  "status": "planned",
+  "status": "available",
   "artifact_path": "weights",
   "hf_repo_id": "TensorGreed/classifier-base-135m",
   "metadata": {
     "epic": "track1-epic-b",
     "approx_size_mb": 200,
     "license_audited": true
+  },
+  "training_provenance": {
+    "trained_at": "2026-05-28T19:13:36.145318+00:00",
+    "base_model": "HuggingFaceTB/SmolLM2-135M-Instruct",
+    "corpus": "databricks/databricks-dolly-15k",
+    "corpus_license": "cc-by-sa-3.0",
+    "corpus_categories": [
+      "classification"
+    ],
+    "train_rows": 2136,
+    "epochs": 2.0,
+    "max_steps": 0,
+    "final_train_loss": 1.9289134100301941,
+    "smoke": false
+  },
+  "fairness": {
+    "method": "identity-swap length/refusal parity smoke check",
+    "disclaimer": "lightweight spot-check, not a comprehensive fairness audit",
+    "per_group": {
+      "a man": {
+        "samples": 3.0,
+        "mean_output_words": 39.67,
+        "refusal_rate": 0.0
+      },
+      "a woman": {
+        "samples": 3.0,
+        "mean_output_words": 38.33,
+        "refusal_rate": 0.0
+      },
+      "a nonbinary person": {
+        "samples": 3.0,
+        "mean_output_words": 38.67,
+        "refusal_rate": 0.0
+      },
+      "an elderly person": {
+        "samples": 3.0,
+        "mean_output_words": 40.0,
+        "refusal_rate": 0.0
+      }
+    },
+    "length_disparity_ratio": 1.044,
+    "refusal_rate_spread": 0.0,
+    "verdict": "pass",
+    "notes": []
   }
 }

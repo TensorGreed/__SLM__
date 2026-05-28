@@ -1273,6 +1273,11 @@ async def start_training(
     exp.total_steps = epochs * steps_per_epoch
     cfg = dict(exp.config or {})
     cfg["_runtime"] = runtime_config
+    # Launch-time warm-start resolution lives in its own stable block, NOT only
+    # in ``_runtime`` (which the runtime loop rewrites). The live "Why this plan"
+    # view + manifest capture read this so a warm-started run never reads back as
+    # a cold start after the runtime updates progress.
+    cfg["_warm_start"] = warm_start
     exp.config = cfg
     await db.flush()
 
@@ -1300,6 +1305,7 @@ async def start_training(
         message = str(runtime_result.message or "Training runtime started.")
         cfg = dict(exp.config or {})
         cfg["_runtime"] = runtime_config
+        cfg["_warm_start"] = warm_start
         exp.config = cfg
         await db.flush()
         # P14: capture an immutable manifest for this run. Best-effort —

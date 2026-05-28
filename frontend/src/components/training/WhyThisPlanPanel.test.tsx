@@ -188,6 +188,30 @@ describe('WhyThisPlanPanel', () => {
         ).toBeInTheDocument();
     });
 
+    it('reads warm start from the stable _warm_start block (preferred over _runtime)', async () => {
+        apiMock.post.mockResolvedValueOnce({ data: ESTIMATED_COST });
+        const exp = {
+            ...EXPERIMENT,
+            config: {
+                ...EXPERIMENT.config,
+                // Stable block says checkpoint; legacy _runtime says cold start —
+                // the stable block must win.
+                _warm_start: {
+                    source: 'checkpoint',
+                    checkpoint_name: 'qa-base-135m',
+                    reason: 'warm_start:qa-base-135m',
+                },
+                _runtime: {
+                    warm_start: { source: 'base_model', reason: 'no_checkpoint_recommended' },
+                },
+            },
+        };
+        render(<WhyThisPlanPanel projectId={5} experiment={exp} />);
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled());
+        expect(screen.getByText('qa-base-135m')).toBeInTheDocument();
+        expect(screen.getByText(/Warm start from qa-base-135m/i)).toBeInTheDocument();
+    });
+
     it('shows the warm-start checkpoint in Strategy when one was used', async () => {
         apiMock.post.mockResolvedValueOnce({ data: ESTIMATED_COST });
         const warmExperiment = {
