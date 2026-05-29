@@ -1067,3 +1067,39 @@ async def get_student_teacher_comparison(
         if detail.startswith(("project_not_found:", "experiment_not_found:")):
             raise HTTPException(404, detail)
         raise HTTPException(400, detail)
+
+
+@router.get("/frontier-comparison/{experiment_id}")
+async def get_frontier_comparison(
+    project_id: int,
+    experiment_id: int,
+    frontier_model_id: str | None = None,
+    frontier_run_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """SLM-vs-frontier benchmark report (Track 1 Epic D): "X% as good as
+    gpt-4o-mini at Y% cost, Z× latency" + a per-metric table.
+
+    Quality is a pure ratio over stored EvalResult rows and needs a frontier
+    baseline eval on the same set (resolved from `?frontier_run_id=`, the
+    experiment's `config.frontier_baseline_run_id`, or the eval pack); without
+    one it soft-falls-back to `no_frontier_eval` (we never fabricate quality).
+    Cost + latency always render with explicit provenance (published frontier
+    reference vs the project's benchmark-sweep estimate). `?frontier_model_id=`
+    picks the frontier model (default gpt-4o-mini). 404 only for a missing
+    project or experiment."""
+    from app.services.frontier_comparison_service import compute_frontier_comparison
+
+    try:
+        return await compute_frontier_comparison(
+            db,
+            project_id,
+            experiment_id,
+            frontier_model_id=frontier_model_id,
+            frontier_baseline_run_id=frontier_run_id,
+        )
+    except ValueError as e:
+        detail = str(e)
+        if detail.startswith(("project_not_found:", "experiment_not_found:")):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)

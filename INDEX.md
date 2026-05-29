@@ -150,6 +150,7 @@ session-start guidance.
 - `backend/app/services/experiment_recovery_service.py` — Experiment lifecycle recovery actions (Story 1.7).
 - `backend/app/services/export_service.py` — Export & runtime packaging service.
 - `backend/app/services/failure_cluster_service.py` — P12 — Failure-cluster service.
+- `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/app/services/gamification/achievements.py` — Declarative achievement catalog (Lab Journal).
 - `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
@@ -362,6 +363,7 @@ session-start guidance.
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
+- `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
@@ -466,6 +468,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
+- `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
@@ -573,6 +576,7 @@ session-start guidance.
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
+- `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
@@ -777,6 +781,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/EvalPanel.spanset.test.tsx` — Phase 5.3.4b — Sample Predictions card in span_set scoring mode.
 - `frontend/src/components/evaluation/EvalPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/FrontierComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_

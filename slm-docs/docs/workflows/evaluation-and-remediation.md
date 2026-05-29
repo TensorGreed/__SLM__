@@ -238,6 +238,16 @@ When you've run eval against two experiments in the same project, the Eval tab s
 
 When B regressed, a red **Fix the gap** banner offers a one-click "Rerun experiment #A" button that posts to the existing `rerun-from-manifest` endpoint. The rerun spawns a NEW experiment that replays A's resolved config + dataset snapshot — A and B both stay untouched. If A never produced a manifest (e.g. it failed mid-training), the click surfaces a toast explaining only completed runs can be rolled back to.
 
+## SLM-vs-frontier benchmark report
+
+The Eval tab also answers the production buying question — *"is my cheap local model good enough vs. just calling gpt-4o-mini?"* — as an honest report: **"Your model is X% as good as gpt-4o-mini at Y% of the cost and Z× the latency."** with a per-metric table behind it.
+
+- **Quality** is a pure ratio over stored eval results — `slm / frontier` per shared metric — and needs a **frontier baseline run**: the frontier model evaluated on the *same* eval set. Resolve it via `?frontier_run_id=`, the experiment's `config.frontier_baseline_run_id`, or the eval pack. Without one the quality block soft-falls-back to `no_frontier_eval` (the report **never fabricates** a quality number), and the per-metric table marks where the SLM is `behind`, not only where it wins.
+- **Cost + latency** are labeled by provenance. Frontier figures come from a small **published-reference table** (gpt-4o-mini / gpt-4o / claude-3.5-haiku public pricing + typical latency, `as_of`-stamped). SLM figures are `estimated` from the project's latest model-benchmark sweep (throughput → $/1M tokens at the GPU hourly rate; latency from the same sweep). No sweep yet → the SLM side is `unavailable` with a CTA, never guessed.
+- Pick the comparison target with `?frontier_model_id=` (default `gpt-4o-mini`). API: `GET .../evaluation/frontier-comparison/{experiment_id}`.
+
+> To populate the quality number, evaluate a frontier model on your gold set and point the report at that run (a one-click frontier-eval runner is planned follow-up work).
+
 ## Drift-triggered hallucination-trap refresh (admin opt-in)
 
 Projects can opt into automatic hallucination-trap refresh from the **Drift-trap review queue** panel under the Eval tab. When auto-refresh is off, the panel shows an opt-in banner with a one-click "Enable auto-refresh" button; when it's on, a status chip surfaces the per-refresh trap count and a "Disable" link. Either way, the panel's "Generate now" button always works — it hits the manual `POST /drift/refresh-traps` endpoint and reloads the queue.

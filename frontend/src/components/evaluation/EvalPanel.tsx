@@ -19,6 +19,7 @@ import FailureClustersPanel from './FailureClustersPanel';
 import ActiveLearningPanel from './ActiveLearningPanel';
 import SftLiftPanel from './SftLiftPanel';
 import StudentTeacherComparisonPanel from './StudentTeacherComparisonPanel';
+import FrontierComparisonPanel from './FrontierComparisonPanel';
 import AutoRagComparisonPanel from './AutoRagComparisonPanel';
 import RerouteRecommendationPanel from './RerouteRecommendationPanel';
 import CoachStrip from '../coach/CoachStrip';
@@ -1702,6 +1703,16 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     projectId={projectId}
                     experimentId={selectedExp}
                     experiments={experiments}
+                    refreshToken={evalResults.length}
+                />
+            )}
+
+            {/* Epic D — honest SLM-vs-frontier report (X% as good as gpt-4o-mini */}
+            {/* at Y% cost, Z× latency). Self-hides on 4xx/5xx. */}
+            {selectedExp && evalResults.length > 0 && (
+                <FrontierComparisonPanel
+                    projectId={projectId}
+                    experimentId={selectedExp}
                     refreshToken={evalResults.length}
                 />
             )}
