@@ -105,6 +105,20 @@ Two complementary sweeps help you pick a config, both surfaced in the Training C
 
     Switching the picker re-fetches and re-annotates the frontier against the new axis. API: `POST .../training/sweeps` (start), `GET .../training/sweeps/{sweep_id}?cost_kind=…` (Pareto, defaults to `wall_clock_seconds`; an unsupported value returns 400), `GET .../training/sweeps` (list). Grid is capped at 16 cells.
 
+### Pre-flight budget + stop-when-met
+
+Before launch, the panel renders a wall-clock estimate of the planned sweep so you know what you're committing to:
+
+> Estimated runtime: **8m** for 4 cells — based on same base model (6 prior cells) · ~2m per cell
+
+The estimate comes from `POST .../training/sweeps/preflight-budget` (returns `{cell_count, seconds_per_cell, estimated_seconds, basis, sample_size}`). The basis fallback chain — `same_base_and_recipe` → `same_base_model` → `project_default` → `no_history` — is surfaced verbatim in the chip so you can tell a measured estimate from a default. We deliberately don't report dollars: GPU cost depends on the runtime backend (local GB10 = $0, cloud-burst = variable), and a fake $ chip would lie. Wall-clock is the honest currency we always have.
+
+The launcher also takes a **quality target** (eval pass-rate threshold, e.g. `0.85` or `85` — both forms accepted, 85 is coerced to 0.85). When set, the next `get-Pareto` observation that sees a completed cell clearing the target triggers cancellation of any cells still running:
+
+> Target 85% · winner: **r8-lr2e-4** · cancelled 3 remaining cells
+
+The watcher is **lazy-on-fetch**: there's no background worker; the frontend polls `get-Pareto` every 4s while cells are training, and that endpoint does the check + fires `cancel_training` on the running cells. Cancelled cells get a `cancelled_by_target=true` annotation on their row and a "cancelled · target hit" badge in the UI. Cancellation is best-effort; a cell that finishes between our status read and the cancel call just shows up as completed on the next poll, which is fine — no wasted refund logic. Leave the field blank to run the full grid to completion (legacy behaviour).
+
 ## Trainability forecast
 
 The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".

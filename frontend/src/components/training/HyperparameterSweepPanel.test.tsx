@@ -52,7 +52,11 @@ describe('HyperparameterSweepPanel', () => {
     });
 
     it('launches a sweep with parsed ranks/lrs and renders the Pareto cells', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: { sweep_id: 'sweep123', dispatched_cells: 4 } });
+        apiMock.post.mockImplementation((url: string) =>
+            typeof url === 'string' && url.endsWith('/preflight-budget')
+                ? Promise.resolve({ data: { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 } })
+                : Promise.resolve({ data: { sweep_id: 'sweep123', dispatched_cells: 4 } }),
+        );
         apiMock.get.mockResolvedValue({ data: SWEEP });
 
         const user = userEvent.setup();
@@ -98,7 +102,11 @@ describe('HyperparameterSweepPanel', () => {
     });
 
     it('invokes onOpenExperiment when a cell row is clicked', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: { sweep_id: 'sweep123', dispatched_cells: 4 } });
+        apiMock.post.mockImplementation((url: string) =>
+            typeof url === 'string' && url.endsWith('/preflight-budget')
+                ? Promise.resolve({ data: { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 } })
+                : Promise.resolve({ data: { sweep_id: 'sweep123', dispatched_cells: 4 } }),
+        );
         apiMock.get.mockResolvedValue({ data: SWEEP });
         const onOpen = vi.fn();
         const user = userEvent.setup();
@@ -110,7 +118,11 @@ describe('HyperparameterSweepPanel', () => {
     });
 
     it('switches the cost axis on picker click and re-fetches with the new kind', async () => {
-        apiMock.post.mockResolvedValueOnce({ data: { sweep_id: 'sweep123', dispatched_cells: 4 } });
+        apiMock.post.mockImplementation((url: string) =>
+            typeof url === 'string' && url.endsWith('/preflight-budget')
+                ? Promise.resolve({ data: { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 } })
+                : Promise.resolve({ data: { sweep_id: 'sweep123', dispatched_cells: 4 } }),
+        );
         // First fetch (default): wall-clock. After picker click: lora_r.
         apiMock.get
             .mockResolvedValueOnce({ data: SWEEP_WALL_CLOCK })
@@ -150,6 +162,111 @@ describe('HyperparameterSweepPanel', () => {
         ).toBe('false');
     });
 
+    // URL-routed POST mock — the preflight-budget call fires after a 500ms
+    // debounce, so it can race the launch click. Routing by URL keeps the
+    // launch/budget responses independent regardless of ordering.
+    function routedPost(budget: object, launch: object) {
+        apiMock.post.mockImplementation((url: string) => {
+            if (typeof url === 'string' && url.endsWith('/preflight-budget')) {
+                return Promise.resolve({ data: budget });
+            }
+            return Promise.resolve({ data: launch });
+        });
+    }
+
+    it('renders the pre-flight budget chip from a /preflight-budget call', async () => {
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 120, estimated_seconds: 480, basis: 'same_base_model', sample_size: 6 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/5/training/sweeps/preflight-budget',
+                expect.objectContaining({
+                    base_model: 'm',
+                    lora_r_values: [8, 16],
+                    learning_rate_values: [2e-4, 3e-4],
+                }),
+            );
+        }, { timeout: 2000 });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('hp-preflight')).toBeInTheDocument();
+        });
+        expect(screen.getByTestId('hp-preflight').textContent).toMatch(/8m/);
+        expect(screen.getByTestId('hp-preflight').textContent).toMatch(/same base model/);
+        expect(screen.getByTestId('hp-preflight').textContent).toMatch(/6 prior cells/);
+    });
+
+    it('submits quality_target on launch and renders cancelled-by-target badges', async () => {
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+
+        const targetHitSweep = {
+            ...SWEEP_WALL_CLOCK,
+            quality_target: 0.85,
+            target_hit: true,
+            target_hit_label: 'r8-lr0.0002',
+            cancelled_by_target: ['r16-lr0.0003'],
+            cells: SWEEP_WALL_CLOCK.cells.map((c) =>
+                c.label === 'r16-lr0.0003'
+                    ? { ...c, status: 'cancelled', cancelled_by_target: true }
+                    : c
+            ),
+        };
+        apiMock.get.mockResolvedValue({ data: targetHitSweep });
+
+        const user = userEvent.setup();
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+
+        await user.type(screen.getByTestId('hp-quality-target'), '0.85');
+        await user.click(screen.getByRole('button', { name: /Run sweep/ }));
+
+        await waitFor(() => {
+            const launchCall = apiMock.post.mock.calls.find(
+                (call) => typeof call[0] === 'string' && call[0].endsWith('/sweeps'),
+            );
+            expect(launchCall).toBeTruthy();
+            expect(launchCall![1]).toEqual(expect.objectContaining({ quality_target: 0.85 }));
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('hp-target-hit')).toBeInTheDocument();
+        });
+        expect(screen.getByTestId('hp-target-hit').textContent).toMatch(/winner/);
+        expect(screen.getByTestId('hp-target-hit').textContent).toMatch(/r8-lr0.0002/);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('hp-row-r16-lr0.0003-cancelled')).toBeInTheDocument();
+        });
+    });
+
+    it('coerces a percent-format target (85) to 0.85 on launch', async () => {
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+        apiMock.get.mockResolvedValue({ data: SWEEP });
+
+        const user = userEvent.setup();
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+        await user.type(screen.getByTestId('hp-quality-target'), '85');
+        await user.click(screen.getByRole('button', { name: /Run sweep/ }));
+
+        await waitFor(() => {
+            const launchCall = apiMock.post.mock.calls.find(
+                (call) => typeof call[0] === 'string' && call[0].endsWith('/sweeps'),
+            );
+            expect(launchCall).toBeTruthy();
+            expect(launchCall![1]).toEqual(expect.objectContaining({ quality_target: 0.85 }));
+        });
+    });
+
     it('surfaces "cost pending" when the chosen axis has no signal yet', async () => {
         // Cell completed but no wall-clock recorded — the backend returns
         // cost_score=null with cost_source="pending". The panel should drop
@@ -165,7 +282,11 @@ describe('HyperparameterSweepPanel', () => {
                 pareto_optimal: false, dominated_by: [],
             }],
         };
-        apiMock.post.mockResolvedValueOnce({ data: { sweep_id: 'sweep123', dispatched_cells: 1 } });
+        apiMock.post.mockImplementation((url: string) =>
+            typeof url === 'string' && url.endsWith('/preflight-budget')
+                ? Promise.resolve({ data: { cell_count: 1, seconds_per_cell: 60, estimated_seconds: 60, basis: 'no_history', sample_size: 0 } })
+                : Promise.resolve({ data: { sweep_id: 'sweep123', dispatched_cells: 1 } }),
+        );
         apiMock.get.mockResolvedValue({ data: pendingCost });
 
         const user = userEvent.setup();

@@ -302,6 +302,21 @@ Which axis the Pareto scatter uses to score "cost" in the hyperparameter bake-of
 
 Unsupported values return 400 from the API rather than silently falling back. See [Hyperparameter bake-off](../workflows/training.md#model--hyperparameter-bake-off-pareto).
 
+## Sweep pre-flight budget · `basis`
+
+Estimator returned by `POST .../training/sweeps/preflight-budget` for a planned grid: `{cell_count, seconds_per_cell, estimated_seconds, basis, sample_size}`. The `basis` field labels how the seconds-per-cell median was derived, in order of tightness:
+
+- `same_base_and_recipe` — median of prior cells in this project on the same base model AND recipe. Tightest signal.
+- `same_base_model` — median of prior cells on the same base model (any recipe). Used when no same-recipe history exists.
+- `project_default` — median across any prior sweep cells in the project. Loose, but better than guessing.
+- `no_history` — no prior cells at all; falls back to a conservative default (`DEFAULT_NO_HISTORY_SECONDS_PER_CELL`, ~2 min). UI labels this as "rough estimate, no prior runs".
+
+Dollars are deliberately not reported — GPU cost depends on the runtime backend (local GB10 = $0, cloud-burst = variable). Wall-clock is the honest unit we always have.
+
+## Sweep quality target · stop-when-met
+
+Threshold the orchestrator uses to decide "winner found — cancel the rest of the sweep". Stored on each cell's `_sweep.quality_target` at dispatch. The watcher is lazy-on-fetch: the panel polls `get_sweep_pareto` every 4s while cells train, and that endpoint checks "did any completed cell clear the target?" — if yes and other cells are still running, it fires `cancel_training` against them and annotates each row with `cancelled_by_target=true`. The launcher accepts either decimal (`0.85`) or percent (`85`) form; the percent form is coerced. Blank target = run the full grid to completion (legacy behaviour).
+
 ## See also
 
 - [Reason-code taxonomy](../observability/failure-clusters.md#reason-code-taxonomy) — same table with more context.

@@ -35,6 +35,7 @@ interface SweepCell {
     cost_source?: string;
     pareto_optimal?: boolean;
     dominated_by?: string[];
+    cancelled_by_target?: boolean;
 }
 
 interface SweepResponse {
@@ -46,6 +47,18 @@ interface SweepResponse {
     best_experiment_id: number | null;
     cost_kind: CostKind;
     supported_cost_kinds: CostKind[];
+    quality_target?: number | null;
+    target_hit?: boolean;
+    target_hit_label?: string | null;
+    cancelled_by_target?: string[];
+}
+
+interface PreflightBudget {
+    cell_count: number;
+    seconds_per_cell: number;
+    estimated_seconds: number;
+    basis: 'same_base_and_recipe' | 'same_base_model' | 'project_default' | 'no_history';
+    sample_size: number;
 }
 
 interface HyperparameterSweepPanelProps {
@@ -99,6 +112,38 @@ function errorDetail(err: unknown, fallback: string): string {
     return typeof detail === 'string' && detail ? detail : fallback;
 }
 
+// Render a seconds total as "12m", "1.3h", etc. Picks a precision that
+// keeps the user honest about "this is an estimate, not a stopwatch
+// reading" — single-decimal hours, integer minutes.
+function formatDuration(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+    return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+// Human-friendly basis label. The "no_history" case is special — surface
+// it as "rough" so the user knows the number is a default, not measured.
+const BUDGET_BASIS_LABEL: Record<PreflightBudget['basis'], string> = {
+    same_base_and_recipe: 'based on same base + recipe',
+    same_base_model: 'based on same base model',
+    project_default: 'based on this project’s sweeps',
+    no_history: 'rough estimate, no prior runs',
+};
+
+// Coerce a quality-target string from the input. Accepts decimal (0.85)
+// or percent (85). Returns null when the field is blank or unparseable,
+// which is treated as "no target — run the full grid".
+function parseQualityTarget(text: string): number | null {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (n > 1.0 && n <= 100.0) return n / 100.0;
+    if (n > 0 && n <= 1.0) return n;
+    return null;
+}
+
 const W = 480;
 const H = 280;
 const PAD = { top: 18, right: 22, bottom: 42, left: 52 };
@@ -111,11 +156,13 @@ export default function HyperparameterSweepPanel({
 }: HyperparameterSweepPanelProps) {
     const [ranksText, setRanksText] = useState('8, 16');
     const [lrsText, setLrsText] = useState('2e-4, 3e-4');
+    const [qualityTargetText, setQualityTargetText] = useState('');
     const [launching, setLaunching] = useState(false);
     const [error, setError] = useState('');
     const [sweepId, setSweepId] = useState('');
     const [sweep, setSweep] = useState<SweepResponse | null>(null);
     const [costKind, setCostKind] = useState<CostKind>('wall_clock_seconds');
+    const [budget, setBudget] = useState<PreflightBudget | null>(null);
     const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const cellEstimate = useMemo(() => {
@@ -123,6 +170,39 @@ export default function HyperparameterSweepPanel({
         const lrs = parseNumbers(lrsText).length;
         return ranks * lrs;
     }, [ranksText, lrsText]);
+
+    // Pre-flight budget — refetch whenever the planned grid shape changes.
+    // Debounced so a user typing "8, 16, 32" doesn't fire three requests
+    // mid-typing. 500ms is long enough to avoid the typing case and short
+    // enough that the chip feels live when they paste a value.
+    useEffect(() => {
+        const ranks = parseNumbers(ranksText).map((n) => Math.round(n));
+        const lrs = parseNumbers(lrsText);
+        if (!ranks.length || !lrs.length) {
+            setBudget(null);
+            return;
+        }
+        let cancelled = false;
+        const handle = setTimeout(async () => {
+            try {
+                const res = await api.post<PreflightBudget>(
+                    `/projects/${projectId}/training/sweeps/preflight-budget`,
+                    {
+                        base_model: baseModel,
+                        lora_r_values: ranks,
+                        learning_rate_values: lrs,
+                    },
+                );
+                if (!cancelled) setBudget(res.data);
+            } catch {
+                if (!cancelled) setBudget(null);
+            }
+        }, 500);
+        return () => {
+            cancelled = true;
+            clearTimeout(handle);
+        };
+    }, [ranksText, lrsText, baseModel, projectId]);
 
     const fetchSweep = useCallback(async (id: string, kind: CostKind) => {
         try {
@@ -168,6 +248,7 @@ export default function HyperparameterSweepPanel({
         setLaunching(true);
         setError('');
         setSweep(null);
+        const qualityTarget = parseQualityTarget(qualityTargetText);
         try {
             const res = await api.post<{ sweep_id: string; dispatched_cells: number }>(
                 `/projects/${projectId}/training/sweeps`,
@@ -176,6 +257,7 @@ export default function HyperparameterSweepPanel({
                     base_config: baseConfig || {},
                     lora_r_values: ranks,
                     learning_rate_values: lrs,
+                    quality_target: qualityTarget,
                 },
             );
             setSweepId(res.data.sweep_id);
@@ -239,10 +321,35 @@ export default function HyperparameterSweepPanel({
                     Learning rates
                     <input className="input" value={lrsText} onChange={(e) => setLrsText(e.target.value)} placeholder="2e-4, 3e-4" />
                 </label>
+                <label className="hp-sweep__field" title="Stop the rest of the sweep once any cell's eval pass-rate clears this. Blank = run every cell to completion.">
+                    Quality target
+                    <input
+                        className="input"
+                        value={qualityTargetText}
+                        onChange={(e) => setQualityTargetText(e.target.value)}
+                        placeholder="0.85"
+                        data-testid="hp-quality-target"
+                    />
+                </label>
                 <button type="button" className="btn btn-primary" onClick={() => void launch()} disabled={launching}>
                     {launching ? 'Launching…' : `Run sweep (${cellEstimate} cells)`}
                 </button>
             </div>
+
+            {budget && (
+                <div className="hp-sweep__preflight" data-testid="hp-preflight">
+                    <span className="hp-sweep__preflight-headline">
+                        Estimated runtime: <strong>{formatDuration(budget.estimated_seconds)}</strong>
+                        {' '}for {budget.cell_count} cell{budget.cell_count === 1 ? '' : 's'}
+                    </span>
+                    <span className="hp-sweep__preflight-basis">
+                        {budget.basis === 'no_history'
+                            ? BUDGET_BASIS_LABEL[budget.basis]
+                            : `${BUDGET_BASIS_LABEL[budget.basis]} (${budget.sample_size} prior cell${budget.sample_size === 1 ? '' : 's'})`}
+                        {' · ~'}{formatDuration(budget.seconds_per_cell)}{' per cell'}
+                    </span>
+                </div>
+            )}
 
             {error && <div className="hp-sweep__error">{error}</div>}
 
@@ -255,6 +362,20 @@ export default function HyperparameterSweepPanel({
                             <span className="hp-sweep__best"> · best: <strong>{sweep.best_label}</strong></span>
                         )}
                     </div>
+
+                    {sweep.target_hit && sweep.target_hit_label && (
+                        <div className="hp-sweep__target-hit" data-testid="hp-target-hit">
+                            Target {(sweep.quality_target != null) ? `${(sweep.quality_target * 100).toFixed(0)}%` : 'reached'}
+                            {' · winner: '}
+                            <strong>{sweep.target_hit_label}</strong>
+                            {sweep.cancelled_by_target && sweep.cancelled_by_target.length > 0 && (
+                                <span className="hp-sweep__target-hit-cancelled">
+                                    {' · cancelled '}{sweep.cancelled_by_target.length}{' remaining cell'}
+                                    {sweep.cancelled_by_target.length === 1 ? '' : 's'}
+                                </span>
+                            )}
+                        </div>
+                    )}
 
                     <div
                         className="hp-sweep__cost-picker"
@@ -332,6 +453,15 @@ export default function HyperparameterSweepPanel({
                                         {c.label}
                                         {c.pareto_optimal && <span className="hp-sweep__badge">frontier</span>}
                                         {c.label === sweep.best_label && <span className="hp-sweep__badge hp-sweep__badge--best">best</span>}
+                                        {c.cancelled_by_target && (
+                                            <span
+                                                className="hp-sweep__badge hp-sweep__badge--cancelled"
+                                                data-testid={`hp-row-${c.label}-cancelled`}
+                                                title="Stopped early because another cell hit the quality target"
+                                            >
+                                                cancelled · target hit
+                                            </span>
+                                        )}
                                     </span>
                                     <span className="hp-sweep__row-metrics">
                                         {c.status === 'completed' ? (

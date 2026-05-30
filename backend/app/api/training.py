@@ -68,6 +68,7 @@ from app.services.model_selection_service import (
 )
 from app.services.model_benchmark_service import benchmark_model_sweep
 from app.services.hyperparameter_sweep_service import (
+    estimate_sweep_budget,
     get_sweep_pareto,
     list_project_sweeps,
     start_hyperparameter_sweep,
@@ -243,6 +244,22 @@ class ModelBenchmarkSweepRequest(BaseModel):
 class HyperparameterSweepRequest(BaseModel):
     base_model: str = Field(..., min_length=1, max_length=255)
     base_config: dict[str, Any] = Field(default_factory=dict)
+    lora_r_values: list[int] = Field(default_factory=lambda: [8, 16])
+    learning_rate_values: list[float] = Field(default_factory=lambda: [2e-4])
+    base_model_values: list[str] = Field(default_factory=list)
+    # Stop-when-met threshold. When set, the first completed cell whose
+    # quality_score clears this value triggers cancellation of any cells
+    # still running on the next get-Pareto observation. None = run the
+    # full grid to completion (legacy behaviour).
+    quality_target: float | None = Field(default=None)
+
+
+class SweepPreflightBudgetRequest(BaseModel):
+    """Body for ``POST /sweeps/preflight-budget`` — same axis shape as the
+    start request, no side effects. ``base_model`` is required because the
+    historical median is keyed on it (and on the recipe, which the service
+    reads from the project)."""
+    base_model: str = Field(..., min_length=1, max_length=255)
     lora_r_values: list[int] = Field(default_factory=lambda: [8, 16])
     learning_rate_values: list[float] = Field(default_factory=lambda: [2e-4])
     base_model_values: list[str] = Field(default_factory=list)
@@ -3275,11 +3292,37 @@ async def start_training_sweep(
             lora_r_values=list(req.lora_r_values or []),
             learning_rate_values=list(req.learning_rate_values or []),
             base_model_values=list(req.base_model_values or []),
+            quality_target=req.quality_target,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
     await db.commit()
     return result
+
+
+@router.post("/sweeps/preflight-budget")
+async def sweep_preflight_budget(
+    project_id: int,
+    req: SweepPreflightBudgetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a wall-clock estimate for a planned sweep, with the basis
+    explaining how rough the number is (no-history → conservative default,
+    same-base+recipe → tightest)."""
+    project = await _get_project_or_404(db, project_id)
+    recipe_id = (project.selected_recipe or {}).get("recipe_id") if project else None
+    try:
+        return await estimate_sweep_budget(
+            db,
+            project_id,
+            base_model=req.base_model,
+            lora_r_values=list(req.lora_r_values or []),
+            learning_rate_values=list(req.learning_rate_values or []),
+            base_model_values=list(req.base_model_values or []),
+            recipe_id=recipe_id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/sweeps")

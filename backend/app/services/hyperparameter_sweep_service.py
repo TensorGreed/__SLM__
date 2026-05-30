@@ -147,6 +147,31 @@ def expand_grid(
     return cells
 
 
+def _coerce_quality_target(value: Any) -> float | None:
+    """Coerce a user-supplied quality target to a sane [0, 1] float, or None.
+
+    The target is the threshold the orchestrator uses to decide "winner found
+    — stop the rest of the sweep". 0 and 1 are degenerate ends (always-hit and
+    never-hit) and we clamp into the open interval rather than rejecting,
+    because the panel can plausibly let a user type 0.99 and expect it to
+    behave like "very close to perfect".
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not (0.0 < f <= 1.0):
+        # An out-of-range target is almost certainly a typo (e.g. 80 meaning
+        # "80%"). Clamp the obvious percentage form, otherwise drop.
+        if 1.0 < f <= 100.0:
+            f = f / 100.0
+        else:
+            return None
+    return f
+
+
 async def start_hyperparameter_sweep(
     db: AsyncSession,
     project_id: int,
@@ -156,8 +181,15 @@ async def start_hyperparameter_sweep(
     lora_r_values: list[int],
     learning_rate_values: list[float],
     base_model_values: list[str] | None = None,
+    quality_target: float | None = None,
 ) -> dict[str, Any]:
-    """Materialize + dispatch one Experiment per grid cell under a shared sweep id."""
+    """Materialize + dispatch one Experiment per grid cell under a shared sweep id.
+
+    When ``quality_target`` is provided, the sweep is annotated so that the
+    next ``get_sweep_pareto`` call that observes a cell clearing the target
+    cancels any cells still running — saving real GPU spend when the first
+    good config arrives early.
+    """
     # Local import avoids a circular import (training_service imports this module
     # is not the case today, but keep the dependency one-directional + lazy).
     from app.services.training_service import create_experiment, start_training
@@ -168,18 +200,22 @@ async def start_hyperparameter_sweep(
         learning_rate_values=learning_rate_values,
         base_model_values=base_model_values,
     )
+    normalized_target = _coerce_quality_target(quality_target)
     sweep_id = uuid4().hex[:12]
     created: list[dict[str, Any]] = []
     for index, cell in enumerate(cells):
         label = str(cell.pop("_label"))
         axis_values = dict(cell.pop("_axis_values"))
         cell_base_model = str(cell.get("base_model") or base_model).strip() or base_model
-        cell["_sweep"] = {
+        sweep_meta: dict[str, Any] = {
             "sweep_id": sweep_id,
             "label": label,
             "cell_index": index,
             "axis_values": axis_values,
         }
+        if normalized_target is not None:
+            sweep_meta["quality_target"] = normalized_target
+        cell["_sweep"] = sweep_meta
         record: dict[str, Any] = {
             "label": label,
             "cell_index": index,
@@ -215,6 +251,7 @@ async def start_hyperparameter_sweep(
         "requested_cells": len(cells),
         "dispatched_cells": len(dispatched),
         "cells": created,
+        "quality_target": normalized_target,
         "axes": {
             "lora_r": _dedupe_preserve_order([int(r) for r in lora_r_values]),
             "learning_rate": _dedupe_preserve_order([float(x) for x in learning_rate_values]),
@@ -383,6 +420,38 @@ async def get_sweep_pareto(
             key=lambda r: (-float(r["quality_score"]), float(r["cost_score"])),
         )
 
+    # Stop-when-met: every cell carries the sweep's quality_target on its
+    # _sweep meta (when one was set at dispatch). If any completed cell's
+    # quality_score has cleared the target AND there are still-running cells,
+    # cancel them. The frontend polls this endpoint every 4s, so "next
+    # observation cancels the rest" is the natural watcher loop without any
+    # background worker — and the user can refresh the panel to see the
+    # cancellation reflected.
+    quality_target = _extract_quality_target(experiments)
+    target_hit = False
+    target_hit_label: str | None = None
+    cancelled_now: list[str] = []
+    if quality_target is not None:
+        # Pick the first cell (by cell_index) that cleared the target; that
+        # cell becomes the "winner" the cancel is justified by.
+        clearing = sorted(
+            [
+                (idx, r) for idx, r in enumerate(rows)
+                if r["quality_score"] is not None
+                and float(r["quality_score"]) >= float(quality_target)
+            ],
+            key=lambda t: t[0],
+        )
+        if clearing:
+            target_hit = True
+            target_hit_label = clearing[0][1]["label"]
+            cancelled_now = await _cancel_still_running_cells(
+                db,
+                project_id=project_id,
+                experiments=experiments,
+                rows=rows,
+            )
+
     return {
         "sweep_id": token,
         "project_id": project_id,
@@ -399,6 +468,192 @@ async def get_sweep_pareto(
         "supported_cost_kinds": list(SUPPORTED_COST_KINDS),
         "best_label": best["label"] if best else None,
         "best_experiment_id": best["experiment_id"] if best else None,
+        "quality_target": quality_target,
+        "target_hit": target_hit,
+        "target_hit_label": target_hit_label,
+        "cancelled_by_target": cancelled_now,
+    }
+
+
+def _extract_quality_target(experiments: list[Experiment]) -> float | None:
+    """Recover the sweep's quality_target from any cell's _sweep meta.
+
+    Every cell in a sweep carries the same target (set at dispatch); the
+    first non-None reading wins. ``None`` means no target was set — the
+    sweep runs every cell to completion regardless of partial winners.
+    """
+    for exp in experiments:
+        meta = (exp.config or {}).get("_sweep") or {}
+        target = meta.get("quality_target")
+        if target is None:
+            continue
+        try:
+            return float(target)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+async def _cancel_still_running_cells(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    experiments: list[Experiment],
+    rows: list[dict[str, Any]],
+) -> list[str]:
+    """Cancel any cell whose status is still RUNNING / PENDING / QUEUED.
+
+    Annotates each cancelled row in place with ``cancelled_by_target=True``
+    + status downgraded to "cancelled" so the next render reflects the new
+    state without a refetch. Errors during cancel (cell already finished
+    between our status read and the cancel call, etc.) are swallowed —
+    cancellation is best-effort, not a critical path.
+    """
+    from app.models.experiment import ExperimentStatus
+    from app.services.training_service import cancel_training
+
+    cancelled: list[str] = []
+    label_to_row = {r["label"]: r for r in rows}
+    for exp in experiments:
+        status_value = exp.status.value if hasattr(exp.status, "value") else str(exp.status)
+        if status_value not in {"running", "pending", "queued"}:
+            continue
+        meta = (exp.config or {}).get("_sweep") or {}
+        label = str(meta.get("label") or exp.name)
+        try:
+            await cancel_training(db, project_id, int(exp.id))
+            cancelled.append(label)
+            row = label_to_row.get(label)
+            if row is not None:
+                row["status"] = ExperimentStatus.CANCELLED.value
+                row["cancelled_by_target"] = True
+        except Exception:
+            # Most likely racing the trainer's own status flip; the row
+            # will reflect the real state on the next poll regardless.
+            continue
+    return cancelled
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pre-flight budget estimator.
+#
+# Before launching, the user wants to know: "what does this sweep cost
+# me in wall-clock terms?" We answer with the median seconds-per-cell
+# from prior completed cells, multiplied by the planned cell count.
+#
+# Basis fallback (specific → general → bail):
+#   1. Cells in this project with the same base_model + recipe_id.
+#   2. Cells in this project with the same base_model (any recipe).
+#   3. Cells in this project on any base model.
+#   4. No history → return basis="no_history" and a conservative default
+#      so the UI can still render "rough estimate" rather than a chip
+#      that says "unknown".
+#
+# We deliberately do *not* report dollars: GPU cost depends on the
+# runtime backend (local GB10 = $0, cloud-burst = variable), and a
+# fake $ chip would lie. Wall-clock is the honest currency we always
+# have.
+# ─────────────────────────────────────────────────────────────────────
+
+
+# Conservative seconds-per-cell when there's no history at all. Tuned
+# against the platform's default 135M/SFT recipe with the demo gold
+# set (~2 min per cell on the dev GB10). Over-estimates for tinier
+# sweeps and under-estimates for big-model sweeps — the basis="no_history"
+# label keeps the user honest about how rough the number is.
+DEFAULT_NO_HISTORY_SECONDS_PER_CELL = 120
+
+
+async def estimate_sweep_budget(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    base_model: str,
+    lora_r_values: list[int],
+    learning_rate_values: list[float],
+    base_model_values: list[str] | None = None,
+    recipe_id: str | None = None,
+) -> dict[str, Any]:
+    """Pre-launch wall-clock estimate for a planned hyperparameter sweep.
+
+    Validates the grid shape (so the launcher errors before submit on
+    obviously bad input), computes the planned cell count, queries
+    historical cells for a seconds-per-cell median, and returns
+    ``{seconds_per_cell, cell_count, estimated_seconds, basis,
+    sample_size}`` so the launcher can render "~3.2h based on 18 prior
+    cells on this base+recipe" or "rough estimate, no prior runs" as
+    appropriate.
+
+    Raises ``ValueError`` on invalid grid input — the API surfaces
+    that as a 400.
+    """
+    # Use expand_grid for cell-count validation/parity with the launch
+    # path. ValueError on empty axes bubbles up unchanged.
+    cells = expand_grid(
+        {},
+        lora_r_values=lora_r_values,
+        learning_rate_values=learning_rate_values,
+        base_model_values=base_model_values,
+    )
+    cell_count = len(cells)
+
+    # Pull every completed cell for this project (small-N — sweeps live
+    # under their own _sweep marker, and we only want ones with a
+    # measured wall-clock).
+    result = await db.execute(
+        select(Experiment).where(Experiment.project_id == project_id)
+    )
+    all_cells: list[Experiment] = []
+    for exp in result.scalars().all():
+        meta = (exp.config or {}).get("_sweep") or {}
+        if not meta.get("sweep_id"):
+            continue
+        if exp.started_at is None or exp.completed_at is None:
+            continue
+        seconds = (exp.completed_at - exp.started_at).total_seconds()
+        if seconds <= 0:
+            continue
+        all_cells.append(exp)
+
+    def _seconds_of(exp: Experiment) -> float:
+        return (exp.completed_at - exp.started_at).total_seconds()
+
+    # Stage 1: same base_model + same recipe.
+    candidates: list[Experiment] = []
+    basis = "no_history"
+    sample_size = 0
+    if recipe_id:
+        candidates = [
+            e for e in all_cells
+            if e.base_model == base_model
+            and ((e.config or {}).get("_sweep") or {}).get("recipe_id") == recipe_id
+        ]
+        if candidates:
+            basis = "same_base_and_recipe"
+    # Stage 2: same base_model only.
+    if not candidates:
+        candidates = [e for e in all_cells if e.base_model == base_model]
+        if candidates:
+            basis = "same_base_model"
+    # Stage 3: any cell in the project.
+    if not candidates:
+        candidates = list(all_cells)
+        if candidates:
+            basis = "project_default"
+
+    if candidates:
+        durations = sorted(_seconds_of(e) for e in candidates)
+        seconds_per_cell = float(durations[len(durations) // 2])  # median
+        sample_size = len(durations)
+    else:
+        seconds_per_cell = float(DEFAULT_NO_HISTORY_SECONDS_PER_CELL)
+
+    return {
+        "cell_count": cell_count,
+        "seconds_per_cell": seconds_per_cell,
+        "estimated_seconds": seconds_per_cell * cell_count,
+        "basis": basis,
+        "sample_size": sample_size,
     }
 
 

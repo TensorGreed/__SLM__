@@ -42,7 +42,9 @@ from app.database import async_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus, TrainingMode  # noqa: E402
 from app.services.hyperparameter_sweep_service import (  # noqa: E402
+    DEFAULT_NO_HISTORY_SECONDS_PER_CELL,
     MAX_SWEEP_CELLS,
+    estimate_sweep_budget,
     expand_grid,
     get_sweep_pareto,
     list_project_sweeps,
@@ -447,6 +449,266 @@ class SweepOrchestrationTests(unittest.TestCase):
         asyncio.run(_seed())
         with self.assertRaises(ValueError):
             asyncio.run(_run_get(project_id, sweep_id, cost_kind="bogus"))
+
+    # -- Stop-when-met (auto-cancel watcher) ---------------------------
+
+    def _seed_cell(
+        self, *, project_id: int, sweep_id: str, label: str, status: ExperimentStatus,
+        lora_r: int = 8, quality_target: float | None = None,
+        train_loss: float | None = None, started_at=None, completed_at=None,
+        eval_pass_rate: float | None = None,
+    ):
+        """Seed a single Experiment representing one sweep cell.
+
+        Kept on the test class (not the module) because pytest collects
+        free functions named ``test_*`` automatically — using a helper
+        method avoids accidental collection of seeders as tests.
+        """
+        async def _add():
+            async with async_session_factory() as db:
+                cfg: dict = {
+                    "lora_r": lora_r,
+                    "_sweep": {
+                        "sweep_id": sweep_id, "label": label, "cell_index": int(lora_r),
+                        "axis_values": {"lora_r": lora_r, "learning_rate": 2e-4},
+                    },
+                }
+                if quality_target is not None:
+                    cfg["_sweep"]["quality_target"] = quality_target
+                exp = Experiment(
+                    project_id=project_id, name=f"sweep-{sweep_id}-{label}", base_model=BASE,
+                    training_mode=TrainingMode.SFT, status=status,
+                    final_train_loss=train_loss,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    config=cfg,
+                )
+                db.add(exp)
+                await db.flush()
+                if eval_pass_rate is not None:
+                    db.add(EvalResult(
+                        experiment_id=exp.id,
+                        dataset_name="gold",
+                        eval_type="task",
+                        pass_rate=eval_pass_rate,
+                    ))
+                await db.commit()
+                return int(exp.id)
+        return asyncio.run(_add())
+
+    def test_target_hit_cancels_still_running_cells(self):
+        """When one completed cell clears the target, every still-running
+        cell in the sweep is cancelled on the next get-Pareto observation."""
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+
+        # Two cells: r8 cleared the target with pass_rate=0.9; r16 is still
+        # running. After get_sweep_pareto, r16 should be cancelled.
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8, quality_target=0.85,
+            eval_pass_rate=0.9, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=60),
+        )
+        r16_id = self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r16",
+            status=ExperimentStatus.RUNNING, lora_r=16, quality_target=0.85,
+            started_at=anchor,
+        )
+
+        # cancel_training reaches into job_service.cancel_task; that path
+        # would fail in tests (no real task). Patch it to a no-op so we
+        # can assert the row-level effect (status flips, cancelled_by_target
+        # is annotated) without spinning a real runtime.
+        cancelled_ids: list[int] = []
+
+        async def _fake_cancel(db, pid, eid):
+            cancelled_ids.append(int(eid))
+            # Mirror the real cancel: flip status + completed_at.
+            exp = await db.get(Experiment, int(eid))
+            exp.status = ExperimentStatus.CANCELLED
+            exp.completed_at = datetime.now(timezone.utc)
+            await db.flush()
+            return {"experiment_id": int(eid), "status": "cancelled"}
+
+        with patch(
+            "app.services.training_service.cancel_training",
+            _fake_cancel,
+        ):
+            out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+
+        self.assertEqual(out["quality_target"], 0.85)
+        self.assertTrue(out["target_hit"])
+        self.assertEqual(out["target_hit_label"], "r8")
+        self.assertEqual(out["cancelled_by_target"], ["r16"])
+        self.assertIn(r16_id, cancelled_ids)
+        by_label = {c["label"]: c for c in out["cells"]}
+        self.assertTrue(by_label["r16"].get("cancelled_by_target"))
+        self.assertEqual(by_label["r16"]["status"], "cancelled")
+
+    def test_target_not_hit_leaves_running_cells_alone(self):
+        """No completed cell cleared the target → no cancellation."""
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8, quality_target=0.95,
+            eval_pass_rate=0.7,  # below target
+            started_at=anchor, completed_at=anchor + timedelta(seconds=60),
+        )
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r16",
+            status=ExperimentStatus.RUNNING, lora_r=16, quality_target=0.95,
+            started_at=anchor,
+        )
+
+        out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+        self.assertEqual(out["quality_target"], 0.95)
+        self.assertFalse(out["target_hit"])
+        self.assertIsNone(out["target_hit_label"])
+        self.assertEqual(out["cancelled_by_target"], [])
+        by_label = {c["label"]: c for c in out["cells"]}
+        self.assertNotEqual(by_label["r16"]["status"], "cancelled")
+
+    def test_no_target_set_means_no_cancellation_machinery(self):
+        """A sweep without a quality_target runs every cell — same as legacy."""
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8,
+            eval_pass_rate=0.99, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=60),
+        )
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r16",
+            status=ExperimentStatus.RUNNING, lora_r=16, started_at=anchor,
+        )
+        out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+        self.assertIsNone(out["quality_target"])
+        self.assertFalse(out["target_hit"])
+        self.assertEqual(out["cancelled_by_target"], [])
+
+    # -- Pre-flight budget estimator -----------------------------------
+
+    def test_estimate_budget_no_history(self):
+        """No prior cells → conservative default + basis='no_history'."""
+        project_id = self._create_project()
+
+        async def _run():
+            async with async_session_factory() as db:
+                return await estimate_sweep_budget(
+                    db, project_id, base_model=BASE,
+                    lora_r_values=[8, 16], learning_rate_values=[2e-4, 3e-4],
+                )
+
+        out = asyncio.run(_run())
+        self.assertEqual(out["cell_count"], 4)
+        self.assertEqual(out["basis"], "no_history")
+        self.assertEqual(out["sample_size"], 0)
+        self.assertEqual(out["seconds_per_cell"], float(DEFAULT_NO_HISTORY_SECONDS_PER_CELL))
+        self.assertEqual(out["estimated_seconds"], 4 * float(DEFAULT_NO_HISTORY_SECONDS_PER_CELL))
+
+    def test_estimate_budget_uses_prior_cells_median(self):
+        """Prior cells on the same base model produce a tighter estimate."""
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        # Three prior cells: 30s, 60s, 90s → median 60s.
+        for i, (label, secs) in enumerate([("a", 30), ("b", 60), ("c", 90)]):
+            self._seed_cell(
+                project_id=project_id, sweep_id=sweep_id + label,  # different sweep ids
+                label=label, status=ExperimentStatus.COMPLETED, lora_r=8 + i,
+                started_at=anchor, completed_at=anchor + timedelta(seconds=secs),
+            )
+
+        async def _run():
+            async with async_session_factory() as db:
+                return await estimate_sweep_budget(
+                    db, project_id, base_model=BASE,
+                    lora_r_values=[8, 16], learning_rate_values=[2e-4],
+                )
+
+        out = asyncio.run(_run())
+        self.assertEqual(out["cell_count"], 2)
+        self.assertEqual(out["basis"], "same_base_model")
+        self.assertEqual(out["sample_size"], 3)
+        self.assertEqual(out["seconds_per_cell"], 60.0)
+        self.assertEqual(out["estimated_seconds"], 120.0)
+
+    def test_estimate_budget_endpoint(self):
+        project_id = self._create_project()
+        resp = self.client.post(
+            f"/api/projects/{project_id}/training/sweeps/preflight-budget",
+            json={"base_model": BASE, "lora_r_values": [8, 16], "learning_rate_values": [2e-4]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["cell_count"], 2)
+        self.assertEqual(body["basis"], "no_history")
+
+        # Empty axes → 400.
+        bad = self.client.post(
+            f"/api/projects/{project_id}/training/sweeps/preflight-budget",
+            json={"base_model": BASE, "lora_r_values": [], "learning_rate_values": [2e-4]},
+        )
+        self.assertEqual(bad.status_code, 400, bad.text)
+
+    def test_start_sweep_persists_quality_target_on_every_cell(self):
+        """quality_target round-trips into each cell's _sweep meta so the
+        watcher can recover it on subsequent fetches (no sweep table yet)."""
+        project_id = self._create_project()
+
+        async def _noop_start(db, pid, eid):
+            return {"experiment_id": eid, "status": "running"}
+
+        async def _run():
+            async with async_session_factory() as db:
+                with patch("app.services.training_service.start_training", _noop_start):
+                    out = await start_hyperparameter_sweep(
+                        db, project_id, base_model=BASE,
+                        lora_r_values=[8, 16], learning_rate_values=[2e-4],
+                        quality_target=0.85,
+                    )
+                await db.commit()
+                return out
+
+        result = asyncio.run(_run())
+        self.assertEqual(result["quality_target"], 0.85)
+
+        async def _check():
+            async with async_session_factory() as db:
+                from sqlalchemy import select as _select
+                rows = (await db.execute(
+                    _select(Experiment).where(Experiment.project_id == project_id)
+                )).scalars().all()
+                return [(r.config or {}).get("_sweep", {}).get("quality_target") for r in rows]
+
+        targets = asyncio.run(_check())
+        self.assertEqual(targets, [0.85, 0.85])  # 2 cells, both annotated
+
+    def test_quality_target_coerces_percent_input(self):
+        """A user typing 85 (meaning 85%) is coerced to 0.85 — common typo."""
+        project_id = self._create_project()
+
+        async def _noop_start(db, pid, eid):
+            return {"experiment_id": eid, "status": "running"}
+
+        async def _run():
+            async with async_session_factory() as db:
+                with patch("app.services.training_service.start_training", _noop_start):
+                    out = await start_hyperparameter_sweep(
+                        db, project_id, base_model=BASE,
+                        lora_r_values=[8], learning_rate_values=[2e-4],
+                        quality_target=85,  # percent form
+                    )
+                await db.commit()
+                return out
+
+        self.assertEqual(asyncio.run(_run())["quality_target"], 0.85)
 
 
 async def _run_get(project_id: int, sweep_id: str, *, cost_kind: str | None = None):
