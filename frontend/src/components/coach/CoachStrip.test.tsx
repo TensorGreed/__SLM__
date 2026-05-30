@@ -664,6 +664,50 @@ describe('CoachStrip', () => {
         });
     });
 
+    it('navigates to the observability FailureClusterList on the failure-clusters-panel target', async () => {
+        // Sweep-inconclusive nudge target — coach surfaces it on the
+        // training stage when the latest sweep's verdict is
+        // inconclusive. The deep-link lands the user on the
+        // observability page with #failure-clusters anchoring the
+        // FailureClusterList section so they see why each cell missed
+        // rather than promoting a sub-gate model.
+        installGetRouter({
+            data: {
+                project_id: 7,
+                stage: 'training',
+                handler_available: true,
+                suggestions: [
+                    {
+                        id: 'training:sweep-inconclusive',
+                        title: 'Sweep inconclusive — 4/4 cells, none cleared gate',
+                        body: 'Sweep sweepabc finished with no cell clearing the project gate.',
+                        severity: 'warning',
+                        action: {
+                            kind: 'navigate',
+                            label: 'Open Failure clusters',
+                            params: { target: 'failure-clusters-panel' },
+                        },
+                        context: { sweep_id: 'sweepabc' },
+                    },
+                ],
+            },
+        });
+        render(<CoachStrip projectId={7} stage="training" />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('coach-suggestion-action-training:sweep-inconclusive'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('coach-suggestion-action-training:sweep-inconclusive'),
+        );
+        await waitFor(() => {
+            expect(navigateMock).toHaveBeenCalledWith(
+                '/project/7/observability#failure-clusters',
+            );
+        });
+    });
+
     it('shows an error fallback when the coach endpoint fails', async () => {
         apiMock.get.mockImplementation(async (url: string) => {
             if (url.includes('/gamification')) {

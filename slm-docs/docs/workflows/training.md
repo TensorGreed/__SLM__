@@ -129,6 +129,17 @@ The sweep's `best_label` is whoever has the highest `quality_score`, even if tha
 
 A pack with zero gates would trivially return `passed=True` for every cell — that's exactly the vanity case the honesty pass is preventing. The annotator detects `gate_count == 0` and treats the cell as "not measurable" (`gate_passed=null`) rather than letting "no gates configured" masquerade as "winner found".
 
+#### Coach handoff on `inconclusive`
+
+The inconclusive verdict also surfaces as a **Coach Mode** card on the training stage (`coach_service._inconclusive_sweep_nudge`), so a user who has the coach strip open doesn't have to keep the sweep panel mounted to learn that nobody cleared the gate. The card carries:
+
+- Severity `warning`.
+- Title: *"Sweep inconclusive — N/M cells, none cleared gate"*.
+- Body that names the top-3 failed gates with cell counts (e.g. *"Gate(s) missed: acc_gte_0.8 (4 cells), f1_gte_0.7 (1 cell)"*) so the user can tell whether one gate dominates or the failure spreads across many.
+- A `navigate` action pointing at the `failure-clusters-panel` target — the front-end routes that to `/project/{id}/observability#failure-clusters` (the `id="failure-clusters"` anchor on the FailureClusterList section is the one this deep-link targets).
+
+The card stays silent on `promote` (the sweep panel already celebrates the winner) and on `pending` (premature). The dedicated `_inconclusive_sweep_nudge` helper finds the most-recent sweep id by scanning experiments newest-first and reading `config._sweep.sweep_id`, then calls `get_sweep_pareto` to check the verdict.
+
 ## Trainability forecast
 
 The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".

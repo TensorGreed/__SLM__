@@ -1021,7 +1021,115 @@ async def _training_stage_suggestions(
             ),
         },
     })
+
+    # Sweep-inconclusive nudge — surface the latest hyperparameter sweep
+    # whose verdict is "inconclusive" so the user doesn't have to keep
+    # the panel open to learn that nobody cleared the gate. See
+    # _inconclusive_sweep_nudge below.
+    sweep_nudge = await _inconclusive_sweep_nudge(db, project.id)
+    if sweep_nudge:
+        suggestions.append(sweep_nudge)
+
     return suggestions
+
+
+async def _inconclusive_sweep_nudge(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    """Coach card for the latest hyperparameter sweep when its verdict is
+    ``inconclusive`` — i.e. every completed cell has eval results but none
+    cleared the project's gate. Stays silent on ``promote`` and ``pending``
+    verdicts (the sweep panel itself surfaces those; coach repeating them
+    would just be noise).
+
+    Why this lives in the training stage: sweeps are launched from
+    the training-config Power Tools and the panel that shows them
+    (``HyperparameterSweepPanel``) is mounted there, so the user is
+    already looking at the right surface.
+    """
+    from sqlalchemy import select as _select
+
+    from app.models.experiment import Experiment
+    from app.services.hyperparameter_sweep_service import get_sweep_pareto
+
+    # Find the most-recent sweep id for the project. We sort by
+    # experiment.id desc (cheap and stable — created-at would also work
+    # but it's not indexed here) and pick the first cell that carries
+    # a ``_sweep.sweep_id``. Skips early when no sweeps have been run.
+    result = await db.execute(
+        _select(Experiment)
+        .where(Experiment.project_id == project_id)
+        .order_by(Experiment.id.desc())
+    )
+    latest_sweep_id: str | None = None
+    for exp in result.scalars():
+        meta = (exp.config or {}).get("_sweep") or {}
+        sid = str(meta.get("sweep_id") or "").strip()
+        if sid:
+            latest_sweep_id = sid
+            break
+    if latest_sweep_id is None:
+        return None
+
+    try:
+        pareto = await get_sweep_pareto(db, project_id, latest_sweep_id)
+    except ValueError:
+        return None
+
+    if pareto.get("verdict") != "inconclusive":
+        return None
+
+    # Pull the failed gate IDs across cells so the card body can name them.
+    # The vast majority of inconclusive sweeps fail the same gate across
+    # every cell (one gate dominates), so dedup + sort + show the top 3.
+    failed_gates: dict[str, int] = {}
+    for cell in pareto.get("cells", []):
+        if cell.get("gate_passed") is False:
+            for gid in cell.get("gate_failed_ids") or []:
+                if isinstance(gid, str) and gid:
+                    failed_gates[gid] = failed_gates.get(gid, 0) + 1
+    top_gates = sorted(failed_gates.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    gate_blurb = ""
+    if top_gates:
+        # Format as "acc_gte_0.8 (4 cells)" — the count tells the user
+        # whether one gate dominates or the failure spreads across many.
+        rendered = ", ".join(
+            f"{name} ({count} cell{'s' if count != 1 else ''})"
+            for name, count in top_gates
+        )
+        gate_blurb = f" Gate(s) missed: {rendered}."
+
+    measurable = int((pareto.get("gate_summary") or {}).get("measurable_count") or 0)
+    cell_count = int(pareto.get("cell_count") or 0)
+
+    body = (
+        f"Sweep {latest_sweep_id} finished with no cell clearing the project "
+        f"gate ({measurable}/{cell_count} measurable)."
+        + gate_blurb
+        + " Failure clusters explain why each cell missed; promoting any of "
+        "these would just ship a sub-gate model."
+    )
+
+    return {
+        "id": "training:sweep-inconclusive",
+        "title": (
+            f"Sweep inconclusive — {measurable}/{cell_count} cells, none cleared gate"
+        ),
+        "body": body,
+        "severity": "warning",
+        "action": {
+            "kind": "navigate",
+            "label": "Open Failure clusters",
+            "params": {"target": "failure-clusters-panel"},
+        },
+        "context": {
+            "sweep_id": latest_sweep_id,
+            "verdict": "inconclusive",
+            "measurable_count": measurable,
+            "cell_count": cell_count,
+            "failed_gates": top_gates,
+        },
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────

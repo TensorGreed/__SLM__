@@ -183,7 +183,7 @@ export default function ProjectObservabilityPage() {
                 />
             </section>
 
-            <section className="card">
+            <section className="card" id="failure-clusters">
                 <FailureClusterList
                     projectId={projectId}
                     onSelectRun={handleSelectRun}

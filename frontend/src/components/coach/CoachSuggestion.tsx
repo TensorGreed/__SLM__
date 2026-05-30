@@ -192,6 +192,13 @@ const NAVIGATE_TARGET_URLS: Record<
     // mounted by the time the user lands.
     'reroute-recommendation-panel': (projectId) =>
         `/project/${projectId}/pipeline/eval#reroute-recommendation-panel`,
+    // Sweep-inconclusive nudge — sends the user to the observability
+    // page's FailureClusterList (the section was given the
+    // `failure-clusters` anchor for this deep-link). When the sweep
+    // verdict is inconclusive, this is where the user goes to see why
+    // each cell missed the gate rather than promoting a sub-gate model.
+    'failure-clusters-panel': (projectId) =>
+        `/project/${projectId}/observability#failure-clusters`,
 };
 
 export default function CoachSuggestionCard({

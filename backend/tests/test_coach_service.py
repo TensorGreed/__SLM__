@@ -784,6 +784,13 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
                 "cache_hit": False,
             }
 
+        async def _no_sweep_nudge(*_a, **_k):
+            # Default off for the focused forecast tests in this class —
+            # the sweep nudge has its own dedicated test class below.
+            # Without this, every training-stage test would have to seed
+            # a sweep to keep the assertion counts honest.
+            return None
+
         with (
             patch(
                 "app.services.trainability_forecast_service.forecast_training",
@@ -792,6 +799,10 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.services.recipe_service.get_recipe",
                 return_value=recipe_stub if with_recipe else None,
+            ),
+            patch(
+                "app.services.coach_service._inconclusive_sweep_nudge",
+                side_effect=_no_sweep_nudge,
             ),
         ):
             return await _training_stage_suggestions(
@@ -901,6 +912,122 @@ class CoachServiceTrainingStageTests(unittest.IsolatedAsyncioTestCase):
                 project=_StubProject(),
             )
         self.assertEqual(result, [])
+
+
+class CoachServiceSweepInconclusiveNudgeTests(unittest.IsolatedAsyncioTestCase):
+    """Direct calls to ``_inconclusive_sweep_nudge``: surfaces a coach
+    card when the latest sweep's verdict is inconclusive, stays silent
+    on promote / pending / no-sweep."""
+
+    def _fake_db_with_latest_sweep(self, sweep_id: str | None):
+        """Build a fake AsyncSession whose ``execute(...)`` returns a
+        result yielding one experiment carrying ``sweep_id`` in its
+        ``_sweep`` config (or yielding nothing when sweep_id is None).
+        """
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        rows: list[SimpleNamespace] = []
+        if sweep_id:
+            rows.append(SimpleNamespace(
+                id=1,
+                config={"_sweep": {"sweep_id": sweep_id, "label": "r8", "cell_index": 0}},
+            ))
+
+        class _ScalarsResult:
+            def __init__(self, items): self._items = items
+            def __iter__(self): return iter(self._items)
+
+        class _ExecuteResult:
+            def __init__(self, items): self._items = items
+            def scalars(self): return _ScalarsResult(self._items)
+
+        db = SimpleNamespace()
+        db.execute = AsyncMock(return_value=_ExecuteResult(rows))
+        return db
+
+    async def _run(self, *, sweep_id: str | None, pareto: dict | None):
+        from unittest.mock import patch
+        from app.services.coach_service import _inconclusive_sweep_nudge
+
+        async def _stub_pareto(_db, _pid, _sid):
+            if pareto is None:
+                raise ValueError("No sweep")
+            return pareto
+
+        with patch(
+            "app.services.hyperparameter_sweep_service.get_sweep_pareto",
+            side_effect=_stub_pareto,
+        ):
+            return await _inconclusive_sweep_nudge(
+                self._fake_db_with_latest_sweep(sweep_id),
+                project_id=42,
+            )
+
+    async def test_no_sweep_returns_none(self):
+        result = await self._run(sweep_id=None, pareto=None)
+        self.assertIsNone(result)
+
+    async def test_inconclusive_surfaces_warning_with_failure_clusters_navigate(self):
+        pareto = {
+            "sweep_id": "sweepabc",
+            "verdict": "inconclusive",
+            "verdict_reason": "No completed cell cleared the project gate.",
+            "cell_count": 4,
+            "gate_summary": {"pack_id": "evalpack.demo", "measurable_count": 4},
+            "cells": [
+                {"label": "r8", "gate_passed": False, "gate_failed_ids": ["acc_gte_0.8"]},
+                {"label": "r16", "gate_passed": False, "gate_failed_ids": ["acc_gte_0.8", "f1_gte_0.7"]},
+                {"label": "r32", "gate_passed": False, "gate_failed_ids": ["acc_gte_0.8"]},
+                {"label": "r64", "gate_passed": False, "gate_failed_ids": ["acc_gte_0.8"]},
+            ],
+        }
+        result = await self._run(sweep_id="sweepabc", pareto=pareto)
+        self.assertIsNotNone(result)
+        assert result is not None  # for type narrowing
+        self.assertEqual(result["id"], "training:sweep-inconclusive")
+        self.assertEqual(result["severity"], "warning")
+        self.assertEqual(result["action"]["kind"], "navigate")
+        self.assertEqual(result["action"]["params"]["target"], "failure-clusters-panel")
+        # Body names the dominant gate + cell count (4 cells missed acc_gte_0.8).
+        self.assertIn("acc_gte_0.8 (4 cells)", result["body"])
+        self.assertIn("4/4 measurable", result["body"])
+        # Context payload carries the sweep id + dedup'd gate counts for downstream telemetry.
+        self.assertEqual(result["context"]["sweep_id"], "sweepabc")
+        failed = dict(result["context"]["failed_gates"])
+        self.assertEqual(failed["acc_gte_0.8"], 4)
+        self.assertEqual(failed["f1_gte_0.7"], 1)
+
+    async def test_promote_verdict_returns_none(self):
+        pareto = {
+            "sweep_id": "sweepabc",
+            "verdict": "promote",
+            "cell_count": 2,
+            "gate_summary": {"pack_id": "evalpack.demo", "measurable_count": 2},
+            "cells": [{"label": "r8", "gate_passed": True, "gate_failed_ids": []}],
+        }
+        result = await self._run(sweep_id="sweepabc", pareto=pareto)
+        # Promote is success — the sweep panel already shows it. Coach stays silent.
+        self.assertIsNone(result)
+
+    async def test_pending_verdict_returns_none(self):
+        pareto = {
+            "sweep_id": "sweepabc",
+            "verdict": "pending",
+            "cell_count": 4,
+            "gate_summary": {"pack_id": "evalpack.demo", "measurable_count": 0},
+            "cells": [],
+        }
+        result = await self._run(sweep_id="sweepabc", pareto=pareto)
+        # Pending = still training; nothing actionable yet.
+        self.assertIsNone(result)
+
+    async def test_pareto_lookup_failure_returns_none(self):
+        # get_sweep_pareto raised — the latest sweep id may have been
+        # deleted between the DB query and the Pareto call. Surface
+        # nothing rather than 500ing the coach response.
+        result = await self._run(sweep_id="ghost", pareto=None)
+        self.assertIsNone(result)
 
 
 class CoachServiceEvalStageTests(unittest.IsolatedAsyncioTestCase):
