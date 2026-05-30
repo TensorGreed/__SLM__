@@ -1892,6 +1892,46 @@
     color: var(--color-primary, #2563eb);
 }
 
+.hp-sweep__cost-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: var(--space-sm) 0;
+    font-size: 12px;
+}
+
+.hp-sweep__cost-picker-label {
+    color: var(--text-secondary, var(--text-muted));
+    margin-right: 4px;
+}
+
+.hp-sweep__cost-option {
+    padding: 2px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+}
+
+.hp-sweep__cost-option:hover {
+    border-color: var(--color-primary, #2563eb);
+}
+
+.hp-sweep__cost-option.is-selected {
+    background: rgba(37, 99, 235, 0.14);
+    border-color: var(--color-primary, #2563eb);
+    color: var(--color-primary, #2563eb);
+}
+
+.hp-sweep__cost-pending {
+    color: var(--text-muted, #94a3b8);
+    font-style: italic;
+}
+
 /* -- WarmStartDeltaChart (Epic B/C) ------------------------------------- */
 .warmstart-delta {
     margin: var(--space-md) 0;

@@ -3296,14 +3296,26 @@ async def list_training_sweeps(
 async def get_training_sweep(
     project_id: int,
     sweep_id: str,
+    cost_kind: str = "wall_clock_seconds",
     db: AsyncSession = Depends(get_db),
 ):
-    """Return a sweep's cells annotated with the quality-vs-cost Pareto frontier."""
+    """Return a sweep's cells annotated with the quality-vs-cost Pareto frontier.
+
+    ``cost_kind`` picks the cost axis: ``wall_clock_seconds`` (default, the
+    honest measured-duration axis), ``lora_r`` (adapter footprint proxy), or
+    ``base_params_m`` (base-model parameter count, useful for cross-model
+    sweeps). Unknown values return 400 rather than silently falling back.
+    """
     await _get_project_or_404(db, project_id)
     try:
-        return await get_sweep_pareto(db, project_id, sweep_id)
+        return await get_sweep_pareto(db, project_id, sweep_id, cost_kind=cost_kind)
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        msg = str(e)
+        # Unsupported cost_kind is a client error (400), not a missing
+        # resource. Match on the prefix the service emits.
+        if msg.startswith("Unsupported cost_kind"):
+            raise HTTPException(400, msg)
+        raise HTTPException(404, msg)
 
 
 @router.post("/model-selection/telemetry")

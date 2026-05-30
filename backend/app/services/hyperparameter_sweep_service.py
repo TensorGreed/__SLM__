@@ -11,9 +11,24 @@ the configured runtime), so the start call returns as soon as every cell is
 dispatched; the Pareto endpoint aggregates results as cells complete.
 
 Quality (higher = better) is read from the experiment's eval pass-rate when
-available, else derived from eval/train loss. Cost (lower = better) is the LoRA
-rank — a direct proxy for adapter footprint — so the frontier surfaces the best
-learning rate for each adapter size and the quality-vs-size trade-off across ranks.
+available, else derived from eval/train loss. Cost (lower = better) is picked
+by the caller via ``cost_kind``:
+
+* ``"wall_clock_seconds"`` (default) — the honest one. Real measured
+  ``completed_at - started_at`` for the cell. Captures actual training
+  time so a rank-32 cell that trained fast looks cheaper than a rank-8
+  cell that took an hour.
+* ``"lora_r"`` — adapter footprint proxy. Cheap to compute, available
+  immediately (no training needed), but a fiction when ``base_model``
+  is an axis (rank-16 on a 135M base vs rank-16 on a 3B base do *not*
+  cost the same).
+* ``"base_params_m"`` — base model parameter count in millions. Useful
+  when the sweep varies ``base_model`` and the user wants to read the
+  Pareto as "which model size is worth the quality gain".
+
+The frontier is computed against whichever cost the caller asks for, and the
+response echoes ``cost_kind`` + ``cost_key`` so the frontend renders the right
+axis label without guessing.
 """
 
 from __future__ import annotations
@@ -32,7 +47,37 @@ from app.services.model_benchmark_service import annotate_pareto_frontier
 MAX_SWEEP_CELLS = 16
 
 QUALITY_KEY = "quality_score"
-COST_KEY = "lora_r"
+
+# Default cost axis. Wall-clock is the honest one — see the module docstring.
+# Kept as a constant so callers can reference it (the API default echoes it
+# back to the frontend).
+DEFAULT_COST_KIND = "wall_clock_seconds"
+
+# Allow-list of cost-kind strings. Anything outside this raises ValueError
+# so a typo in the API query string surfaces as a 400 rather than a silent
+# "cost is None" panel.
+SUPPORTED_COST_KINDS: tuple[str, ...] = (
+    "wall_clock_seconds",
+    "lora_r",
+    "base_params_m",
+)
+
+# Known parameter counts for the default base models. Mirrors the same dict
+# in trainability_forecast_service.py; we keep them separate so the two
+# surfaces can drift independently if one needs to support a model the
+# other shouldn't yet. Falls back to None (cost unknown) when the model
+# id isn't recognized, which the Pareto annotator treats as "exclude from
+# the frontier" rather than guessing.
+BASE_MODEL_PARAMS_M: dict[str, int] = {
+    "HuggingFaceTB/SmolLM2-135M-Instruct": 135,
+    "HuggingFaceTB/SmolLM2-360M-Instruct": 360,
+    "Qwen/Qwen2.5-0.5B-Instruct": 500,
+    "Qwen/Qwen2.5-1.5B-Instruct": 1500,
+    "Qwen/Qwen2.5-3B-Instruct": 3000,
+    "Qwen/Qwen2.5-Coder-1.5B-Instruct": 1500,
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0": 1100,
+    "microsoft/phi-2": 2700,
+}
 
 
 def _coerce_float(value: Any, default: float | None = None) -> float | None:
@@ -201,18 +246,80 @@ def _cell_quality(experiment: Experiment) -> tuple[float | None, str]:
     return None, "pending"
 
 
+def _cell_cost(experiment: Experiment, cost_kind: str) -> tuple[float | None, str]:
+    """Return (cost lower=better, source) for the chosen ``cost_kind``.
+
+    ``None`` means the cost is genuinely unavailable for this cell (the most
+    common case is wall-clock asked for before the cell finishes). The
+    Pareto annotator skips cells with ``None`` cost; the UI surfaces them
+    with a "cost pending" status rather than guessing.
+    """
+    if cost_kind == "wall_clock_seconds":
+        started = experiment.started_at
+        completed = experiment.completed_at
+        if started is None or completed is None:
+            return None, "pending"
+        seconds = (completed - started).total_seconds()
+        # Negative deltas are impossible but defensive: a clock-skew
+        # artefact would yield a nonsense cost. Treat as missing.
+        if seconds < 0:
+            return None, "invalid"
+        return float(seconds), "wall_clock_seconds"
+
+    if cost_kind == "lora_r":
+        config = experiment.config or {}
+        rank = config.get("lora_r")
+        if rank is None:
+            # Cell predates the LoRA axis being a sweep dimension. Excluded
+            # rather than guessed.
+            return None, "missing_lora_r"
+        try:
+            return float(rank), "lora_r"
+        except (TypeError, ValueError):
+            return None, "invalid"
+
+    if cost_kind == "base_params_m":
+        params = BASE_MODEL_PARAMS_M.get(experiment.base_model or "")
+        if params is None:
+            return None, "unknown_base_model"
+        return float(params), "base_params_m"
+
+    # Unsupported cost_kind: defensive fall-through. Public callers go
+    # through ``get_sweep_pareto`` which validates first, so this only
+    # fires for code paths that bypass validation. Returning None is
+    # safer than raising mid-loop.
+    return None, "unsupported_cost_kind"
+
+
 async def get_sweep_pareto(
-    db: AsyncSession, project_id: int, sweep_id: str
+    db: AsyncSession,
+    project_id: int,
+    sweep_id: str,
+    *,
+    cost_kind: str = DEFAULT_COST_KIND,
 ) -> dict[str, Any]:
     """Aggregate a sweep's cells into a quality-vs-cost Pareto matrix.
 
-    Completed cells with a quality signal are annotated on the frontier
-    (quality ↑ vs LoRA rank ↓). Cells still training have ``quality_score=None``
-    and are excluded from the frontier annotation but listed with their status.
+    ``cost_kind`` picks the cost axis (see module docstring). Default is
+    ``"wall_clock_seconds"`` — the honest one. Cells with a missing cost
+    for the chosen axis (e.g. wall-clock asked for before the cell
+    finishes, or ``base_params_m`` asked for on an unrecognized model id)
+    are listed with ``cost_score=None`` and excluded from frontier
+    annotation, so the panel can render them as "cost pending" without
+    polluting the frontier.
+
+    Completed cells with both a quality and a cost signal are annotated
+    on the frontier (quality ↑ vs ``cost_kind`` ↓).
     """
     token = str(sweep_id or "").strip()
     if not token:
         raise ValueError("sweep_id is required.")
+
+    if cost_kind not in SUPPORTED_COST_KINDS:
+        raise ValueError(
+            f"Unsupported cost_kind '{cost_kind}'. "
+            f"Supported: {', '.join(SUPPORTED_COST_KINDS)}."
+        )
 
     result = await db.execute(
         select(Experiment)
@@ -232,6 +339,7 @@ async def get_sweep_pareto(
         sweep_meta = dict((exp.config or {}).get("_sweep") or {})
         axis_values = dict(sweep_meta.get("axis_values") or {})
         quality, quality_source = _cell_quality(exp)
+        cost, cost_source = _cell_cost(exp, cost_kind)
         status = exp.status.value if hasattr(exp.status, "value") else str(exp.status)
         rows.append(
             {
@@ -246,20 +354,34 @@ async def get_sweep_pareto(
                 "final_eval_loss": _coerce_float(exp.final_eval_loss),
                 "quality_score": quality,
                 "quality_source": quality_source,
+                "cost_score": cost,
+                "cost_source": cost_source,
             }
         )
 
-    scored = [r for r in rows if r["quality_score"] is not None]
-    annotate_pareto_frontier(scored, quality_key=QUALITY_KEY, cost_key=COST_KEY)
+    # Frontier annotation needs BOTH a quality and a cost signal — a cell
+    # that has quality but no cost (or vice versa) is genuinely off the
+    # 2D plot, not on the frontier. Don't downgrade either signal by
+    # filling None with a default.
+    scored = [
+        r for r in rows
+        if r["quality_score"] is not None and r["cost_score"] is not None
+    ]
+    annotate_pareto_frontier(scored, quality_key=QUALITY_KEY, cost_key="cost_score")
     for row in rows:
-        if row["quality_score"] is None:
+        if row["quality_score"] is None or row["cost_score"] is None:
             row["pareto_optimal"] = False
             row["dominated_by"] = []
 
     optimal_labels = [r["label"] for r in scored if r.get("pareto_optimal")]
+    # "Best" = highest quality among scored cells, ties broken by lowest cost.
+    # This is the cell the promote-the-winner button targets.
     best = None
     if scored:
-        best = max(scored, key=lambda r: float(r["quality_score"]))
+        best = min(
+            scored,
+            key=lambda r: (-float(r["quality_score"]), float(r["cost_score"])),
+        )
 
     return {
         "sweep_id": token,
@@ -269,9 +391,12 @@ async def get_sweep_pareto(
         "cells": rows,
         "pareto": {
             "quality_key": QUALITY_KEY,
-            "cost_key": COST_KEY,
+            "cost_key": "cost_score",
+            "cost_kind": cost_kind,
             "optimal_labels": optimal_labels,
         },
+        "cost_kind": cost_kind,
+        "supported_cost_kinds": list(SUPPORTED_COST_KINDS),
         "best_label": best["label"] if best else None,
         "best_experiment_id": best["experiment_id"] if best else None,
     }

@@ -292,6 +292,16 @@ Pre-training "will this clear gates?" prediction shown above the Preflight butto
 
 What kind of fine-tuning the trainer runs: `sft` (instruction), `dpo` (direct preference), `orpo` (odds-ratio preference), `classification`, `seq2seq`, `distillation` (offline KD against captured teacher logits — see [Knowledge distillation](#knowledge-distillation-kd)). Filtered by the chosen base model's capabilities.
 
+## Hyperparameter sweep · cost axis (`cost_kind`)
+
+Which axis the Pareto scatter uses to score "cost" in the hyperparameter bake-off. Three supported values, picked via the radio above the scatter (and as `?cost_kind=` on `GET .../training/sweeps/{sweep_id}`):
+
+- `wall_clock_seconds` — measured `completed_at - started_at` per cell. The honest default: real training time captured by the platform. Cells without timestamps surface as `cost_source="pending"` and sit out the scatter rather than being fabricated.
+- `lora_r` — adapter footprint proxy. Cheap and immediately available, but a fiction when `base_model` is also a swept axis (rank-16 on a 135M base does not cost what rank-16 on a 3B base costs).
+- `base_params_m` — base-model parameter count in millions. The right axis when the sweep varies `base_model` and you're reading the Pareto as a model-size trade-off. Models outside the platform catalog surface as `cost_source="unknown_base_model"`.
+
+Unsupported values return 400 from the API rather than silently falling back. See [Hyperparameter bake-off](../workflows/training.md#model--hyperparameter-bake-off-pareto).
+
 ## See also
 
 - [Reason-code taxonomy](../observability/failure-clusters.md#reason-code-taxonomy) — same table with more context.
