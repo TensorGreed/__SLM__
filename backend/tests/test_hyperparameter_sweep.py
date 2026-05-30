@@ -690,6 +690,179 @@ class SweepOrchestrationTests(unittest.TestCase):
         targets = asyncio.run(_check())
         self.assertEqual(targets, [0.85, 0.85])  # 2 cells, both annotated
 
+    # -- Winner-vs-gate honesty pass -----------------------------------
+    #
+    # evaluate_experiment_auto_gates is the real gate machinery. The tests
+    # below patch it to a small stub that takes the labels mapped to a
+    # gate outcome — keeping the test focused on verdict logic without
+    # dragging in the eval-pack contract.
+
+    def _patch_gate(self, outcomes: dict[str, dict]):
+        """Patch evaluate_experiment_auto_gates to return per-label outcomes.
+
+        Each value is a dict: {passed: bool, has_eval: bool, gate_count: int,
+        failed_ids?: list[str]}. Unknown labels return "no eval" so missing
+        from the dict means "not measurable" (gate_passed=None).
+        """
+        from unittest.mock import patch as _patch
+
+        async def _stub(db, *, project_id, experiment_id, **kwargs):
+            from sqlalchemy import select as _select
+            exp = (await db.execute(_select(Experiment).where(Experiment.id == experiment_id))).scalar_one()
+            meta = (exp.config or {}).get("_sweep") or {}
+            label = str(meta.get("label") or exp.name)
+            o = outcomes.get(label) or {}
+            has_eval = bool(o.get("has_eval"))
+            gate_count = int(o.get("gate_count", 1))
+            return {
+                "passed": bool(o.get("passed")),
+                "failed_gate_ids": list(o.get("failed_ids") or []),
+                "latest_eval_result_ids": {"task": 1} if has_eval else {},
+                "task_spec": {"gate_count": gate_count},
+                "pack_resolution": {"active_pack_id": "evalpack.test"},
+                "task_profile": "classification",
+            }
+
+        return _patch(
+            "app.services.evaluation_pack_service.evaluate_experiment_auto_gates",
+            _stub,
+        )
+
+    def test_verdict_promote_when_a_cell_clears_gate(self):
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        # r8 cleared the gate, r16 did not.
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8,
+            eval_pass_rate=0.9, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=60),
+        )
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r16",
+            status=ExperimentStatus.COMPLETED, lora_r=16,
+            eval_pass_rate=0.6, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=80),
+        )
+
+        with self._patch_gate({
+            "r8":  {"passed": True,  "has_eval": True, "gate_count": 2},
+            "r16": {"passed": False, "has_eval": True, "gate_count": 2,
+                    "failed_ids": ["acc_gte_0.8"]},
+        }):
+            out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+
+        self.assertEqual(out["verdict"], "promote")
+        self.assertEqual(out["gate_summary"]["pack_id"], "evalpack.test")
+        self.assertTrue(out["gate_summary"]["any_cell_cleared"])
+        self.assertEqual(out["gate_summary"]["measurable_count"], 2)
+        by_label = {c["label"]: c for c in out["cells"]}
+        self.assertTrue(by_label["r8"]["gate_passed"])
+        self.assertFalse(by_label["r16"]["gate_passed"])
+        self.assertEqual(by_label["r16"]["gate_failed_ids"], ["acc_gte_0.8"])
+
+    def test_verdict_inconclusive_when_no_cell_clears(self):
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8,
+            eval_pass_rate=0.5, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=60),
+        )
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r16",
+            status=ExperimentStatus.COMPLETED, lora_r=16,
+            eval_pass_rate=0.6, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=80),
+        )
+
+        with self._patch_gate({
+            "r8":  {"passed": False, "has_eval": True, "gate_count": 1, "failed_ids": ["acc"]},
+            "r16": {"passed": False, "has_eval": True, "gate_count": 1, "failed_ids": ["acc"]},
+        }):
+            out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+
+        self.assertEqual(out["verdict"], "inconclusive")
+        self.assertFalse(out["gate_summary"]["any_cell_cleared"])
+        self.assertIn("No completed cell cleared", out["verdict_reason"])
+
+    def test_verdict_pending_when_cells_still_running(self):
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        # One done (didn't clear), one still running.
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8,
+            eval_pass_rate=0.5, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=60),
+        )
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r16",
+            status=ExperimentStatus.RUNNING, lora_r=16, started_at=anchor,
+        )
+
+        with self._patch_gate({
+            "r8": {"passed": False, "has_eval": True, "gate_count": 1, "failed_ids": ["acc"]},
+        }):
+            out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+
+        self.assertEqual(out["verdict"], "pending")
+
+    def test_verdict_inconclusive_when_no_eval_results(self):
+        """All cells finished but none have eval results yet — still inconclusive,
+        with a reason that names the missing measurement (not "failed gate")."""
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8,
+            train_loss=1.5,  # has quality_source=train_loss, no eval results
+            started_at=anchor, completed_at=anchor + timedelta(seconds=60),
+        )
+
+        with self._patch_gate({
+            # r8 has no eval results from the stub's perspective.
+            "r8": {"passed": False, "has_eval": False, "gate_count": 1},
+        }):
+            out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+
+        self.assertEqual(out["verdict"], "inconclusive")
+        self.assertIn("not measurable", out["verdict_reason"])
+        by_label = {c["label"]: c for c in out["cells"]}
+        self.assertIsNone(by_label["r8"]["gate_passed"])
+
+    def test_zero_gate_pack_does_not_falsely_promote(self):
+        """A pack with zero gates would trivially return passed=True. The
+        annotation must treat that as 'not measurable', not 'cleared the gate' —
+        that's the vanity case this honesty pass is preventing."""
+        project_id = self._create_project()
+        sweep_id = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+        self._seed_cell(
+            project_id=project_id, sweep_id=sweep_id, label="r8",
+            status=ExperimentStatus.COMPLETED, lora_r=8,
+            eval_pass_rate=0.5, started_at=anchor,
+            completed_at=anchor + timedelta(seconds=60),
+        )
+
+        with self._patch_gate({
+            "r8": {"passed": True, "has_eval": True, "gate_count": 0},
+        }):
+            out = asyncio.run(_run_get(project_id, sweep_id, cost_kind="lora_r"))
+
+        # Zero-gate pack → measurable_count stays 0 → no cell cleared, no
+        # gate_passed annotation. Verdict is inconclusive ("not measurable").
+        self.assertEqual(out["verdict"], "inconclusive")
+        self.assertEqual(out["gate_summary"]["measurable_count"], 0)
+        self.assertFalse(out["gate_summary"]["any_cell_cleared"])
+        by_label = {c["label"]: c for c in out["cells"]}
+        self.assertIsNone(by_label["r8"]["gate_passed"])
+
     def test_quality_target_coerces_percent_input(self):
         """A user typing 85 (meaning 85%) is coerced to 0.85 — common typo."""
         project_id = self._create_project()

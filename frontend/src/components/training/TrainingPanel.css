@@ -1971,6 +1971,59 @@
     color: #ea580c;
 }
 
+.hp-sweep__badge--gate-pass {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--color-success, #22c55e);
+}
+
+.hp-sweep__badge--gate-fail {
+    background: rgba(239, 68, 68, 0.16);
+    color: #ef4444;
+}
+
+.hp-sweep__verdict {
+    margin: var(--space-sm) 0;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+}
+
+.hp-sweep__verdict--promote {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--color-success, #16a34a);
+}
+
+.hp-sweep__verdict--inconclusive {
+    background: rgba(234, 88, 12, 0.12);
+    color: #ea580c;
+}
+
+.hp-sweep__verdict--pending {
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text-secondary, var(--text-muted));
+}
+
+.hp-sweep__verdict-label {
+    font-weight: 600;
+}
+
+.hp-sweep__verdict-pack {
+    color: var(--text-secondary, var(--text-muted));
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 12px;
+}
+
+.hp-sweep__verdict-reason {
+    margin-top: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+}
+
+.hp-sweep__verdict-handoff {
+    margin-top: 4px;
+    font-size: 12px;
+}
+
 /* -- WarmStartDeltaChart (Epic B/C) ------------------------------------- */
 .warmstart-delta {
     margin: var(--space-md) 0;

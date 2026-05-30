@@ -317,6 +317,16 @@ Dollars are deliberately not reported — GPU cost depends on the runtime backen
 
 Threshold the orchestrator uses to decide "winner found — cancel the rest of the sweep". Stored on each cell's `_sweep.quality_target` at dispatch. The watcher is lazy-on-fetch: the panel polls `get_sweep_pareto` every 4s while cells train, and that endpoint checks "did any completed cell clear the target?" — if yes and other cells are still running, it fires `cancel_training` against them and annotates each row with `cancelled_by_target=true`. The launcher accepts either decimal (`0.85`) or percent (`85`) form; the percent form is coerced. Blank target = run the full grid to completion (legacy behaviour).
 
+## Sweep verdict · promote / inconclusive / pending
+
+Three-state outcome on a hyperparameter sweep, surfaced by `get_sweep_pareto` after running each completed cell through `evaluate_experiment_auto_gates`:
+
+- `promote` — at least one cell cleared the project's evaluation pack gate. The UI offers promote-to-base backed by a real signal.
+- `inconclusive` — every completed cell has eval results but none cleared the gate. The UI surfaces "nobody cleared <gate>" and links to the failure-cluster panel rather than letting the user quietly promote a sub-gate winner.
+- `pending` — cells are still running, or completed cells don't have eval results yet (`gate_passed=null`).
+
+Per-cell, `gate_passed ∈ {true, false, null}` and `gate_failed_ids` lists the specific gate IDs the cell missed. A pack with zero gates is treated as `not measurable` (gate_passed=null) — passing trivially when no gates exist is exactly the vanity behaviour the honesty pass prevents. See [Winner-vs-gate verdict](../workflows/training.md#winner-vs-gate-verdict).
+
 ## See also
 
 - [Reason-code taxonomy](../observability/failure-clusters.md#reason-code-taxonomy) — same table with more context.

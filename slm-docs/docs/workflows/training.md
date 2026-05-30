@@ -119,6 +119,16 @@ The launcher also takes a **quality target** (eval pass-rate threshold, e.g. `0.
 
 The watcher is **lazy-on-fetch**: there's no background worker; the frontend polls `get-Pareto` every 4s while cells are training, and that endpoint does the check + fires `cancel_training` on the running cells. Cancelled cells get a `cancelled_by_target=true` annotation on their row and a "cancelled · target hit" badge in the UI. Cancellation is best-effort; a cell that finishes between our status read and the cancel call just shows up as completed on the next poll, which is fine — no wasted refund logic. Leave the field blank to run the full grid to completion (legacy behaviour).
 
+### Winner-vs-gate verdict
+
+The sweep's `best_label` is whoever has the highest `quality_score`, even if that "best" never cleared the project's evaluation gate. The honest layer on top runs each completed cell through `evaluate_experiment_auto_gates` and surfaces a three-state verdict:
+
+- `promote` — at least one completed cell cleared the project's evaluation pack gate. The UI renders a green banner naming the pack (`evalpack.demo`, etc.) and the winner row gets a `gate ✓` badge. This is the only state where a promote-to-base action is honest.
+- `inconclusive` — every completed cell has eval results but none cleared the gate. The UI renders an amber banner with the gate name + a one-line handoff: *"Open the Failure clusters panel to see why each cell missed."* Each cell row gets a `gate ✗ · <gate_id>` badge so the user can see which gate failed without opening the cell.
+- `pending` — cells are still running, or completed cells don't have eval results yet (`gate_passed=null`). No promote/inconclusive claim made; the banner reads "Gate verdict pending" without a failure-cluster handoff.
+
+A pack with zero gates would trivially return `passed=True` for every cell — that's exactly the vanity case the honesty pass is preventing. The annotator detects `gate_count == 0` and treats the cell as "not measurable" (`gate_passed=null`) rather than letting "no gates configured" masquerade as "winner found".
+
 ## Trainability forecast
 
 The **trainability forecast** runs *before* preflight, on the Training Config page. It looks at the project's recipe + gold set + base model and predicts whether the upcoming run is likely to clear the default Auto-Gates. Advisory only — it never blocks the run; if the verdict is amber/red the Train button just relabels to "Train anyway".

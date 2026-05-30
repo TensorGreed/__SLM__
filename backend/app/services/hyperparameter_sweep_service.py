@@ -452,6 +452,22 @@ async def get_sweep_pareto(
                 rows=rows,
             )
 
+    # Winner-vs-gate honesty pass. quality_score being the highest across the
+    # sweep doesn't mean the winner is actually any *good* — it just means
+    # it's the least-bad. Run each completed cell against the project's eval
+    # pack gate and surface whether any cell genuinely cleared the bar.
+    # Three verdicts:
+    #   promote      — some cell cleared the gate; UI can offer promote-to-base.
+    #   inconclusive — every completed cell has an eval result but none cleared
+    #                  the gate. UI surfaces "nobody cleared <X>" + handoff to
+    #                  the failure-cluster panel.
+    #   pending      — cells are still running OR cleared cells have no eval
+    #                  results yet. No claim either way.
+    gate_summary = await _annotate_cell_gates(
+        db, project_id=project_id, experiments=experiments, rows=rows,
+    )
+    verdict, verdict_reason = _compute_verdict(rows=rows, gate_summary=gate_summary)
+
     return {
         "sweep_id": token,
         "project_id": project_id,
@@ -472,6 +488,9 @@ async def get_sweep_pareto(
         "target_hit": target_hit,
         "target_hit_label": target_hit_label,
         "cancelled_by_target": cancelled_now,
+        "verdict": verdict,
+        "verdict_reason": verdict_reason,
+        "gate_summary": gate_summary,
     }
 
 
@@ -532,6 +551,135 @@ async def _cancel_still_running_cells(
             # will reflect the real state on the next poll regardless.
             continue
     return cancelled
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Winner-vs-gate honesty pass.
+#
+# best_label is whoever has the highest quality_score in the sweep — even
+# if that "best" is below the project's quality gate. Running each cell
+# through the project's evaluation pack tells us whether any cell actually
+# cleared the bar. The verdict is:
+#
+#   promote      — some completed cell cleared the project's gate. UI shows
+#                  a "promote to base" affordance backed by a real signal.
+#   inconclusive — every completed cell has eval results but none cleared
+#                  the gate. UI surfaces "nobody cleared <X>" and links the
+#                  user to the failure-cluster panel rather than letting
+#                  them quietly promote a sub-gate winner.
+#   pending      — cells are still running, OR completed cells don't have
+#                  eval results yet (gate_passed=None). No claim.
+#
+# This matches the "Honest metrics, no vanity" memory: never declare an
+# all-green sweep when nobody actually cleared the bar.
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def _annotate_cell_gates(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    experiments: list[Experiment],
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Run each cell with eval results through the project's evaluation pack
+    gate. Mutates ``rows`` in place to set ``gate_passed`` and
+    ``gate_failed_ids`` per cell. Returns a top-level summary dict naming
+    the pack + counts that the UI can surface.
+
+    A cell is annotated as:
+      gate_passed=True  → evaluation pack returned passed=True
+      gate_passed=False → eval results exist but pack returned passed=False;
+                          failed_gate_ids carry the specific gate names
+      gate_passed=None  → no eval results yet, or no pack configured, or
+                          the pack errored. Surfaced as "not measurable".
+    """
+    from app.services.evaluation_pack_service import evaluate_experiment_auto_gates
+
+    pack_id: str | None = None
+    task_profile: str | None = None
+    any_cleared = False
+    measured_count = 0
+    measurable_count = 0
+    label_to_row = {r["label"]: r for r in rows}
+
+    for exp in experiments:
+        meta = (exp.config or {}).get("_sweep") or {}
+        label = str(meta.get("label") or exp.name)
+        row = label_to_row.get(label)
+        if row is None:
+            continue
+        # Default to "not measurable yet"; only override on a real signal.
+        row["gate_passed"] = None
+        row["gate_failed_ids"] = []
+        try:
+            result = await evaluate_experiment_auto_gates(
+                db,
+                project_id=project_id,
+                experiment_id=int(exp.id),
+            )
+        except Exception:
+            # No pack, no project, experiment missing — surface as "not
+            # measurable" rather than crashing the Pareto fetch.
+            continue
+        # Capture the pack/profile once; every cell shares the same gate.
+        if pack_id is None:
+            pack_resolution = result.get("pack_resolution") or {}
+            pack_id = pack_resolution.get("active_pack_id") or pack_resolution.get("preferred_pack_id")
+            task_profile = result.get("task_profile")
+        latest_ids = result.get("latest_eval_result_ids") or {}
+        if not latest_ids:
+            # No eval has been computed for this cell yet. Distinct from
+            # "gate failed" — the cell isn't measurable until eval runs.
+            continue
+        # A pack with zero gates would return passed=True trivially. Don't
+        # let "no gates configured" masquerade as "cleared the gate" —
+        # that's exactly the vanity case the honesty pass is preventing.
+        task_spec = result.get("task_spec") or {}
+        gate_count = int(task_spec.get("gate_count") or 0)
+        if gate_count <= 0:
+            continue
+        measurable_count += 1
+        passed = bool(result.get("passed"))
+        row["gate_passed"] = passed
+        row["gate_failed_ids"] = list(result.get("failed_gate_ids") or [])
+        if passed:
+            any_cleared = True
+        measured_count += 1
+
+    return {
+        "pack_id": pack_id,
+        "task_profile": task_profile,
+        "measurable_count": measurable_count,
+        "any_cell_cleared": any_cleared,
+    }
+
+
+def _compute_verdict(
+    *,
+    rows: list[dict[str, Any]],
+    gate_summary: dict[str, Any],
+) -> tuple[str, str]:
+    """Compute the (verdict, reason) pair from per-cell gate annotations.
+
+    See module docstring for the three-state semantics. The reason string
+    is short and meant to be rendered directly under the verdict badge.
+    """
+    if gate_summary.get("any_cell_cleared"):
+        return "promote", "At least one cell cleared the project gate."
+
+    has_running = any(r["status"] in {"running", "pending", "queued"} for r in rows)
+    measurable = int(gate_summary.get("measurable_count") or 0)
+
+    if has_running and measurable == 0:
+        return "pending", "Cells still training; gate verdict pending."
+    if has_running:
+        return "pending", "Some cells finished without clearing the gate; others still running."
+    if measurable == 0:
+        # All cells are done (or cancelled) but no eval results exist for
+        # any of them. Common when training failed before eval ran.
+        return "inconclusive", "No cell produced eval results; gate is not measurable."
+    return "inconclusive", "No completed cell cleared the project gate."
 
 
 # ─────────────────────────────────────────────────────────────────────

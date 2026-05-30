@@ -36,7 +36,13 @@ interface SweepCell {
     pareto_optimal?: boolean;
     dominated_by?: string[];
     cancelled_by_target?: boolean;
+    // null = not measurable yet (no eval results / no pack);
+    // true/false = pack ran and (cleared / didn't clear) the gate.
+    gate_passed?: boolean | null;
+    gate_failed_ids?: string[];
 }
+
+type Verdict = 'promote' | 'inconclusive' | 'pending';
 
 interface SweepResponse {
     sweep_id: string;
@@ -51,6 +57,14 @@ interface SweepResponse {
     target_hit?: boolean;
     target_hit_label?: string | null;
     cancelled_by_target?: string[];
+    verdict?: Verdict;
+    verdict_reason?: string;
+    gate_summary?: {
+        pack_id?: string | null;
+        task_profile?: string | null;
+        measurable_count?: number;
+        any_cell_cleared?: boolean;
+    };
 }
 
 interface PreflightBudget {
@@ -377,6 +391,33 @@ export default function HyperparameterSweepPanel({
                         </div>
                     )}
 
+                    {sweep.verdict && (
+                        <div
+                            className={`hp-sweep__verdict hp-sweep__verdict--${sweep.verdict}`}
+                            data-testid="hp-verdict"
+                            data-verdict={sweep.verdict}
+                        >
+                            <strong className="hp-sweep__verdict-label">
+                                {sweep.verdict === 'promote' && '✓ Winner cleared the gate'}
+                                {sweep.verdict === 'inconclusive' && 'Inconclusive — nobody cleared the gate'}
+                                {sweep.verdict === 'pending' && 'Gate verdict pending'}
+                            </strong>
+                            {sweep.gate_summary?.pack_id && (
+                                <span className="hp-sweep__verdict-pack">
+                                    {' · '}{sweep.gate_summary.pack_id}
+                                </span>
+                            )}
+                            {sweep.verdict_reason && (
+                                <div className="hp-sweep__verdict-reason">{sweep.verdict_reason}</div>
+                            )}
+                            {sweep.verdict === 'inconclusive' && sweep.gate_summary?.measurable_count !== 0 && (
+                                <div className="hp-sweep__verdict-handoff">
+                                    Open the <a className="inline-link" href="#failure-clusters">Failure clusters</a> panel to see why each cell missed.
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     <div
                         className="hp-sweep__cost-picker"
                         aria-label={`Cost axis — currently ${axisMeta.label}`}
@@ -460,6 +501,30 @@ export default function HyperparameterSweepPanel({
                                                 title="Stopped early because another cell hit the quality target"
                                             >
                                                 cancelled · target hit
+                                            </span>
+                                        )}
+                                        {c.gate_passed === true && (
+                                            <span
+                                                className="hp-sweep__badge hp-sweep__badge--gate-pass"
+                                                data-testid={`hp-row-${c.label}-gate-pass`}
+                                                title="Cleared the project's evaluation gate"
+                                            >
+                                                gate ✓
+                                            </span>
+                                        )}
+                                        {c.gate_passed === false && (
+                                            <span
+                                                className="hp-sweep__badge hp-sweep__badge--gate-fail"
+                                                data-testid={`hp-row-${c.label}-gate-fail`}
+                                                title={
+                                                    c.gate_failed_ids && c.gate_failed_ids.length
+                                                        ? `Failed: ${c.gate_failed_ids.join(', ')}`
+                                                        : 'Did not clear the project gate'
+                                                }
+                                            >
+                                                gate ✗{c.gate_failed_ids && c.gate_failed_ids.length
+                                                    ? ` · ${c.gate_failed_ids[0]}${c.gate_failed_ids.length > 1 ? '…' : ''}`
+                                                    : ''}
                                             </span>
                                         )}
                                     </span>

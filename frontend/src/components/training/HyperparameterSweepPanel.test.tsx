@@ -267,6 +267,100 @@ describe('HyperparameterSweepPanel', () => {
         });
     });
 
+    it('renders verdict=promote with the gate pass badge on the winner row', async () => {
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+        const promoteSweep = {
+            ...SWEEP_WALL_CLOCK,
+            verdict: 'promote',
+            verdict_reason: 'At least one cell cleared the project gate.',
+            gate_summary: { pack_id: 'evalpack.demo', task_profile: 'classification', measurable_count: 4, any_cell_cleared: true },
+            cells: SWEEP_WALL_CLOCK.cells.map((c) =>
+                c.label === 'r16-lr0.0002'
+                    ? { ...c, gate_passed: true, gate_failed_ids: [] }
+                    : { ...c, gate_passed: false, gate_failed_ids: ['acc_gte_0.8'] },
+            ),
+        };
+        apiMock.get.mockResolvedValue({ data: promoteSweep });
+
+        const user = userEvent.setup();
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+        await user.click(screen.getByRole('button', { name: /Run sweep/ }));
+
+        await waitFor(() => {
+            const verdict = screen.getByTestId('hp-verdict');
+            expect(verdict.getAttribute('data-verdict')).toBe('promote');
+            expect(verdict.textContent).toMatch(/Winner cleared the gate/);
+            expect(verdict.textContent).toMatch(/evalpack\.demo/);
+        });
+        // Winner row gets the gate-pass badge.
+        await waitFor(() => {
+            expect(screen.getByTestId('hp-row-r16-lr0.0002-gate-pass')).toBeInTheDocument();
+        });
+        // Other rows get the gate-fail badge with the failing gate name.
+        const failBadge = screen.getByTestId('hp-row-r8-lr0.0002-gate-fail');
+        expect(failBadge.textContent).toMatch(/acc_gte_0\.8/);
+    });
+
+    it('renders verdict=inconclusive with the failure-cluster handoff', async () => {
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+        const inconclusiveSweep = {
+            ...SWEEP_WALL_CLOCK,
+            verdict: 'inconclusive',
+            verdict_reason: 'No completed cell cleared the project gate.',
+            gate_summary: { pack_id: 'evalpack.demo', task_profile: 'classification', measurable_count: 4, any_cell_cleared: false },
+            cells: SWEEP_WALL_CLOCK.cells.map((c) => ({ ...c, gate_passed: false, gate_failed_ids: ['acc_gte_0.8'] })),
+        };
+        apiMock.get.mockResolvedValue({ data: inconclusiveSweep });
+
+        const user = userEvent.setup();
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+        await user.click(screen.getByRole('button', { name: /Run sweep/ }));
+
+        await waitFor(() => {
+            const verdict = screen.getByTestId('hp-verdict');
+            expect(verdict.getAttribute('data-verdict')).toBe('inconclusive');
+            expect(verdict.textContent).toMatch(/Inconclusive/);
+            expect(verdict.textContent).toMatch(/No completed cell cleared/);
+            expect(verdict.textContent).toMatch(/Failure clusters/);
+        });
+    });
+
+    it('renders verdict=pending without a failure-cluster handoff', async () => {
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+        const pendingSweep = {
+            ...SWEEP_WALL_CLOCK,
+            verdict: 'pending',
+            verdict_reason: 'Cells still training; gate verdict pending.',
+            gate_summary: { pack_id: 'evalpack.demo', task_profile: 'classification', measurable_count: 0, any_cell_cleared: false },
+            cells: SWEEP_WALL_CLOCK.cells.map((c) => ({ ...c, status: 'running', gate_passed: null })),
+        };
+        apiMock.get.mockResolvedValue({ data: pendingSweep });
+
+        const user = userEvent.setup();
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+        await user.click(screen.getByRole('button', { name: /Run sweep/ }));
+
+        await waitFor(() => {
+            const verdict = screen.getByTestId('hp-verdict');
+            expect(verdict.getAttribute('data-verdict')).toBe('pending');
+            expect(verdict.textContent).toMatch(/Gate verdict pending/);
+            // No "Failure clusters" handoff during pending.
+            expect(verdict.textContent).not.toMatch(/Failure clusters/);
+        });
+        // Cells with gate_passed=null get neither badge.
+        expect(screen.queryByTestId('hp-row-r8-lr0.0002-gate-pass')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('hp-row-r8-lr0.0002-gate-fail')).not.toBeInTheDocument();
+    });
+
     it('surfaces "cost pending" when the chosen axis has no signal yet', async () => {
         // Cell completed but no wall-clock recorded — the backend returns
         // cost_score=null with cost_source="pending". The panel should drop
