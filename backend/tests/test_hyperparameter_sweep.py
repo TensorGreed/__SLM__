@@ -41,6 +41,7 @@ from app.config import settings  # noqa: E402
 from app.database import async_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.experiment import EvalResult, Experiment, ExperimentStatus, TrainingMode  # noqa: E402
+from app.models.sweep import Sweep  # noqa: E402
 from app.services.hyperparameter_sweep_service import (  # noqa: E402
     DEFAULT_NO_HISTORY_SECONDS_PER_CELL,
     MAX_SWEEP_CELLS,
@@ -862,6 +863,186 @@ class SweepOrchestrationTests(unittest.TestCase):
         self.assertFalse(out["gate_summary"]["any_cell_cleared"])
         by_label = {c["label"]: c for c in out["cells"]}
         self.assertIsNone(by_label["r8"]["gate_passed"])
+
+    # -- First-class Sweep table (option a refactor) -------------------
+
+    def test_start_sweep_persists_first_class_sweep_row(self):
+        """start_hyperparameter_sweep must write a Sweep row and link
+        every cell's experiments.sweep_id FK back to it."""
+        project_id = self._create_project()
+
+        async def _noop_start(db, pid, eid):
+            return {"experiment_id": eid, "status": "running"}
+
+        async def _run():
+            async with async_session_factory() as db:
+                with patch("app.services.training_service.start_training", _noop_start):
+                    out = await start_hyperparameter_sweep(
+                        db, project_id, base_model=BASE,
+                        lora_r_values=[8, 16], learning_rate_values=[2e-4],
+                        quality_target=0.85,
+                    )
+                await db.commit()
+                return out
+
+        result = asyncio.run(_run())
+        token = result["sweep_id"]
+
+        async def _check():
+            async with async_session_factory() as db:
+                from sqlalchemy import select as _select
+                sweep = (await db.execute(
+                    _select(Sweep).where(
+                        Sweep.project_id == project_id,
+                        Sweep.sweep_id == token,
+                    )
+                )).scalar_one_or_none()
+                cells = (await db.execute(
+                    _select(Experiment).where(Experiment.project_id == project_id)
+                )).scalars().all()
+                return sweep, cells
+
+        sweep, cells = asyncio.run(_check())
+        # Sweep row materialised with the right metadata.
+        self.assertIsNotNone(sweep)
+        assert sweep is not None
+        self.assertEqual(sweep.base_model, BASE)
+        self.assertEqual(sweep.quality_target, 0.85)
+        self.assertEqual(sweep.requested_cells, 2)
+        self.assertEqual(sweep.axes["lora_r"], [8, 16])
+        # Every cell points back to the Sweep via the FK column.
+        self.assertEqual(len(cells), 2)
+        for cell in cells:
+            self.assertEqual(cell.sweep_id, int(sweep.id))
+
+    def test_get_sweep_pareto_uses_fk_when_sweep_row_exists(self):
+        """A Sweep row + FK'd cells works as the primary read path."""
+        project_id = self._create_project()
+        sweep_token = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+
+        async def _seed():
+            async with async_session_factory() as db:
+                sweep = Sweep(
+                    project_id=project_id, sweep_id=sweep_token,
+                    base_model=BASE, requested_cells=2,
+                    axes={"lora_r": [8, 16]},
+                )
+                db.add(sweep)
+                await db.flush()
+                # Seed two cells linked via the FK ONLY — note that we
+                # also write the legacy breadcrumb so the legacy
+                # fallback path doesn't accidentally catch the test in
+                # case the FK read had a bug.
+                for label, rank, loss in [("r8", 8, 2.0), ("r16", 16, 1.5)]:
+                    db.add(Experiment(
+                        project_id=project_id, sweep_id=int(sweep.id),
+                        name=f"sweep-{sweep_token}-{label}", base_model=BASE,
+                        training_mode=TrainingMode.SFT,
+                        status=ExperimentStatus.COMPLETED,
+                        final_train_loss=loss,
+                        started_at=anchor,
+                        completed_at=anchor + timedelta(seconds=60),
+                        config={"lora_r": rank, "_sweep": {
+                            "sweep_id": sweep_token, "label": label,
+                            "cell_index": rank,
+                            "axis_values": {"lora_r": rank, "learning_rate": 2e-4},
+                        }},
+                    ))
+                await db.commit()
+
+        asyncio.run(_seed())
+        out = asyncio.run(_run_get(project_id, sweep_token, cost_kind="lora_r"))
+        # Same shape as the legacy-fallback path — the test is asserting
+        # that the FK lookup returns identical results.
+        self.assertEqual(out["cell_count"], 2)
+        self.assertEqual(out["completed_count"], 2)
+        labels = {c["label"] for c in out["cells"]}
+        self.assertEqual(labels, {"r8", "r16"})
+
+    def test_list_project_sweeps_reads_table_first_with_richer_payload(self):
+        """list_project_sweeps returns Sweep-table rows with cell_count
+        + base_model + quality_target so the history sidebar can render
+        without another roundtrip."""
+        project_id = self._create_project()
+        token = uuid.uuid4().hex[:12]
+        anchor = datetime(2026, 5, 30, 12, 0, 0, tzinfo=timezone.utc)
+
+        async def _seed():
+            async with async_session_factory() as db:
+                sweep = Sweep(
+                    project_id=project_id, sweep_id=token,
+                    base_model=BASE, requested_cells=3, quality_target=0.9,
+                    axes={"lora_r": [8, 16, 32]},
+                    created_at=anchor,
+                )
+                db.add(sweep)
+                await db.flush()
+                db.add(Experiment(
+                    project_id=project_id, sweep_id=int(sweep.id),
+                    name=f"sweep-{token}-r8", base_model=BASE,
+                    training_mode=TrainingMode.SFT,
+                    status=ExperimentStatus.COMPLETED,
+                    config={"lora_r": 8, "_sweep": {"sweep_id": token, "label": "r8",
+                            "cell_index": 0,
+                            "axis_values": {"lora_r": 8, "learning_rate": 2e-4}}},
+                ))
+                await db.commit()
+
+        asyncio.run(_seed())
+
+        async def _run():
+            async with async_session_factory() as db:
+                return await list_project_sweeps(db, project_id)
+
+        out = asyncio.run(_run())
+        # Find this test's sweep (other tests may have left rows behind).
+        entry = next((s for s in out["sweeps"] if s["sweep_id"] == token), None)
+        self.assertIsNotNone(entry)
+        assert entry is not None
+        self.assertEqual(entry["cell_count"], 1)
+        self.assertEqual(entry["requested_cells"], 3)
+        self.assertEqual(entry["base_model"], BASE)
+        self.assertEqual(entry["quality_target"], 0.9)
+        self.assertIsNotNone(entry["created_at"])
+
+    def test_list_project_sweeps_legacy_fallback_for_pre_migration_data(self):
+        """A sweep that only exists as a config breadcrumb (no Sweep
+        row yet) still shows in the sidebar — important during the
+        migration window and for tests like the existing 22."""
+        project_id = self._create_project()
+        sweep_token = uuid.uuid4().hex[:12]
+
+        async def _seed():
+            async with async_session_factory() as db:
+                # No Sweep row, just the legacy breadcrumb.
+                db.add(Experiment(
+                    project_id=project_id,
+                    name=f"sweep-{sweep_token}-r8", base_model=BASE,
+                    training_mode=TrainingMode.SFT,
+                    status=ExperimentStatus.COMPLETED,
+                    config={"lora_r": 8, "_sweep": {"sweep_id": sweep_token, "label": "r8",
+                            "cell_index": 0,
+                            "axis_values": {"lora_r": 8, "learning_rate": 2e-4}}},
+                ))
+                await db.commit()
+
+        asyncio.run(_seed())
+
+        async def _run():
+            async with async_session_factory() as db:
+                return await list_project_sweeps(db, project_id)
+
+        out = asyncio.run(_run())
+        entry = next((s for s in out["sweeps"] if s["sweep_id"] == sweep_token), None)
+        self.assertIsNotNone(entry)
+        assert entry is not None
+        # Legacy entries surface with cell_count from the scan but
+        # created_at=None / axes=None (information we don't have without
+        # the Sweep row).
+        self.assertEqual(entry["cell_count"], 1)
+        self.assertIsNone(entry["created_at"])
+        self.assertEqual(entry["base_model"], BASE)
 
     def test_quality_target_coerces_percent_input(self):
         """A user typing 85 (meaning 85%) is coerced to 0.85 — common typo."""

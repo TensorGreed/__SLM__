@@ -138,7 +138,17 @@ The inconclusive verdict also surfaces as a **Coach Mode** card on the training 
 - Body that names the top-3 failed gates with cell counts (e.g. *"Gate(s) missed: acc_gte_0.8 (4 cells), f1_gte_0.7 (1 cell)"*) so the user can tell whether one gate dominates or the failure spreads across many.
 - A `navigate` action pointing at the `failure-clusters-panel` target — the front-end routes that to `/project/{id}/observability#failure-clusters` (the `id="failure-clusters"` anchor on the FailureClusterList section is the one this deep-link targets).
 
-The card stays silent on `promote` (the sweep panel already celebrates the winner) and on `pending` (premature). The dedicated `_inconclusive_sweep_nudge` helper finds the most-recent sweep id by scanning experiments newest-first and reading `config._sweep.sweep_id`, then calls `get_sweep_pareto` to check the verdict.
+The card stays silent on `promote` (the sweep panel already celebrates the winner) and on `pending` (premature). The dedicated `_inconclusive_sweep_nudge` helper reads the first row from the `sweeps` table ordered by `created_at desc` — a single index lookup rather than the legacy scan-every-experiment-then-decode-config breadcrumb pattern.
+
+### Sweep history sidebar + first-class `sweeps` table
+
+Sweeps used to live only as a JSON breadcrumb (`config._sweep.sweep_id`) on each cell `Experiment`. Every reader (`get_sweep_pareto`, `list_project_sweeps`, the coach nudge, the pre-flight budget query) had to scan all experiments for a project and filter by that breadcrumb — a JSON-decode-and-string-match join that scaled with the project's history, not with sweep count.
+
+Migration `20260530_0043_sweeps_first_class` introduces a real `sweeps` table (with `project_id`, `sweep_id` token, `base_model`, `recipe_id`, `axes`, `quality_target`, `requested_cells`, `created_at`) and an `experiments.sweep_id` FK column. Existing legacy data is backfilled in the same migration: each unique `config._sweep.sweep_id` token becomes a `Sweep` row, each cell's FK is set. SQLite quirk: the FK is declared at the ORM level only, no `ADD CONSTRAINT` in the migration.
+
+UI: a **history sidebar** above the launcher lists the most-recent 5 sweeps for the project with cell count, age (`2h ago` / `1d ago`), and the quality target if one was set. Clicking an entry switches the Pareto panel to that sweep's data (deep-link via `setSweepId` + the existing 4s poll). The first-class table makes the sidebar cheap — a single indexed query on `sweeps.project_id` instead of a project-wide experiment scan.
+
+Legacy fallback: `get_sweep_pareto` and `list_project_sweeps` still honour the old `config._sweep.sweep_id` breadcrumb when no matching `Sweep` row exists. This keeps the existing test suite (27 tests that seed cells without a Sweep row) green and protects the in-flight window between deploying the new code and running the alembic backfill.
 
 ## Trainability forecast
 

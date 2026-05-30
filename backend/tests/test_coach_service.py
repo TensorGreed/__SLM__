@@ -923,6 +923,13 @@ class CoachServiceSweepInconclusiveNudgeTests(unittest.IsolatedAsyncioTestCase):
         """Build a fake AsyncSession whose ``execute(...)`` returns a
         result yielding one experiment carrying ``sweep_id`` in its
         ``_sweep`` config (or yielding nothing when sweep_id is None).
+
+        The coach nudge first runs a ``select(Sweep).limit(1)`` query
+        (which calls ``.scalar_one_or_none()`` on the result); we return
+        ``None`` from that so the code falls through to the legacy
+        breadcrumb scan, which is what these tests are written against.
+        Once the Sweep table is populated everywhere, the same stub
+        can return a real Sweep record instead.
         """
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
@@ -941,6 +948,9 @@ class CoachServiceSweepInconclusiveNudgeTests(unittest.IsolatedAsyncioTestCase):
         class _ExecuteResult:
             def __init__(self, items): self._items = items
             def scalars(self): return _ScalarsResult(self._items)
+            # First call (the Sweep lookup) reads scalar_one_or_none ->
+            # None forces the legacy fallback path.
+            def scalar_one_or_none(self): return None
 
         db = SimpleNamespace()
         db.execute = AsyncMock(return_value=_ExecuteResult(rows))
@@ -1028,6 +1038,57 @@ class CoachServiceSweepInconclusiveNudgeTests(unittest.IsolatedAsyncioTestCase):
         # nothing rather than 500ing the coach response.
         result = await self._run(sweep_id="ghost", pareto=None)
         self.assertIsNone(result)
+
+    async def test_uses_first_class_sweep_row_when_available(self):
+        """Primary path: when a Sweep row exists, the nudge looks it up
+        in one query instead of scanning experiments. This test stubs
+        ``scalar_one_or_none`` to return a Sweep so the legacy fallback
+        branch is provably bypassed."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from app.services.coach_service import _inconclusive_sweep_nudge
+
+        fake_sweep = SimpleNamespace(sweep_id="sweep-from-table", id=99)
+
+        # First execute call (the Sweep lookup) yields the fake sweep
+        # row. Every other execute call also returns it, but the nudge
+        # only inspects scalar_one_or_none for the Sweep query and
+        # scalars() for the legacy fallback — neither of which should
+        # fire because the primary path returns the Sweep up front.
+        class _ExecuteResult:
+            def __init__(self): self._sweep = fake_sweep
+            def scalar_one_or_none(self): return self._sweep
+            def scalars(self):
+                # If this fires we've gone down the legacy path — test
+                # would observe by checking the sweep_id passed to
+                # get_sweep_pareto below.
+                return iter([])
+
+        db = SimpleNamespace()
+        db.execute = AsyncMock(return_value=_ExecuteResult())
+
+        observed_sweep_ids: list[str] = []
+
+        async def _stub_pareto(_db, _pid, sid):
+            observed_sweep_ids.append(sid)
+            return {
+                "sweep_id": sid,
+                "verdict": "inconclusive",
+                "verdict_reason": "No completed cell cleared the project gate.",
+                "cell_count": 1,
+                "gate_summary": {"pack_id": "evalpack.demo", "measurable_count": 1},
+                "cells": [{"label": "r8", "gate_passed": False, "gate_failed_ids": ["acc"]}],
+            }
+
+        with patch(
+            "app.services.hyperparameter_sweep_service.get_sweep_pareto",
+            side_effect=_stub_pareto,
+        ):
+            result = await _inconclusive_sweep_nudge(db, project_id=42)
+
+        self.assertIsNotNone(result)
+        # Hit the Sweep-table token, not a legacy breadcrumb.
+        self.assertEqual(observed_sweep_ids, ["sweep-from-table"])
 
 
 class CoachServiceEvalStageTests(unittest.IsolatedAsyncioTestCase):

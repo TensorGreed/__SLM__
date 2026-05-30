@@ -75,6 +75,23 @@ interface PreflightBudget {
     sample_size: number;
 }
 
+interface SweepHistoryEntry {
+    sweep_id: string;
+    cell_count: number;
+    requested_cells: number;
+    base_model: string;
+    recipe_id: string | null;
+    quality_target: number | null;
+    created_at: string | null;
+    axes: { lora_r?: number[]; learning_rate?: number[]; base_model?: string[] } | null;
+}
+
+interface SweepHistoryResponse {
+    project_id: number;
+    sweep_count: number;
+    sweeps: SweepHistoryEntry[];
+}
+
 interface HyperparameterSweepPanelProps {
     projectId: number;
     baseModel: string;
@@ -136,6 +153,21 @@ function formatDuration(seconds: number): string {
     return `${(seconds / 3600).toFixed(1)}h`;
 }
 
+// Relative-time formatter for the history sidebar. Sweeps that
+// completed an hour ago vs three days ago need different wording; the
+// sidebar isn't the place for an exact timestamp tooltip. The browser's
+// Intl.RelativeTimeFormat would be cleaner but it's overkill here.
+function formatAgo(iso: string | null): string {
+    if (!iso) return '—';
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return '—';
+    const delta = (Date.now() - t) / 1000;
+    if (delta < 60) return 'just now';
+    if (delta < 3600) return `${Math.round(delta / 60)}m ago`;
+    if (delta < 86400) return `${Math.round(delta / 3600)}h ago`;
+    return `${Math.round(delta / 86400)}d ago`;
+}
+
 // Human-friendly basis label. The "no_history" case is special — surface
 // it as "rough" so the user knows the number is a default, not measured.
 const BUDGET_BASIS_LABEL: Record<PreflightBudget['basis'], string> = {
@@ -177,7 +209,27 @@ export default function HyperparameterSweepPanel({
     const [sweep, setSweep] = useState<SweepResponse | null>(null);
     const [costKind, setCostKind] = useState<CostKind>('wall_clock_seconds');
     const [budget, setBudget] = useState<PreflightBudget | null>(null);
+    const [history, setHistory] = useState<SweepHistoryEntry[]>([]);
     const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // History sidebar — list past sweeps for the project. Re-fetches
+    // whenever the current sweepId changes (so launching a new sweep
+    // pulls it into the list) and on initial mount. Cheap call —
+    // backend hits the Sweep table directly.
+    const refreshHistory = useCallback(async () => {
+        try {
+            const res = await api.get<SweepHistoryResponse>(
+                `/projects/${projectId}/training/sweeps`,
+            );
+            setHistory(res.data?.sweeps || []);
+        } catch {
+            // History sidebar is non-critical — silent failure is fine.
+            setHistory([]);
+        }
+    }, [projectId]);
+    useEffect(() => {
+        void refreshHistory();
+    }, [refreshHistory, sweepId]);
 
     const cellEstimate = useMemo(() => {
         const ranks = parseNumbers(ranksText).length;
@@ -325,6 +377,48 @@ export default function HyperparameterSweepPanel({
                     Each cell is a real Experiment on <code>{baseModel}</code>. Pareto = quality vs {axisMeta.label.toLowerCase()}.
                 </span>
             </div>
+
+            {history.length > 0 && (
+                <div
+                    className="hp-sweep__history"
+                    data-testid="hp-history"
+                    aria-label="Past sweeps for this project"
+                >
+                    <span className="hp-sweep__history-label">Past sweeps:</span>
+                    <ul className="hp-sweep__history-list">
+                        {history.slice(0, 5).map((entry) => {
+                            const isCurrent = entry.sweep_id === sweepId;
+                            return (
+                                <li
+                                    key={entry.sweep_id}
+                                    className={`hp-sweep__history-item ${isCurrent ? 'is-current' : ''}`}
+                                >
+                                    <button
+                                        type="button"
+                                        className="hp-sweep__history-button"
+                                        data-testid={`hp-history-${entry.sweep_id}`}
+                                        data-current={isCurrent ? 'true' : 'false'}
+                                        onClick={() => setSweepId(entry.sweep_id)}
+                                        title={
+                                            entry.created_at
+                                                ? `${entry.sweep_id} · ${entry.base_model}`
+                                                : `${entry.sweep_id} · legacy sweep`
+                                        }
+                                    >
+                                        <span className="hp-sweep__history-id">{entry.sweep_id.slice(0, 8)}</span>
+                                        <span className="hp-sweep__history-meta">
+                                            {entry.cell_count}/{entry.requested_cells || entry.cell_count} cells · {formatAgo(entry.created_at)}
+                                            {entry.quality_target != null && (
+                                                <> · target {(entry.quality_target * 100).toFixed(0)}%</>
+                                            )}
+                                        </span>
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </div>
+            )}
 
             <div className="hp-sweep__controls">
                 <label className="hp-sweep__field">

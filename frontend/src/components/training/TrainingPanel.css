@@ -2024,6 +2024,70 @@
     font-size: 12px;
 }
 
+.hp-sweep__history {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin: var(--space-sm) 0;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: rgba(148, 163, 184, 0.05);
+    font-size: 12px;
+}
+
+.hp-sweep__history-label {
+    color: var(--text-secondary, var(--text-muted));
+    font-weight: 600;
+}
+
+.hp-sweep__history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.hp-sweep__history-button {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated, transparent);
+    color: var(--text-primary);
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+    line-height: 1.3;
+    text-align: left;
+}
+
+.hp-sweep__history-button:hover {
+    border-color: var(--color-primary, #2563eb);
+}
+
+.hp-sweep__history-button[data-current="true"] {
+    background: rgba(37, 99, 235, 0.14);
+    border-color: var(--color-primary, #2563eb);
+    color: var(--color-primary, #2563eb);
+}
+
+.hp-sweep__history-id {
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.hp-sweep__history-meta {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 10px;
+}
+
 /* -- WarmStartDeltaChart (Epic B/C) ------------------------------------- */
 .warmstart-delta {
     margin: var(--space-md) 0;

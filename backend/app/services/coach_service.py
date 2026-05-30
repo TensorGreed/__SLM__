@@ -1050,24 +1050,38 @@ async def _inconclusive_sweep_nudge(
     from sqlalchemy import select as _select
 
     from app.models.experiment import Experiment
+    from app.models.sweep import Sweep
     from app.services.hyperparameter_sweep_service import get_sweep_pareto
 
-    # Find the most-recent sweep id for the project. We sort by
-    # experiment.id desc (cheap and stable — created-at would also work
-    # but it's not indexed here) and pick the first cell that carries
-    # a ``_sweep.sweep_id``. Skips early when no sweeps have been run.
-    result = await db.execute(
-        _select(Experiment)
-        .where(Experiment.project_id == project_id)
-        .order_by(Experiment.id.desc())
+    # Primary lookup: one-row hit on the sweeps table, ordered by
+    # created_at desc. The legacy fallback below survives for tests +
+    # pre-migration projects that don't have Sweep rows yet.
+    sweep_result = await db.execute(
+        _select(Sweep)
+        .where(Sweep.project_id == project_id)
+        .order_by(Sweep.created_at.desc())
+        .limit(1)
     )
-    latest_sweep_id: str | None = None
-    for exp in result.scalars():
-        meta = (exp.config or {}).get("_sweep") or {}
-        sid = str(meta.get("sweep_id") or "").strip()
-        if sid:
-            latest_sweep_id = sid
-            break
+    latest_sweep_record = sweep_result.scalar_one_or_none()
+    latest_sweep_id: str | None = (
+        latest_sweep_record.sweep_id if latest_sweep_record is not None else None
+    )
+
+    if latest_sweep_id is None:
+        # Legacy fallback: scan experiments for the most-recent
+        # config._sweep.sweep_id breadcrumb. Only fires when no Sweep
+        # row exists yet (pre-migration data / tests).
+        result = await db.execute(
+            _select(Experiment)
+            .where(Experiment.project_id == project_id)
+            .order_by(Experiment.id.desc())
+        )
+        for exp in result.scalars():
+            meta = (exp.config or {}).get("_sweep") or {}
+            sid = str(meta.get("sweep_id") or "").strip()
+            if sid:
+                latest_sweep_id = sid
+                break
     if latest_sweep_id is None:
         return None
 

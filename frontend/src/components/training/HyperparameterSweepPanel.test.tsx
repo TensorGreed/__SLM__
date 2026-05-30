@@ -267,6 +267,84 @@ describe('HyperparameterSweepPanel', () => {
         });
     });
 
+    it('renders past sweeps in the history sidebar and switches sweepId on click', async () => {
+        // History fetch hits GET /sweeps and returns the enriched
+        // payload (Sweep-table rows with cell_count + created_at).
+        // Clicking a sweep button switches the panel's current sweep,
+        // triggering a fresh /sweeps/<id> fetch.
+        routedPost(
+            { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },
+            { sweep_id: 'sweep123', dispatched_cells: 4 },
+        );
+
+        const historyResp = {
+            project_id: 5,
+            sweep_count: 2,
+            sweeps: [
+                {
+                    sweep_id: 'aaaa1111aaaa',
+                    cell_count: 4,
+                    requested_cells: 4,
+                    base_model: 'm',
+                    recipe_id: 'classification',
+                    quality_target: 0.85,
+                    created_at: new Date(Date.now() - 3600_000).toISOString(),
+                    axes: { lora_r: [8, 16], learning_rate: [2e-4] },
+                },
+                {
+                    sweep_id: 'bbbb2222bbbb',
+                    cell_count: 2,
+                    requested_cells: 2,
+                    base_model: 'm',
+                    recipe_id: null,
+                    quality_target: null,
+                    created_at: new Date(Date.now() - 86400_000).toISOString(),
+                    axes: null,
+                },
+            ],
+        };
+
+        // Route GET by URL: /sweeps (without an id) returns the history,
+        // /sweeps/<id> returns the Pareto.
+        apiMock.get.mockImplementation((url: string) => {
+            if (typeof url === 'string' && /\/sweeps$/.test(url)) {
+                return Promise.resolve({ data: historyResp });
+            }
+            return Promise.resolve({ data: { ...SWEEP_WALL_CLOCK, sweep_id: 'bbbb2222bbbb' } });
+        });
+
+        const user = userEvent.setup();
+        render(<HyperparameterSweepPanel projectId={5} baseModel="m" />);
+
+        // History sidebar renders both entries (newest first).
+        await waitFor(() => {
+            expect(screen.getByTestId('hp-history')).toBeInTheDocument();
+            expect(screen.getByTestId('hp-history-aaaa1111aaaa')).toBeInTheDocument();
+            expect(screen.getByTestId('hp-history-bbbb2222bbbb')).toBeInTheDocument();
+        });
+
+        // The first entry's text shows cell count + relative-time + target chip.
+        const first = screen.getByTestId('hp-history-aaaa1111aaaa');
+        expect(first.textContent).toMatch(/4\/4 cells/);
+        expect(first.textContent).toMatch(/h ago/);
+        expect(first.textContent).toMatch(/target 85%/);
+
+        // Click the older entry → panel switches sweep + fires /sweeps/<id>.
+        await user.click(screen.getByTestId('hp-history-bbbb2222bbbb'));
+        await waitFor(() => {
+            expect(apiMock.get).toHaveBeenCalledWith(
+                '/projects/5/training/sweeps/bbbb2222bbbb',
+                { params: { cost_kind: 'wall_clock_seconds' } },
+            );
+        });
+        // Selected entry is marked current.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('hp-history-bbbb2222bbbb').getAttribute('data-current'),
+            ).toBe('true');
+        });
+    });
+
     it('renders verdict=promote with the gate pass badge on the winner row', async () => {
         routedPost(
             { cell_count: 4, seconds_per_cell: 60, estimated_seconds: 240, basis: 'no_history', sample_size: 0 },

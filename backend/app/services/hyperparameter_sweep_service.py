@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.experiment import EvalResult, Experiment
+from app.models.sweep import Sweep
 from app.services.model_benchmark_service import annotate_pareto_frontier
 
 MAX_SWEEP_CELLS = 16
@@ -202,6 +203,39 @@ async def start_hyperparameter_sweep(
     )
     normalized_target = _coerce_quality_target(quality_target)
     sweep_id = uuid4().hex[:12]
+
+    # First-class Sweep row. The legacy ``config._sweep.sweep_id``
+    # breadcrumb on every cell still gets written below for backward
+    # compat + debugging, but the FK from Experiment.sweep_id → Sweep.id
+    # is the authoritative source the readers now use.
+    from app.models.project import Project as _Project
+
+    project_row = await db.get(_Project, project_id)
+    recipe_id: str | None = None
+    if project_row is not None and isinstance(project_row.selected_recipe, dict):
+        candidate = project_row.selected_recipe.get("recipe_id")
+        if isinstance(candidate, str) and candidate.strip():
+            recipe_id = candidate
+    sweep_record = Sweep(
+        project_id=project_id,
+        sweep_id=sweep_id,
+        base_model=base_model,
+        recipe_id=recipe_id,
+        axes={
+            "lora_r": _dedupe_preserve_order([int(r) for r in (lora_r_values or [])]),
+            "learning_rate": _dedupe_preserve_order(
+                [float(x) for x in (learning_rate_values or [])]
+            ),
+            "base_model": _dedupe_preserve_order(
+                [str(m) for m in (base_model_values or [])]
+            ),
+        },
+        quality_target=normalized_target,
+        requested_cells=len(cells),
+    )
+    db.add(sweep_record)
+    await db.flush()
+
     created: list[dict[str, Any]] = []
     for index, cell in enumerate(cells):
         label = str(cell.pop("_label"))
@@ -231,6 +265,11 @@ async def start_hyperparameter_sweep(
                 config=cell,
                 description=f"Hyperparameter sweep {sweep_id} · cell {label}",
             )
+            # Wire the FK back to the parent Sweep so readers can do a
+            # single index lookup instead of scanning every experiment
+            # in the project. The breadcrumb in cell["_sweep"] above is
+            # still written for backward compat.
+            exp.sweep_id = int(sweep_record.id)
             await db.flush()
             await start_training(db, project_id, int(exp.id))
             record["experiment_id"] = int(exp.id)
@@ -258,6 +297,53 @@ async def start_hyperparameter_sweep(
             "base_model": _dedupe_preserve_order([str(m) for m in (base_model_values or [])]),
         },
     }
+
+
+async def _load_sweep_cells(
+    db: AsyncSession,
+    project_id: int,
+    sweep_token: str,
+) -> tuple[Sweep | None, list[Experiment]]:
+    """Return ``(sweep_record, cells)`` for a sweep token.
+
+    Primary path: look up the ``Sweep`` row by ``(project_id, sweep_id)``
+    and pull experiments via the ``experiments.sweep_id`` FK. This is the
+    one-index-lookup path the table refactor is meant to deliver.
+
+    Fallback: when the Sweep row doesn't exist yet (legacy data that
+    pre-dates the migration, or a test that auto-creates tables without
+    running alembic), scan experiments in the project and filter by the
+    ``config._sweep.sweep_id`` breadcrumb. The fallback preserves the
+    27 pre-existing test cases without forcing each to seed a Sweep row.
+    """
+    sweep_result = await db.execute(
+        select(Sweep).where(
+            Sweep.project_id == project_id,
+            Sweep.sweep_id == sweep_token,
+        )
+    )
+    sweep_record = sweep_result.scalar_one_or_none()
+
+    if sweep_record is not None:
+        exp_result = await db.execute(
+            select(Experiment)
+            .where(Experiment.sweep_id == int(sweep_record.id))
+            .options(selectinload(Experiment.eval_results))
+        )
+        return sweep_record, list(exp_result.scalars())
+
+    # Legacy fallback: scan by config breadcrumb.
+    exp_result = await db.execute(
+        select(Experiment)
+        .where(Experiment.project_id == project_id)
+        .options(selectinload(Experiment.eval_results))
+    )
+    cells = [
+        exp
+        for exp in exp_result.scalars().all()
+        if str(((exp.config or {}).get("_sweep") or {}).get("sweep_id") or "") == sweep_token
+    ]
+    return None, cells
 
 
 def _latest_eval(experiment: Experiment) -> EvalResult | None:
@@ -358,16 +444,7 @@ async def get_sweep_pareto(
             f"Supported: {', '.join(SUPPORTED_COST_KINDS)}."
         )
 
-    result = await db.execute(
-        select(Experiment)
-        .where(Experiment.project_id == project_id)
-        .options(selectinload(Experiment.eval_results))
-    )
-    experiments = [
-        exp
-        for exp in result.scalars().all()
-        if str(((exp.config or {}).get("_sweep") or {}).get("sweep_id") or "") == token
-    ]
+    _sweep_record, experiments = await _load_sweep_cells(db, project_id, token)
     if not experiments:
         raise ValueError(f"No sweep found for sweep_id '{sweep_id}'.")
 
@@ -806,18 +883,79 @@ async def estimate_sweep_budget(
 
 
 async def list_project_sweeps(db: AsyncSession, project_id: int) -> dict[str, Any]:
-    """List distinct sweep ids for a project with cell counts (newest first)."""
-    result = await db.execute(
+    """List sweeps for a project, newest first.
+
+    Primary path reads from the ``sweeps`` table (one row per sweep,
+    indexed by project_id). For each row we also count the
+    associated experiments via the FK so the sidebar can show
+    "cell_count" without re-scanning. The legacy breadcrumb path is
+    only used to surface sweeps that pre-date the migration AND haven't
+    been backfilled yet (e.g. tests that don't run alembic) — without
+    it the sidebar would silently hide pre-existing sweeps.
+    """
+    sweep_rows_result = await db.execute(
+        select(Sweep).where(Sweep.project_id == project_id).order_by(Sweep.created_at.desc())
+    )
+    sweep_records = list(sweep_rows_result.scalars())
+
+    sweeps: list[dict[str, Any]] = []
+    seen_tokens: set[str] = set()
+    for record in sweep_records:
+        cell_count_result = await db.execute(
+            select(Experiment.id).where(Experiment.sweep_id == int(record.id))
+        )
+        cell_count = len(cell_count_result.scalars().all())
+        sweeps.append({
+            "sweep_id": record.sweep_id,
+            "cell_count": cell_count,
+            "requested_cells": int(record.requested_cells or 0),
+            "base_model": record.base_model,
+            "recipe_id": record.recipe_id,
+            "quality_target": record.quality_target,
+            "created_at": record.created_at.isoformat() if record.created_at else None,
+            "axes": record.axes,
+        })
+        seen_tokens.add(record.sweep_id)
+
+    # Legacy fallback: surface sweeps that exist only as JSON
+    # breadcrumbs (no Sweep row yet). Keeps pre-migration data visible
+    # in the sidebar; once the user triggers any sweep-related write
+    # the migration / backfill pulls them into the table.
+    legacy_result = await db.execute(
         select(Experiment).where(Experiment.project_id == project_id)
     )
-    sweeps: dict[str, dict[str, Any]] = {}
-    for exp in result.scalars().all():
+    legacy_groups: dict[str, dict[str, Any]] = {}
+    for exp in legacy_result.scalars().all():
         meta = (exp.config or {}).get("_sweep") or {}
         sid = str(meta.get("sweep_id") or "")
-        if not sid:
+        if not sid or sid in seen_tokens:
             continue
-        entry = sweeps.setdefault(sid, {"sweep_id": sid, "cell_count": 0, "latest_experiment_id": 0})
+        entry = legacy_groups.setdefault(sid, {
+            "sweep_id": sid,
+            "cell_count": 0,
+            "requested_cells": 0,
+            "base_model": exp.base_model,
+            "recipe_id": None,
+            "quality_target": None,
+            "created_at": None,
+            "axes": None,
+            "_latest_experiment_id": 0,
+        })
         entry["cell_count"] += 1
-        entry["latest_experiment_id"] = max(entry["latest_experiment_id"], int(exp.id))
-    ordered = sorted(sweeps.values(), key=lambda e: e["latest_experiment_id"], reverse=True)
-    return {"project_id": project_id, "sweep_count": len(ordered), "sweeps": ordered}
+        entry["_latest_experiment_id"] = max(
+            int(entry["_latest_experiment_id"]), int(exp.id)
+        )
+    legacy_sorted = sorted(
+        legacy_groups.values(),
+        key=lambda e: int(e.get("_latest_experiment_id") or 0),
+        reverse=True,
+    )
+    for entry in legacy_sorted:
+        entry.pop("_latest_experiment_id", None)
+        sweeps.append(entry)
+
+    return {
+        "project_id": project_id,
+        "sweep_count": len(sweeps),
+        "sweeps": sweeps,
+    }

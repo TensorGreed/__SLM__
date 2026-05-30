@@ -52,6 +52,7 @@ from app.models.gold_drift_review_queue import (
     GoldDriftQueueStatus,
     GoldDriftReviewQueueRow,
 )
+from app.models.sweep import Sweep
 
 __all__ = [
     "Project",
@@ -108,4 +109,5 @@ __all__ = [
     "GoldDriftQueueStatus",
     "GoldDriftReviewQueueRow",
     "JobStatus",
+    "Sweep",
 ]

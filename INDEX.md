@@ -273,6 +273,7 @@ session-start guidance.
 - `backend/app/models/run_event.py` — Canonical RunEvent schema (priority.md P31, Wave G).
 - `backend/app/models/secret.py` — Project-level secret storage ORM model.
 - `backend/app/models/support_bundle.py` — Persisted support bundles (priority.md P34, Wave G).
+- `backend/app/models/sweep.py` — Sweep ORM model — first-class record for a hyperparameter bake-off.
 - `backend/app/models/training_forecast_snapshot.py` — Trainability forecast snapshot — per-compute history (USER-SUCCESS Epic 1, T2).
 - `backend/app/models/training_manifest.py` — Immutable training-run manifest (priority.md P14).
 - `backend/app/models/workflow_run.py` — Workflow run ORM models for DAG execution tracking.
@@ -349,6 +350,7 @@ session-start guidance.
 - `backend/alembic/versions/20260527_0040_remediation_action_events.py` — Remediation action event tracking (E2).
 - `backend/alembic/versions/20260527_0041_gold_drift_review_queue.py` — Gold-drift review queue table (E4).
 - `backend/alembic/versions/20260528_0042_training_manifest_warm_start.py` — Training manifest warm_start JSON column (Track 1, Epic B).
+- `backend/alembic/versions/20260530_0043_sweeps_first_class.py` — First-class ``sweeps`` table + ``experiments.sweep_id`` FK + backfill.
 
 ## Frontend · API clients
 

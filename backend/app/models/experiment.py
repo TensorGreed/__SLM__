@@ -64,11 +64,19 @@ class Experiment(Base):
     # checkpoint, transitions status to PAUSED, and clears the flag. The
     # resume endpoint re-dispatches the runtime and the cycle starts over.
     pause_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # First-class link to the parent Sweep when this Experiment is a
+    # cell of a hyperparameter bake-off. Nullable: ad-hoc experiments
+    # (the majority) have no sweep. SQLite doesn't enforce the FK at
+    # the DB level; the constraint here is for documentation + Postgres.
+    sweep_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("sweeps.id"), nullable=True, index=True, default=None
+    )
 
     # Relationships
     project = relationship("Project", back_populates="experiments")
     checkpoints = relationship("Checkpoint", back_populates="experiment", cascade="all, delete-orphan")
     eval_results = relationship("EvalResult", back_populates="experiment", cascade="all, delete-orphan")
+    sweep = relationship("Sweep", back_populates="cells", foreign_keys=[sweep_id])
 
     def __repr__(self) -> str:
         return f"<Experiment {self.id}: {self.name} [{self.status.value}]>"
