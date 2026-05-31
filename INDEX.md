@@ -302,6 +302,7 @@ session-start guidance.
 - `backend/scripts/auto_rag_ab.py` — A/B harness for auto-RAG (USER-SUCCESS Epic 9 Phase 9c).
 - `backend/scripts/backfill_demo_recipes.py` — Backfill recipes onto demo projects that were seeded before the
 - `backend/scripts/benchmark.py` — External benchmark runtime for real SLM serving metrics.
+- `backend/scripts/bootstrap_sqli_demo.py` — Bootstrap a complete SQL-injection-detector demo project on BrewSLM.
 - `backend/scripts/brewslm.py` — BrewSLM CLI for ingestion, preflight, training, and export workflows.
 - `backend/scripts/curriculum_ab.py` — A/B harness for curriculum learning (USER-SUCCESS Epic 6 Phase 6c).
 - `backend/scripts/dump_openapi.py` — Dump the FastAPI OpenAPI spec to stdout (or --out path) as JSON.
