@@ -1,0 +1,128 @@
+/* TokenLengthDistributionPanel — V3 of the ML-native visualisations arc. */
+
+.token-dist {
+    margin: var(--space-md) 0;
+    padding: var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated, transparent);
+}
+
+.token-dist__head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: var(--space-sm);
+}
+
+.token-dist__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.token-dist__hint {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 12px;
+}
+
+.token-dist__controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-end;
+    margin-bottom: var(--space-sm);
+}
+
+.token-dist__field {
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+    color: var(--text-secondary, var(--text-muted));
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    gap: 4px;
+}
+
+.token-dist__field .input {
+    min-width: 220px;
+    font-family: var(--font-mono, ui-monospace);
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-primary);
+}
+
+.token-dist__error {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(239, 68, 68, 0.10);
+    color: #b91c1c;
+    font-size: 12px;
+}
+
+.token-dist__missing {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(148, 163, 184, 0.10);
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 12px;
+}
+
+.token-dist__chart-wrap {
+    margin: var(--space-sm) 0;
+}
+
+.token-dist__stats {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: var(--space-sm);
+    font-size: 12px;
+}
+
+.token-dist__stats th,
+.token-dist__stats td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+}
+
+.token-dist__stats th {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 500;
+}
+
+.token-dist__chip {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.token-dist__trunc {
+    color: #ea580c;
+    font-weight: 600;
+}
+
+.token-dist__trunc-frac {
+    color: var(--text-secondary, var(--text-muted));
+    font-weight: 400;
+    margin-left: 2px;
+}
+
+.token-dist__shift {
+    margin-top: var(--space-sm);
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(234, 88, 12, 0.12);
+    color: #c2410c;
+    font-size: 12px;
+    line-height: 1.5;
+}

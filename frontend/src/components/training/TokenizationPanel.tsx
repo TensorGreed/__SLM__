@@ -6,7 +6,9 @@ import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
+import TokenLengthDistributionPanel from './TokenLengthDistributionPanel';
 import './TokenizationPanel.css';
+import './TokenLengthDistributionPanel.css';
 
 interface TokenizationPanelProps {
     projectId: number;
@@ -144,6 +146,16 @@ export default function TokenizationPanel({ projectId, onNextStep }: Tokenizatio
 
     return (
         <div className="tok-panel">
+            {/* V3 ML-native viz — cross-split token-length overlay.
+                Sits above the single-split deep-dive below so the user
+                lands on "are my splits comparable?" first, then drills
+                into a single split when they want the long tail. */}
+            <TokenLengthDistributionPanel
+                projectId={projectId}
+                defaultModelName={modelName}
+                defaultMaxSeqLength={maxSeqLen}
+            />
+
             {/* ── Model Selection ──────────────────────────────── */}
             <div className="tok-section">
                 <h3><span className="icon">🔤</span> Tokenization Analysis</h3>

@@ -528,6 +528,7 @@ session-start guidance.
 - `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
 - `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
+- `frontend/src/components/training/TokenLengthDistributionPanel.tsx` — TokenLengthDistributionPanel — V3 of the ML-native visualisations arc.
 - `frontend/src/components/training/TokenizationPanel.tsx` — Token distribution analyzer with histogram and sequence-length statistics.
 - `frontend/src/components/training/TrainAnywayButton.tsx` — TrainAnywayButton — USER-SUCCESS Epic 1 supplement.
 - `frontend/src/components/training/TrainabilityForecastPanel.tsx` — TrainabilityForecastPanel — USER-SUCCESS Epic 1.
@@ -730,6 +731,7 @@ session-start guidance.
 - `backend/tests/test_synthetic_qa_conversation_async.py` — Batched synthetic QA + conversation generation (USER-SUCCESS Epic 2c).
 - `backend/tests/test_synthetic_span_async.py` — Batched synthetic-span generation (long-running) — Story PII-async.
 - `backend/tests/test_theme5_epic1_video_flow_cli.py` — Theme 5 Epic 1 — brewslm CLI gap-fill commands for the 11-video flow.
+- `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
 - `backend/tests/test_warmstart_checkpoint.py` — Unit tests for the warm-start checkpoint trainer's non-GPU logic.
@@ -818,6 +820,7 @@ session-start guidance.
 - `frontend/src/components/training/LossCurvePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/TokenLengthDistributionPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainabilityForecastPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainingPanel.test.tsx` — _(no docstring)_

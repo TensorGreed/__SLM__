@@ -257,6 +257,17 @@ If you do need to inspect:
 brewslm dataset tokenize --project 1 --dataset tickets_v1 --base-model 12
 ```
 
+### Token-length distribution across splits (V3 ML-native viz)
+
+The Tokenization tab lands on the **TokenLengthDistributionPanel** before the single-split deep-dive: a grouped histogram with one bar per `(bucket, split)` so train / validation / test render on the same axis. Backed by `POST /api/projects/{id}/tokenization/analyze-splits`, which orchestrates the existing single-split analyze across all three splits in one call.
+
+Reading the overlay:
+
+- **Grouped histogram** — the bucket axis is fixed (`0-256` → `256-512` → `512-1024` → `1024-2048` → `2048+`). Three bars per group, one per split, coloured train (blue) / validation (green) / test (orange).
+- **Per-split percentile table** — `samples`, `p50`, `p95`, `p99`, `max`, `truncated`. The `truncated` column flags rows where the prepared sample exceeded the configured `max_seq_length` — those rows get cut at training time. Bigger projects often discover that the long tail of test exceeds train's coverage; this is where it surfaces.
+- **Distribution-shift note** — when test's p95 is more than **+30%** above train's p95, a one-line honest beat fires: "test p95 = X tokens vs train p95 = Y; model trained with `max_seq_length=Z` will silently truncate longer test rows at eval". Below +30% the note stays silent — that gap is within sampling variance and warning on it would cry wolf.
+- **Missing-splits chip** — when dataset prep hasn't materialised all three splits yet (train is first), the panel renders what it has and names the rest in a chip. The grouped histogram fills in as the missing splits land.
+
 ## Quality checklist
 
 Before kicking off training, verify on the Dataset Prep tab:
