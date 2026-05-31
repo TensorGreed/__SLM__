@@ -1,0 +1,125 @@
+/* ClassificationChartsPanel — V1 of the ML-native visualisations arc. */
+
+.cls-charts {
+    margin: var(--space-md) 0;
+    padding: var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated, transparent);
+}
+
+.cls-charts__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.cls-charts__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.cls-charts__head-meta {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.cls-charts__hint {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 12px;
+    margin: 0 0 8px;
+}
+
+/* -- Per-class P/R/F1 bars ----------------------------------------- */
+
+.cls-charts__bars {
+    margin-bottom: var(--space-md);
+}
+
+.cls-charts__bars-svg {
+    width: 100%;
+    max-width: 760px;
+    height: auto;
+    font-size: 11px;
+}
+
+.cls-charts__bars-header text {
+    fill: var(--text-secondary, var(--text-muted));
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.cls-charts__bars-label {
+    fill: var(--text-primary);
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 11px;
+}
+
+.cls-charts__bars-support {
+    fill: var(--text-secondary, var(--text-muted));
+    font-variant-numeric: tabular-nums;
+}
+
+.cls-charts__bar-bg {
+    fill: rgba(148, 163, 184, 0.16);
+    rx: 2;
+}
+
+.cls-charts__bar .cls-charts__bar-fill {
+    rx: 2;
+}
+
+.cls-charts__bar.is-good .cls-charts__bar-fill { fill: var(--color-success, #22c55e); }
+.cls-charts__bar.is-mid  .cls-charts__bar-fill { fill: var(--color-warning, #eab308); }
+.cls-charts__bar.is-bad  .cls-charts__bar-fill { fill: var(--color-error, #ef4444); }
+
+.cls-charts__bar-value {
+    fill: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+}
+
+/* -- Confusion matrix heatmap -------------------------------------- */
+
+.cls-charts__matrix-svg {
+    width: 100%;
+    max-width: 720px;
+    height: auto;
+    font-size: 10px;
+}
+
+.cls-charts__matrix-row-label,
+.cls-charts__matrix-col-label {
+    fill: var(--text-primary);
+    font-family: var(--font-mono, ui-monospace);
+    font-size: 10px;
+}
+
+.cls-charts__matrix-col-label.is-unparseable {
+    fill: #ea580c;
+    font-style: italic;
+}
+
+.cls-charts__matrix-cell {
+    stroke: var(--border-color, rgba(148, 163, 184, 0.3));
+    stroke-width: 0.5;
+}
+
+.cls-charts__matrix-count {
+    fill: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.cls-charts__matrix-count.is-light {
+    /* When a cell has a high share its background is dark — flip the
+       count colour to keep the digit readable. */
+    fill: #ffffff;
+}

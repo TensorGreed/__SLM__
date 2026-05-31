@@ -466,6 +466,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
+- `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
 - `frontend/src/components/evaluation/EvalPanel.tsx` — Multi-view evaluation hub with scorecards, failure analysis, and quality gates.
@@ -774,6 +775,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
+- `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPanel.alignment.test.tsx` — Phase 5.3.6 — Sample Predictions card with AlignmentHandler enrichment.

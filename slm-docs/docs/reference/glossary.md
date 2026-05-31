@@ -322,7 +322,7 @@ Threshold the orchestrator uses to decide "winner found — cancel the rest of t
 Three-state outcome on a hyperparameter sweep, surfaced by `get_sweep_pareto` after running each completed cell through `evaluate_experiment_auto_gates`:
 
 - `promote` — at least one cell cleared the project's evaluation pack gate. The UI offers promote-to-base backed by a real signal.
-- `inconclusive` — every completed cell has eval results but none cleared the gate. The UI surfaces "nobody cleared <gate>" and links to the failure-cluster panel rather than letting the user quietly promote a sub-gate winner.
+- `inconclusive` — every completed cell has eval results but none cleared the gate. The UI surfaces "nobody cleared `<gate_id>`" and links to the failure-cluster panel rather than letting the user quietly promote a sub-gate winner.
 - `pending` — cells are still running, or completed cells don't have eval results yet (`gate_passed=null`).
 
 Per-cell, `gate_passed ∈ {true, false, null}` and `gate_failed_ids` lists the specific gate IDs the cell missed. A pack with zero gates is treated as `not measurable` (gate_passed=null) — passing trivially when no gates exist is exactly the vanity behaviour the honesty pass prevents. See [Winner-vs-gate verdict](../workflows/training.md#winner-vs-gate-verdict).

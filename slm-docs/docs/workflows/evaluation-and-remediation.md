@@ -304,6 +304,7 @@ Each pack's task spec defines:
 Pipeline → **Eval** → **Run evaluation**. Pick the trained experiment + eval pack. Click **Start**. The page fills with:
 
 - **Gate row per metric** — pass / fail + score.
+- **Classification breakdown** — for classification eval results, a per-class P/R/F1 bar chart (sorted by F1 ascending — the worst class lands at the top, the row the user actually needs to look at) plus a confusion-matrix heatmap (gold rows × predicted columns, diagonal green, off-diagonal red, intensity scaled by row share). An `unparsed` column appears whenever the model emitted a label outside the candidate set — distinct visual treatment so "wrong known class" and "emitted gibberish" don't read the same. See `ClassificationChartsPanel`.
 - **Failure cluster card** below — folds errors by `(reason_code, signature)`.
 - **Remediation suggestions card** — per cluster, what to try next.
 

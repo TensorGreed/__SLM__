@@ -11,6 +11,8 @@ import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import { Term } from '../shared/Term';
+import ClassificationChartsPanel from './ClassificationChartsPanel';
+import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import EvalPackScaffoldPanel from './EvalPackScaffoldPanel';
@@ -75,6 +77,19 @@ interface EvalMetrics {
     scored_predictions?: ScoredPrediction[];
     inference?: InferenceMetrics;
     schema_mismatch?: SchemaMismatchReport;
+    // V1 of the ML-native visualisations arc — the classification
+    // handler emits these per result; ClassificationChartsPanel renders
+    // the bars + confusion-matrix heatmap when both are present.
+    accuracy?: number;
+    macro_f1?: number;
+    per_class?: Record<string, {
+        precision: number;
+        recall: number;
+        f1: number;
+        support: number;
+    }>;
+    confusion_matrix?: Record<string, Record<string, number>>;
+    candidate_set?: string[];
 }
 
 interface PredictionPreviewRow {
@@ -1820,6 +1835,26 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                 </tbody>
                             </table>
                         </div>
+
+                        {/* V1 ML-native visualisations — classification per-class bars +
+                            confusion-matrix heatmap. Renders for every eval result that
+                            carries both `per_class` and `confusion_matrix` (the
+                            classification handler always emits both); silent on other
+                            task profiles. Each result that qualifies gets its own block
+                            so projects with both gold-dev and gold-test results show two
+                            distinct charts. */}
+                        {evalResults
+                            .filter((r) => r.metrics?.per_class && Object.keys(r.metrics.per_class).length > 0)
+                            .map((r) => (
+                                <ClassificationChartsPanel
+                                    key={`cls-charts-${r.id}`}
+                                    perClass={r.metrics.per_class!}
+                                    confusionMatrix={r.metrics.confusion_matrix || {}}
+                                    candidates={r.metrics.candidate_set}
+                                    macroF1={r.metrics.macro_f1 ?? null}
+                                    accuracy={r.metrics.accuracy ?? null}
+                                />
+                            ))}
                     </div>
                 </div>
             )}
