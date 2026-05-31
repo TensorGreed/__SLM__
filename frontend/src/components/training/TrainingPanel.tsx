@@ -15,6 +15,8 @@ import DatasetFitCard from './DatasetFitCard';
 import ExperimentCompare from './ExperimentCompare';
 import HyperparameterSweepPanel from './HyperparameterSweepPanel';
 import ParetoComparisonPanel from './ParetoComparisonPanel';
+import LossCurvePanel from './LossCurvePanel';
+import './LossCurvePanel.css';
 import WarmStartDeltaChart from './WarmStartDeltaChart';
 import HardwareRecommenderModal from './HardwareRecommenderModal';
 import type { RecommendationResult } from './HardwareRecommenderModal';
@@ -3237,6 +3239,12 @@ export default function TrainingPanel({
               <span className="mb-value">{currentEvalLoss !== null ? Number(currentEvalLoss).toFixed(4) : '--'}</span>
             </div>
           </div>
+
+          {/* V2 ML-native viz — train vs eval loss overlay with the
+              best-eval marker + the overfitting region shaded when eval
+              starts climbing back from its minimum. Mounts for every
+              run that has any loss metrics streamed in. */}
+          <LossCurvePanel metrics={metrics} />
 
           {/* Track 1, Epic B/C — warm-started runs: what your rows added on top
               of the pre-tuned base (delta vs the warm-start's starting loss). */}

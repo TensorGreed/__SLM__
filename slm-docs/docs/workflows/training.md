@@ -299,6 +299,8 @@ While a run is in flight:
 - **CLI** — `brewslm logs tail --project 1 --run-id exp-42` streams events.
 - **API** — `GET /api/run-events/run/exp-42`.
 
+**Loss curve overlay (V2 ML-native viz).** Every active run renders a `LossCurvePanel` overlay above the warm-start chart: a solid blue train-loss line plus a dashed orange eval-loss line on shared axes, with the step that achieved the **best eval loss** marked by a green vertical line + dot. When eval starts climbing back from its minimum by more than `+0.05` (above the noise floor — anything smaller is step-to-step jitter that would cry wolf), the region from best-eval-step → end is shaded as the **overfitting region** and a one-line note quotes the divergence delta (`+0.18 from step 240`). The note also names the promote-the-winner pick — the step at the eval minimum, not the final checkpoint — so the user doesn't ship a sub-gate version of a run that already had its peak.
+
 **Warm-start delta curve.** When a run [warm-started](#warm-start-checkpoints) from a checkpoint (`_warm_start.source=checkpoint`), the active-run view adds a **Δ-vs-baseline** chart: the live loss curve plus a second series of `loss(step) − the warm-start's initial loss on your data`, with a headline of how much your rows reduced loss below the pre-tuned base's starting point — so you can see your data's *marginal* contribution, not just the absolute loss the base already provided.
 
 ## Pause + resume + cancel

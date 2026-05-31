@@ -1,0 +1,168 @@
+/* LossCurvePanel — V2 of the ML-native visualisations arc. */
+
+.loss-curve {
+    margin: var(--space-md) 0;
+    padding: var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated, transparent);
+}
+
+.loss-curve--empty {
+    color: var(--text-secondary, var(--text-muted));
+    font-style: italic;
+    text-align: center;
+}
+
+.loss-curve__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.loss-curve__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.loss-curve__head-meta {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.loss-curve__hint {
+    color: var(--text-secondary, var(--text-muted));
+    font-size: 12px;
+    margin: 0;
+}
+
+.loss-curve__svg {
+    width: 100%;
+    max-width: 760px;
+    height: auto;
+    font-size: 11px;
+}
+
+.loss-curve__axis {
+    stroke: var(--border-color, rgba(148, 163, 184, 0.5));
+    stroke-width: 1;
+    fill: none;
+}
+
+.loss-curve__tick-label {
+    fill: var(--text-secondary, var(--text-muted));
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.loss-curve__axis-label {
+    fill: var(--text-secondary, var(--text-muted));
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+/* -- Paths ----------------------------------------------------------- */
+
+.loss-curve__path--train {
+    stroke: var(--color-primary, #2563eb);
+    stroke-width: 1.75;
+}
+
+.loss-curve__path--eval {
+    stroke: #ea580c;
+    stroke-width: 1.75;
+    stroke-dasharray: 5 3;
+}
+
+.loss-curve__eval-marker {
+    fill: #ea580c;
+    stroke: var(--bg-elevated, #ffffff);
+    stroke-width: 1;
+}
+
+/* -- Best-eval marker ---------------------------------------------- */
+
+.loss-curve__best-marker {
+    stroke: var(--color-success, #16a34a);
+    stroke-width: 1;
+    stroke-dasharray: 2 3;
+    opacity: 0.7;
+}
+
+.loss-curve__best-dot {
+    fill: var(--color-success, #16a34a);
+    stroke: var(--bg-elevated, #ffffff);
+    stroke-width: 1.5;
+}
+
+/* -- Divergence (overfitting) shade --------------------------------- */
+
+.loss-curve__diverge-shade {
+    fill: rgba(239, 68, 68, 0.10);
+}
+
+.loss-curve__diverge-note {
+    margin: var(--space-sm) 0 0;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(234, 88, 12, 0.12);
+    color: #ea580c;
+    font-size: 12px;
+}
+
+/* -- Legend --------------------------------------------------------- */
+
+.loss-curve__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 8px;
+    font-size: 11px;
+}
+
+.loss-curve__legend-item {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-secondary, var(--text-muted));
+}
+
+.loss-curve__legend-item::before {
+    content: '';
+    display: inline-block;
+    width: 16px;
+    height: 2px;
+    margin-right: 6px;
+    border-radius: 1px;
+}
+
+.loss-curve__legend-item--train::before {
+    background: var(--color-primary, #2563eb);
+}
+
+.loss-curve__legend-item--eval::before {
+    background: #ea580c;
+    border-top: 2px dashed #ea580c;
+    background: transparent;
+    height: 0;
+    border-top-width: 2px;
+}
+
+.loss-curve__legend-item--best::before {
+    background: var(--color-success, #16a34a);
+    height: 8px;
+    width: 8px;
+    border-radius: 50%;
+}
+
+.loss-curve__legend-item--diverge::before {
+    background: rgba(239, 68, 68, 0.18);
+    height: 10px;
+    width: 14px;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}

@@ -524,6 +524,7 @@ session-start guidance.
 - `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
 - `frontend/src/components/training/HardwareRecommenderModal.tsx` — Configuration recommender modal based on available GPU profiles and task type.
 - `frontend/src/components/training/HyperparameterSweepPanel.tsx` — HyperparameterSweepPanel — Track 1, Epic C.
+- `frontend/src/components/training/LossCurvePanel.tsx` — LossCurvePanel — V2 of the ML-native visualisations arc.
 - `frontend/src/components/training/ModelRegistryPanel.tsx` — Checkpoint history browser with filtering and download links.
 - `frontend/src/components/training/ParetoComparisonPanel.tsx` — ParetoComparisonPanel — Track 1, Epic C.
 - `frontend/src/components/training/PreRunConfirmModal.tsx` — PreRunConfirmModal — P20 pre-run confirm with cost provenance badge.
@@ -814,6 +815,7 @@ session-start guidance.
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/LossCurvePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/PreRunConfirmModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/TrainAnywayButton.test.tsx` — _(no docstring)_
