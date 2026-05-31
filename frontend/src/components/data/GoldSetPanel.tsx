@@ -8,6 +8,7 @@ import api from '../../api/client';
 import EmptyState from '../shared/EmptyState';
 import StepFooter from '../shared/StepFooter';
 import CoachStrip from '../coach/CoachStrip';
+import GoldSetDiagnosticsPanel from './GoldSetDiagnosticsPanel';
 import LlmGoldGeneratePanel from './LlmGoldGeneratePanel';
 import GoldEntryRowBody from './GoldEntryRowBody';
 import type { GoldRowRecipe } from './GoldEntryRowBody';
@@ -393,6 +394,13 @@ export default function GoldSetPanel({ projectId, onNextStep }: GoldSetPanelProp
                 </div>
 
                 <CoachStrip projectId={projectId} stage="gold_set" />
+
+                {/* V4 ML-native viz — class-balance bars + class-similarity
+                    heatmap. Renders the actionable shape of the gold set so
+                    "imbalanced" or "redundant" reads as a chart rather than
+                    a number in a Coach suggestion. Self-fetches on mount;
+                    silent for non-classification recipes. */}
+                <GoldSetDiagnosticsPanel projectId={projectId} />
 
                 {recipeId && SUPPORTED_LLM_GOLD_RECIPES.has(recipeId) && (
                     <LlmGoldGeneratePanel

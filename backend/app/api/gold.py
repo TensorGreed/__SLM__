@@ -26,6 +26,9 @@ from app.services.gold_service import (
     import_qa_pairs,
     lock_gold_dataset,
 )
+from app.services.gold_set_diagnostics_service import (
+    compute_gold_set_diagnostics,
+)
 from app.services.secret_service import (
     delete_project_secret,
     get_project_secret_value,
@@ -642,3 +645,27 @@ async def lock_dataset(
     ds_type = DatasetType.GOLD_DEV if dataset_type == "gold_dev" else DatasetType.GOLD_TEST
     ds = await lock_gold_dataset(db, project_id, ds_type)
     return {"id": ds.id, "name": ds.name, "is_locked": ds.is_locked, "record_count": ds.record_count}
+
+
+@router.get("/diagnostics")
+async def gold_set_diagnostics(
+    project_id: int,
+    sample_per_class: int = 12,
+    db: AsyncSession = Depends(get_db),
+):
+    """V4 ML-native viz — class-balance bars + class-similarity heatmap.
+
+    Returns a single payload the ``GoldSetDiagnosticsPanel`` consumes:
+    ``{class_balance: {labels, total, entropy_nats}, similarity:
+    {labels, matrix, insufficient_labels}, total_rows,
+    classification_eligible}``. ``classification_eligible=false`` for
+    non-classification recipes (the UI renders an empty-state hint
+    rather than a misleading single-class chart).
+    """
+    if sample_per_class < 2 or sample_per_class > 100:
+        raise HTTPException(400, "sample_per_class must be in [2, 100]")
+    return await compute_gold_set_diagnostics(
+        db,
+        project_id,
+        sample_per_class=sample_per_class,
+    )

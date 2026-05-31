@@ -25,6 +25,18 @@ For each sampled row, paste the gold answer and approve. The workbench tracks `p
 
 A locked gold version is **immutable**. New rows make a new version.
 
+### Gold-set diagnostics (V4 ML-native viz)
+
+The Gold-set tab renders a `GoldSetDiagnosticsPanel` above the entry list whenever the gold set has at least a few classification rows. Two complementary views from a single `GET /api/projects/{id}/gold/diagnostics` call:
+
+- **Class-balance bars** — one row per label sorted descending. The bar shows share-of-total; a dashed line at **15%** marks the same imbalance floor Coach Mode's `class_imbalance` signal fires below, so a bar dropping under the line previews exactly what'll be flagged at training time. Classes below the floor turn red. Header reports total rows, class count, and Shannon entropy.
+- **Class-similarity heatmap** — rows × cols = labels. Each cell is the mean pairwise Jaccard between a sample of rows from each class (default 12 per class):
+    - **Diagonal cells** measure intra-class redundancy. ~1.0 = rows look the same → low diversity → the model learns nothing. ~0.0 = good variety.
+    - **Off-diagonal cells** measure inter-class confusability. ~1.0 = even a perfect classifier can't separate the classes from text alone. ~0.0 = the classes are easy to tell apart.
+- **Cells with `n/a`** = the class doesn't have enough rows for similarity scoring; named in a footnote rather than fabricated as 0.
+
+Non-classification gold sets (span-extraction, summarization, qa-sft) render an empty-state hint — class balance is a classification concept. Span-extraction has its own diversity signals via the trainability forecast (`entity_type_coverage_thin`, `negative_examples_missing`).
+
 ### CLI
 
 ```sh

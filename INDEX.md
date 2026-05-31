@@ -155,6 +155,7 @@ session-start guidance.
 - `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
+- `backend/app/services/gold_set_diagnostics_service.py` — Gold-set diagnostics for V4 of the ML-native visualisations arc.
 - `backend/app/services/gold_workbench_service.py` — Gold-set annotation workbench service (priority.md P10).
 - `backend/app/services/hardware_service.py` — Hardware recommender service mapping target devices to model and compression profiles.
 - `backend/app/services/hyperparameter_sweep_service.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
@@ -450,6 +451,7 @@ session-start guidance.
 - `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
 - `frontend/src/components/data/GoldEntryAddForm.tsx` — GoldEntryAddForm — per-recipe inline form for manually adding a
 - `frontend/src/components/data/GoldEntryRowBody.tsx` — GoldEntryRowBody — shared per-recipe body renderer for a single
+- `frontend/src/components/data/GoldSetDiagnosticsPanel.tsx` — GoldSetDiagnosticsPanel — V4 of the ML-native visualisations arc.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
@@ -585,6 +587,7 @@ session-start guidance.
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
+- `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
@@ -763,6 +766,7 @@ session-start guidance.
 - `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
+- `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
