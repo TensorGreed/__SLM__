@@ -167,9 +167,17 @@ def _make_signal(
     context: dict | None = None,
     plain_english: str | None = None,
     why_it_matters: str | None = None,
+    autofix_kind: str | None = None,
 ) -> dict[str, Any]:
     """Build a signal payload. Pulls plain-English / why-it-matters
-    from the translation table when not explicitly passed."""
+    from the translation table when not explicitly passed.
+
+    ``autofix_kind`` (D3) flags signals the safe auto-fix engine can
+    resolve in one click. The frontend renders an "Auto-fix" button
+    when this is set, calling ``POST /data-health/autofix`` with the
+    kind as the payload. ``None`` = the signal is informational only
+    (no safe transform exists yet for it).
+    """
     layman = _layman_for(id)
     return {
         "id": id,
@@ -179,6 +187,7 @@ def _make_signal(
         "why_it_matters": why_it_matters if why_it_matters is not None else layman["why"],
         "suggested_action": suggested_action,
         "context": context or {},
+        "autofix_kind": autofix_kind,
     }
 
 
@@ -252,6 +261,9 @@ async def _ingestion_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 "accepted": accepted,
                 "failure_rate": round(fail_rate, 4),
             },
+            # D3 safe auto-fix — failed docs have no extracted text,
+            # dropping them is non-destructive (they're already useless).
+            autofix_kind="drop_failed_docs",
         ))
 
     return {
@@ -346,6 +358,11 @@ async def _cleaning_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 "target": "cleaning",
             },
             context={"pii_findings": pii_total, "cleaned_docs": len(cleaned_docs)},
+            # D3 safe auto-fix — re-runs clean_document with redact=True
+            # for every doc with PII findings + redact_pii=False. The
+            # cleaning service is idempotent, so this is a pure
+            # re-render of the cleaned text with PII masked.
+            autofix_kind="redact_pii",
         ))
     elif pii_findings_present and any_redacted:
         signals.append(_make_signal(
@@ -430,6 +447,10 @@ async def _cleaning_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
                 "total_cleaned": len(cleaned_docs),
                 "fraction": round(dup_frac, 4),
             },
+            # D3 safe auto-fix — keeps the lowest-id occurrence of each
+            # text_hash and drops the rest. Pure dedup, no data loss
+            # beyond redundancy.
+            autofix_kind="dedupe_duplicate_docs",
         ))
 
     return {

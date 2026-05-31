@@ -52,6 +52,18 @@ interface HealthSignal {
     why_it_matters: string;
     suggested_action: SuggestedAction | null;
     context: Record<string, unknown>;
+    // D3 — when set, the safe auto-fix engine can resolve this
+    // signal in one click. The panel renders an "Auto-fix" button
+    // that POSTs to /data-health/autofix with this kind as the
+    // payload, then refreshes the report.
+    autofix_kind?: string | null;
+}
+
+interface AutofixResult {
+    fix_kind: string;
+    applied_count: number;
+    summary: string;
+    details: Record<string, unknown>;
 }
 
 interface HealthGroup {
@@ -114,12 +126,23 @@ function targetUrl(projectId: number, target: string | undefined): string | null
     }
 }
 
+// Layman label per autofix kind — what the user sees on the button.
+// Keep these terse and active-voice ("Drop", "Dedupe", "Redact") so
+// the button reads as the verb the click does.
+const AUTOFIX_LABEL: Record<string, string> = {
+    drop_failed_docs: 'Drop failed docs',
+    dedupe_duplicate_docs: 'Dedupe duplicates',
+    redact_pii: 'Redact PII',
+};
+
 export default function DataHealthReportPanel({ projectId }: DataHealthReportPanelProps) {
     const navigate = useNavigate();
     const [data, setData] = useState<HealthReport | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
+    const [applyingFix, setApplyingFix] = useState<string | null>(null);
+    const [lastFix, setLastFix] = useState<AutofixResult | null>(null);
 
     const fetch = useCallback(async () => {
         setLoading(true);
@@ -148,6 +171,35 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
             return next;
         });
     };
+
+    const applyAutofix = useCallback(async (kind: string, signalId: string) => {
+        // Light confirmation — we tell the user what'll change before
+        // the POST fires. Confirm uses the layman label so the prompt
+        // reads natural ("Drop failed docs?") instead of programmatic.
+        const label = AUTOFIX_LABEL[kind] || kind;
+        const confirmed = window.confirm(
+            `${label}? This applies the safe auto-fix immediately. `
+            + `The fix is idempotent so re-running is harmless.`,
+        );
+        if (!confirmed) return;
+        setApplyingFix(signalId);
+        setLastFix(null);
+        try {
+            const res = await api.post<AutofixResult>(
+                `/projects/${projectId}/data-health/autofix`,
+                { fix_kind: kind },
+            );
+            setLastFix(res.data);
+            // Refresh the report so the just-fixed signal's severity
+            // updates (typically ok now).
+            await fetch();
+        } catch (err) {
+            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            setError(typeof detail === 'string' ? detail : 'Auto-fix failed.');
+        } finally {
+            setApplyingFix(null);
+        }
+    }, [projectId, fetch]);
 
     if (loading && !data) {
         return (
@@ -205,6 +257,24 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
                     )}
                 </p>
             </header>
+
+            {lastFix && (
+                <div
+                    className="data-health__fix-toast"
+                    data-testid="data-health-fix-toast"
+                    role="status"
+                >
+                    <strong>{lastFix.summary}</strong>
+                    <button
+                        type="button"
+                        className="data-health__fix-toast-dismiss"
+                        onClick={() => setLastFix(null)}
+                        aria-label="Dismiss fix summary"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
 
             {populatedGroups.length === 0 ? (
                 <p className="data-health__empty">No data-quality signals yet. Upload some documents to get started.</p>
@@ -271,24 +341,40 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
                                                         </p>
                                                     )}
                                                 </div>
-                                                {sig.suggested_action?.label && (
-                                                    <button
-                                                        type="button"
-                                                        className="data-health__action btn btn-sm"
-                                                        onClick={() => {
-                                                            if (url) navigate(url);
-                                                        }}
-                                                        disabled={!url}
-                                                        data-testid={`data-health-action-${sig.id}`}
-                                                        title={
-                                                            url
-                                                                ? `Navigate to ${sig.suggested_action.target}`
-                                                                : 'Action not yet wired up'
-                                                        }
-                                                    >
-                                                        {sig.suggested_action.label}
-                                                    </button>
-                                                )}
+                                                <div className="data-health__actions">
+                                                    {sig.autofix_kind && (
+                                                        <button
+                                                            type="button"
+                                                            className="data-health__autofix btn btn-sm"
+                                                            onClick={() => void applyAutofix(sig.autofix_kind as string, sig.id)}
+                                                            disabled={applyingFix === sig.id}
+                                                            data-testid={`data-health-autofix-${sig.id}`}
+                                                            title="Safe auto-fix — idempotent and predictable"
+                                                        >
+                                                            {applyingFix === sig.id
+                                                                ? 'Applying…'
+                                                                : `Auto-fix: ${AUTOFIX_LABEL[sig.autofix_kind] || sig.autofix_kind}`}
+                                                        </button>
+                                                    )}
+                                                    {sig.suggested_action?.label && (
+                                                        <button
+                                                            type="button"
+                                                            className="data-health__action btn btn-sm"
+                                                            onClick={() => {
+                                                                if (url) navigate(url);
+                                                            }}
+                                                            disabled={!url}
+                                                            data-testid={`data-health-action-${sig.id}`}
+                                                            title={
+                                                                url
+                                                                    ? `Navigate to ${sig.suggested_action.target}`
+                                                                    : 'Action not yet wired up'
+                                                            }
+                                                        >
+                                                            {sig.suggested_action.label}
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         </li>
                                     );

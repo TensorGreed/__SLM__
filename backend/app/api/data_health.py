@@ -1,21 +1,34 @@
-"""Data Health Report API — D1 of the data-quality arc.
+"""Data Health Report API — D1/D3 of the data-quality arc.
 
-Mounts at ``/api/projects/{project_id}/data-health``. Aggregates every
-data-quality signal (ingestion, cleaning, shape vs recipe, classification
-balance) into one panel-friendly payload. See
-``data_health_service.compute_data_health_report`` for the shape.
+Mounts at ``/api/projects/{project_id}/data-health``:
+
+- ``GET /`` — aggregated Data Health Report (D1+D2).
+- ``POST /autofix`` — apply a safe auto-fix transform (D3).
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.services.data_health_autofix_service import (
+    SUPPORTED_FIX_KINDS,
+    apply_autofix,
+)
 from app.services.data_health_service import compute_data_health_report
 
 
 router = APIRouter(prefix="/projects/{project_id}/data-health", tags=["Data Health"])
+
+
+class AutofixRequest(BaseModel):
+    """Body for ``POST /data-health/autofix``. D3 only takes ``fix_kind``
+    (no per-fix params yet — every supported fix runs across the
+    project's whole data corpus). D4 will add per-fix params (e.g.
+    ``max_seq_length`` for the truncation fix)."""
+    fix_kind: str = Field(..., min_length=1)
 
 
 @router.get("")
@@ -28,3 +41,30 @@ async def get_data_health_report(
         return await compute_data_health_report(db, project_id)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/autofix")
+async def post_data_health_autofix(
+    project_id: int,
+    req: AutofixRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply a safe auto-fix transform. Each fix is idempotent — calling
+    again after applying returns ``applied_count=0`` rather than
+    double-applying. Unknown ``fix_kind`` returns 400."""
+    try:
+        result = await apply_autofix(db, project_id, req.fix_kind)
+    except ValueError as e:
+        msg = str(e)
+        if msg.startswith("Project"):
+            raise HTTPException(404, msg)
+        raise HTTPException(400, msg)
+    await db.commit()
+    return result
+
+
+@router.get("/autofix/supported")
+def get_supported_autofixes(project_id: int):  # noqa: ARG001
+    """List the fix kinds D3 supports. The panel calls this to decide
+    which signals get an Auto-fix button."""
+    return {"fix_kinds": list(SUPPORTED_FIX_KINDS)}

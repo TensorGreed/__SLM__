@@ -204,6 +204,142 @@ describe('DataHealthReportPanel', () => {
         ).toMatch(/--warn/);
     });
 
+    it('shows an autofix button on signals with autofix_kind and applies it on confirm', async () => {
+        const reportWithAutofix = {
+            ...BLOCK_REPORT,
+            groups: [
+                {
+                    id: 'cleaning',
+                    title: 'Cleaning',
+                    subtitle: 'PII redaction + quality + dedup',
+                    signals: [
+                        {
+                            id: 'cleaning.duplicate_chunks',
+                            severity: 'warn' as const,
+                            headline: '5 duplicate document(s) detected.',
+                            plain_english: 'A significant share of your cleaned text chunks are duplicates.',
+                            why_it_matters: 'The model will overfit on the duplicated patterns.',
+                            suggested_action: { kind: 'navigate', label: 'Review duplicates', target: 'cleaning' },
+                            context: { duplicate_count: 5 },
+                            autofix_kind: 'dedupe_duplicate_docs',
+                        },
+                    ],
+                },
+            ],
+            overall: 'warn' as const,
+            severity_summary: { ok: 0, warn: 1, block: 0 },
+            total_signals: 1,
+        };
+        // After the autofix runs, the report shows the dup signal as ok.
+        const reportAfterFix = {
+            ...reportWithAutofix,
+            groups: [
+                {
+                    ...reportWithAutofix.groups[0],
+                    signals: [
+                        {
+                            ...reportWithAutofix.groups[0].signals[0],
+                            severity: 'ok' as const,
+                            headline: 'No duplicate documents detected.',
+                            autofix_kind: null,
+                        },
+                    ],
+                },
+            ],
+            overall: 'ok' as const,
+            severity_summary: { ok: 1, warn: 0, block: 0 },
+        };
+        apiMock.get
+            .mockResolvedValueOnce({ data: reportWithAutofix })
+            .mockResolvedValueOnce({ data: reportAfterFix });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                fix_kind: 'dedupe_duplicate_docs',
+                applied_count: 5,
+                summary: 'Dropped 5 duplicate documents across 2 dedup groups.',
+                details: { group_count: 2 },
+            },
+        });
+        // Stub the confirm dialog to auto-confirm.
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderPanel();
+        const user = userEvent.setup();
+
+        // Autofix button is visible.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-health-autofix-cleaning.duplicate_chunks'),
+            ).toBeInTheDocument();
+        });
+
+        await user.click(screen.getByTestId('data-health-autofix-cleaning.duplicate_chunks'));
+
+        // Confirm prompt fired.
+        expect(confirmSpy).toHaveBeenCalled();
+
+        // POST went to the right endpoint with the right kind.
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/42/data-health/autofix',
+                { fix_kind: 'dedupe_duplicate_docs' },
+            );
+        });
+
+        // Toast surfaces the fix summary.
+        await waitFor(() => {
+            const toast = screen.getByTestId('data-health-fix-toast');
+            expect(toast.textContent).toMatch(/Dropped 5 duplicate documents/);
+        });
+
+        // Report refetched (second GET call).
+        await waitFor(() => {
+            expect(apiMock.get).toHaveBeenCalledTimes(2);
+        });
+
+        confirmSpy.mockRestore();
+    });
+
+    it('cancelling the autofix confirm does not POST', async () => {
+        const reportWithAutofix = {
+            ...BLOCK_REPORT,
+            groups: [
+                {
+                    id: 'cleaning',
+                    title: 'Cleaning',
+                    subtitle: 'PII redaction + quality + dedup',
+                    signals: [
+                        {
+                            id: 'cleaning.pii_unredacted',
+                            severity: 'warn' as const,
+                            headline: '18 PII findings detected.',
+                            plain_english: 'PII detected, not redacted.',
+                            why_it_matters: 'Memorisation risk.',
+                            suggested_action: null,
+                            context: {},
+                            autofix_kind: 'redact_pii',
+                        },
+                    ],
+                },
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: reportWithAutofix });
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        renderPanel();
+        const user = userEvent.setup();
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-health-autofix-cleaning.pii_unredacted'),
+            ).toBeInTheDocument();
+        });
+        await user.click(screen.getByTestId('data-health-autofix-cleaning.pii_unredacted'));
+
+        // POST never called when the user cancels the confirm.
+        expect(apiMock.post).not.toHaveBeenCalled();
+        confirmSpy.mockRestore();
+    });
+
     it('renders an error fallback when the API call fails', async () => {
         apiMock.get.mockRejectedValueOnce({
             response: { data: { detail: 'Project not found' } },

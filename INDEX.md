@@ -32,7 +32,7 @@ session-start guidance.
 - `backend/app/api/comparison.py` — Comparison API for experiments.
 - `backend/app/api/compression.py` — Compression API routes.
 - `backend/app/api/curriculum.py` — Curriculum-ranking API routes (USER-SUCCESS Epic 6 Phase 6a).
-- `backend/app/api/data_health.py` — Data Health Report API — D1 of the data-quality arc.
+- `backend/app/api/data_health.py` — Data Health Report API — D1/D3 of the data-quality arc.
 - `backend/app/api/data_studio.py` — Data Studio API routes.
 - `backend/app/api/dataset.py` — Dataset preparation API routes.
 - `backend/app/api/dataset_import.py` — Dataset-import API surface (Phase A).
@@ -101,6 +101,7 @@ session-start guidance.
 - `backend/app/services/cost_estimator_service.py` — P18 — Cost estimator with provenance (priority.md, RM3).
 - `backend/app/services/curriculum_service.py` — Curriculum-style training row ranking (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/app/services/data_adapter_service.py` — Data adapter SDK registry and execution helpers.
+- `backend/app/services/data_health_autofix_service.py` — D3 — safe auto-fix engine for the Data Health Report.
 - `backend/app/services/data_health_service.py` — Data Health Report — D1 of the data-quality arc.
 - `backend/app/services/data_studio_service.py` — Data Studio overview intelligence.
 - `backend/app/services/dataset_contract_service.py` — Prepared dataset contract validation for task-specific training readiness.
@@ -574,6 +575,7 @@ session-start guidance.
 - `backend/tests/test_curriculum_phase6d_defaults.py` — Tests for the Phase 6d default-on heuristic + Coach Mode nudge.
 - `backend/tests/test_curriculum_service.py` — Tests for the curriculum-ranking service (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/tests/test_curriculum_training_integration.py` — Tests for the curriculum training-pipeline integration
+- `backend/tests/test_data_health_autofix.py` — D3 of the data-quality arc — safe auto-fix engine.
 - `backend/tests/test_data_health_service.py` — D1 of the data-quality arc — aggregated Data Health Report.
 - `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.

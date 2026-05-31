@@ -204,7 +204,8 @@ Each signal row carries:
 - **Severity badge** — `ok` / `warn` / `block`, matching the Coach Mode + trainability-forecast palette so the same red means the same thing across panels.
 - **Plain-English summary** — the actual problem, in words a non-technical user can act on. Sits above the technical headline (which is still rendered for users who want the numbers).
 - **"Why this matters" expander** — closed by default, one-click expand. The point is to teach the consequence at training time, not to wall users with text.
-- **Suggested action chip** — informational in D1 (clicking navigates to the relevant tab). D3 + D4 of the arc will replace this with **1-click auto-fix** for the safe transforms (dedup, whitespace, casing, UTF-8 re-encode, drop-empties, column-rename to match recipe schema) and a **preview-diff fix** for the risky ones (truncation, PII redaction, drop suspected-bad rows).
+- **Suggested action chip** — informational, navigates to the relevant tab.
+- **Auto-fix button** (D3, where applicable) — green button next to the action chip when the platform can resolve the signal in one click. See "Safe auto-fixes" below.
 
 The top of the panel is an overall verdict: `ok` ("all clear"), `warn` ("warnings to address"), or `block` ("training won't produce reliable results until these are fixed"), with severity counts. The overall is the worst of all signals — any block bubbles up.
 
@@ -218,6 +219,18 @@ Groups, in order:
 | Class balance | Classification-only: delegated to the trainability forecast's existing signals (`class_imbalance`, `per_class_minimum_unmet`, `label_vocab_fragmented`, `single_class_dominance`) so the report and Coach Mode share one source of truth for the thresholds. |
 
 Empty groups (e.g. Balance for non-classification recipes) are silently skipped.
+
+#### Safe auto-fixes (D3)
+
+Three signals carry an `autofix_kind` hint that surfaces a green **Auto-fix** button on the row. Each transform is predictable, idempotent, and non-destructive beyond removing already-broken or already-redundant rows. Click → confirm → POST → report refreshes with the just-fixed signal now `ok`.
+
+| Signal | Autofix | What it does |
+|---|---|---|
+| `ingestion.parse_failure_rate` | `drop_failed_docs` | Deletes every `RawDocument` with `status=ERROR` plus its on-disk artefacts (raw file + `.extracted.txt` / `.cleaned.txt` / `.chunks.jsonl` sidecars). Failed parses have no extracted text — they were already useless. |
+| `cleaning.duplicate_chunks` | `dedupe_duplicate_docs` | Groups `ACCEPTED` docs by `metadata_.text_hash`; for each group of >1, keeps the lowest-id occurrence and deletes the rest. Pure dedup, no semantic change. |
+| `cleaning.pii_unredacted` | `redact_pii` | Re-runs `clean_document(..., redact=True)` on every doc that has PII findings but `redact_pii` flag unset. Cleaning is itself idempotent — this just re-renders the cleaned text with PII replaced by `[REDACTED]`. Skips docs that aren't yet cleaned (would require running the full pipeline; the user should click Clean first). |
+
+Riskier auto-fixes (drop-low-quality docs, truncation, label canonicalisation, row drops) require a preview-diff and land in D4. The endpoint is `POST /api/projects/{id}/data-health/autofix` with body `{fix_kind: ...}`; `GET /data-health/autofix/supported` lists the kinds the server currently supports.
 
 ### UI
 
