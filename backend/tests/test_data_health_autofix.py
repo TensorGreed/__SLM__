@@ -1,11 +1,16 @@
-"""D3 of the data-quality arc — safe auto-fix engine.
+"""D3 + D4 of the data-quality arc — safe auto-fix engine.
 
-Covers each of the three D3 fixes:
+Covers each of the four supported fixes:
 - drop_failed_docs: removes RawDocuments with status=ERROR + their files.
 - dedupe_duplicate_docs: keeps lowest-id of each text_hash, drops the rest.
 - redact_pii: re-cleans every doc with PII findings + redact_pii=False.
+- canonicalise_labels (D4): merges fragmented classification labels.
 
-Plus:
+Plus, for D3.2 / D4:
+- ``POST /autofix/preview`` returns per-item diff for each fix kind.
+- Preview matches the subsequent apply step exactly (no drift).
+- PII preview refuses with ``safe_to_apply=False`` for structured
+  extraction recipes (mirrors the apply guard).
 - Idempotency (running the same fix twice = 0 changes the second time).
 - Unknown fix_kind → 400.
 - Unknown project → 404.
@@ -346,6 +351,253 @@ class D3AutofixTests(unittest.TestCase):
         self.assertIn("drop_failed_docs", body["fix_kinds"])
         self.assertIn("dedupe_duplicate_docs", body["fix_kinds"])
         self.assertIn("redact_pii", body["fix_kinds"])
+        self.assertIn("canonicalise_labels", body["fix_kinds"])
+
+    # ── preview endpoint (D3.2) ────────────────────────────────
+
+    def test_preview_drop_failed_docs_lists_each_filename(self):
+        pid = self._create_project()
+        self._add_docs(pid, records=[
+            {"status": DocumentStatus.ACCEPTED, "filename": "good.txt"},
+            {"status": DocumentStatus.ERROR, "filename": "bad-1.pdf"},
+            {"status": DocumentStatus.ERROR, "filename": "bad-2.pdf"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "drop_failed_docs"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["fix_kind"], "drop_failed_docs")
+        self.assertEqual(body["would_apply_count"], 2)
+        self.assertTrue(body["safe_to_apply"])
+        names = sorted(it["filename"] for it in body["items"])
+        self.assertEqual(names, ["bad-1.pdf", "bad-2.pdf"])
+        # No state change as a side-effect of preview.
+        recheck = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "drop_failed_docs"},
+        )
+        self.assertEqual(recheck.json()["would_apply_count"], 2)
+
+    def test_preview_dedupe_shows_keep_vs_drop_per_group(self):
+        pid = self._create_project()
+        self._add_docs(pid, records=[
+            {"status": DocumentStatus.ACCEPTED, "filename": "keepA.txt", "cleaned": True, "hash": "ha"},
+            {"status": DocumentStatus.ACCEPTED, "filename": "dropA-1.txt", "cleaned": True, "hash": "ha"},
+            {"status": DocumentStatus.ACCEPTED, "filename": "dropA-2.txt", "cleaned": True, "hash": "ha"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "dedupe_duplicate_docs"},
+        )
+        body = resp.json()
+        self.assertEqual(body["would_apply_count"], 2)
+        self.assertEqual(body["details"]["group_count"], 1)
+        self.assertEqual(len(body["items"]), 1)
+        group = body["items"][0]
+        self.assertEqual(group["keep"]["filename"], "keepA.txt")
+        dropped = sorted(d["filename"] for d in group["drop"])
+        self.assertEqual(dropped, ["dropA-1.txt", "dropA-2.txt"])
+
+    def test_preview_redact_pii_blocks_for_span_extraction(self):
+        """Preview must mirror the apply-step guard — span-extraction
+        recipes get safe_to_apply=False with a clear reason."""
+        pid = self._create_project()
+        from app.services.recipe_service import list_recipes
+        se_recipes = [
+            r for r in list_recipes() if getattr(r, "task_profile", None) == "structured_extraction"
+        ]
+        self.assertGreater(len(se_recipes), 0)
+        self._set_recipe(pid, se_recipes[0].id)
+        self._add_docs(pid, records=[
+            {"status": DocumentStatus.ACCEPTED, "filename": "u1.txt", "cleaned": True, "pii": True},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "redact_pii"},
+        )
+        # 200 with safe_to_apply=False (the modal renders the
+        # explanation rather than throwing a generic API error).
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertFalse(body["safe_to_apply"])
+        self.assertEqual(
+            body["details"]["blocked_reason"], "span_extraction_needs_pii"
+        )
+        self.assertEqual(body["items"], [])
+
+    def test_preview_count_matches_apply_count(self):
+        """The most important contract: preview's would_apply_count
+        must equal apply's applied_count when nothing changes between
+        the two calls. Otherwise the user sees N rows in the modal,
+        clicks Apply, and a different N lands."""
+        pid = self._create_project()
+        self._add_docs(pid, records=[
+            {"status": DocumentStatus.ERROR, "filename": "bad-1.pdf"},
+            {"status": DocumentStatus.ERROR, "filename": "bad-2.pdf"},
+            {"status": DocumentStatus.ERROR, "filename": "bad-3.pdf"},
+        ])
+        preview = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "drop_failed_docs"},
+        ).json()
+        apply_resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix",
+            json={"fix_kind": "drop_failed_docs"},
+        ).json()
+        self.assertEqual(preview["would_apply_count"], apply_resp["applied_count"])
+        self.assertEqual(apply_resp["applied_count"], 3)
+
+    def test_preview_unknown_kind_returns_400(self):
+        pid = self._create_project()
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "rewrite-history"},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+
+    # ── canonicalise_labels (D4) ──────────────────────────────
+
+    def _set_gold_dataset(
+        self, project_id: int, *, name: str, rows: list[dict],
+    ) -> Path:
+        """Write a gold-set JSONL file + register a Dataset row."""
+        import json
+        path = TEST_DATA_DIR / "projects" / str(project_id) / "gold" / f"{name}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+        async def _add():
+            async with async_session_factory() as db:
+                ds = Dataset(
+                    project_id=project_id,
+                    name=name,
+                    dataset_type=(
+                        DatasetType.GOLD_DEV if "dev" in name else DatasetType.GOLD_TEST
+                    ),
+                    file_path=str(path),
+                    record_count=len(rows),
+                )
+                db.add(ds)
+                await db.commit()
+        asyncio.run(_add())
+        return path
+
+    def _set_classification_recipe(self, project_id: int) -> None:
+        from app.services.recipe_service import list_recipes
+        cl = [
+            r for r in list_recipes() if getattr(r, "task_profile", None) == "classification"
+        ]
+        self.assertGreater(len(cl), 0, "no classification recipe in catalog")
+        self._set_recipe(project_id, cl[0].id)
+
+    def test_canonicalise_labels_preview_lists_merge_map(self):
+        pid = self._create_project()
+        self._set_classification_recipe(pid)
+        self._set_gold_dataset(pid, name="gold_dev", rows=[
+            {"prompt": "p1", "label": "positive"},
+            {"prompt": "p2", "label": "positive"},
+            {"prompt": "p3", "label": "Positive"},
+            {"prompt": "p4", "label": "POSITIVE"},
+            {"prompt": "p5", "label": "negative"},
+            {"prompt": "p6", "label": "negative"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "canonicalise_labels"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertTrue(body["safe_to_apply"])
+        # 1 fragmented group (positive variants); 2 rows would change
+        # (Positive + POSITIVE merge into the most-common "positive").
+        self.assertEqual(body["details"]["merge_group_count"], 1)
+        self.assertEqual(body["would_apply_count"], 2)
+        group = body["items"][0]
+        self.assertEqual(group["canonical"], "positive")
+        merged_labels = sorted(m["label"] for m in group["merge_in"])
+        self.assertEqual(merged_labels, ["POSITIVE", "Positive"])
+
+    def test_canonicalise_labels_apply_rewrites_gold_file(self):
+        pid = self._create_project()
+        self._set_classification_recipe(pid)
+        path = self._set_gold_dataset(pid, name="gold_dev", rows=[
+            {"prompt": "p1", "label": "positive"},
+            {"prompt": "p2", "label": "positive"},
+            {"prompt": "p3", "label": "Positive"},
+            {"prompt": "p4", "label": "POSITIVE"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix",
+            json={"fix_kind": "canonicalise_labels"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["applied_count"], 2)
+        self.assertIn("gold_dev.jsonl", body["details"]["rewritten_files"])
+        # The file on disk now has every label normalised to "positive".
+        import json
+        labels = [
+            json.loads(line)["label"]
+            for line in path.read_text().splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(labels, ["positive"] * 4)
+
+    def test_canonicalise_labels_apply_is_idempotent(self):
+        pid = self._create_project()
+        self._set_classification_recipe(pid)
+        self._set_gold_dataset(pid, name="gold_dev", rows=[
+            {"prompt": "p1", "label": "positive"},
+            {"prompt": "p2", "label": "Positive"},
+        ])
+        first = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix",
+            json={"fix_kind": "canonicalise_labels"},
+        ).json()
+        second = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix",
+            json={"fix_kind": "canonicalise_labels"},
+        ).json()
+        self.assertEqual(first["applied_count"], 1)
+        self.assertEqual(second["applied_count"], 0)
+
+    def test_canonicalise_labels_refuses_non_classification(self):
+        """For span-extraction / qa-sft projects the concept of label
+        fragmentation doesn't apply — preview returns
+        safe_to_apply=False and apply raises 400."""
+        pid = self._create_project()
+        from app.services.recipe_service import list_recipes
+        se_recipes = [
+            r for r in list_recipes() if getattr(r, "task_profile", None) == "structured_extraction"
+        ]
+        self._set_recipe(pid, se_recipes[0].id)
+        preview = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "canonicalise_labels"},
+        ).json()
+        self.assertFalse(preview["safe_to_apply"])
+        apply_resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix",
+            json={"fix_kind": "canonicalise_labels"},
+        )
+        self.assertEqual(apply_resp.status_code, 400, apply_resp.text)
+        self.assertIn("classification", apply_resp.json()["detail"])
+
+    def test_canonicalise_labels_preview_no_fragmentation(self):
+        pid = self._create_project()
+        self._set_classification_recipe(pid)
+        self._set_gold_dataset(pid, name="gold_dev", rows=[
+            {"prompt": "p1", "label": "positive"},
+            {"prompt": "p2", "label": "negative"},
+        ])
+        preview = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix/preview",
+            json={"fix_kind": "canonicalise_labels"},
+        ).json()
+        self.assertEqual(preview["would_apply_count"], 0)
+        self.assertEqual(preview["items"], [])
 
     # ── report-level integration ───────────────────────────────
 

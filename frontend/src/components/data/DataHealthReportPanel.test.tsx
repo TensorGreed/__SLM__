@@ -204,7 +204,7 @@ describe('DataHealthReportPanel', () => {
         ).toMatch(/--warn/);
     });
 
-    it('shows an autofix button on signals with autofix_kind and applies it on confirm', async () => {
+    it('shows an autofix button on signals with autofix_kind and opens the preview modal', async () => {
         const reportWithAutofix = {
             ...BLOCK_REPORT,
             groups: [
@@ -252,55 +252,95 @@ describe('DataHealthReportPanel', () => {
         apiMock.get
             .mockResolvedValueOnce({ data: reportWithAutofix })
             .mockResolvedValueOnce({ data: reportAfterFix });
-        apiMock.post.mockResolvedValueOnce({
-            data: {
-                fix_kind: 'dedupe_duplicate_docs',
-                applied_count: 5,
-                summary: 'Dropped 5 duplicate documents across 2 dedup groups.',
-                details: { group_count: 2 },
-            },
-        });
-        // Stub the confirm dialog to auto-confirm.
-        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        // Preview-then-apply: POST /preview returns the diff, then
+        // POST /autofix lands the change.
+        apiMock.post
+            .mockResolvedValueOnce({
+                data: {
+                    fix_kind: 'dedupe_duplicate_docs',
+                    would_apply_count: 5,
+                    summary: 'Would drop 5 duplicate documents.',
+                    details: { group_count: 2 },
+                    items: [
+                        {
+                            kind: 'dedup_group',
+                            text_hash: 'abc123',
+                            keep: { id: 1, filename: 'keep.txt' },
+                            drop: [
+                                { id: 2, filename: 'dup-1.txt' },
+                                { id: 3, filename: 'dup-2.txt' },
+                            ],
+                        },
+                    ],
+                    safe_to_apply: true,
+                },
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    fix_kind: 'dedupe_duplicate_docs',
+                    applied_count: 5,
+                    summary: 'Dropped 5 duplicate documents across 2 dedup groups.',
+                    details: { group_count: 2 },
+                },
+            });
 
         renderPanel();
         const user = userEvent.setup();
 
-        // Autofix button is visible.
         await waitFor(() => {
             expect(
                 screen.getByTestId('data-health-autofix-cleaning.duplicate_chunks'),
             ).toBeInTheDocument();
         });
 
+        // Click opens the preview modal (no window.confirm).
         await user.click(screen.getByTestId('data-health-autofix-cleaning.duplicate_chunks'));
 
-        // Confirm prompt fired.
-        expect(confirmSpy).toHaveBeenCalled();
-
-        // POST went to the right endpoint with the right kind.
+        // Modal renders with preview content.
         await waitFor(() => {
-            expect(apiMock.post).toHaveBeenCalledWith(
+            expect(screen.getByTestId('autofix-modal')).toBeInTheDocument();
+        });
+        // The first POST hits the preview endpoint, not the apply
+        // one — that's the new safety contract.
+        expect(apiMock.post).toHaveBeenNthCalledWith(
+            1,
+            '/projects/42/data-health/autofix/preview',
+            { fix_kind: 'dedupe_duplicate_docs' },
+        );
+        // Modal lists the actual filenames so the user can see what
+        // would happen.
+        await waitFor(() => {
+            expect(screen.getByTestId('autofix-modal-list')).toBeInTheDocument();
+        });
+        expect(screen.getByTestId('autofix-modal').textContent).toMatch(/keep\.txt/);
+        expect(screen.getByTestId('autofix-modal').textContent).toMatch(/dup-1\.txt/);
+
+        // User clicks Apply — only now does the destructive POST fire.
+        await user.click(screen.getByTestId('autofix-modal-apply'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenNthCalledWith(
+                2,
                 '/projects/42/data-health/autofix',
                 { fix_kind: 'dedupe_duplicate_docs' },
             );
         });
 
+        // Modal closes after apply.
+        await waitFor(() => {
+            expect(screen.queryByTestId('autofix-modal')).not.toBeInTheDocument();
+        });
         // Toast surfaces the fix summary.
         await waitFor(() => {
             const toast = screen.getByTestId('data-health-fix-toast');
             expect(toast.textContent).toMatch(/Dropped 5 duplicate documents/);
         });
-
         // Report refetched (second GET call).
         await waitFor(() => {
             expect(apiMock.get).toHaveBeenCalledTimes(2);
         });
-
-        confirmSpy.mockRestore();
     });
 
-    it('cancelling the autofix confirm does not POST', async () => {
+    it('cancelling the autofix preview never fires the destructive POST', async () => {
         const reportWithAutofix = {
             ...BLOCK_REPORT,
             groups: [
@@ -324,7 +364,19 @@ describe('DataHealthReportPanel', () => {
             ],
         };
         apiMock.get.mockResolvedValueOnce({ data: reportWithAutofix });
-        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                fix_kind: 'redact_pii',
+                would_apply_count: 2,
+                summary: 'Would re-clean 2 documents.',
+                details: { total_findings: 8 },
+                items: [
+                    { kind: 'pii_doc', id: 10, filename: 'one.txt', pii_findings: 4 },
+                    { kind: 'pii_doc', id: 11, filename: 'two.txt', pii_findings: 4 },
+                ],
+                safe_to_apply: true,
+            },
+        });
 
         renderPanel();
         const user = userEvent.setup();
@@ -335,9 +387,77 @@ describe('DataHealthReportPanel', () => {
         });
         await user.click(screen.getByTestId('data-health-autofix-cleaning.pii_unredacted'));
 
-        // POST never called when the user cancels the confirm.
-        expect(apiMock.post).not.toHaveBeenCalled();
-        confirmSpy.mockRestore();
+        // Modal opens + preview fetched.
+        await waitFor(() => {
+            expect(screen.getByTestId('autofix-modal')).toBeInTheDocument();
+        });
+        // User cancels.
+        await user.click(screen.getByTestId('autofix-modal-cancel'));
+        await waitFor(() => {
+            expect(screen.queryByTestId('autofix-modal')).not.toBeInTheDocument();
+        });
+        // POST count is 1 — only the preview ran, never the apply.
+        expect(apiMock.post).toHaveBeenCalledTimes(1);
+        expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/42/data-health/autofix/preview',
+            { fix_kind: 'redact_pii' },
+        );
+    });
+
+    it('apply button stays disabled when preview returns safe_to_apply=false', async () => {
+        const reportWithAutofix = {
+            ...BLOCK_REPORT,
+            groups: [
+                {
+                    id: 'cleaning',
+                    title: 'Cleaning',
+                    subtitle: 'PII redaction + quality + dedup',
+                    signals: [
+                        {
+                            id: 'cleaning.pii_unredacted',
+                            severity: 'warn' as const,
+                            headline: '18 PII findings detected.',
+                            plain_english: 'PII detected, not redacted.',
+                            why_it_matters: 'Memorisation risk.',
+                            suggested_action: null,
+                            context: {},
+                            autofix_kind: 'redact_pii',
+                        },
+                    ],
+                },
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: reportWithAutofix });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                fix_kind: 'redact_pii',
+                would_apply_count: 0,
+                summary: 'PII redaction is unsafe for span-extraction recipes.',
+                details: { blocked_reason: 'span_extraction_needs_pii' },
+                items: [],
+                safe_to_apply: false,
+            },
+        });
+
+        renderPanel();
+        const user = userEvent.setup();
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-health-autofix-cleaning.pii_unredacted'),
+            ).toBeInTheDocument();
+        });
+        await user.click(screen.getByTestId('data-health-autofix-cleaning.pii_unredacted'));
+        await waitFor(() => {
+            expect(screen.getByTestId('autofix-modal-blocked')).toBeInTheDocument();
+        });
+        const applyBtn = screen.getByTestId('autofix-modal-apply') as HTMLButtonElement;
+        expect(applyBtn.disabled).toBe(true);
+        // The destructive POST never fires.
+        expect(apiMock.post).toHaveBeenCalledTimes(1);
+        expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/42/data-health/autofix/preview',
+            { fix_kind: 'redact_pii' },
+        );
     });
 
     it('renders an error fallback when the API call fails', async () => {

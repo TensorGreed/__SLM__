@@ -81,3 +81,6 @@ tts/.venv/
 tts/audio/
 tts/__pycache__/
 CODEX_PROMPT_data_studio_prd.md
+
+# Academy planning doc — local only, do not commit
+ACADEMY_ROADMAP.md

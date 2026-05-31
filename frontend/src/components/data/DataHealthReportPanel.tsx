@@ -34,6 +34,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import api from '../../api/client';
+import AutofixPreviewModal from './AutofixPreviewModal';
 import './DataHealthReportPanel.css';
 
 type Severity = 'ok' | 'warn' | 'block';
@@ -133,6 +134,7 @@ const AUTOFIX_LABEL: Record<string, string> = {
     drop_failed_docs: 'Drop failed docs',
     dedupe_duplicate_docs: 'Dedupe duplicates',
     redact_pii: 'Redact PII',
+    canonicalise_labels: 'Merge label variants',
 };
 
 export default function DataHealthReportPanel({ projectId }: DataHealthReportPanelProps) {
@@ -141,8 +143,12 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
-    const [applyingFix, setApplyingFix] = useState<string | null>(null);
     const [lastFix, setLastFix] = useState<AutofixResult | null>(null);
+    // D3.2 — preview-then-apply: the panel opens AutofixPreviewModal
+    // here; the modal handles preview + apply and surfaces the
+    // result via onApplied. No more window.confirm() — every
+    // destructive transform shows its per-item diff first.
+    const [previewing, setPreviewing] = useState<{ kind: string; label: string } | null>(null);
 
     const fetch = useCallback(async () => {
         setLoading(true);
@@ -172,34 +178,18 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
         });
     };
 
-    const applyAutofix = useCallback(async (kind: string, signalId: string) => {
-        // Light confirmation — we tell the user what'll change before
-        // the POST fires. Confirm uses the layman label so the prompt
-        // reads natural ("Drop failed docs?") instead of programmatic.
+    const openPreview = useCallback((kind: string) => {
         const label = AUTOFIX_LABEL[kind] || kind;
-        const confirmed = window.confirm(
-            `${label}? This applies the safe auto-fix immediately. `
-            + `The fix is idempotent so re-running is harmless.`,
-        );
-        if (!confirmed) return;
-        setApplyingFix(signalId);
         setLastFix(null);
-        try {
-            const res = await api.post<AutofixResult>(
-                `/projects/${projectId}/data-health/autofix`,
-                { fix_kind: kind },
-            );
-            setLastFix(res.data);
-            // Refresh the report so the just-fixed signal's severity
-            // updates (typically ok now).
-            await fetch();
-        } catch (err) {
-            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-            setError(typeof detail === 'string' ? detail : 'Auto-fix failed.');
-        } finally {
-            setApplyingFix(null);
-        }
-    }, [projectId, fetch]);
+        setPreviewing({ kind, label });
+    }, []);
+
+    const handleApplied = useCallback(async (result: AutofixResult) => {
+        setLastFix(result);
+        // Refresh the report so the just-fixed signal's severity
+        // updates (typically ok now).
+        await fetch();
+    }, [fetch]);
 
     if (loading && !data) {
         return (
@@ -346,14 +336,11 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
                                                         <button
                                                             type="button"
                                                             className="data-health__autofix btn btn-sm"
-                                                            onClick={() => void applyAutofix(sig.autofix_kind as string, sig.id)}
-                                                            disabled={applyingFix === sig.id}
+                                                            onClick={() => openPreview(sig.autofix_kind as string)}
                                                             data-testid={`data-health-autofix-${sig.id}`}
-                                                            title="Safe auto-fix — idempotent and predictable"
+                                                            title="Preview the diff before applying"
                                                         >
-                                                            {applyingFix === sig.id
-                                                                ? 'Applying…'
-                                                                : `Auto-fix: ${AUTOFIX_LABEL[sig.autofix_kind] || sig.autofix_kind}`}
+                                                            Preview: {AUTOFIX_LABEL[sig.autofix_kind] || sig.autofix_kind}
                                                         </button>
                                                     )}
                                                     {sig.suggested_action?.label && (
@@ -396,6 +383,16 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
                     Refresh
                 </button>
             </footer>
+
+            {previewing && (
+                <AutofixPreviewModal
+                    projectId={projectId}
+                    fixKind={previewing.kind}
+                    fixLabel={previewing.label}
+                    onClose={() => setPreviewing(null)}
+                    onApplied={(r) => void handleApplied(r)}
+                />
+            )}
         </section>
     );
 }

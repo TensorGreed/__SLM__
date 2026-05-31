@@ -205,7 +205,7 @@ Each signal row carries:
 - **Plain-English summary** — the actual problem, in words a non-technical user can act on. Sits above the technical headline (which is still rendered for users who want the numbers).
 - **"Why this matters" expander** — closed by default, one-click expand. The point is to teach the consequence at training time, not to wall users with text.
 - **Suggested action chip** — informational, navigates to the relevant tab.
-- **Auto-fix button** (D3, where applicable) — green button next to the action chip when the platform can resolve the signal in one click. See "Safe auto-fixes" below.
+- **Preview button** (D3/D4, where applicable) — green button next to the action chip when the platform can resolve the signal. Opens a per-item diff modal; the destructive change only lands after the user clicks Apply in the modal. See "Auto-fixes (preview-then-apply)" below.
 
 The top of the panel is an overall verdict: `ok` ("all clear"), `warn` ("warnings to address"), or `block` ("training won't produce reliable results until these are fixed"), with severity counts. The overall is the worst of all signals — any block bubbles up.
 
@@ -220,19 +220,32 @@ Groups, in order:
 
 Empty groups (e.g. Balance for non-classification recipes) are silently skipped.
 
-#### Safe auto-fixes (D3)
+#### Auto-fixes (preview-then-apply) — D3 + D4
 
-Three signals carry an `autofix_kind` hint that surfaces a green **Auto-fix** button on the row. Each transform is predictable, idempotent, and non-destructive beyond removing already-broken or already-redundant rows. Click → confirm → POST → report refreshes with the just-fixed signal now `ok`.
+Every signal that carries an `autofix_kind` hint surfaces a green **Preview: …** button on the row. Clicking opens a modal that shows the **per-item diff** the fix would produce (filenames being dropped, keep-vs-drop pairs for dedup, label merge map for canonicalisation, PII finding counts) — no destructive change lands until the user clicks Apply inside that modal.
 
-| Signal | Autofix | What it does |
+The contract is:
+
+1. UI POSTs `/data-health/autofix/preview` with `{fix_kind}`. The server returns `{would_apply_count, summary, items, safe_to_apply, details}` without mutating anything.
+2. The modal renders the `items` list. If `safe_to_apply: false`, the Apply button is disabled and a "Safety guard" callout explains why.
+3. On Apply, UI POSTs `/data-health/autofix`. The endpoint runs the matching transform and returns `{applied_count, summary, details}` — the panel surfaces that as a toast and refreshes the report.
+
+| Signal | Fix kind | What it does |
 |---|---|---|
-| `ingestion.parse_failure_rate` | `drop_failed_docs` | Deletes every `RawDocument` with `status=ERROR` plus its on-disk artefacts (raw file + `.extracted.txt` / `.cleaned.txt` / `.chunks.jsonl` sidecars). Failed parses have no extracted text — they were already useless. |
-| `cleaning.duplicate_chunks` | `dedupe_duplicate_docs` | Groups `ACCEPTED` docs by `metadata_.text_hash`; for each group of >1, keeps the lowest-id occurrence and deletes the rest. Pure dedup, no semantic change. |
-| `cleaning.pii_unredacted` | `redact_pii` | Re-runs `clean_document(..., redact=True)` on every doc that has PII findings but `redact_pii` flag unset. Cleaning is itself idempotent — this just re-renders the cleaned text with PII replaced by `[REDACTED]`. Skips docs that aren't yet cleaned (would require running the full pipeline; the user should click Clean first). |
+| `ingestion.parse_failure_rate` | `drop_failed_docs` | Deletes every `RawDocument` with `status=ERROR` plus its on-disk artefacts (raw file + `.extracted.txt` / `.cleaned.txt` / `.chunks.jsonl` sidecars). Failed parses have no extracted text — they were already useless. Preview lists each filename + the parse error string so the user can see *which* files would be dropped. |
+| `cleaning.duplicate_chunks` | `dedupe_duplicate_docs` | Groups `ACCEPTED` docs by `metadata_.text_hash`; for each group of >1, keeps the lowest-id occurrence and deletes the rest. Pure dedup, no semantic change. Preview shows each duplicate set as a "keep ✓ / drop −" group so the user picks up which copy survives. |
+| `cleaning.pii_unredacted` | `redact_pii` | Re-runs `clean_document(..., redact=True)` on every doc that has PII findings but `redact_pii` flag unset. Cleaning is itself idempotent — this just re-renders the cleaned text with PII replaced by `[REDACTED]`. Skips docs that aren't yet cleaned (would require running the full pipeline; the user should click Clean first). Preview lists each affected doc + its PII finding count. |
+| `balance.label_vocab_fragmented` | `canonicalise_labels` (D4) | Classification-only. Groups labels by their normalised form (lowercase + collapsed whitespace), picks the most-common variant as canonical (ties broken alphabetically), and rewrites every gold-set JSONL row whose label sits in a non-canonical bucket. Idempotent (re-running on already-canonicalised gold is a no-op). Preview shows the merge map: `"Positive" (3) + "POSITIVE" (1) → "positive" (15 canonical)`. Refuses on non-classification recipes (`safe_to_apply: false`). |
 
-**Recipe-aware PII guard**: for `structured_extraction` recipes (PII detection, NER, entity extraction) the source-document PII IS the training signal — auto-redacting it would destroy what the model needs to learn. For these projects, the data-health signal flips to `ok` severity with explanatory copy, the auto-fix button is hidden in the panel, and even a direct API call to `POST /data-health/autofix` with `fix_kind=redact_pii` returns 400. If you need redaction for a separate non-training use, do it manually on a copy of the cleaned outputs. The signal's `context.autofix_blocked_reason` carries the machine-readable reason (`span_extraction_needs_pii`) for logs / scripted clients.
+**Recipe-aware PII guard**: for `structured_extraction` recipes (PII detection, NER, entity extraction) the source-document PII IS the training signal — auto-redacting it would destroy what the model needs to learn. For these projects, the data-health signal flips to `ok` severity with explanatory copy, the **Preview** button is hidden in the panel, the preview endpoint returns `safe_to_apply: false` with `details.blocked_reason = "span_extraction_needs_pii"` so the modal can't apply, and a direct call to `POST /data-health/autofix` with `fix_kind=redact_pii` returns 400. If you need redaction for a separate non-training use, do it manually on a copy of the cleaned outputs.
 
-Riskier auto-fixes (drop-low-quality docs, truncation, label canonicalisation, row drops) require a preview-diff and land in D4. The endpoint is `POST /api/projects/{id}/data-health/autofix` with body `{fix_kind: ...}`; `GET /data-health/autofix/supported` lists the kinds the server currently supports.
+**Endpoints**:
+
+- `POST /api/projects/{id}/data-health/autofix/preview` — `{fix_kind}` → `{would_apply_count, summary, items, safe_to_apply, details}`. Read-only.
+- `POST /api/projects/{id}/data-health/autofix` — `{fix_kind}` → `{applied_count, summary, details}`. Mutating; UI is expected to call `/preview` first.
+- `GET /api/projects/{id}/data-health/autofix/supported` — `{fix_kinds: [...]}`. Lists every kind the server understands.
+
+Further fixes (drop-low-quality docs, truncation, row drops) follow the same preview-then-apply pattern and ship in D5+.
 
 ### UI
 
