@@ -248,6 +248,79 @@ class D3AutofixTests(unittest.TestCase):
         )
         self.assertEqual(resp.json()["applied_count"], 0)
 
+    # ── PII safeguard for span-extraction projects ────────────
+
+    def _set_recipe(self, project_id: int, recipe_id: str) -> None:
+        async def _set():
+            async with async_session_factory() as db:
+                from app.models.project import Project
+                proj = await db.get(Project, project_id)
+                proj.selected_recipe = {"recipe_id": recipe_id}
+                await db.commit()
+        asyncio.run(_set())
+
+    def test_redact_pii_signal_silenced_for_span_extraction_project(self):
+        """A structured_extraction recipe (PII detection, NER, etc.)
+        needs PII in source documents to teach the model. The
+        data-health report should report the signal as ok and refuse
+        the auto-fix — the model would lose its training signal."""
+        pid = self._create_project()
+        # Find a real structured_extraction recipe — the platform's
+        # built-in pii.spans recipe maps to task_profile=structured_extraction.
+        from app.services.recipe_service import list_recipes
+        se_recipes = [
+            r for r in list_recipes() if getattr(r, "task_profile", None) == "structured_extraction"
+        ]
+        self.assertGreater(len(se_recipes), 0, "no structured_extraction recipe found in catalog")
+        self._set_recipe(pid, se_recipes[0].id)
+        # Seed docs with PII findings + cleaned but no redact flag —
+        # exactly the state that would normally fire the warn signal.
+        self._add_docs(pid, records=[
+            {"status": DocumentStatus.ACCEPTED, "filename": "u1.txt", "cleaned": True, "pii": True},
+            {"status": DocumentStatus.ACCEPTED, "filename": "u2.txt", "cleaned": True, "pii": True},
+        ])
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        pii = _signal_by_id(body, "cleaning.pii_unredacted")
+        self.assertIsNotNone(pii)
+        assert pii is not None
+        # Severity flipped to ok — the platform isn't telling the user
+        # "this is wrong" when for their use case it's right.
+        self.assertEqual(pii["severity"], "ok")
+        # No auto-fix offered.
+        self.assertIsNone(pii["autofix_kind"])
+        # Plain-English explains why PII is kept (so the user
+        # understands the data-health UX, not a bug).
+        self.assertIn("span-extraction", pii["plain_english"])
+        # Context carries the blocked-reason so logs / debugging can
+        # trace why the autofix didn't fire.
+        self.assertEqual(pii["context"]["autofix_blocked_reason"], "span_extraction_needs_pii")
+
+    def test_redact_pii_autofix_refuses_for_span_extraction_project(self):
+        """Even if the API is called directly (bypassing the panel
+        which hides the button), the autofix endpoint refuses with
+        400 + a clear explanation. Defence in depth — the signal
+        logic is the primary guard; this is the safety net."""
+        pid = self._create_project()
+        from app.services.recipe_service import list_recipes
+        se_recipes = [
+            r for r in list_recipes() if getattr(r, "task_profile", None) == "structured_extraction"
+        ]
+        self._set_recipe(pid, se_recipes[0].id)
+        self._add_docs(pid, records=[
+            {"status": DocumentStatus.ACCEPTED, "filename": "u1.txt", "cleaned": True, "pii": True},
+        ])
+
+        resp = self.client.post(
+            f"/api/projects/{pid}/data-health/autofix",
+            json={"fix_kind": "redact_pii"},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        body = resp.json()
+        # Error message names the protected use case in plain language.
+        self.assertIn("span-extraction", body["detail"])
+        self.assertIn("training signal", body["detail"])
+
     # ── error paths ────────────────────────────────────────────
 
     def test_unknown_fix_kind_returns_400(self):

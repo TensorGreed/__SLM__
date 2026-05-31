@@ -212,8 +212,39 @@ async def _redact_pii(
 
     Imports clean_document lazily because the cleaning service pulls
     in a lot of regex + chunking helpers we don't otherwise need on
-    the request path."""
+    the request path.
+
+    Defence in depth: refuses to run for ``structured_extraction``
+    projects. For PII detection / NER / entity-extraction tasks the
+    source-document PII IS the training signal — auto-redacting it
+    would destroy what the model is supposed to learn. The data-health
+    report's recipe-aware signal logic also hides the button for this
+    project shape, but we re-check here in case the API is hit
+    directly (CLI, scripted client, etc.).
+    """
+    from app.models.project import Project
     from app.services.cleaning_service import clean_document
+
+    project = await db.get(Project, project_id)
+    if project is not None:
+        selected = project.selected_recipe or {}
+        recipe_id = selected.get("recipe_id") if isinstance(selected, dict) else None
+        if recipe_id:
+            try:
+                from app.services.recipe_service import get_recipe
+                recipe = get_recipe(recipe_id)
+                task_profile = getattr(recipe, "task_profile", None) if recipe else None
+            except Exception:
+                task_profile = None
+            if task_profile == "structured_extraction":
+                raise ValueError(
+                    "redact_pii is unsafe for span-extraction recipes: "
+                    "the model needs PII in source documents to learn "
+                    "what to detect. Auto-redaction would destroy the "
+                    "training signal. If you need redaction for a "
+                    "separate non-training use, do it manually on a "
+                    "copy of the cleaned outputs."
+                )
 
     docs = await _load_raw_docs(db, project_id)
     targets = []

@@ -230,6 +230,8 @@ Three signals carry an `autofix_kind` hint that surfaces a green **Auto-fix** bu
 | `cleaning.duplicate_chunks` | `dedupe_duplicate_docs` | Groups `ACCEPTED` docs by `metadata_.text_hash`; for each group of >1, keeps the lowest-id occurrence and deletes the rest. Pure dedup, no semantic change. |
 | `cleaning.pii_unredacted` | `redact_pii` | Re-runs `clean_document(..., redact=True)` on every doc that has PII findings but `redact_pii` flag unset. Cleaning is itself idempotent — this just re-renders the cleaned text with PII replaced by `[REDACTED]`. Skips docs that aren't yet cleaned (would require running the full pipeline; the user should click Clean first). |
 
+**Recipe-aware PII guard**: for `structured_extraction` recipes (PII detection, NER, entity extraction) the source-document PII IS the training signal — auto-redacting it would destroy what the model needs to learn. For these projects, the data-health signal flips to `ok` severity with explanatory copy, the auto-fix button is hidden in the panel, and even a direct API call to `POST /data-health/autofix` with `fix_kind=redact_pii` returns 400. If you need redaction for a separate non-training use, do it manually on a copy of the cleaned outputs. The signal's `context.autofix_blocked_reason` carries the machine-readable reason (`span_extraction_needs_pii`) for logs / scripted clients.
+
 Riskier auto-fixes (drop-low-quality docs, truncation, label canonicalisation, row drops) require a preview-diff and land in D4. The endpoint is `POST /api/projects/{id}/data-health/autofix` with body `{fix_kind: ...}`; `GET /data-health/autofix/supported` lists the kinds the server currently supports.
 
 ### UI

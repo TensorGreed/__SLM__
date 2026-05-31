@@ -191,6 +191,32 @@ def _make_signal(
     }
 
 
+def _resolve_task_profile(project: Project) -> str | None:
+    """Resolve the project's recipe to a ``task_profile`` string (e.g.
+    ``"classification"``, ``"structured_extraction"``, ``"qa_sft"``).
+
+    Returns ``None`` when no recipe is selected or the recipe can't
+    be loaded. Used by ``_cleaning_group`` to make the PII signal
+    recipe-aware — span-extraction projects need PII in source data
+    to teach the model what to detect, so the auto-redact path must
+    not fire for those.
+    """
+    selected = project.selected_recipe or {}
+    if not isinstance(selected, dict):
+        return None
+    recipe_id = selected.get("recipe_id")
+    if not isinstance(recipe_id, str) or not recipe_id:
+        return None
+    try:
+        from app.services.recipe_service import get_recipe
+        recipe = get_recipe(recipe_id)
+        if recipe is None:
+            return None
+        return getattr(recipe, "task_profile", None)
+    except Exception:
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Ingestion group.
 # ─────────────────────────────────────────────────────────────────────
@@ -279,8 +305,22 @@ async def _ingestion_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────
 
 
-async def _cleaning_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
-    """PII, low-quality docs, duplicate chunks."""
+async def _cleaning_group(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    task_profile: str | None = None,
+) -> dict[str, Any]:
+    """PII, low-quality docs, duplicate chunks.
+
+    ``task_profile`` (when known) lets the PII signal be recipe-aware.
+    For ``structured_extraction`` recipes the user is almost certainly
+    training a span-extraction model (PII detection, NER, entity
+    extraction) where the source-document PII is the **training
+    signal** — auto-redacting it would destroy the very pattern the
+    model needs to learn. In that case we flip the signal to ``ok``
+    and refuse the auto-fix.
+    """
     result = await db.execute(
         select(RawDocument)
         .join(Dataset, Dataset.id == RawDocument.dataset_id)
@@ -342,28 +382,65 @@ async def _cleaning_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
         bool((d.metadata_ or {}).get("redact_pii")) for d in cleaned_docs
     )
     if pii_findings_present and not any_redacted:
-        severity: Severity = (
-            "block" if pii_total >= PII_BLOCK_COUNT else "warn"
-        )
-        signals.append(_make_signal(
-            id="cleaning.pii_unredacted",
-            severity=severity,
-            headline=(
-                f"{pii_total} PII findings detected across {len(cleaned_docs)} cleaned doc(s) "
-                f"— redaction was not applied."
-            ),
-            suggested_action={
-                "kind": "navigate",
-                "label": "Re-clean with redact-PII on",
-                "target": "cleaning",
-            },
-            context={"pii_findings": pii_total, "cleaned_docs": len(cleaned_docs)},
-            # D3 safe auto-fix — re-runs clean_document with redact=True
-            # for every doc with PII findings + redact_pii=False. The
-            # cleaning service is idempotent, so this is a pure
-            # re-render of the cleaned text with PII masked.
-            autofix_kind="redact_pii",
-        ))
+        # Recipe-aware: span-extraction projects (PII detection, NER,
+        # entity extraction, etc.) need the PII in source documents to
+        # teach the model what to detect. Auto-redacting would destroy
+        # the training signal. Flip to ok severity and remove the
+        # auto-fix so the panel doesn't silently nuke the user's
+        # training data.
+        is_span_extraction = task_profile == "structured_extraction"
+        if is_span_extraction:
+            signals.append(_make_signal(
+                id="cleaning.pii_unredacted",
+                severity="ok",
+                headline=(
+                    f"{pii_total} PII finding(s) detected — kept in source "
+                    f"(required for span-extraction training)."
+                ),
+                plain_english=(
+                    "Your recipe is span-extraction (PII detection, NER, entity "
+                    "extraction, etc.) — the model learns by seeing PII in the "
+                    "source documents and the gold-set spans pointing at it. "
+                    "Auto-redaction is intentionally disabled for this project "
+                    "shape so the training signal isn't destroyed. If you need "
+                    "redaction for a separate non-training use, do it manually "
+                    "on a copy of the cleaned outputs."
+                ),
+                why_it_matters="",
+                suggested_action=None,
+                context={
+                    "pii_findings": pii_total,
+                    "cleaned_docs": len(cleaned_docs),
+                    "task_profile": task_profile,
+                    "autofix_blocked_reason": "span_extraction_needs_pii",
+                },
+                # Deliberately no autofix_kind — the panel will not
+                # render the Drop/Redact button for this row.
+            ))
+        else:
+            severity: Severity = (
+                "block" if pii_total >= PII_BLOCK_COUNT else "warn"
+            )
+            signals.append(_make_signal(
+                id="cleaning.pii_unredacted",
+                severity=severity,
+                headline=(
+                    f"{pii_total} PII findings detected across {len(cleaned_docs)} cleaned doc(s) "
+                    f"— redaction was not applied."
+                ),
+                suggested_action={
+                    "kind": "navigate",
+                    "label": "Re-clean with redact-PII on",
+                    "target": "cleaning",
+                },
+                context={"pii_findings": pii_total, "cleaned_docs": len(cleaned_docs)},
+                # D3 safe auto-fix — re-runs clean_document with
+                # redact=True for every doc with PII findings +
+                # redact_pii=False. The cleaning service is idempotent,
+                # so this is a pure re-render of the cleaned text with
+                # PII masked.
+                autofix_kind="redact_pii",
+            ))
     elif pii_findings_present and any_redacted:
         signals.append(_make_signal(
             id="cleaning.pii_unredacted",
@@ -684,9 +761,14 @@ async def compute_data_health_report(
     if project is None:
         raise ValueError(f"Project {project_id} not found")
 
+    # Resolve task_profile once at the top so the per-group builders
+    # don't each re-query the recipe service. None when no recipe is
+    # selected, which is the state shape_group will flag separately.
+    task_profile = _resolve_task_profile(project)
+
     groups = [
         await _ingestion_group(db, project_id),
-        await _cleaning_group(db, project_id),
+        await _cleaning_group(db, project_id, task_profile=task_profile),
         await _shape_group(db, project),
         await _balance_group(db, project),
     ]
