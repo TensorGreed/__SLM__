@@ -195,6 +195,30 @@ curl -X POST http://localhost:8000/api/projects/1/synthetic/generate \
 
 Joins cleaned + synthetic rows (if any), runs the chosen adapter, splits train/val/test, and writes the prepared records to `DATA_DIR/projects/{id}/prepared/`.
 
+### Data Health Report (D1+D2 of the data-quality arc)
+
+The Data Prep tab opens with an aggregated **Data Health Report** at the top — a single panel that pulls every data-quality signal scattered across the platform (ingestion, cleaning, shape vs recipe, classification balance) into one traffic-light scorecard. Backed by `GET /api/projects/{id}/data-health`.
+
+Each signal row carries:
+
+- **Severity badge** — `ok` / `warn` / `block`, matching the Coach Mode + trainability-forecast palette so the same red means the same thing across panels.
+- **Plain-English summary** — the actual problem, in words a non-technical user can act on. Sits above the technical headline (which is still rendered for users who want the numbers).
+- **"Why this matters" expander** — closed by default, one-click expand. The point is to teach the consequence at training time, not to wall users with text.
+- **Suggested action chip** — informational in D1 (clicking navigates to the relevant tab). D3 + D4 of the arc will replace this with **1-click auto-fix** for the safe transforms (dedup, whitespace, casing, UTF-8 re-encode, drop-empties, column-rename to match recipe schema) and a **preview-diff fix** for the risky ones (truncation, PII redaction, drop suspected-bad rows).
+
+The top of the panel is an overall verdict: `ok` ("all clear"), `warn` ("warnings to address"), or `block` ("training won't produce reliable results until these are fixed"), with severity counts. The overall is the worst of all signals — any block bubbles up.
+
+Groups, in order:
+
+| Group | What it covers |
+|---|---|
+| Ingestion | Document count, parse-failure rate (warn at 10%, block at 25%). |
+| Cleaning | PII findings + redaction status, low-quality fraction (block at 30%), duplicate-document share via `text_hash` (block at 30%). |
+| Shape vs recipe | Recipe selected? Train/val/test prepared? Corpus size above the recipe minimum? |
+| Class balance | Classification-only: delegated to the trainability forecast's existing signals (`class_imbalance`, `per_class_minimum_unmet`, `label_vocab_fragmented`, `single_class_dominance`) so the report and Coach Mode share one source of truth for the thresholds. |
+
+Empty groups (e.g. Balance for non-classification recipes) are silently skipped.
+
 ### UI
 
 Pipeline → **Data prep** → **Run prep**. Settings:

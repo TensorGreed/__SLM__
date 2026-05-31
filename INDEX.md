@@ -32,6 +32,7 @@ session-start guidance.
 - `backend/app/api/comparison.py` — Comparison API for experiments.
 - `backend/app/api/compression.py` — Compression API routes.
 - `backend/app/api/curriculum.py` — Curriculum-ranking API routes (USER-SUCCESS Epic 6 Phase 6a).
+- `backend/app/api/data_health.py` — Data Health Report API — D1 of the data-quality arc.
 - `backend/app/api/data_studio.py` — Data Studio API routes.
 - `backend/app/api/dataset.py` — Dataset preparation API routes.
 - `backend/app/api/dataset_import.py` — Dataset-import API surface (Phase A).
@@ -100,6 +101,7 @@ session-start guidance.
 - `backend/app/services/cost_estimator_service.py` — P18 — Cost estimator with provenance (priority.md, RM3).
 - `backend/app/services/curriculum_service.py` — Curriculum-style training row ranking (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/app/services/data_adapter_service.py` — Data adapter SDK registry and execution helpers.
+- `backend/app/services/data_health_service.py` — Data Health Report — D1 of the data-quality arc.
 - `backend/app/services/data_studio_service.py` — Data Studio overview intelligence.
 - `backend/app/services/dataset_contract_service.py` — Prepared dataset contract validation for task-specific training readiness.
 - `backend/app/services/dataset_import/configs.py` — Saved-config CRUD + ``run_from_config`` orchestration.
@@ -430,6 +432,7 @@ session-start guidance.
 - `frontend/src/components/dashboard/PipelineProgress.tsx` — Linear progress tracker showing pipeline stage completion with percentage and status indicators.
 - `frontend/src/components/dashboard/ProjectCard.tsx` — Project summary card displaying status, description, stats, and pipeline-stage progress.
 - `frontend/src/components/data/CleaningPanel.tsx` — Panel for async batch document cleaning with progress tracking and quality scoring.
+- `frontend/src/components/data/DataHealthReportPanel.tsx` — DataHealthReportPanel — D1+D2 of the data-quality arc.
 - `frontend/src/components/data/DataStudioAssistPanel.tsx` — Panel for running AI-assisted suggestions on mapping and domain with provider configuration.
 - `frontend/src/components/data/DataStudioCoachRailPanel.tsx` — Coach rail panel for DataStudio checks with blocked / attention / ready verdicts.
 - `frontend/src/components/data/DataStudioDatasetVersionsPanel.tsx` — Panel showing prepared dataset version history with reproducibility and reuse-signal checks.
@@ -571,6 +574,7 @@ session-start guidance.
 - `backend/tests/test_curriculum_phase6d_defaults.py` — Tests for the Phase 6d default-on heuristic + Coach Mode nudge.
 - `backend/tests/test_curriculum_service.py` — Tests for the curriculum-ranking service (USER-SUCCESS Epic 6 Phase 6a).
 - `backend/tests/test_curriculum_training_integration.py` — Tests for the curriculum training-pipeline integration
+- `backend/tests/test_data_health_service.py` — D1 of the data-quality arc — aggregated Data Health Report.
 - `backend/tests/test_data_studio_overview.py` — Data Studio overview endpoint tests.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
@@ -750,6 +754,7 @@ session-start guidance.
 - `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/FirstRunCheatSheet.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/DataHealthReportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioAssistPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioCoachRailPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DataStudioDatasetVersionsPanel.test.tsx` — _(no docstring)_

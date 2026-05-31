@@ -4,9 +4,11 @@
 
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import DataHealthReportPanel from './DataHealthReportPanel';
 import StepFooter from '../shared/StepFooter';
 import { toast } from '../../stores/toastStore';
 import { loadWorkflowStagePrefill } from '../../utils/workflowGraphPrefill';
+import './DataHealthReportPanel.css';
 import './DatasetPrepPanel.css';
 
 interface DatasetPrepPanelProps {
@@ -919,6 +921,14 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
 
     return (
         <div className="dataprep-panel">
+            {/* D1+D2 of the data-quality arc — aggregated Data Health
+                Report. Mounted at the top of dataset prep because by this
+                point ingestion + cleaning + recipe selection have run, so
+                every signal is computable. The user reads "here's what's
+                wrong before you train" before scrolling to the per-split
+                tables below. */}
+            <DataHealthReportPanel projectId={projectId} />
+
             <div className="dp-view-tabs">
                 <button
                     type="button"

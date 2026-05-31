@@ -1,0 +1,242 @@
+/* DataHealthReportPanel — D1+D2 of the data-quality arc. */
+
+.data-health {
+    margin: var(--space-md) 0;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated, transparent);
+    overflow: hidden;
+}
+
+.data-health--loading,
+.data-health--error {
+    padding: var(--space-md);
+    color: var(--text-secondary, var(--text-muted));
+    font-style: italic;
+}
+
+/* -- Overall header ------------------------------------------------- */
+
+.data-health__head {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.data-health__head--ok {
+    background: rgba(34, 197, 94, 0.10);
+}
+
+.data-health__head--warn {
+    background: rgba(234, 179, 8, 0.10);
+}
+
+.data-health__head--block {
+    background: rgba(239, 68, 68, 0.10);
+}
+
+.data-health__head-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.data-health__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.data-health__overall-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+
+.data-health__overall-badge--ok {
+    background: var(--color-success, #16a34a);
+    color: #ffffff;
+}
+
+.data-health__overall-badge--warn {
+    background: #eab308;
+    color: #ffffff;
+}
+
+.data-health__overall-badge--block {
+    background: var(--color-error, #ef4444);
+    color: #ffffff;
+}
+
+.data-health__headline {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.data-health__counts {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--text-secondary, var(--text-muted));
+    font-variant-numeric: tabular-nums;
+}
+
+.data-health__counts strong {
+    color: var(--text-primary);
+}
+
+.data-health__empty {
+    padding: var(--space-md);
+    color: var(--text-secondary, var(--text-muted));
+    font-style: italic;
+    margin: 0;
+}
+
+/* -- Group panels --------------------------------------------------- */
+
+.data-health__groups {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.data-health__group {
+    border-top: 1px solid var(--border-color);
+}
+
+.data-health__group:first-child {
+    border-top: none;
+}
+
+.data-health__group-head {
+    padding: 8px 16px 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+}
+
+.data-health__group-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-secondary, var(--text-muted));
+}
+
+.data-health__group-subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.data-health__signal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 16px 12px;
+}
+
+/* -- Individual signal rows ---------------------------------------- */
+
+.data-health__signal {
+    padding: 10px 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.data-health__signal:first-child {
+    border-top: none;
+}
+
+.data-health__signal-head {
+    display: grid;
+    grid-template-columns: 28px 1fr auto;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.data-health__sev-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.data-health__sev-badge--ok {
+    background: var(--color-success, #16a34a);
+}
+
+.data-health__sev-badge--warn {
+    background: #eab308;
+}
+
+.data-health__sev-badge--block {
+    background: var(--color-error, #ef4444);
+}
+
+.data-health__signal-body {
+    min-width: 0;
+}
+
+.data-health__plain-english {
+    margin: 0 0 4px;
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.45;
+}
+
+.data-health__headline-line {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-secondary, var(--text-muted));
+    font-family: var(--font-mono, ui-monospace);
+}
+
+.data-health__why-toggle {
+    margin-top: 6px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--color-primary, #2563eb);
+    font-size: 11px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.data-health__why-toggle:hover {
+    text-decoration: underline;
+}
+
+.data-health__why {
+    margin: 6px 0 0;
+    padding: 8px 12px;
+    background: rgba(148, 163, 184, 0.10);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+.data-health__action {
+    flex-shrink: 0;
+    align-self: flex-start;
+}
+
+/* -- Footer -------------------------------------------------------- */
+
+.data-health__foot {
+    padding: 6px 16px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-muted);
+    font-size: 11px;
+    background: rgba(148, 163, 184, 0.04);
+}
