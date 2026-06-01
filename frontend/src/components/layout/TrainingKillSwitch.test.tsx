@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import TrainingKillSwitch from './TrainingKillSwitch';
 import type { Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
+import { useToastStore } from '../../stores/toastStore';
 
 
 const { apiMock } = vi.hoisted(() => ({
@@ -224,5 +225,109 @@ describe('TrainingKillSwitch', () => {
             />,
         );
         expect(container.firstChild).toBeNull();
+    });
+
+    it('attaches a "Start retry now" action to the success toast after cancel+clone', async () => {
+        // Closes the kill→clone→relaunch loop in-toast. The
+        // success toast that lands post-cancel+clone must carry a
+        // ToastAction whose label is "Start retry now" — clicking
+        // it fires POST /start on the cloned experiment id
+        // (verified in the next test).
+        const user = userEvent.setup();
+        _seedCounter(42, 3);
+        useToastStore.setState({ toasts: [] });
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url === '/jobs/42/cancel') {
+                return { data: { id: 42, status: 'cancelled' } };
+            }
+            if (url.endsWith('/training/experiments/100/clone')) {
+                return {
+                    data: { id: 777, name: 'train #42 (retry)' },
+                };
+            }
+            return { data: {} };
+        });
+        apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
+
+        render(<TrainingKillSwitch job={_trainingJob()} />);
+        await user.click(
+            screen.getByTestId('notification-bell-row-42-kill-switch'),
+        );
+        await user.click(
+            screen.getByTestId(
+                'notification-bell-row-42-kill-switch-cancel-clone',
+            ),
+        );
+
+        // Pull the latest toast directly from the store — easier
+        // than waiting for the toast renderer to mount in
+        // isolation.
+        const toasts = useToastStore.getState().toasts;
+        const success = toasts.find((t) => t.type === 'success');
+        expect(success).toBeDefined();
+        expect(success!.action).toBeDefined();
+        expect(success!.action!.label).toBe('Start retry now');
+        // The message names the cloned experiment so the user
+        // knows what they're about to start.
+        expect(success!.message).toContain('train #42 (retry)');
+    });
+
+    it('clicking the toast action POSTs to /start on the cloned experiment', async () => {
+        // The other half of the action contract: clicking the
+        // toast's "Start retry now" button hits the start
+        // endpoint with the cloned experiment id (not the
+        // original).
+        const user = userEvent.setup();
+        _seedCounter(42, 3);
+        useToastStore.setState({ toasts: [] });
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url === '/jobs/42/cancel') {
+                return { data: { id: 42, status: 'cancelled' } };
+            }
+            if (url.endsWith('/training/experiments/100/clone')) {
+                return {
+                    data: { id: 777, name: 'train #42 (retry)' },
+                };
+            }
+            if (url.endsWith('/training/experiments/777/start')) {
+                return { data: { status: 'running' } };
+            }
+            return { data: {} };
+        });
+        apiMock.get.mockResolvedValue({ data: { count: 0, jobs: [] } });
+
+        render(<TrainingKillSwitch job={_trainingJob()} />);
+        await user.click(
+            screen.getByTestId('notification-bell-row-42-kill-switch'),
+        );
+        await user.click(
+            screen.getByTestId(
+                'notification-bell-row-42-kill-switch-cancel-clone',
+            ),
+        );
+
+        // Invoke the action directly from the store — the
+        // component-level test for the toast renderer covers
+        // the button-click → onClick wiring; here we verify the
+        // action's effect.
+        const action = useToastStore
+            .getState()
+            .toasts.find((t) => t.type === 'success')?.action;
+        expect(action).toBeDefined();
+        // Reset post mock so we can isolate the start call.
+        apiMock.post.mockClear();
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url.endsWith('/training/experiments/777/start')) {
+                return { data: { status: 'running' } };
+            }
+            return { data: {} };
+        });
+        await action!.onClick();
+        const startCalls = apiMock.post.mock.calls.filter(
+            (c) => typeof c[0] === 'string' && c[0].endsWith('/training/experiments/777/start'),
+        );
+        expect(startCalls).toHaveLength(1);
+        // user not needed here; silence the lint if it complained.
+        void user;
     });
 });

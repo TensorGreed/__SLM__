@@ -69,6 +69,7 @@ export default function TrainingKillSwitch({ job }: TrainingKillSwitchProps) {
                 // Always cancel first. Clone is opt-in via the
                 // dialog action.
                 await cancelJob(job.id);
+                let clonedId: number | null = null;
                 let clonedName: string | null = null;
                 if (clone && projectId !== null && experimentId !== null) {
                     try {
@@ -76,6 +77,7 @@ export default function TrainingKillSwitch({ job }: TrainingKillSwitchProps) {
                             `/projects/${projectId}/training/experiments/`
                             + `${experimentId}/clone`,
                         );
+                        clonedId = resp.data?.id ?? null;
                         clonedName = resp.data?.name || `#${resp.data?.id}`;
                     } catch (err) {
                         const msg =
@@ -88,10 +90,38 @@ export default function TrainingKillSwitch({ job }: TrainingKillSwitchProps) {
                         return;
                     }
                 }
-                if (clonedName) {
+                if (clonedId !== null && clonedName) {
+                    // "Start retry now" closes the kill→clone→relaunch
+                    // loop in-toast: one click starts the PENDING
+                    // clone without context-switching to the training
+                    // panel. Action survives 10s of toast life so a
+                    // distracted user still catches it.
                     toast.success(
                         `Cancelled diverging run · cloned to "${clonedName}" (PENDING).`,
-                        6000,
+                        10000,
+                        {
+                            label: 'Start retry now',
+                            onClick: async () => {
+                                if (projectId === null || clonedId === null) return;
+                                try {
+                                    await api.post(
+                                        `/projects/${projectId}/training/`
+                                        + `experiments/${clonedId}/start`,
+                                        {},
+                                    );
+                                    toast.info(
+                                        `Retry "${clonedName}" started.`,
+                                        4000,
+                                    );
+                                    await refreshJobs();
+                                } catch (err) {
+                                    const msg =
+                                        (err as { message?: string })?.message
+                                        || 'start failed';
+                                    toast.error(`Retry start: ${msg}`);
+                                }
+                            },
+                        },
                     );
                 } else {
                     toast.info('Cancelled diverging run.', 4000);

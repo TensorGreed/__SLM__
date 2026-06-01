@@ -859,6 +859,7 @@ session-start guidance.
 - `frontend/src/components/shared/ErrorPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/HealthCheckModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/Toast.test.tsx` — Toast renderer — focused on the new optional ``action`` field
 - `frontend/src/components/training/ArchetypeComparisonPanel.test.tsx` — ArchetypeComparisonPanel tests (USER-SUCCESS Epic 8 Phase 8b).
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_

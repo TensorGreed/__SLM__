@@ -29,10 +29,35 @@ const ToastItem = ({ toast }: { toast: ToastMessage }) => {
         setTimeout(() => removeToast(toast.id), 200); // Wait for fade-out animation
     };
 
+    const handleAction = async () => {
+        // Action runs first, then the toast dismisses. We dismiss
+        // regardless of action success/failure so the user isn't
+        // stuck with a stale "Start retry now" button if the
+        // start endpoint 404s — the action's purpose is satisfied
+        // (they tried) and any follow-up shows up via the bell.
+        if (!toast.action) return;
+        try {
+            await toast.action.onClick();
+        } catch {
+            // swallow — handler is fire-and-forget by contract.
+        }
+        handleClose();
+    };
+
     return (
         <div className={`toast ${toast.type} ${isRemoving ? 'removing' : ''}`} role="alert">
             <span className="toast-icon">{ICONS[toast.type] ?? 'ℹ️'}</span>
             <span className="toast-message">{toast.message}</span>
+            {toast.action && (
+                <button
+                    type="button"
+                    className="toast-action"
+                    onClick={() => void handleAction()}
+                    data-testid={`toast-${toast.id}-action`}
+                >
+                    {toast.action.label}
+                </button>
+            )}
             <button className="toast-close" onClick={handleClose} aria-label="Close">×</button>
         </div>
     );
