@@ -574,6 +574,48 @@ def _detect_classification(record: dict[str, Any], config: dict[str, Any]) -> bo
     return 1.0 if has_label else 0.0
 
 
+# Maximum candidate-set size we'll inline into the training prompt.
+# Matches ``ClassificationHandler.LABEL_LIST_PROMPT_CAP`` so trainer
+# + eval render the same prompt. Beyond this we fall back to the
+# "just the class label" instruction.
+_CLASSIFICATION_LABEL_LIST_PROMPT_CAP = 30
+
+
+def _build_classification_training_prompt(
+    text: str, candidates: list[str] | None,
+) -> str:
+    """Mirror of ``ClassificationHandler._build_prompt_text`` so training
+    rows carry the same prompt format the eval handler builds. The
+    model sees the instruction at training time, learns to emit a
+    label after ``Label:``, and the held-out eval just feeds new
+    inputs into the identical scaffold.
+
+    β-fix: previously ``_map_classification`` wrote raw text into
+    ``source_text``, so the trainer learned ``text → label`` with no
+    instruction scaffold. At eval time the handler wrapped the input
+    in ``"Classify the following text. … Label:"`` — a format the
+    model had never seen — and produced unparseable predictions.
+    This commit closes the train/eval format gap inside the
+    adapter itself.
+    """
+    if candidates and 0 < len(candidates) <= _CLASSIFICATION_LABEL_LIST_PROMPT_CAP:
+        label_list = ", ".join(candidates)
+        return (
+            f"Classify the following text. Reply with exactly one of: "
+            f"{label_list}.\n"
+            f"Text: {text}\n"
+            f"Label:"
+        )
+    # > cap or unknown: still ask for a single-label reply. Matches the
+    # handler's no-list fallback so trainer + eval still agree.
+    return (
+        "Classify the following text. Reply with just the class label, "
+        "nothing else.\n"
+        f"Text: {text}\n"
+        f"Label:"
+    )
+
+
 def _map_classification(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
     text_fields = config.get("text_fields")
     label_fields = config.get("label_fields")
@@ -604,12 +646,44 @@ def _map_classification(record: dict[str, Any], config: dict[str, Any]) -> dict[
     if not text or not label:
         return None
 
+    # β-fix — wrap source_text with the instruction prompt so training
+    # rows match the format ClassificationHandler builds at eval time.
+    # When the caller pre-scanned the dataset for candidate labels and
+    # injected them into ``config["candidates"]``, we render the
+    # list-in-prompt variant (matches eval for small candidate sets).
+    # Without candidates we fall back to the no-list variant — still
+    # syntactically identical to what the eval handler will produce
+    # for large candidate sets.
+    candidates = config.get("candidates")
+    if not isinstance(candidates, list):
+        candidates = None
+    cleaned_candidates: list[str] | None = None
+    if candidates:
+        cleaned_candidates = [
+            str(c).strip() for c in candidates if isinstance(c, str) and str(c).strip()
+        ]
+    wrapped_prompt = _build_classification_training_prompt(text, cleaned_candidates)
+    # ``target_text`` carries a single leading space so the tokenizer
+    # decodes the label as a clean continuation of the prompt's
+    # trailing ``Label:`` — without the space the model has to
+    # predict ``benign`` immediately adjacent to a colon, which
+    # tokenizes as a different token from ``" benign"`` after
+    # whitespace in most BPE vocabularies.
+    target_with_space = f" {label}"
+
     return {
+        # ``text`` + ``label`` remain raw so downstream surfaces (data
+        # health, gold diagnostics, smoke test) can introspect the
+        # underlying classification labels without having to parse
+        # the wrapped prompt back apart.
         "text": text,
-        "source_text": text,
-        "target_text": label,
         "label": label,
         "answer": label,
+        # ``source_text`` + ``target_text`` carry the wrapped prompt
+        # format the trainer consumes. Loss is computed on
+        # ``target_text`` only.
+        "source_text": wrapped_prompt,
+        "target_text": target_with_space,
     }
 
 

@@ -345,6 +345,34 @@ def _adapt_record_to_text(
         )
 
     if task_type == "classification":
+        # β-fix tail — the data adapter (classification-label) writes
+        # ``source_text`` wrapped with the production prompt the
+        # ClassificationHandler builds at eval time
+        # (``"Classify the following text. Reply with exactly one of:
+        # …\nText: …\nLabel:"``). If we re-derive a different format
+        # here, the model never sees the eval-time scaffold and
+        # produces unparseable completions on held-out data. So when
+        # the prepared row already carries an adapter-wrapped
+        # ``source_text`` + ``target_text``, pass it through
+        # untouched — the tokenizer renders one string and the same
+        # string the handler will rebuild at inference time.
+        prepared_source = row.get("source_text")
+        prepared_target = row.get("target_text")
+        if (
+            isinstance(prepared_source, str)
+            and prepared_source.lstrip().startswith("Classify the following text")
+            and isinstance(prepared_target, str)
+            and prepared_target.strip()
+        ):
+            return _attach_multimodal_fields(row, {
+                # Tokenizer sees prompt + target as one sequence; loss
+                # is masked off the prompt span by the trainer's
+                # ``DataCollatorForCompletionOnlyLM`` (or equivalent
+                # response_template-based masking).
+                "text": f"{prepared_source}{prepared_target}",
+                "source_text": prepared_source,
+                "target_text": prepared_target,
+            })
         source = _pick_first_text(row, list(contract.get("input_fields", [])))
         label_raw = ""
         for key in list(contract.get("label_fields", [])):

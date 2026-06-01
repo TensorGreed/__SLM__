@@ -227,6 +227,58 @@ def _load_records_from_file(
     return records
 
 
+# Mirror of ``data_adapter_service._CLASSIFICATION_LABEL_LIST_PROMPT_CAP``
+# — beyond this size we don't inline the candidate list, so we also
+# don't bother pre-scanning past it.
+_CLASSIFICATION_CANDIDATE_SCAN_CAP = 50
+
+
+def _scan_classification_labels(
+    rows: list[dict[str, Any]],
+    *,
+    field_mapping: dict[str, str] | None,
+    adapter_config: dict[str, Any] | None,
+) -> list[str] | None:
+    """Pre-scan rows for unique classification labels (β-fix).
+
+    Mirrors the label-field aliases ``_map_classification`` uses so
+    the candidate set matches what the per-row map step will read.
+    Returns a sorted, deduplicated list capped at
+    ``_CLASSIFICATION_CANDIDATE_SCAN_CAP`` — beyond that the adapter
+    falls back to the no-list prompt variant anyway, so collecting
+    more wastes work."""
+    label_fields = (adapter_config or {}).get("label_fields") if adapter_config else None
+    aliases = list(label_fields) if isinstance(label_fields, list) and label_fields else [
+        "label",
+        "class",
+        "category",
+        "output_label",
+        "target",
+        "answer",
+        "output",
+    ]
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for alias in aliases:
+            value = row.get(alias)
+            if not isinstance(value, str):
+                continue
+            cleaned = value.strip()
+            if not cleaned:
+                continue
+            seen.add(cleaned)
+            break
+        if len(seen) > _CLASSIFICATION_CANDIDATE_SCAN_CAP:
+            # Too many distinct labels — fall back to no-list mode.
+            # Return None so the caller skips the candidate injection.
+            return None
+    if not seen:
+        return None
+    return sorted(seen)
+
+
 def _normalize_rows_for_training(
     rows: list[dict[str, Any]],
     source_dataset: DatasetType,
@@ -249,6 +301,23 @@ def _normalize_rows_for_training(
         resolved_adapter_id,
         requested_task_profile=task_profile,
     )
+    # β-fix — classification adapter renders the production prompt
+    # format including (when small enough) the candidate label list.
+    # Pre-scan the rows to find unique labels, then inject them into
+    # adapter_config so ``_map_classification`` can use them. Skip
+    # for non-classification adapters or when the caller already
+    # provided candidates.
+    if resolved_adapter_id == "classification-label" and (
+        not adapter_config or "candidates" not in adapter_config
+    ):
+        candidate_set = _scan_classification_labels(
+            rows,
+            field_mapping=field_mapping,
+            adapter_config=adapter_config,
+        )
+        if candidate_set:
+            adapter_config = dict(adapter_config or {})
+            adapter_config["candidates"] = candidate_set
     for row in rows:
         canonical = map_record_with_adapter(
             row,

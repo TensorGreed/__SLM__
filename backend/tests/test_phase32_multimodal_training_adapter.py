@@ -30,6 +30,54 @@ class Phase32MultimodalTrainingAdapterTests(unittest.TestCase):
         )
         self.assertEqual(modality, "vision_language")
 
+    def test_adapt_record_classification_preserves_adapter_wrapped_prompt(self):
+        """β-fix tail: when the data adapter already wrote a
+        production-format ``source_text`` (starts with ``"Classify
+        the following text"``), the training adapter must pass it
+        through untouched — not rebuild a different format. Without
+        this, the model is trained on ``Text: …\\nLabel: …`` but the
+        eval handler builds ``Classify the following text…\\nLabel:``
+        and we get ~80% unparseable held-out predictions.
+        """
+        contract = train_script._build_data_adapter_contract("classification", "chatml")
+        wrapped = (
+            "Classify the following text. Reply with exactly one of: benign, injection."
+            "\nText: calle del mistral, 65\nLabel:"
+        )
+        adapted = train_script._adapt_record_to_text(
+            {
+                "text": "calle del mistral, 65",
+                "label": "benign",
+                "answer": "benign",
+                "source_text": wrapped,
+                "target_text": " benign",
+            },
+            contract,
+            "chatml",
+        )
+        # source_text must be the adapter-wrapped prompt, byte-for-byte.
+        self.assertEqual(adapted["source_text"], wrapped)
+        # target_text must keep the leading-space convention.
+        self.assertEqual(adapted["target_text"], " benign")
+        # The trainer's tokenized "text" field is prompt + target —
+        # the model sees `Label: benign` as a clean continuation.
+        self.assertEqual(adapted["text"], f"{wrapped} benign")
+
+    def test_adapt_record_classification_falls_back_for_legacy_rows(self):
+        """Rows that don't carry an adapter-wrapped ``source_text``
+        (legacy projects prepped before β) still go through the old
+        ``"Text: …\\nLabel: …"`` reconstruction so existing experiments
+        keep training the same way."""
+        contract = train_script._build_data_adapter_contract("classification", "chatml")
+        adapted = train_script._adapt_record_to_text(
+            {"text": "raw input", "label": "spam"},
+            contract,
+            "chatml",
+        )
+        self.assertEqual(adapted["text"], "Text: raw input\nLabel: spam")
+        self.assertEqual(adapted["source_text"], "raw input")
+        self.assertEqual(adapted["target_text"], "spam")
+
     def test_adapt_record_preserves_multimodal_fields_for_seq2seq(self):
         contract = train_script._build_data_adapter_contract("seq2seq", "chatml")
         adapted = train_script._adapt_record_to_text(

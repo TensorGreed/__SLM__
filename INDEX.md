@@ -574,6 +574,7 @@ session-start guidance.
 - `backend/tests/test_auto_rag_phase9d.py` — Tests for Phase 9d — auto-RAG default-on heuristic + target
 - `backend/tests/test_auto_rag_service.py` — Tests for the auto-RAG BM25 service (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
+- `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).
 - `backend/tests/test_cleaning_async_task.py` — Cleaning background-task pattern (Phase F UX fix for 100K-row cleans).
 - `backend/tests/test_cleaning_chunks_pagination.py` — GET /cleaning/chunks pagination + sampling contract.
