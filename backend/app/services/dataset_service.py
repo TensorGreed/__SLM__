@@ -285,6 +285,103 @@ def _scan_classification_labels(
 _STRUCTURED_FIELD_SCAN_SIZE = 20
 
 
+# Per-adapter subtask specs (subtask-propagation infrastructure).
+# Each entry mirrors the matching handler's ``SUBTASK_*`` constants
+# + ``DEFAULT_SUBTASK`` so the adapter and the handler agree on
+# enumeration AND default. Adding a new subtask-aware adapter
+# means a one-line entry here plus a fix in the adapter's
+# ``_map_<name>`` to read ``adapter_config['subtask']``. Adapters
+# NOT in this table get ``None`` from the resolver — used as a
+# signal that they don't branch per-subtask.
+#
+# Sources (eval_task_handler_service.py):
+#   - vision-language-pair → VisionLanguageHandler:1912-1917
+#   - audio-transcript     → AudioTranscriptHandler:2114-2118
+#   - seq2seq-pair         → Seq2SeqHandler:2508-2516
+_ADAPTER_SUBTASK_SPECS: dict[str, dict[str, Any]] = {
+    "vision-language-pair": {
+        "allowed": frozenset({"captioning", "vqa"}),
+        "default": "captioning",
+    },
+    "audio-transcript": {
+        "allowed": frozenset({"transcription", "audio_qa"}),
+        "default": "transcription",
+    },
+    "seq2seq-pair": {
+        "allowed": frozenset({"translation", "summarization", "paraphrase"}),
+        "default": "summarization",
+    },
+}
+
+
+def _resolve_adapter_subtask(
+    adapter_id: str,
+    manifest: dict[str, Any] | None,
+    adapter_config: dict[str, Any] | None,
+) -> str | None:
+    """Resolve the eval subtask for an adapter that branches
+    per-subtask (vision-language-pair / audio-transcript /
+    seq2seq-pair).
+
+    Resolution precedence (highest priority first):
+      1. ``adapter_config['subtask']`` — explicit override at the
+         call site. Tests + power users set this; an invalid
+         value falls through rather than failing loudly so a
+         legacy adapter_config doesn't break the prep pipeline.
+      2. ``manifest['subtask']`` — what the handler reads at
+         eval time (``VisionLanguageHandler._resolve_subtask``
+         et al). Adapter must agree, or train/eval drift again.
+      3. ``manifest['output_schema']['subtask']`` — some
+         manifests nest task config under output_schema; accept
+         both shapes.
+      4. The per-adapter ``default`` (matches the handler's
+         ``DEFAULT_SUBTASK`` constant). The handler also falls
+         back to default when the manifest doesn't carry the
+         field, so the adapter's no-manifest case stays aligned.
+      5. ``None`` — returned for any adapter NOT in
+         ``_ADAPTER_SUBTASK_SPECS``. Caller uses the ``None``
+         signal to skip subtask injection entirely (e.g.,
+         classification-label, structured-extraction,
+         rag-grounded don't branch per-subtask).
+    """
+    spec = _ADAPTER_SUBTASK_SPECS.get(adapter_id)
+    if spec is None:
+        return None
+    allowed: frozenset[str] = spec["allowed"]
+    default: str = spec["default"]
+
+    # 1. adapter_config override
+    if isinstance(adapter_config, dict):
+        raw = adapter_config.get("subtask")
+        if isinstance(raw, str):
+            normalized = raw.strip().lower()
+            if normalized in allowed:
+                return normalized
+            # Invalid value → fall through to manifest. We don't
+            # raise because adapter_config can carry caller-
+            # forwarded extras that may have shape drift across
+            # versions; loud failure here would block the prep
+            # pipeline for a value that the resolver can recover.
+
+    # 2 + 3. manifest field (with output_schema nesting fallback)
+    if isinstance(manifest, dict):
+        m_raw = manifest.get("subtask")
+        if isinstance(m_raw, str):
+            normalized = m_raw.strip().lower()
+            if normalized in allowed:
+                return normalized
+        output_schema = manifest.get("output_schema")
+        if isinstance(output_schema, dict):
+            os_raw = output_schema.get("subtask")
+            if isinstance(os_raw, str):
+                normalized = os_raw.strip().lower()
+                if normalized in allowed:
+                    return normalized
+
+    # 4. Per-adapter default.
+    return default
+
+
 def _scan_structured_extraction_fields(
     rows: list[dict[str, Any]],
     *,
@@ -354,6 +451,7 @@ def _normalize_rows_for_training(
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
     task_profile: str | None = None,
+    manifest: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     normalized_entries: list[dict[str, Any]] = []
     resolved_adapter_id, _ = resolve_data_adapter_for_records(
@@ -400,6 +498,24 @@ def _normalize_rows_for_training(
         if fields_set:
             adapter_config = dict(adapter_config or {})
             adapter_config["fields"] = fields_set
+    # Subtask-propagation infrastructure (η+1) — for adapters that
+    # branch per-subtask (vision-language-pair / audio-transcript /
+    # seq2seq-pair), resolve the subtask from manifest + inject
+    # into adapter_config so the per-row map step picks the right
+    # prompt shape. Returns ``None`` for non-subtask-aware adapters;
+    # those skip the injection cleanly. When the caller already
+    # passed ``adapter_config['subtask']``, the resolver returns it
+    # unchanged (idempotent re-injection is harmless but we still
+    # guard with the ``not in`` check below to make the contract
+    # explicit at the call site).
+    resolved_subtask = _resolve_adapter_subtask(
+        resolved_adapter_id, manifest, adapter_config,
+    )
+    if resolved_subtask is not None and (
+        not adapter_config or "subtask" not in adapter_config
+    ):
+        adapter_config = dict(adapter_config or {})
+        adapter_config["subtask"] = resolved_subtask
     for row in rows:
         canonical = map_record_with_adapter(
             row,
