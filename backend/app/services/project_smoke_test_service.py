@@ -483,6 +483,137 @@ async def _check_prepared_splits(
         )
 
 
+async def _check_adapter_handler_format(
+    db: AsyncSession, project_id: int,
+) -> SmokeCheckResult:
+    """Detect train/eval prompt-format drift before it produces a
+    catastrophic 0%-ish held-out F1 (the failure mode that bit the
+    SQLi-detector project after a clean training run).
+
+    The recipe declares its canonical adapter
+    (``recipe.adapter_id`` — e.g. ``classification-label`` for the
+    Text-Classifier recipe). The prepared manifest records which
+    adapter was actually used for dataset prep
+    (``manifest.adapter_id``). When they disagree, the trainer used
+    a different prompt format than the eval-time handler will use,
+    and held-out F1 drops to noise even though training-time eval
+    looked healthy.
+
+    Status:
+      * ``ok`` — adapters match.
+      * ``warn`` — adapters disagree. Includes the expected/actual
+        names + a remediation pointing at Data Prep with the
+        correct adapter.
+      * ``skip`` — recipe missing OR manifest doesn't yet exist OR
+        either side doesn't declare an adapter. The check is
+        informational and not load-bearing for projects that haven't
+        prepped yet.
+      * ``fail`` — the check itself errored (recipe catalog read
+        broke, etc.).
+    """
+    started = time.monotonic()
+    try:
+        project = await db.get(Project, project_id)
+        elapsed_pre = int((time.monotonic() - started) * 1000)
+        if project is None:
+            return SmokeCheckResult(
+                name="adapter_handler_format",
+                status="skip",
+                elapsed_ms=elapsed_pre,
+                message="Project doesn't exist — adapter/handler check skipped.",
+            )
+        selected = project.selected_recipe or {}
+        recipe_id = selected.get("recipe_id") if isinstance(selected, dict) else None
+        if not recipe_id:
+            return SmokeCheckResult(
+                name="adapter_handler_format",
+                status="skip",
+                elapsed_ms=elapsed_pre,
+                message="No recipe — can't compare adapters.",
+            )
+        from app.services.recipe_service import get_recipe
+        recipe = get_recipe(recipe_id)
+        if recipe is None:
+            return SmokeCheckResult(
+                name="adapter_handler_format",
+                status="skip",
+                elapsed_ms=elapsed_pre,
+                message=f"Recipe '{recipe_id}' not in catalog.",
+            )
+        expected_adapter = getattr(recipe, "adapter_id", None)
+
+        from app.services.eval_task_handler_service import read_prepared_manifest
+        manifest = read_prepared_manifest(project_id)
+        actual_adapter = manifest.get("adapter_id") if isinstance(manifest, dict) else None
+        elapsed = int((time.monotonic() - started) * 1000)
+
+        if not expected_adapter:
+            return SmokeCheckResult(
+                name="adapter_handler_format",
+                status="skip",
+                elapsed_ms=elapsed,
+                message=f"Recipe '{recipe_id}' doesn't declare an adapter.",
+            )
+        if not actual_adapter:
+            return SmokeCheckResult(
+                name="adapter_handler_format",
+                status="skip",
+                elapsed_ms=elapsed,
+                message=(
+                    "Dataset hasn't been prepped yet (manifest has no "
+                    "adapter_id). Check fires after the first Data Prep run."
+                ),
+                metadata={"expected_adapter": expected_adapter},
+            )
+        if expected_adapter == actual_adapter:
+            return SmokeCheckResult(
+                name="adapter_handler_format",
+                status="ok",
+                elapsed_ms=elapsed,
+                message=(
+                    f"Adapter '{actual_adapter}' matches recipe '{recipe_id}'."
+                ),
+                metadata={
+                    "expected_adapter": expected_adapter,
+                    "actual_adapter": actual_adapter,
+                    "recipe_id": recipe_id,
+                },
+            )
+        return SmokeCheckResult(
+            name="adapter_handler_format",
+            status="warn",
+            elapsed_ms=elapsed,
+            message=(
+                f"Recipe '{recipe_id}' expects adapter "
+                f"'{expected_adapter}' but dataset was prepped with "
+                f"'{actual_adapter}'. Held-out eval will likely produce "
+                f"unparseable predictions because the trainer's prompt "
+                f"format won't match the eval handler's expected format."
+            ),
+            remediation=(
+                f"Re-prep the dataset with the correct adapter: open "
+                f"Pipeline → Data Prep and set adapter to "
+                f"'{expected_adapter}'. Then retrain. The training-time "
+                f"eval may stay high either way, but the held-out F1 "
+                f"won't reflect the real model quality until the "
+                f"adapter matches what the eval handler expects."
+            ),
+            metadata={
+                "expected_adapter": expected_adapter,
+                "actual_adapter": actual_adapter,
+                "recipe_id": recipe_id,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return SmokeCheckResult(
+            name="adapter_handler_format",
+            status="fail",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            message="Couldn't check adapter/handler format.",
+            envelope=_envelope_from_exception(stage="dataset", exc=exc),
+        )
+
+
 async def _check_experiments_accessible(
     db: AsyncSession, project_id: int,
 ) -> SmokeCheckResult:
@@ -527,6 +658,7 @@ _CHECKS: tuple = (
     _check_synth_catalog,
     _check_synth_backend,
     _check_prepared_splits,
+    _check_adapter_handler_format,
     _check_experiments_accessible,
 )
 

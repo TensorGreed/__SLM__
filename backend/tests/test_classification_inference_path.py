@@ -148,7 +148,14 @@ class ClassificationDispatchTests(unittest.TestCase):
 
 
 class WrapsOwnPromptTests(unittest.TestCase):
-    """Layer 2 — handler signals it builds its own prompt."""
+    """Layer 2 — handler signals it builds its own prompt.
+
+    Six handlers build complete instruction prompts in their
+    ``build_prompts`` (classification / structured / RAG / seq2seq /
+    vision / audio). Each opts out of the chat-template wrap. Four
+    handlers (generic / qa / safety / alignment) pass through raw
+    inputs and rely on the model's chat template, so they keep the
+    default (chat-template-on)."""
 
     def test_classification_handler_opts_out_of_chat_template(self):
         """ClassificationHandler builds a complete prompt
@@ -159,15 +166,56 @@ class WrapsOwnPromptTests(unittest.TestCase):
         fix addresses."""
         self.assertTrue(ClassificationHandler().wraps_own_prompt())
 
+    def test_all_instruction_handlers_opt_out_of_chat_template(self):
+        """The 6 handlers whose ``build_prompts`` produces a full
+        instruction template all return ``wraps_own_prompt: True``.
+        These follow the same trap as ClassificationHandler — without
+        the opt-out, the chat-template wrap converts the task-tuned
+        model into chat-completion mode at eval time and yields
+        gibberish for task-specific outputs."""
+        from app.services.eval_task_handler_service import (
+            AudioTranscriptHandler,
+            RAGHandler,
+            Seq2SeqHandler,
+            StructuredExtractionHandler,
+            VisionLanguageHandler,
+        )
+        for cls in [
+            ClassificationHandler,
+            StructuredExtractionHandler,
+            RAGHandler,
+            Seq2SeqHandler,
+            VisionLanguageHandler,
+            AudioTranscriptHandler,
+        ]:
+            instance = cls()
+            self.assertTrue(
+                bool(getattr(instance, "wraps_own_prompt", lambda: False)()),
+                f"{cls.__name__} should opt out of chat-template wrap",
+            )
+
     def test_default_handlers_keep_chat_template_wrap(self):
-        """QAHandler + GenericHandler don't override wraps_own_prompt
-        — the inference path treats the absence of the method as
-        ``False`` (apply chat template). Verified via the getattr
-        fallback used by the orchestrator."""
-        # Mirror the orchestrator's check.
-        for handler in [GenericHandler(), QAHandler()]:
+        """Handlers that pass through raw inputs (Generic / QA /
+        Safety / Alignment) don't override wraps_own_prompt — the
+        inference path treats the absence of the method as ``False``
+        (apply chat template). These rely on the model's chat
+        template because they pass raw user inputs without
+        task-specific framing."""
+        from app.services.eval_task_handler_service import (
+            AlignmentHandler,
+            SafetyHandler,
+        )
+        for handler in [
+            GenericHandler(),
+            QAHandler(),
+            SafetyHandler(),
+            AlignmentHandler(),
+        ]:
             wraps = bool(getattr(handler, "wraps_own_prompt", lambda: False)())
-            self.assertFalse(wraps, handler.profile_id)
+            self.assertFalse(
+                wraps,
+                f"{type(handler).__name__} should keep chat-template wrap",
+            )
 
 
 class InferenceChatTemplatePlumbingTests(unittest.TestCase):

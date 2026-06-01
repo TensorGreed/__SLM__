@@ -173,6 +173,72 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
         self.assertGreaterEqual(body["counts"]["fail"], 1)
         self.assertEqual(body["overall"], "fail")
 
+    def test_adapter_handler_format_check_flags_recipe_adapter_mismatch(self):
+        """γ — the diagnostic gate that catches the SQLi-detector
+        class of bug: trainer used a different adapter than the
+        recipe expects, so the trainer's prompt format won't match
+        the eval handler's format and held-out F1 will be 0%-ish
+        even after a clean training run.
+
+        Repro: apply the ``classification`` recipe (which expects
+        ``classification-label`` adapter), then write a prepared
+        manifest with ``adapter_id: default-canonical`` (the
+        dataset-import default). The smoke test must flag this with
+        ``status=warn`` and a remediation pointing at Data Prep with
+        the correct adapter."""
+        import json
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        # Materialize a prepared manifest declaring the wrong adapter.
+        prepared_dir = settings.DATA_DIR / "projects" / str(pid) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        (prepared_dir / "manifest.json").write_text(
+            json.dumps({"adapter_id": "default-canonical"}),
+        )
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        check = self._checks_by_name(resp.json())["adapter_handler_format"]
+        self.assertEqual(check["status"], "warn", check)
+        self.assertIn("classification-label", check["message"])
+        self.assertIn("default-canonical", check["message"])
+        self.assertIn("Data Prep", check["remediation"])
+        self.assertEqual(check["metadata"]["expected_adapter"], "classification-label")
+        self.assertEqual(check["metadata"]["actual_adapter"], "default-canonical")
+        # Overall rolls up to warn (no other failures on this seed).
+        self.assertIn(resp.json()["overall"], {"warn", "fail"})
+
+    def test_adapter_handler_format_check_passes_when_adapters_match(self):
+        """Steady-state: recipe applied + manifest declares the
+        recipe's canonical adapter → status=ok with a confirmation
+        message. No remediation, no envelope."""
+        import json
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        prepared_dir = settings.DATA_DIR / "projects" / str(pid) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        (prepared_dir / "manifest.json").write_text(
+            json.dumps({"adapter_id": "classification-label"}),
+        )
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())["adapter_handler_format"]
+        self.assertEqual(check["status"], "ok", check)
+        self.assertIn("classification-label", check["message"])
+        self.assertIsNone(check["remediation"])
+        self.assertIsNone(check["envelope"])
+
+    def test_adapter_handler_format_check_skips_pre_dataprep(self):
+        """Before Data Prep runs there's no manifest yet; the check
+        skips with an informational message rather than failing.
+        We don't want a brand-new project to fail the smoke test
+        just because it hasn't reached Data Prep yet."""
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        # No manifest on disk.
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())["adapter_handler_format"]
+        self.assertEqual(check["status"], "skip", check)
+        self.assertIn("prepped", check["message"].lower())
+
     def test_parallel_execution_is_faster_than_sum_of_checks(self):
         """Sanity check that the orchestrator runs checks in parallel.
         Total elapsed should be near the slowest single check, NOT

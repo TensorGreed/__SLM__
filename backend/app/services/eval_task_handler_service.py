@@ -1365,6 +1365,17 @@ class StructuredExtractionHandler:
             "schema": schema,
         }
 
+    def wraps_own_prompt(self) -> bool:
+        """``build_prompts`` produces the full instruction
+        (``"Extract the following fields as JSON: …\\nInput: …\\nOutput:"``).
+        Applying the model's chat template on top would wrap that
+        whole instruction inside a user-message and the chat-tuned
+        model would respond conversationally instead of emitting
+        JSON. Skip the wrap so the constructed prompt reaches the
+        model verbatim."""
+
+        return True
+
 
 # ── RAGHandler (Phase 5.3.5) ──────────────────────────────────────────
 
@@ -1658,6 +1669,17 @@ class RAGHandler:
             "total": total,
             "correct": int(sum(em_scores)),
         }
+
+    def wraps_own_prompt(self) -> bool:
+        """``build_prompts`` produces the full grounded prompt
+        (``"Context: …\\nQuestion: …\\nAnswer:"``). Wrapping that as a
+        chat user-message would split the context from the question
+        across turns the chat template defines, and the model would
+        respond to the entire wrapped block conversationally instead
+        of answering the grounded question. Skip the chat-template
+        wrap."""
+
+        return True
 
 
 # ── SafetyHandler (Phase 5.3.8) ───────────────────────────────────────
@@ -2023,6 +2045,17 @@ class VisionLanguageHandler:
             metrics.update(self._score_captioning(pred_texts, ref_texts))
         return metrics
 
+    def wraps_own_prompt(self) -> bool:
+        """``build_prompts`` produces task-specific multimodal prompts
+        (``"Question: …\\nImage: <image:…>\\nAnswer:"`` for VQA,
+        ``"Describe the image: <image:…>\\nCaption:"`` for captioning).
+        The image-token placeholders and the question-answer scaffold
+        must reach the model intact — wrapping in a chat template
+        would either break the placeholder substitution or add a
+        chat turn the model wasn't trained to expect for this task."""
+
+        return True
+
 
 class AudioTranscriptHandler:
     """Task handler for audio transcription + audio-conditioned QA.
@@ -2197,6 +2230,17 @@ class AudioTranscriptHandler:
         if subtask == self.SUBTASK_TRANSCRIPTION:
             metrics.update(self._score_wer_cer(pred_texts, ref_texts))
         return metrics
+
+    def wraps_own_prompt(self) -> bool:
+        """``build_prompts`` produces task-specific audio prompts
+        (``"Transcribe the audio: <audio:…>\\nTranscript:"`` or
+        ``"Question: …\\nAudio: <audio:…>\\nAnswer:"``). The audio
+        placeholders must reach the model intact + the task-specific
+        instruction scaffold defines the response format — wrapping
+        as a chat turn would either break the placeholder or convert
+        the model into chat-completion mode."""
+
+        return True
 
 
 # ── AlignmentHandler (Phase 5.3.6) ────────────────────────────────────
@@ -2675,6 +2719,17 @@ class Seq2SeqHandler:
             metrics.update(self._score_rouge(pred_texts, ref_texts))
 
         return metrics
+
+    def wraps_own_prompt(self) -> bool:
+        """``build_prompts`` produces sub-task-specific instruction
+        templates (``"Translate to French: …"`` /
+        ``"Summarize: …\\nSummary:"`` / ``"Paraphrase: …\\nParaphrase:"``).
+        These are flat-text instruction prompts, not chat turns —
+        wrapping them in the model's chat template would force the
+        Seq2Seq-tuned model into chat-completion mode and break the
+        sub-task scaffold."""
+
+        return True
 
 
 # ── Registry + dispatcher ─────────────────────────────────────────────

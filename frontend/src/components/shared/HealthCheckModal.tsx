@@ -38,6 +38,7 @@ const CHECK_LABELS: Record<string, string> = {
     synth_catalog: 'Synth playbook catalog',
     synth_backend: 'Synth backend reachable',
     prepared_splits: 'Labelled corpus',
+    adapter_handler_format: 'Adapter / handler format match',
     experiments_accessible: 'Experiments table',
 };
 
