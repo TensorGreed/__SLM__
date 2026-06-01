@@ -974,6 +974,180 @@ def _run_llama_cpp_inference(
     return predictions, runtime
 
 
+def _resolve_seq2seq_artifacts(model_ref: str) -> dict[str, Any] | None:
+    """ε-fix detection — when an experiment was trained with
+    ``task_type=seq2seq`` (e.g. T5/BART-style summarisation), the
+    trainer used ``AutoModelForSeq2SeqLM``. The held-out eval path
+    was loading ``AutoModelForCausalLM`` against the saved
+    checkpoint — encoder-decoder models can't be loaded as causal
+    LMs, so the eval either errored out or loaded a wrongly-shaped
+    model that produced garbage. ε mirrors δ's pattern: detect the
+    head shape via the PEFT adapter's ``task_type: SEQ_2_SEQ_LM``
+    flag and dispatch through ``AutoModelForSeq2SeqLM`` for
+    inference.
+
+    Returns ``{base_model, adapter_path}`` when the checkpoint is
+    seq2seq-shaped; ``None`` otherwise so unrelated experiments
+    stay on the existing generation path.
+    """
+    path = Path(model_ref).expanduser()
+    if not path.exists() or not path.is_dir():
+        return None
+    adapter_cfg_path = path / "adapter_config.json"
+    if not adapter_cfg_path.exists():
+        return None
+    try:
+        adapter_cfg = json.loads(adapter_cfg_path.read_text())
+    except Exception:
+        return None
+    task_type = str(adapter_cfg.get("task_type") or "").upper()
+    if task_type != "SEQ_2_SEQ_LM":
+        return None
+    base_model = adapter_cfg.get("base_model_name_or_path")
+    if not isinstance(base_model, str) or not base_model:
+        return None
+    return {
+        "base_model": base_model,
+        "adapter_path": str(path),
+    }
+
+
+def _run_seq2seq_inference(
+    artifacts: dict[str, Any],
+    pairs: list[dict],
+    max_new_tokens: int,
+    temperature: float,
+) -> tuple[list[dict], dict]:
+    """ε-fix inference path — load ``AutoModelForSeq2SeqLM`` against
+    the trainer's base model, apply the PEFT adapter, and generate
+    the target text for each row's prompt. Seq2seq models take raw
+    source text (no chat-template wrap, no completion-only loss
+    head), so the inference is conceptually simpler than the causal
+    path: tokenize the prompt as encoder input, ``.generate()``
+    produces decoder tokens, decode.
+    """
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    base_model = artifacts["base_model"]
+    adapter_path = artifacts["adapter_path"]
+
+    load_started = perf_counter()
+    tokenizer_src = (
+        adapter_path
+        if (Path(adapter_path) / "tokenizer.json").exists()
+        else base_model
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_src, trust_remote_code=True
+    )
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token:
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
+
+    use_cuda = torch.cuda.is_available()
+    model_kwargs: dict[str, Any] = {"trust_remote_code": True}
+    if use_cuda and torch.cuda.is_bf16_supported():
+        model_kwargs["dtype"] = torch.bfloat16
+    elif use_cuda:
+        model_kwargs["dtype"] = torch.float16
+
+    base = AutoModelForSeq2SeqLM.from_pretrained(base_model, **model_kwargs)
+    if len(tokenizer) > base.get_input_embeddings().num_embeddings:
+        base.resize_token_embeddings(len(tokenizer))
+    try:
+        model = PeftModel.from_pretrained(base, adapter_path)
+    except Exception:
+        # The adapter dir might be a merged full-fine-tune rather
+        # than a PEFT adapter; the base loader's output is still
+        # seq2seq-shaped, just without the LoRA delta.
+        model = base
+    if use_cuda:
+        model = model.to("cuda")
+    model.eval()
+    load_seconds = perf_counter() - load_started
+
+    predictions: list[dict] = []
+    latencies_s: list[float] = []
+    generated_tokens_total = 0
+    generation_started = perf_counter()
+    with torch.inference_mode():
+        for row in pairs:
+            prompt = row["prompt"]
+            reference = row["reference"]
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+            )
+            if use_cuda:
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+            started = perf_counter()
+            gen_kwargs: dict[str, Any] = {
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature if temperature > 0 else 1.0,
+                "do_sample": temperature > 0,
+                "pad_token_id": tokenizer.pad_token_id,
+            }
+            output_ids = model.generate(**inputs, **gen_kwargs)
+            elapsed = perf_counter() - started
+            latencies_s.append(elapsed)
+            # Seq2seq's ``generate`` returns decoder tokens
+            # standalone (no prompt prefix to strip), so the whole
+            # output sequence is the prediction. Skip special
+            # tokens to drop ``<pad>``/``</s>`` etc.
+            generated = output_ids[0]
+            generated_tokens = int(generated.shape[-1])
+            generated_tokens_total += generated_tokens
+            prediction = tokenizer.decode(
+                generated, skip_special_tokens=True
+            ).strip()
+            predictions.append(
+                {
+                    "prompt": prompt,
+                    "formatted_prompt": "",
+                    "reference": reference,
+                    "prediction": prediction,
+                    "generated_tokens": generated_tokens,
+                    "latency_ms": round(elapsed * 1000, 3),
+                }
+            )
+
+    total_generation_seconds = perf_counter() - generation_started
+    latency_ms_values = [v * 1000 for v in latencies_s]
+    avg_latency_ms = (
+        sum(latency_ms_values) / len(latency_ms_values)
+        if latency_ms_values
+        else 0.0
+    )
+    token_tps = (
+        generated_tokens_total / total_generation_seconds
+        if total_generation_seconds > 0
+        else 0.0
+    )
+    runtime = {
+        "engine": "transformers",
+        "head": "seq2seq_lm",
+        "device": "cuda" if use_cuda else "cpu",
+        "dtype": str(model_kwargs.get("dtype", "float32")),
+        "model_load_seconds": round(load_seconds, 3),
+        "generation_seconds": round(total_generation_seconds, 3),
+        "average_latency_ms": round(avg_latency_ms, 3),
+        "token_throughput_tps": round(token_tps, 3),
+        # Seq2seq doesn't use a chat template — the prompt is the
+        # encoder input verbatim. Keep the field for downstream
+        # parity with the generation runtime metadata shape.
+        "chat_template_applied_count": 0,
+        "chat_template_applied": False,
+        "total_generated_tokens": generated_tokens_total,
+    }
+    return predictions, runtime
+
+
 def _resolve_classifier_head_artifacts(
     model_ref: str,
 ) -> dict[str, Any] | None:
@@ -1194,6 +1368,17 @@ def _run_local_inference(
     classifier_artifacts = _resolve_classifier_head_artifacts(model_ref)
     if classifier_artifacts is not None:
         return _run_classifier_head_inference(classifier_artifacts, pairs)
+    # ε — when the checkpoint was trained with ``task_type=seq2seq``
+    # (T5/BART-style encoder-decoder), the saved PEFT adapter
+    # carries ``task_type: SEQ_2_SEQ_LM``. The default generation
+    # path loads ``AutoModelForCausalLM`` which can't represent
+    # encoder-decoder models — either errors out or loads wrongly.
+    # Route through ``AutoModelForSeq2SeqLM`` instead.
+    seq2seq_artifacts = _resolve_seq2seq_artifacts(model_ref)
+    if seq2seq_artifacts is not None:
+        return _run_seq2seq_inference(
+            seq2seq_artifacts, pairs, max_new_tokens, temperature,
+        )
     return _run_transformers_inference(
         model_ref, pairs, max_new_tokens, temperature, stop_sequences,
         apply_chat_template=apply_chat_template,

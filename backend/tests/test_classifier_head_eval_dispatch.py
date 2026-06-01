@@ -40,6 +40,7 @@ from unittest.mock import patch
 
 from app.services.evaluation_service import (
     _resolve_classifier_head_artifacts,
+    _resolve_seq2seq_artifacts,
     _run_local_inference,
 )
 
@@ -274,6 +275,163 @@ class RunLocalInferenceDispatchTests(unittest.TestCase):
             )
         self.assertEqual(preds[0]["prediction"], "from-generation")
         self.assertEqual(runtime.get("engine"), "transformers")
+
+
+class ResolveSeq2SeqArtifactsTests(unittest.TestCase):
+    """ε-fix detector (mirrors ResolveClassifierHeadArtifactsTests
+    but keyed on ``task_type: SEQ_2_SEQ_LM``)."""
+
+    def _make_checkpoint(
+        self, *, adapter_extra: dict | None = None,
+    ) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="epsilon-test-"))
+        ckpt = root / "exp" / "checkpoint-100"
+        ckpt.mkdir(parents=True)
+        adapter_cfg = {
+            "base_model_name_or_path": "t5-small",
+            "task_type": "SEQ_2_SEQ_LM",
+            "peft_type": "LORA",
+        }
+        adapter_cfg.update(adapter_extra or {})
+        (ckpt / "adapter_config.json").write_text(json.dumps(adapter_cfg))
+        return ckpt
+
+    def test_detects_seq2seq_adapter(self):
+        ckpt = self._make_checkpoint()
+        artifacts = _resolve_seq2seq_artifacts(str(ckpt))
+        self.assertIsNotNone(artifacts)
+        self.assertEqual(artifacts["base_model"], "t5-small")
+        self.assertEqual(artifacts["adapter_path"], str(ckpt))
+
+    def test_returns_none_for_causal_lm_adapter(self):
+        # CausalLM adapters must NOT be misdetected as seq2seq —
+        # the generation path is the right one for them.
+        ckpt = self._make_checkpoint(adapter_extra={"task_type": "CAUSAL_LM"})
+        self.assertIsNone(_resolve_seq2seq_artifacts(str(ckpt)))
+
+    def test_returns_none_for_seq_cls_adapter(self):
+        # The δ branch handles SEQ_CLS; the ε detector must not
+        # claim a SEQ_CLS adapter (otherwise dispatch ordering
+        # could double-fire).
+        ckpt = self._make_checkpoint(adapter_extra={"task_type": "SEQ_CLS"})
+        self.assertIsNone(_resolve_seq2seq_artifacts(str(ckpt)))
+
+    def test_returns_none_for_nonexistent_path(self):
+        self.assertIsNone(_resolve_seq2seq_artifacts("/tmp/no-epsilon"))
+
+    def test_returns_none_for_missing_adapter_config(self):
+        root = Path(tempfile.mkdtemp(prefix="epsilon-empty-"))
+        self.assertIsNone(_resolve_seq2seq_artifacts(str(root)))
+
+
+class RunLocalInferenceSeq2SeqDispatchTests(unittest.TestCase):
+    def _seq2seq_checkpoint(self) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="epsilon-dispatch-"))
+        ckpt = root / "exp" / "checkpoint-1"
+        ckpt.mkdir(parents=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "fixture/t5",
+                    "task_type": "SEQ_2_SEQ_LM",
+                }
+            )
+        )
+        return ckpt
+
+    def test_dispatches_to_seq2seq_when_detector_returns_artifacts(self):
+        ckpt = self._seq2seq_checkpoint()
+
+        def _fake_seq2seq(artifacts, pairs, max_new_tokens, temperature):
+            return (
+                [
+                    {
+                        "prompt": "summarise: hi",
+                        "reference": "hi",
+                        "prediction": "hello",
+                        "latency_ms": 0.1,
+                        "generated_tokens": 1,
+                    }
+                ],
+                {"engine": "transformers", "head": "seq2seq_lm"},
+            )
+
+        with (
+            patch(
+                "app.services.evaluation_service._run_seq2seq_inference",
+                new=_fake_seq2seq,
+            ),
+            patch(
+                "app.services.evaluation_service._run_transformers_inference",
+                side_effect=AssertionError(
+                    "generation path must not run for SEQ_2_SEQ_LM dispatch"
+                ),
+            ),
+            patch(
+                "app.services.evaluation_service._run_classifier_head_inference",
+                side_effect=AssertionError(
+                    "δ path must not run for seq2seq checkpoint"
+                ),
+            ),
+        ):
+            preds, runtime = _run_local_inference(
+                str(ckpt),
+                [{"prompt": "summarise: hi", "reference": "hi"}],
+                max_new_tokens=8,
+                temperature=0.0,
+            )
+        self.assertEqual(runtime.get("head"), "seq2seq_lm")
+        self.assertEqual(preds[0]["prediction"], "hello")
+
+    def test_dispatch_order_seq_cls_wins_over_seq2seq_when_both_signals_appear(self):
+        # Defensive: an adapter_config can't legitimately carry both
+        # task_type values, but if a bug ever produced one, the
+        # SEQ_CLS branch must run first (δ is the more-tested path
+        # and head logits are richer than a generic generate call).
+        # We test by having the SEQ_CLS detector return artifacts
+        # while the seq2seq detector also could; only the SEQ_CLS
+        # path should fire.
+        root = Path(tempfile.mkdtemp(prefix="epsilon-order-"))
+        exp = root / "exp"
+        ckpt = exp / "checkpoint-1"
+        ckpt.mkdir(parents=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "fixture/base",
+                    "task_type": "SEQ_CLS",
+                    "modules_to_save": ["classifier", "score"],
+                }
+            )
+        )
+        (exp / "training_report.json").write_text(
+            json.dumps(
+                {"runtime_environment": {"label_space_preview": ["a", "b"]}}
+            )
+        )
+
+        def _fake_classifier(artifacts, pairs):
+            return ([{"prediction": "a"}], {"head": "sequence_classification"})
+
+        with (
+            patch(
+                "app.services.evaluation_service._run_classifier_head_inference",
+                new=_fake_classifier,
+            ),
+            patch(
+                "app.services.evaluation_service._run_seq2seq_inference",
+                side_effect=AssertionError(
+                    "ε path must not run when SEQ_CLS detector fires first"
+                ),
+            ),
+        ):
+            preds, runtime = _run_local_inference(
+                str(ckpt),
+                [{"prompt": "x", "reference": "a"}],
+                max_new_tokens=8,
+                temperature=0.0,
+            )
+        self.assertEqual(runtime["head"], "sequence_classification")
 
 
 if __name__ == "__main__":

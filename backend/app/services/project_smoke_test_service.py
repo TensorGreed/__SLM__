@@ -902,22 +902,27 @@ async def _check_classifier_head_vs_handler(
                 ),
             )
 
-        # Reuse δ's detector so this check + the eval dispatch
-        # agree exactly on "is this a classifier-head adapter."
-        # If the detector evolves, the smoke check tracks with it.
+        # Reuse δ's + ε's detectors so this check + the eval
+        # dispatch agree exactly on "is this a head-shaped
+        # adapter." If a detector evolves, the smoke check
+        # tracks with it.
         from app.services.evaluation_service import (
             _resolve_classifier_head_artifacts,
+            _resolve_seq2seq_artifacts,
         )
         artifacts = _resolve_classifier_head_artifacts(checkpoint)
+        seq2seq_artifacts = (
+            _resolve_seq2seq_artifacts(checkpoint) if artifacts is None else None
+        )
         elapsed = int((time.monotonic() - started) * 1000)
-        if artifacts is None:
+        if artifacts is None and seq2seq_artifacts is None:
             return SmokeCheckResult(
                 name="classifier_head_vs_handler",
                 status="ok",
                 elapsed_ms=elapsed,
                 message=(
                     f"Experiment #{experiment.id} is not classifier-head "
-                    f"shaped — generation path is the right one."
+                    f"or seq2seq shaped — generation path is the right one."
                 ),
                 metadata={"experiment_id": experiment.id},
             )
@@ -935,22 +940,113 @@ async def _check_classifier_head_vs_handler(
                     getattr(recipe, "task_profile", "") or ""
                 ).strip().lower() or None
 
-        if recipe_task_profile == "classification":
+        if artifacts is not None:
+            # SEQ_CLS adapter — δ path
+            if recipe_task_profile == "classification":
+                return SmokeCheckResult(
+                    name="classifier_head_vs_handler",
+                    status="ok",
+                    elapsed_ms=elapsed,
+                    message=(
+                        f"Experiment #{experiment.id} ships a classifier "
+                        f"head AND recipe '{recipe_id}' routes through "
+                        f"the classification handler — δ dispatches "
+                        f"through the head's logits at eval time."
+                    ),
+                    metadata={
+                        "experiment_id": experiment.id,
+                        "recipe_id": recipe_id,
+                        "task_profile": recipe_task_profile,
+                        "num_labels": artifacts["num_labels"],
+                        "head_kind": "sequence_classification",
+                    },
+                )
+            if (
+                recipe_task_profile is not None
+                and recipe_task_profile in _GENERATION_MODE_TASK_PROFILES
+            ):
+                return SmokeCheckResult(
+                    name="classifier_head_vs_handler",
+                    status="warn",
+                    elapsed_ms=elapsed,
+                    message=(
+                        f"Experiment #{experiment.id} ships a "
+                        f"classification head (PEFT task_type=SEQ_CLS, "
+                        f"{artifacts['num_labels']} labels) BUT recipe "
+                        f"'{recipe_id}' routes through a generation-mode "
+                        f"handler ('{recipe_task_profile}'). The trained "
+                        f"head's logits go unused at eval time and the "
+                        f"untrained LM head will produce unparseable "
+                        f"output — the same failure mode that bit the "
+                        f"SQLi-detector project before δ landed."
+                    ),
+                    remediation=(
+                        "Pick one: (a) switch the project's recipe to "
+                        "'classification' so δ routes eval through the "
+                        "head's logits; or (b) retrain with "
+                        "``training_config.task_type`` left default "
+                        "(causal-LM) so the LM head learns to emit "
+                        "label tokens against the wrapped prompt. The "
+                        "trainer's val_F1 will look fine either way; "
+                        "this mismatch only bites at held-out eval."
+                    ),
+                    metadata={
+                        "experiment_id": experiment.id,
+                        "recipe_id": recipe_id,
+                        "task_profile": recipe_task_profile,
+                        "num_labels": artifacts["num_labels"],
+                        "head_kind": "sequence_classification",
+                    },
+                )
             return SmokeCheckResult(
                 name="classifier_head_vs_handler",
-                status="ok",
+                status="skip",
                 elapsed_ms=elapsed,
                 message=(
-                    f"Experiment #{experiment.id} ships a classifier "
-                    f"head AND recipe '{recipe_id}' routes through the "
-                    f"classification handler — δ dispatches through "
-                    f"the head's logits at eval time."
+                    f"Experiment #{experiment.id} has a classification "
+                    f"head but the project's task profile "
+                    f"('{recipe_task_profile or 'unset'}') isn't a known "
+                    f"generation handler — can't tell whether the head "
+                    f"will be used at eval."
                 ),
                 metadata={
                     "experiment_id": experiment.id,
                     "recipe_id": recipe_id,
                     "task_profile": recipe_task_profile,
-                    "num_labels": artifacts["num_labels"],
+                    "head_kind": "sequence_classification",
+                },
+            )
+
+        # ε branch — seq2seq adapter (encoder-decoder).
+        # Eval routes through ``AutoModelForSeq2SeqLM`` via ε's
+        # dispatcher. The aligned shape is a seq2seq / summarization
+        # recipe; a CausalLM-style recipe (instruction_sft / qa /
+        # chat_sft) under a seq2seq adapter means the eval would
+        # have crashed pre-ε and now silently routes through the
+        # seq2seq head — which IS the right thing to do, but the
+        # recipe's prompt format may not match what the model was
+        # trained on. Warn so the user sees the shape mismatch.
+        assert seq2seq_artifacts is not None
+        seq2seq_aligned_profiles = frozenset(
+            {"seq2seq", "summarization", "translation"}
+        )
+        if recipe_task_profile in seq2seq_aligned_profiles:
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="ok",
+                elapsed_ms=elapsed,
+                message=(
+                    f"Experiment #{experiment.id} ships a seq2seq "
+                    f"head AND recipe '{recipe_id}' routes through a "
+                    f"seq2seq-compatible profile "
+                    f"('{recipe_task_profile}') — ε dispatches through "
+                    f"AutoModelForSeq2SeqLM at eval time."
+                ),
+                metadata={
+                    "experiment_id": experiment.id,
+                    "recipe_id": recipe_id,
+                    "task_profile": recipe_task_profile,
+                    "head_kind": "seq2seq_lm",
                 },
             )
         if (
@@ -962,53 +1058,47 @@ async def _check_classifier_head_vs_handler(
                 status="warn",
                 elapsed_ms=elapsed,
                 message=(
-                    f"Experiment #{experiment.id} ships a "
-                    f"classification head (PEFT task_type=SEQ_CLS, "
-                    f"{artifacts['num_labels']} labels) BUT recipe "
-                    f"'{recipe_id}' routes through a generation-mode "
-                    f"handler ('{recipe_task_profile}'). The trained "
-                    f"head's logits go unused at eval time and the "
-                    f"untrained LM head will produce unparseable "
-                    f"output — the same failure mode that bit the "
-                    f"SQLi-detector project before δ landed."
+                    f"Experiment #{experiment.id} ships a seq2seq "
+                    f"adapter (PEFT task_type=SEQ_2_SEQ_LM) BUT recipe "
+                    f"'{recipe_id}' routes through a causal-LM-style "
+                    f"profile ('{recipe_task_profile}'). The recipe's "
+                    f"prompt format won't match what the encoder-"
+                    f"decoder model was trained against — held-out "
+                    f"eval will run through ε's seq2seq dispatcher "
+                    f"but the generated text may still look off."
                 ),
                 remediation=(
-                    "Pick one: (a) switch the project's recipe to "
-                    "'classification' so δ routes eval through the "
-                    "head's logits; or (b) retrain with "
-                    "``training_config.task_type`` left default "
-                    "(causal-LM) so the LM head learns to emit "
-                    "label tokens against the wrapped prompt. The "
-                    "trainer's val_F1 will look fine either way; "
-                    "this mismatch only bites at held-out eval."
+                    "Pick one: (a) switch the project's recipe to a "
+                    "seq2seq-aligned profile (summarization, "
+                    "translation, seq2seq) so the prompt shape matches "
+                    "what the encoder-decoder model expects; or (b) "
+                    "retrain with ``task_type`` left default so the "
+                    "trainer uses AutoModelForCausalLM and the recipe's "
+                    "prompt format applies."
                 ),
                 metadata={
                     "experiment_id": experiment.id,
                     "recipe_id": recipe_id,
                     "task_profile": recipe_task_profile,
-                    "num_labels": artifacts["num_labels"],
-                    "head_kind": "sequence_classification",
+                    "head_kind": "seq2seq_lm",
                 },
             )
-        # Recipe exists but task_profile isn't classification *or*
-        # a known generation profile (e.g. preference / alignment).
-        # Don't fire — δ + the smoke check can't make a confident
-        # call without knowing which handler will run at eval.
         return SmokeCheckResult(
             name="classifier_head_vs_handler",
             status="skip",
             elapsed_ms=elapsed,
             message=(
-                f"Experiment #{experiment.id} has a classification "
-                f"head but the project's task profile "
+                f"Experiment #{experiment.id} ships a seq2seq head "
+                f"but the project's task profile "
                 f"('{recipe_task_profile or 'unset'}') isn't a known "
-                f"generation handler — can't tell whether the head "
-                f"will be used at eval."
+                f"profile — can't tell whether the seq2seq dispatch "
+                f"matches the eval handler's expectations."
             ),
             metadata={
                 "experiment_id": experiment.id,
                 "recipe_id": recipe_id,
                 "task_profile": recipe_task_profile,
+                "head_kind": "seq2seq_lm",
             },
         )
     except Exception as exc:  # noqa: BLE001

@@ -499,6 +499,72 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
             "No completed experiment", check["message"]
         )
 
+    def _write_seq2seq_adapter(self, output_dir: Path) -> Path:
+        """ε fixture: build a fake seq2seq checkpoint that the ε
+        detector accepts."""
+        import json
+        ckpt = output_dir / "checkpoint-50"
+        ckpt.mkdir(parents=True, exist_ok=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "t5-small",
+                    "task_type": "SEQ_2_SEQ_LM",
+                    "peft_type": "LORA",
+                }
+            )
+        )
+        return ckpt
+
+    def test_classifier_head_check_warns_on_seq2seq_under_causal_recipe(self):
+        """ε branch — a seq2seq adapter under a CausalLM-style
+        recipe (qa-sft routes to ``instruction_sft``) means the
+        recipe's prompt format won't match what the encoder-decoder
+        model was trained on. Warn so the user sees the shape
+        mismatch before eval looks "off"."""
+        pid = self._create_project()
+        self._apply_recipe(pid, "qa-sft")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_seq2seq_causal"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_seq2seq_adapter(exp_dir)
+        self._seed_completed_experiment(
+            pid, output_dir=str(exp_dir), task_type="seq2seq",
+        )
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "warn", check)
+        self.assertIn("SEQ_2_SEQ_LM", check["message"])
+        self.assertIn("encoder-decoder", check["message"])
+        self.assertEqual(
+            check["metadata"]["head_kind"], "seq2seq_lm"
+        )
+        self.assertIn("summarization", check["remediation"])
+
+    def test_classifier_head_check_passes_for_seq2seq_under_summarization_recipe(self):
+        """ε aligned shape — seq2seq adapter + summarization
+        recipe is the right pairing. ε dispatches through
+        AutoModelForSeq2SeqLM at eval time."""
+        pid = self._create_project()
+        self._apply_recipe(pid, "summarization")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_seq2seq_aligned"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_seq2seq_adapter(exp_dir)
+        self._seed_completed_experiment(
+            pid, output_dir=str(exp_dir), task_type="seq2seq",
+        )
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "ok", check)
+        self.assertIn("seq2seq", check["message"].lower())
+        self.assertIn("ε", check["message"])
+        self.assertEqual(check["metadata"]["head_kind"], "seq2seq_lm")
+
     def test_classifier_head_check_passes_for_non_seq_cls_checkpoint(self):
         """A causal-LM (or otherwise non-SEQ_CLS) checkpoint is the
         right shape for a generation-mode recipe — the check must
