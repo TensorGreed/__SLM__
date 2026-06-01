@@ -34,6 +34,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import api from '../../api/client';
+import type { ErrorEnvelope } from '../../api/errors';
+import { parseErrorEnvelope } from '../../api/errors';
+import ErrorPanel from '../shared/ErrorPanel';
 import AutofixPreviewModal from './AutofixPreviewModal';
 import './DataHealthReportPanel.css';
 
@@ -141,7 +144,9 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
     const navigate = useNavigate();
     const [data, setData] = useState<HealthReport | null>(null);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    // Diagnostics Intervention B — load-failure rendered via shared
+    // <ErrorPanel> with troubleshooting_id + remediation copy.
+    const [error, setError] = useState<ErrorEnvelope | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [lastFix, setLastFix] = useState<AutofixResult | null>(null);
     // D3.2 — preview-then-apply: the panel opens AutofixPreviewModal
@@ -152,13 +157,12 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
 
     const fetch = useCallback(async () => {
         setLoading(true);
-        setError('');
+        setError(null);
         try {
             const res = await api.get<HealthReport>(`/projects/${projectId}/data-health`);
             setData(res.data);
         } catch (err) {
-            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-            setError(typeof detail === 'string' ? detail : 'Failed to load Data Health Report.');
+            setError(parseErrorEnvelope(err));
             setData(null);
         } finally {
             setLoading(false);
@@ -202,10 +206,21 @@ export default function DataHealthReportPanel({ projectId }: DataHealthReportPan
     if (error) {
         return (
             <div className="data-health data-health--error" data-testid="data-health">
-                {error}{' '}
-                <button type="button" className="btn btn-link" onClick={() => void fetch()}>
-                    Retry
-                </button>
+                <ErrorPanel
+                    envelope={error}
+                    onDismiss={() => setError(null)}
+                    testIdPrefix="data-health-load-error"
+                    actions={
+                        <button
+                            type="button"
+                            className="btn btn-link"
+                            onClick={() => void fetch()}
+                            data-testid="data-health-retry"
+                        >
+                            Retry
+                        </button>
+                    }
+                />
             </div>
         );
     }

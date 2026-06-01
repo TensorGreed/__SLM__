@@ -23,7 +23,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { extractApiErrorMessage } from '../../utils/apiError';
+import type { ErrorEnvelope } from '../../api/errors';
+import { parseErrorEnvelope } from '../../api/errors';
+import ErrorPanel from '../shared/ErrorPanel';
 import type { GoldRowRecipe, GoldRowSpan } from './GoldEntryRowBody';
 
 
@@ -172,7 +174,9 @@ export default function GoldEntryAddForm({
     const [summary, setSummary] = useState('');
 
     const [submitting, setSubmitting] = useState(false);
-    const [submitError, setSubmitError] = useState<string | null>(null);
+    // Diagnostics Intervention B — submitError rendered via shared
+    // <ErrorPanel> with troubleshooting_id + remediation copy.
+    const [submitError, setSubmitError] = useState<ErrorEnvelope | null>(null);
 
     // Reset field state when the recipe changes so a stale
     // classification-label doesn't leak into the qa-sft form after
@@ -419,16 +423,14 @@ export default function GoldEntryAddForm({
             setSpanText(''); setEntitiesJson('');
             setDoc(''); setSummary('');
         } catch (err) {
-            // Pull the backend's structured ``detail.message`` when
-            // present — without this the user sees "Request failed
-            // with status code 400" for cases like "Gold dataset is
-            // locked" / EMPTY_GOLD_ROW, which they have no way to
-            // act on. The shared helper handles both structured
-            // detail and plain-string detail; falls back to the
-            // axios message (or the literal "Failed to add row")
-            // for network-level failures.
-            const { message } = extractApiErrorMessage(err, 'Failed to add row');
-            setSubmitError(message);
+            // Diagnostics Intervention B — parse the axios error into
+            // the structured envelope so the shared <ErrorPanel>
+            // renders it with troubleshooting_id + remediation copy.
+            // The structured detail.message (e.g. "Gold dataset is
+            // locked" / EMPTY_GOLD_ROW) lands in envelope.message
+            // automatically since parseErrorEnvelope reads it from
+            // the same path extractApiErrorMessage used to.
+            setSubmitError(parseErrorEnvelope(err));
         } finally {
             setSubmitting(false);
         }
@@ -924,19 +926,11 @@ export default function GoldEntryAddForm({
             )}
 
             {submitError && (
-                <div
-                    role="alert"
-                    data-testid="gold-add-error"
-                    style={{
-                        padding: 'var(--space-sm)',
-                        background: 'var(--color-error-bg)',
-                        color: 'var(--color-error)',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: '0.9rem',
-                    }}
-                >
-                    {submitError}
-                </div>
+                <ErrorPanel
+                    envelope={submitError}
+                    onDismiss={() => setSubmitError(null)}
+                    testIdPrefix="gold-add-error"
+                />
             )}
 
             <div className="form-row">

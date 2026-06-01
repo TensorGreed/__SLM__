@@ -121,7 +121,9 @@ export function parseErrorEnvelope(err: unknown): ErrorEnvelope {
     }
 
     // Legacy ``{detail: "..."}`` — most endpoints that haven't been
-    // migrated yet. Or 422 with array-of-validation-errors.
+    // migrated yet. Or 422 with array-of-validation-errors. Or the
+    // older structured ``{detail: {error_code, message}}`` shape from
+    // SLMError raises before the envelope wrapper picked them up.
     const detailValue = obj.detail;
     if (Array.isArray(detailValue)) {
         // FastAPI validation errors. Surface the first message + stash
@@ -133,6 +135,30 @@ export function parseErrorEnvelope(err: unknown): ErrorEnvelope {
             statusCode: status,
             metadata: { validation_errors: detailValue },
         });
+    }
+    if (isPlainObject(detailValue)) {
+        // Structured detail dict from SLMError ({error_code, message,
+        // actionable_fix, metadata, ...}). Earlier than the full
+        // envelope shape — no troubleshooting_id but everything else
+        // is present. Treat it as a partial envelope rather than a
+        // generic fallback so the user sees the structured message.
+        return {
+            errorCode: stringOr(detailValue.error_code, defaultCodeFromStatus(status)),
+            stage: stringOr(detailValue.stage, 'general'),
+            message: stringOr(
+                detailValue.message ?? detailValue.detail,
+                axiosErr.message || 'Request failed.',
+            ),
+            actionableFix: stringOr(
+                detailValue.actionable_fix,
+                defaultRemediationFromStatus(status),
+            ),
+            docsUrl: stringOr(detailValue.docs_url, '/docs/troubleshooting'),
+            troubleshootingId: `local_${randomToken()}`,
+            metadata: isPlainObject(detailValue.metadata) ? detailValue.metadata : null,
+            statusCode: status,
+            isFallback: true,
+        };
     }
     return makeFallback({
         message: stringOr(detailValue, axiosErr.message || 'Request failed.'),

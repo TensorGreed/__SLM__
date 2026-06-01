@@ -5,8 +5,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
+import type { ErrorEnvelope } from '../../api/errors';
+import { parseErrorEnvelope } from '../../api/errors';
 import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
+import ErrorPanel from '../shared/ErrorPanel';
 import StepFooter from '../shared/StepFooter';
 import { TerminalConsole } from '../shared/TerminalConsole';
 import { Term } from '../shared/Term';
@@ -784,7 +787,11 @@ export default function TrainingPanel({
   const [selectedForCompare, setSelectedForCompare] = useState<number[]>([]);
   const [showCompare, setShowCompare] = useState(false);
   const [taskState, setTaskState] = useState<string>('');
-  const [trainingError, setTrainingError] = useState<string>('');
+  // Diagnostics Intervention B — load-bearing render uses the shared
+  // <ErrorPanel>. Some call sites build messages inline (preflight
+  // failures with hint lists); those go through ``trainingErrorFromMessage``
+  // to wrap as a synthetic envelope.
+  const [trainingError, setTrainingError] = useState<ErrorEnvelope | null>(null);
 
   const [name, setName] = useState('');
   const [baseModel, setBaseModel] = useState('HuggingFaceTB/SmolLM2-135M-Instruct');
@@ -2501,7 +2508,7 @@ export default function TrainingPanel({
     setShowCreate(Boolean(forceCreateVisible && !hideCreateControls));
     setSetupTab('basics');
     setTaskState('');
-    setTrainingError('');
+    setTrainingError(null);
     setTrainingMode('sft');
     setTrainingRuntimeId('auto');
     setTaskType('causal_lm');
@@ -2933,7 +2940,7 @@ export default function TrainingPanel({
 
   const handleCreate = async () => {
     if (!name.trim()) return;
-    setTrainingError('');
+    setTrainingError(null);
     setTrainingWarnings([]);
 
     const config = buildTrainingConfigPayload();
@@ -3009,13 +3016,13 @@ export default function TrainingPanel({
         observability_probe_attention: false,
         observability_probe_top_k: false,
       });
-    } catch (err: any) {
-      setTrainingError(err?.response?.data?.detail || 'Failed to create experiment');
+    } catch (err) {
+      setTrainingError(parseErrorEnvelope(err));
     }
   };
 
   const handleStart = async (experimentId: number) => {
-    setTrainingError('');
+    setTrainingError(null);
     setTrainingWarnings([]);
     try {
       const preflightRes = await api.get<TrainingExperimentPreflightResponse>(
@@ -3026,11 +3033,14 @@ export default function TrainingPanel({
         const errors = Array.isArray(preflight.errors) ? preflight.errors.filter(Boolean) : [];
         const hints = Array.isArray(preflight.hints) ? preflight.hints.filter(Boolean) : [];
         const hintText = hints.length > 0 ? ` Fix hints: ${hints.slice(0, 2).join(' | ')}` : '';
-        setTrainingError(
-          errors.length > 0
-            ? `Preflight failed: ${errors.join(' | ')}${hintText}`
-            : 'Preflight failed due to incompatible configuration.',
-        );
+        // Build a synthetic envelope from the preflight result so the
+        // shared <ErrorPanel> renders it the same way as backend
+        // errors. The hint list lands in metadata so the user can
+        // expand "Technical details" to see all of them.
+        const msg = errors.length > 0
+          ? `Preflight failed: ${errors.join(' | ')}${hintText}`
+          : 'Preflight failed due to incompatible configuration.';
+        setTrainingError(parseErrorEnvelope(msg));
         return;
       }
       const warnings = Array.isArray(preflight?.warnings) ? preflight.warnings.filter(Boolean) : [];
@@ -3051,20 +3061,20 @@ export default function TrainingPanel({
         setObservabilityError('');
         void loadObservabilitySummary(experimentId, { silent: true });
       }
-    } catch (err: any) {
-      setTrainingError(err?.response?.data?.detail || 'Failed to start training');
+    } catch (err) {
+      setTrainingError(parseErrorEnvelope(err));
     }
   };
 
   const handleCancel = async (experimentId: number) => {
-    setTrainingError('');
+    setTrainingError(null);
     try {
       await api.post(`/projects/${projectId}/training/experiments/${experimentId}/cancel`);
       setActiveExperiment((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
       setTaskState('cancel_requested');
       refreshExperiments().catch(() => undefined);
-    } catch (err: any) {
-      setTrainingError(err?.response?.data?.detail || 'Failed to cancel training');
+    } catch (err) {
+      setTrainingError(parseErrorEnvelope(err));
     }
   };
 
@@ -3211,9 +3221,11 @@ export default function TrainingPanel({
           </div>
 
           {trainingError && (
-            <div className="training-alert training-alert--error">
-              {trainingError}
-            </div>
+            <ErrorPanel
+              envelope={trainingError}
+              onDismiss={() => setTrainingError(null)}
+              testIdPrefix="training-error"
+            />
           )}
           {trainingWarnings.length > 0 && (
             <div className="training-alert training-alert--warning">
@@ -5924,9 +5936,11 @@ export default function TrainingPanel({
         )}
 
         {trainingError && (
-          <div className="training-alert training-alert--error">
-            {trainingError}
-          </div>
+          <ErrorPanel
+            envelope={trainingError}
+            onDismiss={() => setTrainingError(null)}
+            testIdPrefix="training-error-bottom"
+          />
         )}
         {trainingWarnings.length > 0 && (
           <div className="training-alert training-alert--warning">

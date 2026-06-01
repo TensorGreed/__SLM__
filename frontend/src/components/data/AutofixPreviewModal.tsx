@@ -24,6 +24,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
+import type { ErrorEnvelope } from '../../api/errors';
+import { parseErrorEnvelope } from '../../api/errors';
+import ErrorPanel from '../shared/ErrorPanel';
 import './AutofixPreviewModal.css';
 
 interface PreviewItem {
@@ -82,14 +85,17 @@ export default function AutofixPreviewModal({
 }: AutofixPreviewModalProps) {
     const [preview, setPreview] = useState<AutofixPreview | null>(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    // Diagnostics Intervention B — both load + apply failures render
+    // via the shared <ErrorPanel> so the user sees troubleshooting_id
+    // + actionable_fix on the same surface they're acting on.
+    const [error, setError] = useState<ErrorEnvelope | null>(null);
     const [applying, setApplying] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
         async function load() {
             setLoading(true);
-            setError('');
+            setError(null);
             try {
                 const res = await api.post<AutofixPreview>(
                     `/projects/${projectId}/data-health/autofix/preview`,
@@ -97,10 +103,8 @@ export default function AutofixPreviewModal({
                 );
                 if (!cancelled) setPreview(res.data);
             } catch (err) {
-                const detail = (err as { response?: { data?: { detail?: string } } })
-                    ?.response?.data?.detail;
                 if (!cancelled) {
-                    setError(typeof detail === 'string' ? detail : 'Failed to load preview.');
+                    setError(parseErrorEnvelope(err));
                 }
             } finally {
                 if (!cancelled) setLoading(false);
@@ -113,7 +117,7 @@ export default function AutofixPreviewModal({
     const handleApply = useCallback(async () => {
         if (!preview || !preview.safe_to_apply) return;
         setApplying(true);
-        setError('');
+        setError(null);
         try {
             const res = await api.post<AutofixResult>(
                 `/projects/${projectId}/data-health/autofix`,
@@ -122,9 +126,7 @@ export default function AutofixPreviewModal({
             onApplied(res.data);
             onClose();
         } catch (err) {
-            const detail = (err as { response?: { data?: { detail?: string } } })
-                ?.response?.data?.detail;
-            setError(typeof detail === 'string' ? detail : 'Apply failed.');
+            setError(parseErrorEnvelope(err));
         } finally {
             setApplying(false);
         }
@@ -166,11 +168,12 @@ export default function AutofixPreviewModal({
                 )}
 
                 {!loading && error && (
-                    <div
-                        className="autofix-modal__body autofix-modal__body--error"
-                        data-testid="autofix-modal-error"
-                    >
-                        {error}
+                    <div className="autofix-modal__body">
+                        <ErrorPanel
+                            envelope={error}
+                            onDismiss={() => setError(null)}
+                            testIdPrefix="autofix-modal-error"
+                        />
                     </div>
                 )}
 

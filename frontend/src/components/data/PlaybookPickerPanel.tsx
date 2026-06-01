@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
+import type { ErrorEnvelope } from '../../api/errors';
+import { parseErrorEnvelope } from '../../api/errors';
 import type {
     CloudProviderEntry,
     DryRunPlaybookResult,
@@ -30,6 +32,7 @@ import {
     listSynthBackends,
     runPlaybookAsync,
 } from '../../api/synthPlaybook';
+import ErrorPanel from '../shared/ErrorPanel';
 import NoRecipeEmptyState from '../shared/NoRecipeEmptyState';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
@@ -114,7 +117,10 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     const [catalogLoading, setCatalogLoading] = useState(true);
     const [catalogError, setCatalogError] = useState<string | null>(null);
     const [running, setRunning] = useState(false);
-    const [runError, setRunError] = useState<string | null>(null);
+    // Switched from raw string to ErrorEnvelope (Diagnostics Intervention B)
+    // so the shared <ErrorPanel> renders the failure with troubleshooting_id +
+    // remediation + metadata, instead of an opaque banner.
+    const [runError, setRunError] = useState<ErrorEnvelope | null>(null);
     const [result, setResult] = useState<PlaybookResult | null>(null);
     // ── Backend picker (Epic 5 Phase 5a) ──────────────────────────
     // ``null`` selectedBackend means "auto-pick on the server" (the
@@ -284,16 +290,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 elapsed_sec: 0,
                 prompt_snippet: '',
             } as PlaybookResult);
-        } catch (err: any) {
-            const status = err?.response?.status;
-            const detail = err?.response?.data?.detail;
-            if (status === 503) {
-                setRunError(
-                    detail || 'No synthetic-data backend is available. Install Ollama or set TEACHER_MODEL_API_URL.',
-                );
-            } else {
-                setRunError(detail || err?.message || 'Run failed');
-            }
+        } catch (err) {
+            setRunError(parseErrorEnvelope(err));
         } finally {
             setRunning(false);
         }
@@ -324,10 +322,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
             }
             // Pre-flight passed — kick the real job.
             await submitJob();
-        } catch (err: any) {
-            const status = err?.response?.status;
-            const detail = err?.response?.data?.detail;
-            setRunError(detail || err?.message || `Pre-flight failed (${status ?? '?'})`);
+        } catch (err) {
+            setRunError(parseErrorEnvelope(err));
         } finally {
             setPreflighting(false);
         }
@@ -372,9 +368,8 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 // setSelectedOllamaModel until React re-renders.
                 await submitJob(`ollama:${qwenFallback}`);
             }
-        } catch (err: any) {
-            const detail = err?.response?.data?.detail;
-            setRunError(detail || err?.message || "Retry failed");
+        } catch (err) {
+            setRunError(parseErrorEnvelope(err));
         } finally {
             setPreflighting(false);
         }
@@ -804,9 +799,11 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
             )}
 
             {runError && (
-                <p className="playbook-picker__error" data-testid="playbook-picker-run-error">
-                    {runError}
-                </p>
+                <ErrorPanel
+                    envelope={runError}
+                    onDismiss={() => setRunError(null)}
+                    testIdPrefix="playbook-picker-run-error"
+                />
             )}
 
             {result && (

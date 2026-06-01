@@ -93,6 +93,42 @@ describe('parseErrorEnvelope', () => {
         expect(parseErrorEnvelope(undefined).isFallback).toBe(true);
     });
 
+    it('parses structured {detail: {error_code, message, actionable_fix, metadata}} shape', () => {
+        // SLMError raises produce ``{detail: {error_code, stage,
+        // message, actionable_fix, metadata, ...}}`` — the older
+        // structured shape before the envelope wrapping was
+        // universalized. The parser must extract the message + the
+        // actionable_fix from the nested detail object, not display
+        // axios's generic "Request failed with status code 400".
+        const err = {
+            isAxiosError: true,
+            message: 'Request failed with status code 400',
+            response: {
+                status: 400,
+                data: {
+                    detail: {
+                        error_code: 'EMPTY_GOLD_ROW',
+                        stage: 'gold',
+                        message: 'Gold row has no recipe-shaped content.',
+                        actionable_fix: 'Provide question+answer or text+label.',
+                        metadata: { received_keys: ['foo'] },
+                    },
+                },
+            },
+        };
+        const env = parseErrorEnvelope(err);
+        expect(env.errorCode).toBe('EMPTY_GOLD_ROW');
+        expect(env.stage).toBe('gold');
+        expect(env.message).toBe('Gold row has no recipe-shaped content.');
+        expect(env.actionableFix).toBe('Provide question+answer or text+label.');
+        expect(env.metadata).toEqual({ received_keys: ['foo'] });
+        // Still a fallback because troubleshooting_id wasn't present;
+        // the parser mints a local_ id so the panel has something to
+        // copy-paste.
+        expect(env.isFallback).toBe(true);
+        expect(env.troubleshootingId).toMatch(/^local_/);
+    });
+
     it('detects the envelope by troubleshooting_id, not error_code', () => {
         // An older endpoint might set error_code but not be envelope-
         // wrapped (no troubleshooting_id). The parser must treat it
