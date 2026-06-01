@@ -573,6 +573,7 @@ session-start guidance.
 - `backend/tests/test_annotation_promotion.py` — Story 1.6 — promote labeled rows → training dataset.
 - `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
 - `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint
+- `backend/tests/test_audio_transcript_adapter_prompt_wrap.py` — κ-fix tests — audio-transcript adapter writes the production
 - `backend/tests/test_auto_rag_ab.py` — Tests for the Phase 9c A/B harness (pure-function pieces).
 - `backend/tests/test_auto_rag_api.py` — Tests for the auto-RAG preview API (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/tests/test_auto_rag_comparison_run_endpoint.py` — Tests for POST /api/projects/{id}/auto-rag/comparison/run

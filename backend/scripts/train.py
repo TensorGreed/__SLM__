@@ -504,6 +504,31 @@ def _adapt_record_to_text(
             "target_text": prepared_target_vl,
         })
 
+    # κ-fix tail — audio-transcript. Mirror of vision-language:
+    # transcription rows start with "Transcribe the audio:";
+    # audio_qa rows start with "Question: " AND contain
+    # "\nAudio: <audio:" — same tight signal as ι's VQA detector
+    # so a plain Q/A row isn't misrouted.
+    prepared_source_au = row.get("source_text")
+    prepared_target_au = row.get("target_text")
+    if (
+        isinstance(prepared_source_au, str)
+        and isinstance(prepared_target_au, str)
+        and prepared_target_au.strip()
+        and (
+            prepared_source_au.lstrip().startswith("Transcribe the audio:")
+            or (
+                prepared_source_au.lstrip().startswith("Question:")
+                and "\nAudio: <audio:" in prepared_source_au
+            )
+        )
+    ):
+        return _attach_multimodal_fields(row, {
+            "text": f"{prepared_source_au}{prepared_target_au}",
+            "source_text": prepared_source_au,
+            "target_text": prepared_target_au,
+        })
+
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
         return _attach_multimodal_fields(

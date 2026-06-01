@@ -1476,19 +1476,92 @@ def _detect_audio_transcript(record: dict[str, Any], config: dict[str, Any]) -> 
     return 1.0 if _map_audio_transcript(record, config) else 0.0
 
 
+_AUDIO_SUBTASKS: frozenset[str] = frozenset({"transcription", "audio_qa"})
+_AUDIO_DEFAULT_SUBTASK: str = "transcription"
+
+
+def _build_audio_transcript_training_prompt(
+    audio_path: str, subtask: str, question: str,
+) -> str:
+    """Mirror of ``AudioTranscriptHandler.build_prompts``
+    (eval_task_handler_service.py:2180-2196) so training rows
+    carry the same prompt format the eval handler builds at
+    inference.
+
+    κ-fix: previously ``_map_audio_transcript`` wrote
+    ``source_text = "audio:{path}"`` (bare text, no
+    ``<audio:…>`` placeholder, no instruction, no
+    ``Transcript:`` cue). The model never saw the eval-time
+    scaffold so held-out WER/CER on audio projects came in
+    artificially high — same shape as the bug β closed for
+    classification-label.
+
+    Mirror of ι (vision-language): swap ``image_path`` →
+    ``audio_path``; ``Describe the image:`` → ``Transcribe the
+    audio:``; ``Caption:`` → ``Transcript:``; ``Image: <image:…>``
+    → ``Audio: <audio:…>``. Branches across both subtasks the
+    handler supports and mirrors the image-missing fallback for
+    audio-missing rows (handler does the same).
+    """
+    if subtask == "audio_qa":
+        if audio_path:
+            return (
+                f"Question: {question}\n"
+                f"Audio: <audio:{audio_path}>\n"
+                "Answer:"
+            )
+        return question
+    # Default: transcription (matches handler's DEFAULT_SUBTASK).
+    if audio_path:
+        return f"Transcribe the audio: <audio:{audio_path}>\nTranscript:"
+    return "Transcribe the audio:"
+
+
 def _map_audio_transcript(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
     audio_aliases = list(config.get("audio_fields") or []) or ["audio_path", "audio", "audio_url", "audio_file", "path"]
     transcript_aliases = list(config.get("transcript_fields") or []) or ["transcript", "text", "caption", "target_text", "answer"]
+    # κ-fix — audio_qa rows carry a question + answer; the adapter
+    # must extract the question separately for the handler's
+    # ``Question: …\nAudio: <audio:…>\nAnswer:`` scaffold. Mirrors
+    # ι's question_aliases for vision VQA.
+    question_aliases = list(config.get("question_fields") or []) or [
+        "question", "prompt", "instruction", "query",
+    ]
     audio_path = _pick_text(record, audio_aliases)
     transcript = _pick_text(record, transcript_aliases)
     if not audio_path or not transcript:
         return None
+
+    # κ-fix — resolve subtask from adapter_config (the subtask-
+    # propagation infrastructure injects it from manifest).
+    # Same invalid-value tolerance pattern as θ/ι.
+    raw_subtask = config.get("subtask")
+    if isinstance(raw_subtask, str):
+        candidate = raw_subtask.strip().lower()
+        subtask = candidate if candidate in _AUDIO_SUBTASKS else _AUDIO_DEFAULT_SUBTASK
+    else:
+        subtask = _AUDIO_DEFAULT_SUBTASK
+
+    question = _pick_text(record, question_aliases)
+
+    wrapped_prompt = _build_audio_transcript_training_prompt(
+        audio_path, subtask, question,
+    )
+    target_with_space = f" {transcript}"
+
     return {
-        "text": f"<audio:{audio_path}> {transcript}",
-        "source_text": f"audio:{audio_path}",
-        "target_text": transcript,
+        # Raw fields preserved for data health / gold diagnostics /
+        # multimodal asset resolution.
         "audio_path": audio_path,
         "answer": transcript,
+        "question": question or None,
+        # ``text`` = wrapped prompt + target so trainer paths that
+        # consume ``text`` directly see the same scaffold the
+        # handler will rebuild at eval. Replaces pre-κ
+        # ``"<audio:{path}> {transcript}"``.
+        "text": f"{wrapped_prompt}{target_with_space}",
+        "source_text": wrapped_prompt,
+        "target_text": target_with_space,
     }
 
 
