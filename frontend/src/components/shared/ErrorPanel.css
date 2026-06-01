@@ -1,0 +1,193 @@
+/* Shared error rendering — sits inline near the action that
+   triggered the error, NOT in a global toast or the bell. */
+
+.error-panel {
+    margin: 12px 0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-style: solid;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.error-panel--warning {
+    background: rgba(234, 179, 8, 0.08);
+    border-color: rgba(234, 179, 8, 0.4);
+}
+
+.error-panel--critical {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+.error-panel__head {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
+    gap: 10px;
+}
+
+.error-panel__badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    line-height: 1.6;
+    flex-shrink: 0;
+}
+
+.error-panel__badge--warning {
+    background: rgba(234, 179, 8, 0.2);
+    color: rgb(146, 109, 5);
+}
+
+.error-panel__badge--critical {
+    background: rgba(239, 68, 68, 0.2);
+    color: rgb(146, 23, 23);
+}
+
+.error-panel__headline {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.error-panel__dismiss {
+    background: transparent;
+    border: 0;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.error-panel__remediation {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+.error-panel__fallback-note {
+    margin: 0;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.04);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    border-radius: 4px;
+    font-style: italic;
+    line-height: 1.5;
+}
+
+.error-panel__details {
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    padding-top: 8px;
+}
+
+.error-panel__details summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-secondary);
+    user-select: none;
+}
+
+.error-panel__details summary::-webkit-details-marker {
+    display: none;
+}
+
+.error-panel__details-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    margin: 8px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.error-panel__details-grid dt {
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: capitalize;
+}
+
+.error-panel__details-grid dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.error-panel__details-grid dd code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.05);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.error-panel__metadata-value {
+    display: inline-block;
+    max-width: 100%;
+}
+
+.error-panel__foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 6px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    font-size: 11px;
+}
+
+.error-panel__trace-id {
+    color: var(--text-tertiary);
+}
+
+.error-panel__trace-id code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    user-select: all;
+}
+
+.error-panel__trace-label {
+    color: var(--text-tertiary);
+}
+
+.error-panel__copy {
+    background: rgba(0, 0, 0, 0.06);
+    border: 0;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.error-panel__copy:hover {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.error-panel__docs-link {
+    margin-left: auto;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 11px;
+}
+
+.error-panel__docs-link:hover {
+    text-decoration: underline;
+}
+
+.error-panel__actions {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: auto;
+}

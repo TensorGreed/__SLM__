@@ -82,6 +82,12 @@ class Phase7ReliabilityEnvelopeTests(unittest.TestCase):
         self.assertTrue(str(payload.get("error_code") or "").strip(), payload)
         self.assertTrue(str(payload.get("actionable_fix") or "").strip(), payload)
         self.assertTrue(str(payload.get("docs_url") or "").strip(), payload)
+        # Diagnostics Intervention A — every envelope must carry a
+        # troubleshooting_id so the user can copy-paste it into a bug
+        # report and the developer can grep logs for it.
+        trace_id = str(payload.get("troubleshooting_id") or "")
+        self.assertTrue(trace_id.startswith("err_"), payload)
+        self.assertGreater(len(trace_id), 8, payload)
         # Backward compatibility with legacy clients that inspect `detail`.
         self.assertIn("detail", payload)
 
@@ -166,6 +172,138 @@ class Phase7ReliabilityEnvelopeTests(unittest.TestCase):
         guardrails = dict(payload.get("guardrails") or {})
         guardrail_warnings = [str(item) for item in list(guardrails.get("warnings") or [])]
         self.assertTrue(any("VRAM" in item for item in guardrail_warnings), guardrail_warnings)
+
+    # ── Diagnostics Intervention A — widened envelope coverage ────
+
+    def test_envelope_now_wraps_synthetic_errors(self):
+        """Pre-A: /synthetic/* errors returned raw {detail: '...'} so
+        the frontend rendered a generic toast with no troubleshooting
+        id, no error_code, no remediation copy. Post-A: every
+        synthetic 4xx/5xx flows through the same envelope shape that
+        ingestion/training/export already used."""
+        project_id = self._create_project("phase-a-synth")
+        resp = self.client.post(
+            f"/api/projects/{project_id}/synthetic/run-playbook",
+            json={"mode": "non-existent-mode", "target_count": 1},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self._assert_structured_error(resp.json(), "synthetic")
+
+    def test_envelope_now_wraps_gold_errors(self):
+        project_id = self._create_project("phase-a-gold")
+        # 422: ``pairs`` must be a list of dicts. Send a string to
+        # force a clean validation failure.
+        resp = self.client.post(
+            f"/api/projects/{project_id}/gold/import",
+            json={"pairs": "not-a-list"},
+        )
+        self.assertEqual(resp.status_code, 422, resp.text)
+        self._assert_structured_error(resp.json(), "gold")
+
+    def test_envelope_now_wraps_data_health_autofix_errors(self):
+        project_id = self._create_project("phase-a-data-health")
+        resp = self.client.post(
+            f"/api/projects/{project_id}/data-health/autofix",
+            json={"fix_kind": "unknown-fix"},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self._assert_structured_error(resp.json(), "data-health")
+
+    def test_envelope_now_wraps_cleaning_errors(self):
+        project_id = self._create_project("phase-a-cleaning")
+        # Try to fetch a non-existent cleaning task.
+        resp = self.client.get(
+            f"/api/projects/{project_id}/cleaning/tasks/does-not-exist",
+        )
+        self.assertEqual(resp.status_code, 404, resp.text)
+        self._assert_structured_error(resp.json(), "cleaning")
+
+    def test_envelope_now_wraps_dataset_import_errors(self):
+        project_id = self._create_project("phase-a-dataset-import")
+        # Empty body fails validation.
+        resp = self.client.post(
+            f"/api/projects/{project_id}/dataset-import/run",
+            json={},
+        )
+        self.assertEqual(resp.status_code, 422, resp.text)
+        self._assert_structured_error(resp.json(), "dataset-import")
+
+    def test_envelope_general_stage_for_unrecognised_paths(self):
+        """``/api/...`` paths whose first segment isn't in the stage
+        table get ``stage='general'`` rather than being skipped. The
+        previous behavior dropped them through to legacy
+        ``{detail: '...'}`` which is what we're trying to phase out."""
+        # 404 on an unknown project hits /api/projects/{id} — generic
+        # project route, no specific stage.
+        resp = self.client.get("/api/projects/999999999")
+        self.assertEqual(resp.status_code, 404, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload.get("stage"), "general", payload)
+        self.assertTrue(payload.get("troubleshooting_id"))
+
+    def test_validation_errors_carry_envelope_shape(self):
+        """422 validation errors also flow through the envelope so the
+        frontend can render them the same way as 4xx/5xx. Backend
+        preserves ``detail = validation_errors[]`` for legacy clients
+        that consume that shape."""
+        project_id = self._create_project("phase-a-validation")
+        resp = self.client.post(
+            f"/api/projects/{project_id}/synthetic/run-playbook",
+            json={"target_count": "not-an-int"},  # bad type
+        )
+        self.assertEqual(resp.status_code, 422, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload.get("stage"), "synthetic", payload)
+        self.assertTrue(payload.get("troubleshooting_id"))
+        # Backward compat: detail is the original validation-errors list.
+        self.assertIsInstance(payload.get("detail"), list)
+        # New: metadata carries the same list under a named key.
+        meta = payload.get("metadata") or {}
+        self.assertIn("validation_errors", meta)
+
+    def test_last_resort_wraps_unhandled_exceptions(self):
+        """The Kaggle SDK's ``sys.exit(1)`` at import time used to
+        crash request handlers with a bare 500 + opaque traceback.
+        With the last-resort ``Exception`` handler registered, even
+        SystemExit-style escapes flow through the envelope shape so
+        the user gets a troubleshooting_id + the developer gets a
+        log line keyed on the same id.
+
+        TestClient's default ``raise_server_exceptions=True``
+        propagates handler exceptions through to the test caller,
+        which masks the production behavior we're trying to verify
+        here. Build a dedicated client with the flag off so the
+        envelope renders as it would for a real request."""
+        from fastapi.testclient import TestClient as _TC
+        from app.main import app as live_app
+
+        async def _bomb():
+            raise RuntimeError("boom from a buggy handler")
+
+        live_app.add_api_route(
+            "/api/_test/last_resort_bomb",
+            _bomb,
+            methods=["GET"],
+        )
+        try:
+            with _TC(live_app, raise_server_exceptions=False) as bomb_client:
+                resp = bomb_client.get("/api/_test/last_resort_bomb")
+        finally:
+            # Strip the route so other tests don't see it.
+            live_app.router.routes = [
+                r for r in live_app.router.routes
+                if getattr(r, "path", "") != "/api/_test/last_resort_bomb"
+            ]
+        self.assertEqual(resp.status_code, 500, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload.get("stage"), "general", payload)
+        self.assertIn("RuntimeError", str(payload.get("message", "")), payload)
+        self.assertTrue(str(payload.get("troubleshooting_id", "")).startswith("err_"))
+        # Metadata carries the exception type + request path so logs
+        # + frontend dispatchers can branch on the failure mode.
+        meta = payload.get("metadata") or {}
+        self.assertEqual(meta.get("exception_type"), "RuntimeError")
+        self.assertIn("/api/_test/last_resort_bomb", str(meta.get("request_path", "")))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Any
@@ -96,7 +97,55 @@ from app.services.target_profile_service import load_target_profile_plugins_from
 from app.exceptions import SLMError
 from fastapi.responses import JSONResponse
 
-_TARGET_STRUCTURED_ERROR_STAGES: tuple[str, ...] = ("ingestion", "training", "export")
+# Stages the structured-error envelope recognises. Order matters —
+# longer / more-specific stage names must come BEFORE shorter prefixes
+# they'd be confused with (e.g. ``data-health`` before any future
+# ``data`` stage). Adding a new stage is safe as long as its URL
+# substring is unique enough.
+_TARGET_STRUCTURED_ERROR_STAGES: tuple[str, ...] = (
+    "ingestion",
+    "training",
+    "export",
+    # Widened coverage (Diagnostics Intervention A) — every other
+    # surface where errors used to render as raw ``{detail: "..."}``
+    # toasts. Each stage gets a stable name so frontend dispatchers
+    # + log aggregators can route by ``stage`` instead of regexing
+    # URLs.
+    "synthetic",
+    "cleaning",
+    "gold",
+    "evaluation",
+    "data-health",
+    "dataset-import",
+    "dataset",
+    "deployments",
+    "playground",
+    "annotation",
+    "manifest",
+    "tokenization",
+    "auto-rag",
+    "distillation",
+    "compression",
+    "drift",
+    "secrets",
+    "jobs",
+    "recipes",
+    "comparison",
+    "artifacts",
+    "audit",
+    "remediation",
+    "starter-packs",
+    "templates",
+    "extensions",
+    "support-bundles",
+    "domain-profile",
+    "domain-pack",
+    "pipeline",
+    "settings",
+    "stats",
+    "runtime",
+    "gate-check",
+)
 _STAGE_DOCS_URL: dict[str, str] = {
     "ingestion": "/docs/ingestion/troubleshooting",
     "training": "/docs/training/troubleshooting",
@@ -106,17 +155,35 @@ _STAGE_DOCS_URL: dict[str, str] = {
 
 
 def _infer_structured_error_stage(path: str) -> str | None:
-    if not path.startswith("/api/projects/"):
+    """Stage name for an API URL, used to enrich the error envelope.
+
+    Returns ``"general"`` for any ``/api/...`` URL whose path doesn't
+    match a more specific stage — every API error gets wrapped in the
+    envelope shape. Non-``/api/`` paths (rare; serves static or health)
+    return ``None`` so we don't wrap them.
+
+    Stage detection is greedy on the first segment after
+    ``/api/`` or ``/api/projects/{id}/``. For ``/api/projects/17/
+    synthetic/run-playbook`` the stage is ``synthetic``; for
+    ``/api/health`` it's ``general``.
+    """
+    if not path.startswith("/api/"):
         return None
     normalized = path.lower()
     for stage in _TARGET_STRUCTURED_ERROR_STAGES:
-        if f"/{stage}" in normalized:
+        # Match as a path segment so ``/dataset`` doesn't swallow
+        # ``/dataset-import`` (we list the longer one first above so
+        # the loop hits it first).
+        if f"/{stage}/" in normalized or normalized.endswith(f"/{stage}"):
             return stage
-    return None
+    return "general"
 
 
 def _default_error_code(stage: str, status_code: int) -> str:
-    prefix = str(stage or "general").strip().upper() or "GENERAL"
+    # Stage names use hyphens (``data-health``, ``dataset-import``)
+    # but error codes follow SCREAMING_SNAKE_CASE so frontend
+    # dispatchers can use them as identifiers.
+    prefix = str(stage or "general").strip().upper().replace("-", "_") or "GENERAL"
     if status_code == 404:
         return f"{prefix}_NOT_FOUND"
     if status_code == 409:
@@ -140,13 +207,27 @@ def _default_actionable_fix(stage: str, status_code: int) -> str:
     return f"Retry the {stage} operation after checking configuration."
 
 
+def _new_troubleshooting_id() -> str:
+    """Short opaque id for the error envelope.
+
+    The user copy-pastes this into a bug report; the developer
+    greps logs for it. 12 url-safe chars is enough for non-collision
+    over the project's expected error volume (millions+) without
+    being overwhelming to read aloud.
+    """
+    import secrets as _secrets
+    return f"err_{_secrets.token_urlsafe(9)}"
+
+
 def _structured_error_payload(
     *,
     stage: str,
     status_code: int,
     detail: Any,
+    troubleshooting_id: str | None = None,
 ) -> dict[str, Any]:
     docs_url = _STAGE_DOCS_URL.get(stage, _STAGE_DOCS_URL["general"])
+    trace_id = troubleshooting_id or _new_troubleshooting_id()
     if isinstance(detail, dict):
         payload = dict(detail)
         message = str(
@@ -166,6 +247,11 @@ def _structured_error_payload(
         )
         payload["docs_url"] = str(payload.get("docs_url") or docs_url)
         payload.setdefault("metadata", payload.get("metadata"))
+        # Diagnostics Intervention A — every error envelope carries a
+        # short opaque id the user can copy-paste into a bug report.
+        # Developer greps logs for it; users get a reference token
+        # instead of trying to describe their failure mode in prose.
+        payload.setdefault("troubleshooting_id", trace_id)
         # Keep backward compatibility with callers/tests expecting plain `detail`.
         payload.setdefault("detail", message)
         return payload
@@ -178,6 +264,7 @@ def _structured_error_payload(
         "actionable_fix": _default_actionable_fix(stage, status_code),
         "docs_url": docs_url,
         "metadata": None,
+        "troubleshooting_id": trace_id,
         # Keep backward compatibility with callers/tests expecting plain `detail`.
         "detail": message,
     }
@@ -398,9 +485,17 @@ async def health_check():
 
 @app.exception_handler(SLMError)
 async def slm_exception_handler(request: Request, exc: SLMError):
+    # SLMError already carries a structured detail dict — re-wrap it
+    # through the envelope so it also picks up troubleshooting_id and
+    # any docs_url defaults the bare exception didn't set.
+    stage = _infer_structured_error_stage(request.url.path) or "general"
     return JSONResponse(
         status_code=exc.status_code,
-        content=exc.detail,
+        content=_structured_error_payload(
+            stage=stage,
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ),
     )
 
 
@@ -416,6 +511,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
                 detail=exc.detail,
             ),
         )
+    # Path didn't match any /api/ prefix (rare — static / health
+    # endpoints). Keep the legacy shape so we don't break tests.
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
@@ -436,3 +533,59 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
         payload["detail"] = validation_errors
         return JSONResponse(status_code=422, content=payload)
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+
+
+@app.exception_handler(Exception)
+async def last_resort_exception_handler(request: Request, exc: Exception):
+    """Last-resort wrapper for unhandled exceptions.
+
+    Catches the failure-mode that bit us with the Kaggle SDK's
+    ``sys.exit(1)`` at import time: an exception (or BaseException
+    subclass like SystemExit) escapes every try/except in the request
+    handler and crashes the request with a 500 + bare stack trace
+    that's only visible in the server log.
+
+    Wrapping it here:
+      * Always returns a 500 with the structured envelope shape.
+      * Logs the full traceback server-side under the same
+        troubleshooting_id the user sees, so support can correlate.
+      * Surfaces the exception type as the ``error_code`` (e.g.
+        ``synthetic.SystemExit``) so frontend dispatch + log
+        aggregation can group by failure mode.
+
+    FastAPI's default last-resort handler returns a bare 500 with no
+    body. Registering ``Exception`` re-routes it through us. We
+    deliberately do NOT catch ``BaseException`` — ``KeyboardInterrupt``
+    + ``SystemExit`` from the worker process itself should still
+    terminate cleanly.
+    """
+    stage = _infer_structured_error_stage(request.url.path) or "general"
+    trace_id = _new_troubleshooting_id()
+    exc_name = type(exc).__name__
+    # Log the full traceback under the trace_id so a developer can
+    # grep the log for it after a user reports the id.
+    logging.getLogger("app.last_resort").exception(
+        "unhandled exception in %s [trace_id=%s] %s",
+        request.url.path, trace_id, exc_name,
+    )
+    return JSONResponse(
+        status_code=500,
+        content=_structured_error_payload(
+            stage=stage,
+            status_code=500,
+            detail={
+                "message": f"{exc_name}: {str(exc) or '(no message)'}",
+                "error_code": f"{stage.upper().replace('-', '_')}_UNHANDLED_{exc_name.upper()}",
+                "actionable_fix": (
+                    "An unexpected server-side error occurred. Copy the "
+                    "troubleshooting_id below and report it — the server "
+                    "log captured the full traceback under this id."
+                ),
+                "metadata": {
+                    "exception_type": exc_name,
+                    "request_path": request.url.path,
+                },
+            },
+            troubleshooting_id=trace_id,
+        ),
+    )

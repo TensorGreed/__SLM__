@@ -369,6 +369,7 @@ session-start guidance.
 - `frontend/src/api/dataStudio.ts` — Types and verdict enums for DataStudio dashboard panels (mapping, domain, synthetic, quality).
 - `frontend/src/api/datasetImport.ts` — Typed wrappers around the Phase A–E dataset-import API.
 - `frontend/src/api/drift.ts` — Typed client for the drift API (E4 UI).
+- `frontend/src/api/errors.ts` — Shared error parsing + types for the platform's structured error
 - `frontend/src/api/evalPackScaffold.ts` — Typed client for the recipe-aware eval-pack scaffolder (E5).
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
@@ -516,6 +517,7 @@ session-start guidance.
 - `frontend/src/components/projects/ProjectTemplateGallery.tsx` — Project-template gallery — surfaces every available template on
 - `frontend/src/components/shared/CommandSnippet.tsx` — CommandSnippet — collapsed "Show as CLI / API" disclosure rendered
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
+- `frontend/src/components/shared/ErrorPanel.tsx` — Shared error rendering component (Diagnostics Intervention A).
 - `frontend/src/components/shared/GettingStartedWizard.tsx` — Eight-step pipeline walkthrough modal introducing the data-to-deployment workflow.
 - `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
 - `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
@@ -750,6 +752,7 @@ session-start guidance.
 
 ## Frontend · Tests
 
+- `frontend/src/api/errors.test.ts` — _(no docstring)_
 - `frontend/src/components/annotation/AnnotationProgress.test.tsx` — AnnotationProgress contract.
 - `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.
 - `frontend/src/components/annotation/PreferencePairLabeler.test.tsx` — PreferencePairLabeler contract.
@@ -826,6 +829,7 @@ session-start guidance.
 - `frontend/src/components/projects/ProjectTemplateGallery.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/EmptyState.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/ErrorPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ArchetypeComparisonPanel.test.tsx` — ArchetypeComparisonPanel tests (USER-SUCCESS Epic 8 Phase 8b).
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
