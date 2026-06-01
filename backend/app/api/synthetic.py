@@ -861,6 +861,22 @@ async def run_synth_playbook(
             # used + prompt snippet in the error so a power user can
             # investigate without re-running.
             if row_count == 0:
+                raw_snippet = result.get("raw_llm_snippet") or ""
+                refused = bool(result.get("refusal_detected"))
+                if refused:
+                    raise RuntimeError(
+                        f"Playbook {req.mode} produced 0 accepted rows via "
+                        f"{backend_used} in {elapsed_sec:.1f}s because the "
+                        f"LLM refused on guardrail grounds. The model "
+                        f"returned: {raw_snippet[:300]!r}. "
+                        f"Fix: switch to a less-restricted model (Qwen 2.5 "
+                        f"is preferred for security/abuse-detection use "
+                        f"cases), pin a specific model via the request's "
+                        f"``backend`` field (e.g. "
+                        f"``ollama:qwen2.5:14b-instruct-q4_K_M``), or "
+                        f"reframe the project's label vocabulary to be "
+                        f"less alarm-bell-y for the model."
+                    )
                 raise RuntimeError(
                     f"Playbook {req.mode} produced 0 accepted rows via "
                     f"{backend_used} in {elapsed_sec:.1f}s. "
@@ -869,8 +885,8 @@ async def run_synth_playbook(
                     f"(2) every generated row failed validation (e.g. "
                     f"label outside the target class for hard-negatives), "
                     f"(3) backend timeout / network error swallowed by "
-                    f"the runner. Check the server logs for the backend's "
-                    f"raw response. Prompt sent (first 200 chars): "
+                    f"the runner. LLM response (first 300 chars): "
+                    f"{raw_snippet[:300]!r}. Prompt sent (first 200 chars): "
                     f"{prompt_snippet[:200]!r}"
                 )
             await handle.set_progress(

@@ -172,6 +172,103 @@ class ClassBalanceFillUnitTests(unittest.TestCase):
         self.assertEqual(len(validated), 1)
         self.assertEqual(validated[0]["payload"]["label"], "rare")
 
+    def test_balance_fill_prompt_renders_target_class_as_valid_json(self):
+        """Regression: the JSON example in the prompt used Python's
+        ``{target_class!r}`` repr, rendering as single-quoted
+        ``'injection'``. Some LLMs (Llama 3) mirrored that style in
+        their output, producing ``'label': 'injection'`` which the
+        JSON parser rejected. Every generated row failed validation,
+        and the playbook reported '0 accepted rows' with a generic
+        diagnostic that didn't name the cause.
+
+        The fix renders the label as proper JSON: ``"injection"``."""
+        pb = get_playbook("classification", SynthMode.CLASS_BALANCE_FILL)
+        gold = [{"text": "x", "label": "benign"}, {"text": "y", "label": "injection"}]
+        ctx = {
+            "recipe_id": "classification", "project_id": 1, "gold_rows": gold,
+            "target_count": 3, "raw_rows": None, "failure_cluster": None,
+            "target_class": "injection",
+        }
+        prompt = pb.build_prompt(ctx)
+        # The JSON template inside the prompt must use double quotes
+        # — single quotes around "injection" was the bug.
+        self.assertIn('"label": "injection"', prompt)
+        self.assertNotIn("'injection'}", prompt)
+        # Belt-and-suspenders directive that calls out the bug class.
+        self.assertIn("DOUBLE QUOTES", prompt)
+
+
+class RefusalDetectionTests(unittest.TestCase):
+    """LLMs with safety guardrails (Llama 3 family in particular) refuse
+    on legitimate classifier-training data when the label name sounds
+    alarming ('injection', 'phishing', 'toxicity'). When that happens
+    the playbook landed a generic '0 accepted rows' error that blamed
+    JSON parsing — useless because the fix isn't to tweak the parser,
+    it's to switch models or pin a non-refusing one.
+
+    These tests cover the new refusal detector + defensive-security
+    system prompt + qwen-first model preference."""
+
+    def test_refusal_detector_fires_on_short_apologetic_response(self):
+        from app.services.synth_playbook_service import _looks_like_refusal
+        self.assertTrue(_looks_like_refusal(
+            "I cannot generate malicious or harmful examples. Can I help "
+            "you with something else?"
+        ))
+        self.assertTrue(_looks_like_refusal(
+            "I'm sorry, but as an AI language model I cannot comply."
+        ))
+        self.assertTrue(_looks_like_refusal(
+            "As a language model, I'm unable to assist with that request."
+        ))
+
+    def test_refusal_detector_silent_on_valid_jsonl_output(self):
+        from app.services.synth_playbook_service import _looks_like_refusal
+        # JSONL containing the word 'cannot' shouldn't be misclassified.
+        valid = '{"text": "\' OR 1=1--", "label": "injection"}\n{"text": "we cannot allow that", "label": "benign"}'
+        self.assertFalse(_looks_like_refusal(valid))
+        # Long natural-language response also shouldn't fire (the
+        # detector only triggers on short, JSON-less output).
+        long_text = "I cannot " * 200
+        self.assertFalse(_looks_like_refusal(long_text))
+
+    def test_refusal_detector_silent_on_empty_response(self):
+        from app.services.synth_playbook_service import _looks_like_refusal
+        self.assertFalse(_looks_like_refusal(""))
+
+    def test_system_prompt_includes_defensive_security_framing(self):
+        """Without this framing, Llama 3 refuses on every BrewSLM project
+        whose label vocabulary triggers its guardrails (injection,
+        phishing, toxicity, spam). The framing is honest — BrewSLM IS
+        training a detector — and unblocks compliance."""
+        from app.services.synth_playbook_service import _system_prompt_for_mode
+        from app.services.synth_playbooks import SynthMode
+        for mode in SynthMode:
+            sp = _system_prompt_for_mode(mode)
+            self.assertIn("defensive", sp.lower())
+            self.assertIn("classifier", sp.lower())
+            # Must explicitly tell the model not to refuse.
+            self.assertTrue(
+                "refuse" in sp.lower() or "moralis" in sp.lower(),
+                f"mode {mode}: defensive prompt should discourage refusal",
+            )
+
+    def test_ollama_prefers_qwen_over_llama3(self):
+        """Qwen 2.5 scales higher (14B/32B/72B) and refuses far less on
+        legitimate security/abuse-detection training data. When both
+        are installed, the auto-picker must reach for Qwen first."""
+        from app.services.synth_backends.ollama import PREFERRED_MODEL_PATTERNS
+        qwen_idx = next(
+            i for i, p in enumerate(PREFERRED_MODEL_PATTERNS) if p == "qwen2.5"
+        )
+        llama_idx = next(
+            i for i, p in enumerate(PREFERRED_MODEL_PATTERNS) if p == "llama3"
+        )
+        self.assertLess(
+            qwen_idx, llama_idx,
+            "qwen2.5 must come before llama3 in PREFERRED_MODEL_PATTERNS",
+        )
+
 
 class ClusterTargetedUnitTests(unittest.TestCase):
     def test_cluster_block_embedded_in_prompt_with_exemplars(self):

@@ -45,9 +45,10 @@ Rules:
   - Each example should sound like real data of class {target_class!r}.
 
 For each example, write a single JSON line:
-{{"text": "...", "label": {target_class!r}}}
+{{"text": "...", "label": "{target_class}"}}
 
 Output exactly {target_count} JSON lines, no preamble, no markdown code fences.
+Use DOUBLE QUOTES around every string — single quotes are not valid JSON.
 """
 
 

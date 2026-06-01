@@ -32,12 +32,21 @@ DEFAULT_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "600"))
 
 # Preference order — we want the strongest realistic model that
 # Ollama users typically have pulled. Tags are matched as substrings
-# (so `llama3.1:8b-instruct-q4_K_M` matches `llama3.1`).
+# (so `qwen2.5:14b-instruct-q4_K_M` matches `qwen2.5`).
+#
+# Qwen 2.5 is preferred over Llama 3 because:
+#   - It scales up to 14B / 32B / 72B in the Ollama catalog (Llama 3
+#     family caps at 8B without going to 70B).
+#   - It's measurably less guard-rail-trigger-happy on legitimate
+#     classifier-training data (security / spam / abuse detection),
+#     where Llama 3 will refuse outright on category names like
+#     "injection" or "toxicity" even with the defensive-use system
+#     prompt. The model that won't refuse is more useful to users.
 PREFERRED_MODEL_PATTERNS: list[str] = [
-    "llama3.1",
-    "llama3",
     "qwen2.5",
     "qwen2",
+    "llama3.1",
+    "llama3",
     "mistral",
     "phi3",
     "gemma",
