@@ -748,6 +748,7 @@ session-start guidance.
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_
+- `backend/tests/test_structured_adapter_prompt_wrap.py` — ζ-fix tests — structured-extraction adapter writes the
 - `backend/tests/test_student_teacher_comparison.py` — Student-vs-teacher distillation comparison — Track 1, Epic A, slice 3.
 - `backend/tests/test_synth_backends_schema_aware.py` — Tests for the ``schema_aware`` backend flag (USER-SUCCESS Epic 5 Phase 5c).
 - `backend/tests/test_synth_nemo_backend.py` — Tests for the NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a).

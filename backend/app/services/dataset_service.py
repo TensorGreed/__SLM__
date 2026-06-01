@@ -279,6 +279,72 @@ def _scan_classification_labels(
     return sorted(seen)
 
 
+# ζ-fix — mirrors ``StructuredExtractionHandler.SCHEMA_SAMPLE_SIZE``
+# so the adapter and the handler scan the same window of rows when
+# they don't have a manifest schema to work from.
+_STRUCTURED_FIELD_SCAN_SIZE = 20
+
+
+def _scan_structured_extraction_fields(
+    rows: list[dict[str, Any]],
+    *,
+    adapter_config: dict[str, Any] | None,
+) -> list[str] | None:
+    """Pre-scan rows for the union of top-level keys in the target
+    JSON payload (ζ-fix). Mirrors the field-resolution logic in
+    ``StructuredExtractionHandler._resolve_schema`` so adapter +
+    handler agree on which fields to inline in the prompt.
+
+    Returns a sorted, deduplicated list of field names, or ``None``
+    when no discoverable fields exist (caller falls back to the
+    no-list prompt variant — which the handler also does).
+    """
+    output_fields = (adapter_config or {}).get("output_fields") if adapter_config else None
+    output_aliases = list(output_fields) if isinstance(output_fields, list) and output_fields else [
+        "structured_output",
+        "json",
+        "labels",
+        "entities",
+        "extracted",
+        "target",
+        "answer",
+        "output",
+    ]
+    seen: set[str] = set()
+    scanned = 0
+    for row in rows:
+        if scanned >= _STRUCTURED_FIELD_SCAN_SIZE:
+            break
+        if not isinstance(row, dict):
+            continue
+        payload: Any = None
+        for alias in output_aliases:
+            if alias in row:
+                value = row.get(alias)
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    continue
+                payload = value
+                break
+        if payload is None:
+            continue
+        scanned += 1
+        # Accept either an already-parsed dict OR a JSON string that
+        # parses to one. Lists / scalars are ignored — the handler
+        # only emits field-list prompts for object-shaped outputs.
+        if isinstance(payload, str):
+            try:
+                parsed = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        else:
+            parsed = payload
+        if isinstance(parsed, dict):
+            seen.update(str(k) for k in parsed.keys() if isinstance(k, str))
+    if not seen:
+        return None
+    return sorted(seen)
+
+
 def _normalize_rows_for_training(
     rows: list[dict[str, Any]],
     source_dataset: DatasetType,
@@ -318,6 +384,22 @@ def _normalize_rows_for_training(
         if candidate_set:
             adapter_config = dict(adapter_config or {})
             adapter_config["candidates"] = candidate_set
+    # ζ-fix — same pattern for structured-extraction: pre-scan the
+    # rows for the target JSON's field set, inject into config so
+    # ``_map_structured_extraction`` can inline the list in its
+    # wrapped prompt (matching the eval handler's behaviour). The
+    # adapter's no-list fallback handles the case when no fields
+    # are discoverable.
+    if resolved_adapter_id == "structured-extraction" and (
+        not adapter_config or "fields" not in adapter_config
+    ):
+        fields_set = _scan_structured_extraction_fields(
+            rows,
+            adapter_config=adapter_config,
+        )
+        if fields_set:
+            adapter_config = dict(adapter_config or {})
+            adapter_config["fields"] = fields_set
     for row in rows:
         canonical = map_record_with_adapter(
             row,

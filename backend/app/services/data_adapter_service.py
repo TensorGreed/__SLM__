@@ -1079,6 +1079,43 @@ def _detect_structured_extraction(record: dict[str, Any], config: dict[str, Any]
     return 1.0 if mapped else 0.0
 
 
+def _build_structured_extraction_training_prompt(
+    source: str, fields: list[str] | None,
+) -> str:
+    """Mirror of ``StructuredExtractionHandler._build_prompt_text``
+    (eval_task_handler_service.py:897-912) so training rows carry
+    the same prompt format the eval handler builds at inference.
+
+    ζ-fix: previously ``_map_structured_extraction`` wrote raw
+    ``source_text`` into the training row, so the trainer learned
+    ``text → JSON`` with no instruction scaffold. At eval time the
+    handler wrapped the input in ``"Extract the following fields
+    as JSON: …\\nReply with a single JSON object, nothing else.\\n
+    Input: …\\nOutput:"`` — a format the model had never seen —
+    and the held-out JSON-validity-rate + field-level EM/F1 came
+    in artificially low. This commit closes the gap inside the
+    adapter, same shape as β did for classification-label.
+    """
+    if fields:
+        field_list = ", ".join(fields)
+        return (
+            "Extract the following fields as JSON: "
+            f"{field_list}.\n"
+            "Reply with a single JSON object, nothing else.\n"
+            f"Input: {source}\n"
+            "Output:"
+        )
+    # No-list fallback — matches the handler's no-list branch so
+    # train + eval still agree on the scaffold when the manifest /
+    # row pre-scan didn't surface a field set.
+    return (
+        "Extract the relevant fields from the input as a single JSON "
+        "object, nothing else.\n"
+        f"Input: {source}\n"
+        "Output:"
+    )
+
+
 def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
     source_fields = config.get("source_fields")
     output_fields = config.get("output_fields")
@@ -1112,12 +1149,44 @@ def _map_structured_extraction(record: dict[str, Any], config: dict[str, Any]) -
     if not source or not target:
         return None
 
+    # ζ-fix — wrap source_text with the handler's instruction
+    # prompt so training rows match what the eval handler will
+    # build at inference. When the caller pre-scanned the dataset
+    # for the field set and injected it into ``config["fields"]``
+    # (via ``_scan_structured_extraction_fields`` in
+    # dataset_service), the list-in-prompt variant fires;
+    # otherwise we fall back to the no-list variant. Both branches
+    # are byte-identical to the handler.
+    fields_in_config = config.get("fields")
+    cleaned_fields: list[str] | None = None
+    if isinstance(fields_in_config, list) and fields_in_config:
+        cleaned_fields = [
+            str(f).strip()
+            for f in fields_in_config
+            if isinstance(f, str) and str(f).strip()
+        ]
+    wrapped_prompt = _build_structured_extraction_training_prompt(
+        source, cleaned_fields
+    )
+    # Leading space on the target so the tokenizer decodes the JSON
+    # as a clean continuation of the prompt's trailing ``Output:``
+    # — mirrors β's ``target_text=" {label}"`` trick. Without the
+    # space, ``{`` adjacent to ``:`` tokenizes differently than
+    # ``" {"`` after whitespace in most BPE vocabs.
+    target_with_space = f" {target}"
+
     return {
-        "text": f"Input: {source}\nStructured Output: {target}",
-        "source_text": source,
-        "target_text": target,
+        # Raw fields stay for downstream surfaces (data health, gold
+        # diagnostics, smoke peek, schema introspection).
+        "text": source,
         "answer": target,
-        "structured_output": target_payload if target_payload is not None else target,
+        "structured_output": (
+            target_payload if target_payload is not None else target
+        ),
+        # source_text + target_text carry the handler-matching scaffold
+        # the trainer consumes. Loss is computed on target_text only.
+        "source_text": wrapped_prompt,
+        "target_text": target_with_space,
     }
 
 

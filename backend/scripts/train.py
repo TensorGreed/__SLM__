@@ -401,6 +401,36 @@ def _adapt_record_to_text(
             {"text": "", "source_text": "", "target_text": ""},
         )
 
+    # ζ-fix tail — when the data adapter (structured-extraction)
+    # already wrote an adapter-wrapped ``source_text`` matching the
+    # StructuredExtractionHandler's prompt format ("Extract the
+    # following fields as JSON: …\nInput: …\nOutput:"), pass it
+    # through instead of letting the direct-text branch overwrite
+    # it with the raw input. Same shape as the classification
+    # branch above. Generalised loose check on the
+    # ``"Extract …"`` prefix the handler declares in
+    # ``expected_prompt_prefixes``.
+    prepared_source_struct = row.get("source_text")
+    prepared_target_struct = row.get("target_text")
+    if (
+        isinstance(prepared_source_struct, str)
+        and (
+            prepared_source_struct.lstrip().startswith(
+                "Extract the following fields as JSON"
+            )
+            or prepared_source_struct.lstrip().startswith(
+                "Extract the relevant fields from the input"
+            )
+        )
+        and isinstance(prepared_target_struct, str)
+        and prepared_target_struct.strip()
+    ):
+        return _attach_multimodal_fields(row, {
+            "text": f"{prepared_source_struct}{prepared_target_struct}",
+            "source_text": prepared_source_struct,
+            "target_text": prepared_target_struct,
+        })
+
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
         return _attach_multimodal_fields(
