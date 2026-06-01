@@ -171,6 +171,7 @@ async def run_playbook(
     failure_cluster: dict[str, Any] | None = None,
     backend: str | None = None,
     backend_override: SynthBackend | None = None,
+    dry_run: bool = False,
 ) -> PlaybookResult:
     """Run the playbook matching (project's recipe, mode) and persist
     accepted rows into the project's synthetic dataset.
@@ -246,7 +247,12 @@ async def run_playbook(
     # The Dataset.file_path field is set lazily by the legacy save
     # flow, so we derive the canonical path ourselves to avoid a
     # circular dependency on whether that flow has fired yet.
-    if accepted_rows:
+    #
+    # ``dry_run=True`` skips persistence — the caller wants to know
+    # whether the (playbook, model) combo *would* produce usable
+    # rows before committing to a full async job. See the
+    # ``/synthetic/run-playbook/dry-run`` endpoint.
+    if accepted_rows and not dry_run:
         synthetic_ds = await get_or_create_synthetic_dataset(db, project_id)
         synthetic_dir = settings.DATA_DIR / "projects" / str(project_id) / "synthetic"
         synthetic_dir.mkdir(parents=True, exist_ok=True)

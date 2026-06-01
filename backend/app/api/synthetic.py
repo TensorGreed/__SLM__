@@ -665,6 +665,74 @@ async def list_synth_backends(project_id: int):
     return {"project_id": project_id, "backends": entries}
 
 
+@router.get("/backends/ollama/models")
+async def list_ollama_models(project_id: int):  # noqa: ARG001 — install-global, project_id ignored
+    """List the Ollama models installed on the local daemon, used by
+    the Synth panel's model-picker dropdown.
+
+    Returns ``{models: [...], default: <pattern-matched-model>}``.
+    The ``default`` reflects what the platform's auto-pick would
+    choose given current `PREFERRED_MODEL_PATTERNS` so the picker
+    can label it ``"Auto (qwen2.5:14b...)"``.
+
+    Best-effort — if Ollama isn't reachable, returns
+    ``{models: [], ollama_available: false, error: ...}`` with a
+    200 so the picker can render a 'No Ollama models found' state
+    rather than failing the panel load.
+    """
+    import httpx  # local import — keep startup light
+
+    from app.services.synth_backends.ollama import (
+        DEFAULT_OLLAMA_HOST,
+        OllamaBackend,
+        PREFERRED_MODEL_PATTERNS,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{DEFAULT_OLLAMA_HOST}/api/tags")
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:  # noqa: BLE001 — daemon down should not 500 the picker
+        return {
+            "project_id": project_id,
+            "models": [],
+            "default": None,
+            "ollama_available": False,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+    raw_models = [m for m in (data.get("models") or []) if m.get("name")]
+    # Resolve the auto-pick the way the backend would: walk
+    # PREFERRED_MODEL_PATTERNS, take the first substring-match.
+    tags = [m["name"] for m in raw_models]
+    default_pick: str | None = None
+    for pattern in PREFERRED_MODEL_PATTERNS:
+        for tag in tags:
+            if pattern in tag:
+                default_pick = tag
+                break
+        if default_pick:
+            break
+    if default_pick is None and tags:
+        default_pick = tags[0]
+
+    return {
+        "project_id": project_id,
+        "models": [
+            {
+                "name": m["name"],
+                "size_bytes": int(m.get("size") or 0),
+                "parameter_size": (m.get("details") or {}).get("parameter_size") or "",
+                "family": (m.get("details") or {}).get("family") or "",
+            }
+            for m in raw_models
+        ],
+        "default": default_pick,
+        "ollama_available": True,
+    }
+
+
 @router.get("/playbooks")
 async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_db)):
     """Catalog of registered playbooks compatible with the project's
@@ -953,3 +1021,90 @@ async def run_synth_playbook(
         )
 
     return result
+
+
+@router.post("/run-playbook/dry-run")
+async def dry_run_synth_playbook(
+    project_id: int,
+    req: RunPlaybookRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Pre-flight a playbook with target_count=1 against the chosen
+    model — **without persisting** any rows. The frontend calls this
+    before kicking the real async job so a refusal or empty-output
+    failure surfaces in <10s inline on the panel, instead of after a
+    60-180s job that ends in a notification-bell error.
+
+    Returns the same envelope as ``/run-playbook`` plus:
+
+      - ``accepted_count``: number of rows that passed validation.
+      - ``refusal_detected``: True when the LLM returned a short
+        non-JSON apology that ``_looks_like_refusal`` recognised.
+      - ``raw_llm_snippet``: first ~280 chars of the model's response
+        so the user can see exactly what came back.
+      - ``ok``: convenience flag — True only when accepted_count >= 1
+        AND refusal_detected is False.
+
+    Never raises for refusals or 0-row outputs — those land as
+    ``ok: False`` in a 200 response so the frontend can render an
+    inline error + retry-with-different-model affordance. 4xx is
+    reserved for genuine input errors (unknown mode, missing recipe,
+    missing gold set) and 5xx for backend transport failures.
+    """
+    from app.services.synth_backends import SynthBackendError
+    from app.services.synth_playbook_service import run_playbook
+    from app.services.synth_playbooks import SynthMode
+
+    try:
+        mode = SynthMode(req.mode)
+    except ValueError:
+        raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
+
+    try:
+        # Force target_count=1 — the user's chosen count is for the
+        # real run, not the pre-flight.
+        result = await run_playbook(
+            db, project_id, mode,
+            target_count=1,
+            target_class=req.target_class,
+            backend=req.backend,
+            dry_run=True,
+        )
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(404, message)
+        raise HTTPException(400, message)
+    except SynthBackendError as e:
+        # Backend isn't available — surface as a 200 with ok=False so
+        # the panel can render "no backend available" inline rather
+        # than as a generic toast.
+        return {
+            "ok": False,
+            "rows": [],
+            "accepted_count": 0,
+            "refusal_detected": False,
+            "raw_llm_snippet": "",
+            "backend_used": req.backend or "auto",
+            "elapsed_sec": 0.0,
+            "prompt_snippet": "",
+            "error": f"Backend unavailable: {e}",
+        }
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            503,
+            f"Dry-run failed ({type(e).__name__}): {e}",
+        )
+
+    accepted_count = len(result.get("rows") or [])
+    refusal = bool(result.get("refusal_detected"))
+    return {
+        "ok": accepted_count >= 1 and not refusal,
+        "rows": result.get("rows") or [],
+        "accepted_count": accepted_count,
+        "refusal_detected": refusal,
+        "raw_llm_snippet": result.get("raw_llm_snippet", ""),
+        "backend_used": result.get("backend_used", req.backend or "auto"),
+        "elapsed_sec": result.get("elapsed_sec", 0.0),
+        "prompt_snippet": result.get("prompt_snippet", ""),
+    }

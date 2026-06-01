@@ -113,6 +113,11 @@ describe('PlaybookPickerPanel', () => {
         // panel renders a tiny "job #N queued" confirmation; actual
         // rows surface in the notification bell when the job
         // completes.
+        //
+        // P1/P2 — every Generate click now starts with a 1-row
+        // dry-run via POST /run-playbook/dry-run. If the dry-run
+        // returns ok=true the panel kicks the real async job. Test
+        // mocks both endpoints via URL dispatch.
         apiMock.get.mockResolvedValue({
             data: {
                 project_id: 5,
@@ -120,24 +125,40 @@ describe('PlaybookPickerPanel', () => {
                 playbooks: [{ recipe_id: 'qa-sft', mode: 'positives_paraphrase' }],
             },
         });
-        apiMock.post.mockResolvedValue({
-            data: {
-                id: 11,
-                kind: 'synth_playbook',
-                title: 'Synth · positives_paraphrase · 30 rows',
-                status: 'queued',
-                progress: null,
-                progress_message: null,
-                project_id: 5,
-                user_id: null,
-                params: { mode: 'positives_paraphrase', target_count: 30 },
-                result: null,
-                error: null,
-                queued_at: '2026-05-26T12:00:00Z',
-                started_at: null,
-                completed_at: null,
-                dismissed_at: null,
-            },
+        apiMock.post.mockImplementation((url: string) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                return Promise.resolve({
+                    data: {
+                        ok: true,
+                        accepted_count: 1,
+                        refusal_detected: false,
+                        raw_llm_snippet: '{"q":"x","a":"y"}',
+                        backend_used: 'ollama:qwen2.5:14b',
+                        elapsed_sec: 2.1,
+                        prompt_snippet: 'p',
+                        rows: [{ payload: { q: 'x', a: 'y' }, synth_confidence: 1, synth_source: 's' }],
+                    },
+                });
+            }
+            return Promise.resolve({
+                data: {
+                    id: 11,
+                    kind: 'synth_playbook',
+                    title: 'Synth · positives_paraphrase · 30 rows',
+                    status: 'queued',
+                    progress: null,
+                    progress_message: null,
+                    project_id: 5,
+                    user_id: null,
+                    params: { mode: 'positives_paraphrase', target_count: 30 },
+                    result: null,
+                    error: null,
+                    queued_at: '2026-05-26T12:00:00Z',
+                    started_at: null,
+                    completed_at: null,
+                    dismissed_at: null,
+                },
+            });
         });
 
         renderPanel(<PlaybookPickerPanel projectId={5} />);
@@ -152,7 +173,15 @@ describe('PlaybookPickerPanel', () => {
         });
         // Confirmation preview shows the queued job marker.
         expect(screen.getByText(/job #11 queued/)).toBeInTheDocument();
-        // POST hit the async-job variant of the endpoint.
+        // Pre-flight POST fired first…
+        expect(apiMock.post).toHaveBeenCalledWith(
+            '/projects/5/synthetic/run-playbook/dry-run',
+            expect.objectContaining({
+                mode: 'positives_paraphrase',
+                target_count: 1,
+            }),
+        );
+        // …then the real async-job POST landed.
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/5/synthetic/run-playbook?async_job=true',
             {
@@ -218,6 +247,7 @@ describe('PlaybookPickerPanel', () => {
     function installRouter(opts: {
         playbooks: unknown;
         backendsResponse?: unknown;
+        ollamaModelsResponse?: unknown;
     }) {
         const backendsResponse = opts.backendsResponse ?? {
             project_id: 1,
@@ -225,7 +255,18 @@ describe('PlaybookPickerPanel', () => {
                 { name: 'ollama', available: true, describe: 'ollama:llama3.1:8b' },
             ],
         };
+        const ollamaModelsResponse = opts.ollamaModelsResponse ?? {
+            project_id: 1,
+            models: [],
+            default: null,
+            ollama_available: false,
+        };
         apiMock.get.mockImplementation(async (url: string) => {
+            // Order matters — /backends/ollama/models must match before
+            // the generic /backends prefix.
+            if (url.includes('/synthetic/backends/ollama/models')) {
+                return { data: ollamaModelsResponse };
+            }
             if (url.includes('/synthetic/backends')) {
                 return { data: backendsResponse };
             }
@@ -393,25 +434,42 @@ describe('PlaybookPickerPanel', () => {
         });
         // Hardening Phase H1 — async-job POST returns a Job stub
         // (202). The pinned backend still flows through verbatim in
-        // the request body.
-        apiMock.post.mockResolvedValue({
-            data: {
-                id: 22,
-                kind: 'synth_playbook',
-                title: 'Synth · positives_paraphrase · 30 rows',
-                status: 'queued',
-                progress: null,
-                progress_message: null,
-                project_id: 3,
-                user_id: null,
-                params: {},
-                result: null,
-                error: null,
-                queued_at: '2026-05-26T12:00:00Z',
-                started_at: null,
-                completed_at: null,
-                dismissed_at: null,
-            },
+        // the request body. P2 added a pre-flight dry-run; it must
+        // also carry the pinned backend through.
+        apiMock.post.mockImplementation((url: string) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                return Promise.resolve({
+                    data: {
+                        ok: true,
+                        accepted_count: 1,
+                        refusal_detected: false,
+                        raw_llm_snippet: '{"x":1}',
+                        backend_used: 'nemo:meta/llama-3.1-70b-instruct',
+                        elapsed_sec: 1.0,
+                        prompt_snippet: 'p',
+                        rows: [{ payload: { x: 1 }, synth_confidence: 1, synth_source: 's' }],
+                    },
+                });
+            }
+            return Promise.resolve({
+                data: {
+                    id: 22,
+                    kind: 'synth_playbook',
+                    title: 'Synth · positives_paraphrase · 30 rows',
+                    status: 'queued',
+                    progress: null,
+                    progress_message: null,
+                    project_id: 3,
+                    user_id: null,
+                    params: {},
+                    result: null,
+                    error: null,
+                    queued_at: '2026-05-26T12:00:00Z',
+                    started_at: null,
+                    completed_at: null,
+                    dismissed_at: null,
+                },
+            });
         });
 
         renderPanel(<PlaybookPickerPanel projectId={3} />);
@@ -571,5 +629,235 @@ describe('PlaybookPickerPanel', () => {
         expect(radio.checked).toBe(true);
         // Count still applied (independent of the rejected mode).
         expect((screen.getByTestId('playbook-picker-count') as HTMLInputElement).value).toBe('10');
+    });
+
+    // ── P1/P2/P3 — pre-flight + model picker + inline diagnostic ────
+
+    /** Boilerplate: route both GETs (playbooks + ollama models) + the
+     *  dry-run POST. The async-job POST stays as the secondary
+     *  resolver — only fires when dry-run reports ok=true. */
+    function installFullRouter(opts: {
+        playbooks: unknown;
+        ollamaModelsResponse?: unknown;
+        dryRunResponse: unknown;
+        asyncJobResponse?: unknown;
+    }) {
+        installRouter({
+            playbooks: opts.playbooks,
+            ollamaModelsResponse: opts.ollamaModelsResponse,
+        });
+        apiMock.post.mockImplementation(async (url: string) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                return { data: opts.dryRunResponse };
+            }
+            return { data: opts.asyncJobResponse ?? { id: 1, status: 'queued', kind: 'synth_playbook' } };
+        });
+    }
+
+    it('renders the Ollama model picker when models are installed and pins the choice through to dry-run', async () => {
+        installFullRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'class_balance_fill' }],
+            },
+            ollamaModelsResponse: {
+                project_id: 1,
+                ollama_available: true,
+                default: 'qwen2.5:14b-instruct-q4_K_M',
+                models: [
+                    { name: 'qwen2.5:14b-instruct-q4_K_M', size_bytes: 1, parameter_size: '14.8B', family: 'qwen2' },
+                    { name: 'llama3:latest', size_bytes: 1, parameter_size: '8.0B', family: 'llama' },
+                ],
+            },
+            dryRunResponse: {
+                ok: true,
+                accepted_count: 1,
+                refusal_detected: false,
+                raw_llm_snippet: '{"text":"x","label":"y"}',
+                backend_used: 'ollama:llama3:latest',
+                elapsed_sec: 2.0,
+                prompt_snippet: '',
+                rows: [{ payload: { text: 'x', label: 'y' }, synth_confidence: 1, synth_source: 's' }],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-ollama-model')).toBeInTheDocument();
+        });
+        // Auto option labels the resolved auto-pick so the user sees
+        // what 'Auto' actually means before they pick anything.
+        const select = screen.getByTestId('playbook-picker-ollama-model') as HTMLSelectElement;
+        expect(select.options[0].textContent).toMatch(/Auto.*qwen2\.5:14b/);
+        // Pick the Llama 3 option explicitly.
+        await userEvent.selectOptions(select, 'llama3:latest');
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/run-playbook/dry-run',
+                expect.objectContaining({ backend: 'ollama:llama3:latest' }),
+            );
+        });
+    });
+
+    it('renders the refusal banner + Retry-with-Qwen button when dry-run detects a refusal', async () => {
+        installFullRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'class_balance_fill' }],
+            },
+            ollamaModelsResponse: {
+                project_id: 1,
+                ollama_available: true,
+                default: 'llama3:latest',
+                models: [
+                    { name: 'qwen2.5:14b-instruct-q4_K_M', size_bytes: 1, parameter_size: '14.8B', family: 'qwen2' },
+                    { name: 'qwen2.5:7b-instruct-q4_K_M', size_bytes: 1, parameter_size: '7.6B', family: 'qwen2' },
+                    { name: 'llama3:latest', size_bytes: 1, parameter_size: '8.0B', family: 'llama' },
+                ],
+            },
+            dryRunResponse: {
+                ok: false,
+                accepted_count: 0,
+                refusal_detected: true,
+                raw_llm_snippet: 'I cannot generate malicious or harmful examples.',
+                backend_used: 'ollama:llama3:latest',
+                elapsed_sec: 0.6,
+                prompt_snippet: '',
+                rows: [],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-preflight-failure')).toBeInTheDocument();
+        });
+        // The model's raw response is shown so the user can see what
+        // happened, not just a generic "0 rows" error.
+        expect(
+            screen.getByTestId('playbook-picker-preflight-snippet').textContent,
+        ).toMatch(/cannot generate/);
+        // Retry button picks the largest qwen2.5 (14B beats 7B).
+        const retry = screen.getByTestId('playbook-picker-retry-qwen') as HTMLButtonElement;
+        expect(retry.textContent).toMatch(/qwen2\.5:14b/);
+        // The actual async-job endpoint never fired — only the dry-run.
+        expect(apiMock.post).toHaveBeenCalledTimes(1);
+        expect(apiMock.post.mock.calls[0][0]).toMatch(/\/run-playbook\/dry-run$/);
+    });
+
+    it('Retry-with-Qwen re-runs dry-run with the new model and submits the real job on success', async () => {
+        // Two dry-run rounds: first refuses (llama3), second passes
+        // (qwen2.5:14b). After the second passes, the async job fires.
+        const dryRunCalls: any[] = [];
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'class_balance_fill' }],
+            },
+            ollamaModelsResponse: {
+                project_id: 1,
+                ollama_available: true,
+                default: 'llama3:latest',
+                models: [
+                    { name: 'qwen2.5:14b-instruct-q4_K_M', size_bytes: 1, parameter_size: '14.8B', family: 'qwen2' },
+                    { name: 'llama3:latest', size_bytes: 1, parameter_size: '8.0B', family: 'llama' },
+                ],
+            },
+        });
+        apiMock.post.mockImplementation(async (url: string, body: any) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                dryRunCalls.push(body);
+                if (body.backend && body.backend.includes('qwen2.5')) {
+                    return {
+                        data: {
+                            ok: true,
+                            accepted_count: 1,
+                            refusal_detected: false,
+                            raw_llm_snippet: '{"text":"x","label":"y"}',
+                            backend_used: 'ollama:qwen2.5:14b-instruct-q4_K_M',
+                            elapsed_sec: 3.2,
+                            prompt_snippet: '',
+                            rows: [{ payload: { text: 'x', label: 'y' }, synth_confidence: 1, synth_source: 's' }],
+                        },
+                    };
+                }
+                return {
+                    data: {
+                        ok: false,
+                        accepted_count: 0,
+                        refusal_detected: true,
+                        raw_llm_snippet: 'I cannot generate malicious examples.',
+                        backend_used: 'ollama:llama3:latest',
+                        elapsed_sec: 0.6,
+                        prompt_snippet: '',
+                        rows: [],
+                    },
+                };
+            }
+            return { data: { id: 42, status: 'queued', kind: 'synth_playbook' } };
+        });
+
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
+        });
+        // First click — llama3 refuses.
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-retry-qwen')).toBeInTheDocument();
+        });
+        // Click the retry button.
+        await userEvent.click(screen.getByTestId('playbook-picker-retry-qwen'));
+        // After retry: dry-run passes + async job fires.
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-result')).toBeInTheDocument();
+        });
+        // Two dry-runs total: first with llama3, second with qwen.
+        expect(dryRunCalls.length).toBe(2);
+        expect(dryRunCalls[0].backend).toBeNull();  // auto-pick = llama3 server-side
+        expect(dryRunCalls[1].backend).toMatch(/qwen2\.5/);
+        // Async-job call also fired with the qwen backend.
+        const asyncCalls = apiMock.post.mock.calls.filter(
+            (c) => String(c[0]).endsWith('?async_job=true'),
+        );
+        expect(asyncCalls.length).toBe(1);
+        expect(asyncCalls[0][1].backend).toMatch(/qwen2\.5/);
+    });
+
+    it('shows a 0-rows diagnostic (no retry) when dry-run returns empty output without a refusal', async () => {
+        installFullRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'class_balance_fill' }],
+            },
+            dryRunResponse: {
+                ok: false,
+                accepted_count: 0,
+                refusal_detected: false,
+                raw_llm_snippet: '```json\n[\n```',  // malformed but not a refusal
+                backend_used: 'ollama:qwen2.5:14b',
+                elapsed_sec: 4.2,
+                prompt_snippet: '',
+                rows: [],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-run')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-preflight-failure')).toBeInTheDocument();
+        });
+        // No retry-with-Qwen for non-refusal failures — the issue
+        // isn't the model, it's the prompt/parser.
+        expect(screen.queryByTestId('playbook-picker-retry-qwen')).not.toBeInTheDocument();
+        expect(screen.getByTestId('playbook-picker-preflight-snippet').textContent).toMatch(/json/);
     });
 });

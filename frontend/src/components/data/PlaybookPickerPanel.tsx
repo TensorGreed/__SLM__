@@ -14,12 +14,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import type {
+    DryRunPlaybookResult,
+    OllamaModelInfo,
     PlaybookCatalogEntry,
     PlaybookResult,
     SynthBackendInfo,
     SynthMode,
 } from '../../api/synthPlaybook';
 import {
+    dryRunPlaybook,
+    listOllamaModels,
     listPlaybooks,
     listSynthBackends,
     runPlaybookAsync,
@@ -117,6 +121,18 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     // see no clutter.
     const [backends, setBackends] = useState<SynthBackendInfo[]>([]);
     const [selectedBackend, setSelectedBackend] = useState<string | null>(null);
+    // P3 — Ollama model picker. When the user pins a specific Ollama
+    // model, ``selectedBackend`` becomes ``ollama:<tag>``; auto-pick
+    // leaves it null and the server picks per PREFERRED_MODEL_PATTERNS.
+    const [ollamaModels, setOllamaModels] = useState<OllamaModelInfo[]>([]);
+    const [ollamaAutoPick, setOllamaAutoPick] = useState<string | null>(null);
+    const [selectedOllamaModel, setSelectedOllamaModel] = useState<string | null>(null);
+    // P1 — pre-flight + inline diagnostic state. ``preflight`` holds
+    // the dry-run result (refusal_detected etc.) so the panel can
+    // render an inline error + retry-with-Qwen affordance instead of
+    // sending the user to the notification bell for diagnostics.
+    const [preflighting, setPreflighting] = useState(false);
+    const [preflight, setPreflight] = useState<DryRunPlaybookResult | null>(null);
 
     useEffect(() => {
         // Backend listing is best-effort — if the endpoint 5xx's,
@@ -132,10 +148,33 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 if (cancelled) return;
                 setBackends([]);
             });
+        // Same idea for the Ollama model list — only relevant when
+        // Ollama is actually one of the available backends, but we
+        // fetch unconditionally because the per-backend check is
+        // cheap enough and folding the result is conditional below.
+        listOllamaModels(projectId)
+            .then((data) => {
+                if (cancelled) return;
+                setOllamaModels(data.models || []);
+                setOllamaAutoPick(data.default);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setOllamaModels([]);
+                setOllamaAutoPick(null);
+            });
         return () => {
             cancelled = true;
         };
     }, [projectId]);
+
+    // Resolve the effective backend string the server should use,
+    // given the user's two picks (backend kind + ollama model). null
+    // means "let the server auto-pick".
+    const effectiveBackend = useMemo<string | null>(() => {
+        if (selectedOllamaModel) return `ollama:${selectedOllamaModel}`;
+        return selectedBackend;
+    }, [selectedBackend, selectedOllamaModel]);
 
     useEffect(() => {
         let cancelled = false;
@@ -181,32 +220,29 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
-    const handleRun = useCallback(async () => {
+    // Kicks the actual async job. Separated from handleRun so the
+    // retry-with-Qwen button can call it directly after the model
+    // is changed — without re-running the dry-run that we just did.
+    // ``backendOverride`` is the explicit backend to use; required
+    // for the retry path where ``effectiveBackend`` would be stale
+    // (the useMemo hasn't recomputed against the just-set
+    // ``selectedOllamaModel`` because React batches state updates).
+    const submitJob = useCallback(async (backendOverride?: string | null) => {
         if (!selectedMode) return;
         setRunning(true);
         setRunError(null);
-        setResult(null);
-        // Hardening Phase H1 — always fire the async-job variant.
-        // Synth runs are LLM-bound and can take 30-180s; blocking
-        // the request was the root cause of the "network error"
-        // class the user reported. The notification bell takes
-        // over progress + completion reporting.
+        const backend = backendOverride !== undefined ? backendOverride : effectiveBackend;
         try {
             const job = await runPlaybookAsync(projectId, {
                 mode: selectedMode,
                 targetCount,
-                backend: selectedBackend,
+                backend,
             });
             toast.info(
                 `Synth started — track in the notification bell (↑ top-right)`,
                 4000,
             );
-            // Kick the polling loop so the new job surfaces in the
-            // bell on the very next tick.
             void useJobsStore.getState().refreshAfterLocalChange();
-            // Stash a tiny "submitted" status into the result slot
-            // so the panel renders an inline confirmation instead
-            // of a blank state.
             setResult({
                 rows: [],
                 backend_used: `job #${job.id} queued`,
@@ -226,7 +262,88 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
         } finally {
             setRunning(false);
         }
-    }, [projectId, selectedMode, targetCount, selectedBackend]);
+    }, [projectId, selectedMode, targetCount, effectiveBackend]);
+
+    // P2 — pre-flight dry-run. Generates 1 row against the chosen
+    // model + playbook, reports back in ~3-10s. If it succeeds, we
+    // kick the real async job for ``targetCount`` rows. If it fails
+    // (refusal, empty output, backend down), we render the inline
+    // error here without ever invoking the long-running job.
+    const handleRun = useCallback(async () => {
+        if (!selectedMode) return;
+        setPreflighting(true);
+        setRunError(null);
+        setResult(null);
+        setPreflight(null);
+        try {
+            const result = await dryRunPlaybook(projectId, {
+                mode: selectedMode,
+                targetCount: 1,
+                backend: effectiveBackend,
+            });
+            setPreflight(result);
+            if (!result.ok) {
+                // Failure surfaced inline; user has the retry button
+                // or can switch models. Do NOT kick the async job.
+                return;
+            }
+            // Pre-flight passed — kick the real job.
+            await submitJob();
+        } catch (err: any) {
+            const status = err?.response?.status;
+            const detail = err?.response?.data?.detail;
+            setRunError(detail || err?.message || `Pre-flight failed (${status ?? '?'})`);
+        } finally {
+            setPreflighting(false);
+        }
+    }, [projectId, selectedMode, effectiveBackend, submitJob]);
+
+    // P1 — "Retry with Qwen 2.5". Pick the largest qwen2.5 we know
+    // about, swap the model picker to it, re-run the dry-run. We
+    // resolve to a concrete tag (e.g. ``qwen2.5:14b-instruct-q4_K_M``)
+    // so the next call doesn't auto-pick whatever happens to be first
+    // alphabetically.
+    const qwenFallback = useMemo<string | null>(() => {
+        const qwens = ollamaModels
+            .filter((m) => m.name.startsWith("qwen2.5"))
+            // Largest size first (parameter_size like "14.8B", "7.6B"
+            // parses to a comparable float).
+            .sort((a, b) => {
+                const score = (s: string) => parseFloat(s.replace(/[^0-9.]/g, "")) || 0;
+                return score(b.parameter_size) - score(a.parameter_size);
+            });
+        return qwens[0]?.name ?? null;
+    }, [ollamaModels]);
+
+    const retryWithQwen = useCallback(async () => {
+        if (!qwenFallback || !selectedMode) return;
+        setSelectedOllamaModel(qwenFallback);
+        // ``selectedBackend`` may still be set to a non-ollama
+        // backend; clear it so the new model wins.
+        setSelectedBackend(null);
+        setPreflighting(true);
+        setRunError(null);
+        setResult(null);
+        try {
+            const result = await dryRunPlaybook(projectId, {
+                mode: selectedMode,
+                targetCount: 1,
+                backend: `ollama:${qwenFallback}`,
+            });
+            setPreflight(result);
+            if (result.ok) {
+                // Pass the qwen backend explicitly — effectiveBackend
+                // is a useMemo and won't reflect the just-called
+                // setSelectedOllamaModel until React re-renders.
+                await submitJob(`ollama:${qwenFallback}`);
+            }
+        } catch (err: any) {
+            const detail = err?.response?.data?.detail;
+            setRunError(detail || err?.message || "Retry failed");
+        } finally {
+            setPreflighting(false);
+        }
+    }, [projectId, selectedMode, qwenFallback, submitJob]);
 
     // Build picker option list from available backends. Hidden when
     // fewer than 2 are available (single-backend installs see no UI
@@ -423,17 +540,143 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 </>
             )}
 
+            {ollamaModels.length > 0 && (
+                <div
+                    className="playbook-picker__count"
+                    data-testid="playbook-picker-ollama-model-row"
+                >
+                    <label htmlFor="playbook-ollama-model-picker">
+                        Ollama model
+                    </label>
+                    <select
+                        id="playbook-ollama-model-picker"
+                        value={selectedOllamaModel ?? ''}
+                        onChange={(e) =>
+                            setSelectedOllamaModel(e.target.value || null)
+                        }
+                        data-testid="playbook-picker-ollama-model"
+                    >
+                        <option value="">
+                            {ollamaAutoPick
+                                ? `Auto (${ollamaAutoPick})`
+                                : 'Auto (server picks)'}
+                        </option>
+                        {ollamaModels.map((m) => (
+                            <option key={m.name} value={m.name}>
+                                {m.name}
+                                {m.parameter_size
+                                    ? ` · ${m.parameter_size}`
+                                    : ''}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
+
             <div className="playbook-picker__actions">
                 <button
                     type="button"
                     className="btn btn-primary"
                     onClick={handleRun}
-                    disabled={!selectedMode || running}
+                    disabled={!selectedMode || running || preflighting}
                     data-testid="playbook-picker-run"
                 >
-                    {running ? 'Running…' : 'Generate'}
+                    {preflighting
+                        ? 'Checking model…'
+                        : running
+                            ? 'Running…'
+                            : 'Generate'}
                 </button>
+                {preflighting && (
+                    <span
+                        className="playbook-picker__preflight-hint"
+                        data-testid="playbook-picker-preflight-hint"
+                    >
+                        Pre-flighting with 1 row to catch refusals or empty
+                        output before the full run.
+                    </span>
+                )}
             </div>
+
+            {preflight && !preflight.ok && (
+                <div
+                    className="playbook-picker__preflight-failure"
+                    role="alert"
+                    data-testid="playbook-picker-preflight-failure"
+                >
+                    {preflight.refusal_detected ? (
+                        <>
+                            <p className="playbook-picker__preflight-headline">
+                                <strong>{preflight.backend_used}</strong> refused
+                                to generate this playbook's content on guardrail
+                                grounds.
+                            </p>
+                            <p className="playbook-picker__preflight-detail">
+                                The model returned:{' '}
+                                <code data-testid="playbook-picker-preflight-snippet">
+                                    {preflight.raw_llm_snippet.slice(0, 240)}
+                                </code>
+                            </p>
+                            {qwenFallback
+                                && selectedOllamaModel !== qwenFallback && (
+                                <button
+                                    type="button"
+                                    className="btn btn-primary"
+                                    onClick={() => void retryWithQwen()}
+                                    disabled={preflighting || running}
+                                    data-testid="playbook-picker-retry-qwen"
+                                >
+                                    Retry with {qwenFallback}
+                                </button>
+                            )}
+                            {!qwenFallback && (
+                                <p className="playbook-picker__preflight-detail">
+                                    No Qwen 2.5 model is installed locally.
+                                    Pull one with{' '}
+                                    <code>ollama pull qwen2.5:14b-instruct</code>{' '}
+                                    and reload, or pick a different model
+                                    from the dropdown above.
+                                </p>
+                            )}
+                        </>
+                    ) : preflight.error ? (
+                        <p className="playbook-picker__preflight-headline">
+                            Backend unavailable:{' '}
+                            <code>{preflight.error}</code>
+                        </p>
+                    ) : (
+                        <>
+                            <p className="playbook-picker__preflight-headline">
+                                Pre-flight produced 0 accepted rows via{' '}
+                                <strong>{preflight.backend_used}</strong> in{' '}
+                                {(preflight.elapsed_sec ?? 0).toFixed(1)}s.
+                            </p>
+                            <p className="playbook-picker__preflight-detail">
+                                The model returned:{' '}
+                                <code data-testid="playbook-picker-preflight-snippet">
+                                    {preflight.raw_llm_snippet.slice(0, 240) || '(empty response)'}
+                                </code>
+                            </p>
+                            <p className="playbook-picker__preflight-detail">
+                                Try a different model from the dropdown above
+                                or pick a different playbook mode.
+                            </p>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {preflight && preflight.ok && running && (
+                <p
+                    className="playbook-picker__preflight-ok"
+                    data-testid="playbook-picker-preflight-ok"
+                >
+                    Pre-flight passed via{' '}
+                    <code>{preflight.backend_used}</code> in{' '}
+                    {(preflight.elapsed_sec ?? 0).toFixed(1)}s — kicking the full
+                    run.
+                </p>
+            )}
 
             {runError && (
                 <p className="playbook-picker__error" data-testid="playbook-picker-run-error">

@@ -96,6 +96,84 @@ export async function runPlaybook(
 }
 
 
+// ─────────────────────────────────────────────────────────────────────
+// Pre-flight dry-run (P2). The picker calls this BEFORE kicking the
+// async job so a refusal or empty-output failure surfaces inline in
+// <10s, not after the user waits 60-180s for the real job to fail.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface DryRunPlaybookResult {
+    /** Convenience flag: true only when accepted_count >= 1 AND
+     *  refusal_detected is false. The panel uses this as a single
+     *  go/no-go signal before kicking the real run. */
+    ok: boolean;
+    accepted_count: number;
+    /** Heuristic: the LLM returned a short non-JSON apology
+     *  ("I cannot generate malicious examples", etc.). When true,
+     *  the panel surfaces a "Retry with a less-restricted model"
+     *  affordance with Qwen 2.5 as the suggested fallback. */
+    refusal_detected: boolean;
+    /** First ~280 chars of the model's raw response — so the user
+     *  can see exactly what came back, not just "0 rows accepted". */
+    raw_llm_snippet: string;
+    backend_used: string;
+    elapsed_sec: number;
+    prompt_snippet: string;
+    /** Set when the backend was unavailable (e.g. Ollama daemon
+     *  down). The panel renders this as a "no backend installed"
+     *  affordance. */
+    error?: string;
+    rows: SynthRow[];
+}
+
+export async function dryRunPlaybook(
+    projectId: number,
+    args: RunPlaybookArgs,
+): Promise<DryRunPlaybookResult> {
+    const resp = await api.post(
+        `/projects/${projectId}/synthetic/run-playbook/dry-run`,
+        {
+            mode: args.mode,
+            target_count: args.targetCount,
+            target_class: args.targetClass ?? null,
+            backend: args.backend ?? null,
+        },
+    );
+    return resp.data as DryRunPlaybookResult;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Ollama-models list (P3). Powers the model-picker dropdown.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface OllamaModelInfo {
+    name: string;
+    size_bytes: number;
+    parameter_size: string;
+    family: string;
+}
+
+export interface OllamaModelsResponse {
+    project_id: number;
+    /** Auto-pick tag the platform would default to given the
+     *  installed models + the backend's PREFERRED_MODEL_PATTERNS. */
+    default: string | null;
+    models: OllamaModelInfo[];
+    ollama_available: boolean;
+    error?: string;
+}
+
+export async function listOllamaModels(
+    projectId: number,
+): Promise<OllamaModelsResponse> {
+    const resp = await api.get(
+        `/projects/${projectId}/synthetic/backends/ollama/models`,
+    );
+    return resp.data as OllamaModelsResponse;
+}
+
+
 // Hardening Phase H1 — async-job variant. Returns the Job stub (202).
 // Caller starts polling via useJobsStore and shows progress in the
 // top-bar notification bell instead of blocking on the LLM call.

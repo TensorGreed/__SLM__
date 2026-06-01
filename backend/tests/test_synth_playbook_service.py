@@ -478,6 +478,122 @@ class RunPlaybookIntegrationTests(unittest.TestCase):
         # was the pre-fix behavior that misled legacy-project users.
         self.assertEqual(payload["playbooks"], [])
 
+    # ── Pre-flight dry-run + Ollama models endpoints ───────────────
+
+    def test_dry_run_returns_ok_without_persisting_when_backend_complies(self):
+        """A successful dry-run returns ``ok=True`` + the 1 generated
+        row in the response, but DOES NOT write to synthetic.jsonl —
+        that's the contract the frontend's pre-flight check relies on."""
+        from unittest.mock import patch
+        from app.services import synth_playbook_service
+
+        project = self._instantiate_template("ticket-router", "Dry-run OK")
+        pid = project["id"]
+        canned = _CannedBackend(
+            '{"text": "Refund my charge.", "label": "billing"}\n'
+        )
+        with patch.object(synth_playbook_service, "pick_backend", return_value=canned):
+            resp = self.client.post(
+                f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+                json={"mode": "positives_paraphrase", "target_count": 5},
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["accepted_count"], 1)
+        self.assertFalse(body["refusal_detected"])
+        self.assertGreater(len(body["raw_llm_snippet"]), 0)
+        self.assertEqual(body["backend_used"], "canned:test")
+        # No persistence: synthetic.jsonl is either missing or unchanged.
+        synthetic_path = (
+            Path(settings.DATA_DIR) / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        )
+        if synthetic_path.exists():
+            with synthetic_path.open() as f:
+                lines = [l for l in f if l.strip()]
+            self.assertEqual(len(lines), 0, "dry-run must not write to synthetic.jsonl")
+
+    def test_dry_run_target_count_is_always_1_regardless_of_request(self):
+        """The frontend passes ``target_count=1`` explicitly, but even
+        if a buggy caller sends 50, the server must clamp to 1 so the
+        pre-flight stays fast."""
+        from unittest.mock import patch
+        from app.services import synth_playbook_service
+
+        project = self._instantiate_template("ticket-router", "Dry-run Clamp")
+        pid = project["id"]
+        canned = _CannedBackend('{"text": "x", "label": "billing"}\n')
+        with patch.object(synth_playbook_service, "pick_backend", return_value=canned):
+            self.client.post(
+                f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+                json={"mode": "positives_paraphrase", "target_count": 50},
+            )
+        # The prompt the backend received must mention target=1.
+        self.assertIn("1", canned.last_prompt or "")
+        self.assertNotIn("50", (canned.last_prompt or ""))
+
+    def test_dry_run_reports_refusal_with_200_not_500(self):
+        """When the LLM refuses, the dry-run must return 200 with
+        ``ok=False, refusal_detected=True`` so the frontend can render
+        an inline error + Retry-with-Qwen button. Returning a 5xx
+        would push the diagnostic into the notification bell instead
+        of the inline panel."""
+        from unittest.mock import patch
+        from app.services import synth_playbook_service
+
+        project = self._instantiate_template("ticket-router", "Dry-run Refusal")
+        pid = project["id"]
+        # Canonical Llama-style refusal — short, no JSON.
+        canned = _CannedBackend(
+            "I cannot generate malicious or harmful examples. Can I help "
+            "you with something else?"
+        )
+        with patch.object(synth_playbook_service, "pick_backend", return_value=canned):
+            resp = self.client.post(
+                f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+                json={"mode": "positives_paraphrase", "target_count": 1},
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["accepted_count"], 0)
+        self.assertTrue(body["refusal_detected"])
+        # raw_llm_snippet should carry through so the panel can show
+        # the user what the model actually said.
+        self.assertIn("cannot generate", body["raw_llm_snippet"])
+
+    def test_dry_run_unknown_mode_returns_400(self):
+        project = self._instantiate_template("ticket-router", "Dry-run Bad Mode")
+        resp = self.client.post(
+            f"/api/projects/{project['id']}/synthetic/run-playbook/dry-run",
+            json={"mode": "make-coffee", "target_count": 1},
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+
+    def test_ollama_models_endpoint_returns_structured_payload_when_daemon_up(self):
+        """Smoke test against the actual local Ollama daemon if
+        running. Tolerates 'daemon down' (returns ollama_available=False)
+        because CI environments won't have Ollama installed."""
+        project = self._instantiate_template("ticket-router", "Ollama Models")
+        pid = project["id"]
+        resp = self.client.get(
+            f"/api/projects/{pid}/synthetic/backends/ollama/models",
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        # Contract: response always has these keys regardless of
+        # daemon state.
+        self.assertIn("models", body)
+        self.assertIn("default", body)
+        self.assertIn("ollama_available", body)
+        self.assertIsInstance(body["models"], list)
+        # When daemon is up, each model entry carries the standard
+        # set of fields the picker needs to render labels.
+        if body["ollama_available"]:
+            for m in body["models"]:
+                self.assertIn("name", m)
+                self.assertIn("parameter_size", m)
+
 
 if __name__ == "__main__":
     unittest.main()
