@@ -522,17 +522,6 @@ def step_summary(project_id: int, exp_id: int, api_base: str) -> None:
     print("    2. Open Training tab — click 'Start' on the experiment.")
     print("    3. Watch the bell for progress; eval runs automatically on")
     print("       completion against gold_test.jsonl.")
-    print()
-    print("  Known UX quirks (cosmetic — the training corpus is real):")
-    print("    * Data Health flags 'No documents uploaded yet' as a blocker.")
-    print("      Reason: dataset-import writes labeled rows directly; it")
-    print("      skips the RawDocument path that the report's ingestion")
-    print("      signal counts. The training corpus is intact and the")
-    print("      trainability forecast confirms it.")
-    print("    * Trainability forecast may flag 'class imbalance entropy")
-    print("      0.69' — 0.69 = ln(2) = MAXIMUM entropy for a 2-class")
-    print("      problem in nats (perfect 50/50). Real label distribution")
-    print("      in train.jsonl is 50.7/49.3 (verified).")
 
 
 # ─────────────────────────────────────────────────────────────────────

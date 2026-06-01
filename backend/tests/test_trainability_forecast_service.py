@@ -134,13 +134,38 @@ class HeuristicAndSignalUnitTests(unittest.TestCase):
         self.assertIn("b", signal["suggested_action"]["params"]["underrepresented_classes"])
 
     def test_class_imbalance_ok_on_balanced_distribution(self):
-        # 5 classes × 10 rows each → entropy ≈ 1.61 (> 1.0 ok).
+        # 5 classes × 10 rows each → balance == 1.0 (perfectly even).
         rows = []
         for label in ["a", "b", "c", "d", "e"]:
             rows.extend([{"label": label}] * 10)
         signal = _signal_class_imbalance(rows, "classification")
         self.assertIsNotNone(signal)
         self.assertEqual(signal["severity"], "ok")
+
+    def test_class_imbalance_ok_on_balanced_binary_distribution(self):
+        """Regression for the SQLi-bootstrap quirk: a 50/50 binary
+        corpus has raw entropy ln(2) ≈ 0.69. The old absolute
+        threshold (warn at <1.0) treated it as skewed even though
+        the data was perfectly balanced. After normalising by
+        ln(n_classes), 50/50 → balance 1.0 → ok regardless of
+        n_classes."""
+        rows = ([{"label": "injection"}] * 50) + ([{"label": "benign"}] * 50)
+        signal = _signal_class_imbalance(rows, "classification")
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        self.assertEqual(signal["severity"], "ok")
+        # Headline reads in normalised "balance" terms now.
+        self.assertIn("balance", signal["headline"])
+
+    def test_class_imbalance_warn_on_60_40_binary_split(self):
+        """60/40 binary → normalised balance ≈ 0.97 (still ok). 65/35
+        → balance ≈ 0.93. The warn band should kick in around 80/20."""
+        rows_8020 = ([{"label": "a"}] * 80) + ([{"label": "b"}] * 20)
+        signal = _signal_class_imbalance(rows_8020, "classification")
+        self.assertIsNotNone(signal)
+        assert signal is not None
+        # 80/20 → balance ≈ 0.722 < 0.75 → warn.
+        self.assertEqual(signal["severity"], "warn")
 
     def test_goldset_diversity_low_signal_fires_on_repetitive_rows(self):
         # Synthetic redundant gold set — same question/answer repeated.
@@ -300,10 +325,10 @@ class ClassificationSignalTests(unittest.TestCase):
 
     def test_classification_builder_emits_entropy_on_balanced_gold(self):
         rows = [{"label": label} for label in ["a"] * 10 + ["b"] * 10 + ["c"] * 10]
-        signals, entropy = _build_classification_signals(rows)
-        self.assertIsNotNone(entropy)
-        # 3 equal classes → entropy ≈ ln(3) ≈ 1.1.
-        self.assertGreater(entropy, 1.0)
+        signals, balance = _build_classification_signals(rows)
+        self.assertIsNotNone(balance)
+        # 3 equal classes → normalised balance == 1.0 (H/ln(n_classes)).
+        self.assertAlmostEqual(balance, 1.0, places=4)
         # All three new signals are quiet (none above their threshold);
         # only the existing class_imbalance signal lands at "ok".
         signal_ids = {s["id"] for s in signals}

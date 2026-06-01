@@ -257,6 +257,51 @@ class DataHealthTests(unittest.TestCase):
         self.assertEqual(lq["context"]["low_quality_count"], 4)
         self.assertEqual(lq["severity"], "block")
 
+    def test_no_documents_signal_clears_when_dataset_import_seeded_labelled_rows(self):
+        """A project ingested via dataset-import (classification corpora
+        land here) has no ``RawDocument`` rows but real labelled-row
+        Datasets. The ingestion signal must recognise that path and
+        flip from ``block`` to ``ok`` — otherwise every classification
+        project gets a permanent false-positive block."""
+        pid = self._create_project()
+
+        async def _seed_labelled():
+            async with async_session_factory() as db:
+                # Mimics dataset-import: writes a SYNTHETIC Dataset
+                # with record_count populated, but no RawDocument rows.
+                ds = Dataset(
+                    project_id=pid,
+                    name="dataset-import",
+                    dataset_type=DatasetType.SYNTHETIC,
+                    file_path=f"/tmp/dataset-import-{pid}.jsonl",
+                    record_count=4_000,
+                )
+                db.add(ds)
+                await db.commit()
+        asyncio.run(_seed_labelled())
+
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "ingestion.no_documents")
+        self.assertIsNotNone(sig)
+        assert sig is not None
+        self.assertEqual(sig["severity"], "ok")
+        self.assertEqual(sig["context"]["labelled_row_count"], 4_000)
+        self.assertEqual(sig["context"]["ingest_path"], "dataset_import")
+        # The headline should mention the row count so a glance at
+        # the panel tells the user the import landed.
+        self.assertIn("4000", sig["headline"])
+
+    def test_no_documents_block_persists_when_neither_path_has_data(self):
+        """Empty project (no RawDocuments AND no dataset-import rows) →
+        still ``block``. The fix only relaxes the signal when there's
+        actual labelled-row content."""
+        pid = self._create_project()
+        body = self.client.get(f"/api/projects/{pid}/data-health").json()
+        sig = _signal_by_id(body, "ingestion.no_documents")
+        self.assertIsNotNone(sig)
+        assert sig is not None
+        self.assertEqual(sig["severity"], "block")
+
     def test_overall_aggregates_to_worst_severity(self):
         """A single block signal anywhere → overall=block. A single warn
         with no blocks → overall=warn. All ok → overall=ok."""

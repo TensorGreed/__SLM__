@@ -97,9 +97,18 @@ MAX_DIVERSITY_PAIRS = 50
 # (which all land in the 0.05-0.20 range).
 DIVERSITY_WARN_THRESHOLD = 0.40
 
-# Class-imbalance thresholds (Shannon entropy).
-CLASS_ENTROPY_WARN = 1.0
-CLASS_ENTROPY_BLOCK = 0.5
+# Class-imbalance thresholds on the *normalised* Shannon entropy
+# (H / ln(n_classes)). Normalising makes the thresholds invariant to
+# the number of classes: 1.0 = perfectly balanced regardless of
+# n_classes, 0.0 = single class dominates entirely.
+#
+# Without normalisation, ``ln(2) ≈ 0.69`` for a perfect 2-class split
+# tripped CLASS_ENTROPY_WARN=1.0 even though the data was 50/50 —
+# the old thresholds implicitly assumed log-base-3 or higher class
+# counts. Verified against the SQLi-detector bootstrap (50.7/49.3
+# split that should be a clean ok).
+CLASS_BALANCE_WARN = 0.75
+CLASS_BALANCE_BLOCK = 0.5
 
 # Format-consistency check: max fraction of gold rows that can fail the
 # schema check before we promote the signal from warn to block.
@@ -243,7 +252,10 @@ def estimate_gate_pass_prob(
 
     quality = (1.0 - recipe_difficulty) * max(0.0, min(1.0, diversity_score))
     if class_entropy is not None:
-        quality *= min(1.0, max(0.0, class_entropy) / 1.5)
+        # ``class_entropy`` is now the normalised class balance ([0, 1]
+        # where 1.0 = perfectly balanced regardless of n_classes); use
+        # it directly as the multiplicative class_term.
+        quality *= max(0.0, min(1.0, class_entropy))
 
     raw = 0.40 * data_floor + 0.25 * capacity + 0.35 * quality
     return max(0.05, min(0.95, raw))
@@ -821,24 +833,35 @@ def _signal_class_imbalance(
 
     total = sum(counts.values())
     entropy = _shannon_entropy(counts.values())
+    # Normalise by ln(n_classes) so 1.0 == perfectly balanced
+    # regardless of how many classes the recipe defines.
+    n_classes = len(counts)
+    max_entropy = math.log(n_classes) if n_classes > 1 else 0.0
+    balance = (entropy / max_entropy) if max_entropy > 0 else 0.0
 
     # Under-represented = any class below 15% of the total when the
     # ideal balance is 1/n_classes. 15% catches the 90/10 binary skew
     # and any 5-way split where a class is below 1/3 of its share.
     under_classes = [k for k, c in counts.items() if c / total < 0.15]
 
-    if entropy < CLASS_ENTROPY_BLOCK:
+    if balance < CLASS_BALANCE_BLOCK:
         severity: Literal["ok", "warn", "block"] = "block"
-        headline = f"Severe class imbalance (entropy {entropy:.2f})."
-    elif entropy < CLASS_ENTROPY_WARN:
+        headline = (
+            f"Severe class imbalance (balance {balance:.2f} of 1.00)."
+        )
+    elif balance < CLASS_BALANCE_WARN:
         severity = "warn"
-        headline = f"Class distribution is skewed (entropy {entropy:.2f})."
+        headline = (
+            f"Class distribution is skewed (balance {balance:.2f} of 1.00)."
+        )
     else:
         return {
             "id": "class_imbalance",
             "severity": "ok",
-            "headline": f"Class distribution looks healthy (entropy {entropy:.2f}).",
-            "detail": f"{len(counts)} classes, distribution evenly spread.",
+            "headline": (
+                f"Class distribution looks healthy (balance {balance:.2f} of 1.00)."
+            ),
+            "detail": f"{n_classes} classes, distribution evenly spread.",
             "suggested_action": None,
         }
 
@@ -1016,8 +1039,14 @@ def _build_classification_signals(
     if dominance is not None:
         signals.append(dominance)
 
-    entropy = _shannon_entropy(counts.values())
-    return signals, entropy
+    # Return *normalised* entropy (balance, in [0, 1]) — matches the
+    # signal headline's 0.00–1.00 scale and feeds the gate-pass
+    # heuristic with a base-invariant quantity.
+    raw_entropy = _shannon_entropy(counts.values())
+    n_classes = len(counts)
+    max_entropy = math.log(n_classes) if n_classes > 1 else 0.0
+    balance = (raw_entropy / max_entropy) if max_entropy > 0 else 0.0
+    return signals, balance
 
 
 # ─────────────────────────────────────────────────────────────────────

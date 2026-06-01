@@ -223,7 +223,24 @@ def _resolve_task_profile(project: Project) -> str | None:
 
 
 async def _ingestion_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
-    """Document-count + parse-failure signals."""
+    """Document-count + parse-failure signals.
+
+    Two ingest paths feed a project:
+
+    1. Document ingestion — unstructured PDFs/DOCs/text files land as
+       ``RawDocument`` rows under a RAW Dataset. This is the path for
+       qa-sft, span-extraction, summarization corpora.
+    2. Dataset import — labelled CSV/JSONL files land directly as rows
+       in a SYNTHETIC/CLEANED/TRAIN Dataset via ``/dataset-import/run``
+       (skipping the RawDocument table entirely). This is the standard
+       path for classification corpora, where each row is already a
+       labelled training example, not a document to be cleaned + split.
+
+    The ingestion signal is satisfied when *either* path has produced
+    rows. Without this check, classification projects (which are
+    expected to import labelled JSONL) get a permanent "No documents"
+    block even after a successful import.
+    """
     result = await db.execute(
         select(RawDocument)
         .join(Dataset, Dataset.id == RawDocument.dataset_id)
@@ -237,13 +254,45 @@ async def _ingestion_group(db: AsyncSession, project_id: int) -> dict[str, Any]:
     signals: list[dict[str, Any]] = []
 
     if total == 0:
-        signals.append(_make_signal(
-            id="ingestion.no_documents",
-            severity="block",
-            headline="No documents uploaded yet.",
-            suggested_action={"kind": "navigate", "label": "Open Ingest tab", "target": "data"},
-            context={"document_count": 0},
-        ))
+        # Before declaring "no documents", check whether the project
+        # has any labelled-row corpus via dataset-import. Counting
+        # CLEANED/SYNTHETIC/TRAIN here matches the trainability
+        # forecast's "labeled corpus" definition — both signals
+        # should agree on whether the project has data.
+        labelled_count_result = await db.execute(
+            select(Dataset).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type.in_([
+                    DatasetType.CLEANED,
+                    DatasetType.SYNTHETIC,
+                    DatasetType.TRAIN,
+                ]),
+            )
+        )
+        labelled_rows = sum(
+            int(ds.record_count or 0) for ds in labelled_count_result.scalars()
+        )
+        if labelled_rows == 0:
+            signals.append(_make_signal(
+                id="ingestion.no_documents",
+                severity="block",
+                headline="No documents or labelled rows ingested yet.",
+                suggested_action={"kind": "navigate", "label": "Open Ingest tab", "target": "data"},
+                context={"document_count": 0, "labelled_row_count": 0},
+            ))
+        else:
+            signals.append(_make_signal(
+                id="ingestion.no_documents",
+                severity="ok",
+                headline=(
+                    f"{labelled_rows} labelled rows imported via dataset-import."
+                ),
+                context={
+                    "document_count": 0,
+                    "labelled_row_count": labelled_rows,
+                    "ingest_path": "dataset_import",
+                },
+            ))
         return {
             "id": "ingestion",
             "title": "Ingestion",
