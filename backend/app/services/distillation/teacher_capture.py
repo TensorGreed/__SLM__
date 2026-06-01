@@ -213,6 +213,102 @@ def _extract_prompt_text(row: dict[str, Any]) -> str:
     return ""
 
 
+def _resolve_handler_wrapped_prompts(
+    project_id: int,
+    rows: list[dict[str, Any]],
+) -> tuple[list[str | None] | None, dict[str, Any]]:
+    """Distillation β-fix — resolve the project's eval handler and
+    pre-wrap each row's prompt with the handler's eval-time
+    instruction template BEFORE sending to the teacher.
+
+    Returns ``(wrapped_prompts, provenance)`` where:
+      * ``wrapped_prompts`` is a list aligned with ``rows`` — each
+        entry is the handler-wrapped prompt for that row, or
+        ``None`` when the handler couldn't wrap (row missing
+        required fields, etc.). The full list is ``None`` when
+        the project has no eval handler that wraps its own
+        prompt (caller falls back to raw extraction).
+      * ``provenance`` carries ``task_profile`` + ``handler_id``
+        so the captured row can record how it was wrapped (for
+        later diagnostics + the KD record builder's preference
+        check).
+
+    Closes the β-shape gap audit OQ surfaced: pre-this-fix the
+    teacher capture wrote raw row prompts; the student trained
+    on `raw_prompt + teacher_completion`; held-out eval handler
+    wrapped with `"Classify the following text. …\\nLabel:"`
+    (or `"Extract …\\nOutput:"`, etc.). Train and eval prompts
+    were different strings — same shape as the SQLi pre-β
+    collapse. After this fix, the teacher sees the same wrapped
+    prompt the student will see at eval, so the captured
+    distribution is over the answer tokens the eval handler will
+    elicit, and the KD record builder can pin train+eval to a
+    single shared scaffold.
+    """
+    from app.services.eval_task_handler_service import (
+        EvalContext,
+        read_prepared_manifest,
+        read_task_profile_from_manifest,
+        resolve_task_handler,
+    )
+
+    task_profile = read_task_profile_from_manifest(project_id)
+    if not task_profile:
+        return None, {}
+    handler = resolve_task_handler(task_profile)
+    # Only handlers that build their own complete prompts at eval
+    # are gap-bearing — non-wrapping handlers (QA / language_modeling)
+    # have a separate chat-template gap addressed elsewhere.
+    if not (
+        hasattr(handler, "wraps_own_prompt")
+        and bool(handler.wraps_own_prompt())
+    ):
+        return None, {}
+
+    manifest = read_prepared_manifest(project_id)
+    ctx = EvalContext(
+        project_id=project_id,
+        experiment_id=0,
+        eval_type="exact_match",
+        task_profile=task_profile,
+        handler_id=getattr(handler, "profile_id", task_profile),
+        prepared_dir=_distillation_dir(project_id),
+        dataset_name="teacher_capture",
+        manifest=dict(manifest or {}),
+    )
+
+    # Handlers expose ``build_prompts(rows, ctx) -> list[BuiltPrompt]``
+    # as the unified interface across task shapes. Per-row failures
+    # (missing required fields, etc.) raise; we catch and emit
+    # ``None`` for that row so the caller can fall back to raw
+    # extraction without killing the whole capture.
+    try:
+        built = handler.build_prompts(rows, ctx)
+    except Exception:
+        return None, {
+            "task_profile": task_profile,
+            "handler_id": getattr(handler, "profile_id", task_profile),
+            "wrap_error": "build_prompts_failed",
+        }
+
+    wrapped: list[str | None] = []
+    for entry in built:
+        prompt_value = getattr(entry, "prompt", None)
+        if isinstance(prompt_value, str) and prompt_value.strip():
+            wrapped.append(prompt_value)
+        else:
+            wrapped.append(None)
+    # Pad/truncate to match rows length — defensive against a
+    # handler returning a different-length list.
+    while len(wrapped) < len(rows):
+        wrapped.append(None)
+    wrapped = wrapped[: len(rows)]
+    return wrapped, {
+        "task_profile": task_profile,
+        "handler_id": getattr(handler, "profile_id", task_profile),
+    }
+
+
 # ── Capture orchestrator ───────────────────────────────────────────────
 
 
@@ -264,12 +360,25 @@ async def capture_teacher_outputs(
     chunk_errors: list[dict] = []
     bounded_k = max(1, min(int(top_k), _MAX_TOP_K))
 
+    # β-fix for KD — resolve handler wraps so each row's teacher
+    # input is the same string the eval handler will build at
+    # held-out time. ``wrapped_prompts`` is None when the project's
+    # handler doesn't wrap (QA / language_modeling); rows then
+    # fall back to raw extraction (no β-shape gap there since the
+    # handler also doesn't wrap at eval).
+    wrapped_prompts, wrap_provenance = _resolve_handler_wrapped_prompts(
+        project_id, rows,
+    )
+
     if on_progress is not None:
         on_progress(0, total, 0)
 
     with open(out_path, "w", encoding="utf-8") as out:
         for index, row in enumerate(rows):
-            prompt_text = _extract_prompt_text(row)
+            wrapped_prompt: str | None = None
+            if wrapped_prompts is not None and index < len(wrapped_prompts):
+                wrapped_prompt = wrapped_prompts[index]
+            prompt_text = wrapped_prompt or _extract_prompt_text(row)
             if not prompt_text:
                 skipped_count += 1
                 chunk_errors.append(
@@ -300,6 +409,19 @@ async def capture_teacher_outputs(
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 "status": "accepted",
             }
+            # β-fix provenance: persist the wrapped prompt + which
+            # handler wrapped it so the KD record builder can train
+            # the student on the exact same scaffold and so a future
+            # audit can verify capture vs eval byte-for-byte.
+            if wrapped_prompt:
+                captured_row["wrapped_prompt"] = wrapped_prompt
+                if wrap_provenance:
+                    captured_row.setdefault(
+                        "task_profile", wrap_provenance.get("task_profile"),
+                    )
+                    captured_row.setdefault(
+                        "handler_id", wrap_provenance.get("handler_id"),
+                    )
             captured_row.setdefault("id", index + 1)
             out.write(json.dumps(captured_row) + "\n")
             captured_count += 1

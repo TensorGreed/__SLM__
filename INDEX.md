@@ -604,6 +604,7 @@ session-start guidance.
 - `backend/tests/test_dataset_auto_exclude_cleaned.py` — ``resolve_training_dataset_types`` contract.
 - `backend/tests/test_decision_engine_service.py` — Tests for the Theme 7 decision engine — `infer_recommended_approach`.
 - `backend/tests/test_demo_recipe_backfill.py` — Tests for the demo-seeder recipe assignment + backfill.
+- `backend/tests/test_distillation_kd_handler_wrap.py` — Distillation β-fix tests — teacher capture wraps with the eval
 - `backend/tests/test_distillation_kd_math.py` — KD loss math + offline trainer compute_loss — Track 1, Epic A, slice 2.
 - `backend/tests/test_distillation_kd_offline.py` — Offline-KD data prep + readiness gate + recipes — Track 1, Epic A, slice 2.
 - `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.

@@ -139,8 +139,18 @@ def _iter_positions(row: dict[str, Any]) -> list[list[list[Any]]]:
 
 
 def _extract_prompt_text(row: dict[str, Any]) -> str:
-    """The teacher's input prompt for a captured row (same precedence as the
-    slice-1 capture's prompt extraction)."""
+    """The teacher's input prompt for a captured row.
+
+    β-fix for KD: prefer ``wrapped_prompt`` when present — it
+    carries the exact handler-built string the teacher saw (and
+    that the eval handler will rebuild at held-out time). Falls
+    back to the raw-field walk for legacy captures (pre-β-KD)
+    that don't have the wrapped field, so existing
+    teacher_capture.jsonl files still build records.
+    """
+    wrapped = row.get("wrapped_prompt")
+    if isinstance(wrapped, str) and wrapped.strip():
+        return wrapped.strip()
     for key in ("question", "prompt", "instruction", "input_text", "text", "input"):
         value = row.get(key)
         if isinstance(value, str) and value.strip():
