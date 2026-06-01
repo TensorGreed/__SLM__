@@ -239,6 +239,129 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
         self.assertEqual(check["status"], "skip", check)
         self.assertIn("prepped", check["message"].lower())
 
+    def test_adapter_match_BUT_prepared_row_lacks_prefix_lands_warn(self):
+        """γ′ — the false-negative the original γ missed.
+
+        Recipe + manifest both say ``classification-label``, but the
+        adapter wrote raw ``text → label`` rows without the handler's
+        production prompt template. Adapter ids agree, BUT
+        training-format ≠ eval-format, and the held-out F1 collapses
+        even though the trainer's internal eval looks fine.
+
+        The strengthened check peeks at the first prepared row and
+        looks for the handler's ``expected_prompt_prefixes``. If
+        none are present, escalate to warn even when adapter ids
+        agree — the row check is what catches the SQLi-detector
+        regression in run #2."""
+        import json
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        prepared_dir = settings.DATA_DIR / "projects" / str(pid) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        # Adapter id agreement — necessary but insufficient.
+        (prepared_dir / "manifest.json").write_text(
+            json.dumps({
+                "adapter_id": "classification-label",
+                "task_profile": "classification",
+            }),
+        )
+        # Prepared train rows in raw text→label format (NO "Classify
+        # the following text" prefix anywhere). This is the actual
+        # SQLi-detector reproduction.
+        (prepared_dir / "train.jsonl").write_text(
+            "\n".join(
+                json.dumps({
+                    "source_text": f"sample text {i}",
+                    "target_text": "benign" if i % 2 == 0 else "injection",
+                    "label": "benign" if i % 2 == 0 else "injection",
+                })
+                for i in range(3)
+            ) + "\n",
+        )
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())["adapter_handler_format"]
+        self.assertEqual(check["status"], "warn", check)
+        self.assertIn("don't contain the prompt format", check["message"])
+        self.assertIn("classification", check["message"])
+        # Metadata names the handler + the prefixes we searched for.
+        self.assertEqual(check["metadata"]["handler_id"], "classification")
+        self.assertIn(
+            "Classify the following text",
+            check["metadata"]["expected_prefixes"],
+        )
+
+    def test_adapter_match_AND_prepared_row_carries_prefix_lands_ok(self):
+        """Steady-state — the adapter actually does write the
+        production prompt format. Check returns ok with a confirmation
+        that the row format matches the handler's expectations."""
+        import json
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        prepared_dir = settings.DATA_DIR / "projects" / str(pid) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        (prepared_dir / "manifest.json").write_text(
+            json.dumps({
+                "adapter_id": "classification-label",
+                "task_profile": "classification",
+            }),
+        )
+        # Prepared rows with the handler's prompt template
+        # embedded in the input — what a well-behaved adapter
+        # writes. Source_text contains the full classification
+        # prompt; target_text is just the label.
+        (prepared_dir / "train.jsonl").write_text(
+            "\n".join(
+                json.dumps({
+                    "source_text": (
+                        "Classify the following text. Reply with "
+                        f"exactly one of: benign, injection.\n"
+                        f"Text: sample {i}\n"
+                        "Label:"
+                    ),
+                    "target_text": " benign" if i % 2 == 0 else " injection",
+                })
+                for i in range(3)
+            ) + "\n",
+        )
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())["adapter_handler_format"]
+        self.assertEqual(check["status"], "ok", check)
+        self.assertIn("classification-label", check["message"])
+        self.assertIn(
+            "classification handler's prompt format",
+            check["message"],
+        )
+
+    def test_peek_is_silent_for_handlers_without_prompt_prefixes(self):
+        """Handlers that don't declare prefixes (Generic / QA / Safety
+        / Alignment) skip the row peek — there's nothing to check.
+        The matching-adapter case still lands ok without trying to
+        peek."""
+        import json
+        pid = self._create_project()
+        # Causal_lm experiments route to QAHandler which doesn't
+        # declare prefixes. Apply qa-sft recipe so the adapter check
+        # has something to compare. Confirm: ok status, no peek
+        # metadata leak.
+        self._apply_recipe(pid, "qa-sft")
+        prepared_dir = settings.DATA_DIR / "projects" / str(pid) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        # Use whatever adapter qa-sft recipe expects — match it.
+        from app.services.recipe_service import get_recipe
+        expected = getattr(get_recipe("qa-sft"), "adapter_id", None)
+        (prepared_dir / "manifest.json").write_text(
+            json.dumps({
+                "adapter_id": expected,
+                "task_profile": "qa",
+            }),
+        )
+        (prepared_dir / "train.jsonl").write_text(
+            json.dumps({"prompt": "what is 2+2?", "answer": "4"}) + "\n",
+        )
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())["adapter_handler_format"]
+        self.assertEqual(check["status"], "ok", check)
+
     def test_parallel_execution_is_faster_than_sum_of_checks(self):
         """Sanity check that the orchestrator runs checks in parallel.
         Total elapsed should be near the slowest single check, NOT

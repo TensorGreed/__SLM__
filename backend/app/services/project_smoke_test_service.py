@@ -107,6 +107,96 @@ def _envelope_from_exception(
     }
 
 
+def _peek_prepared_row_prefix_match(
+    *,
+    project_id: int,
+    manifest: dict[str, Any],
+    experiment_task_type: str | None,
+    recipe_task_profile: str | None,
+) -> dict[str, Any] | None:
+    """Open the first prepared row and check whether the eval handler's
+    expected prompt prefix appears in any string field.
+
+    Returns ``None`` when the check can't run (no handler, no prefixes
+    declared, no readable train file). Otherwise returns
+    ``{status: 'match' | 'mismatch', handler_id, expected_prefixes,
+    peeked_row_path}`` so the caller can phrase the SmokeCheckResult
+    appropriately.
+
+    This is the load-bearing γ′ fix: matching adapter ids was a
+    necessary but insufficient signal. The peeked row catches the
+    SQLi-detector case where the adapter writes raw ``text → label``
+    rows even though it's tagged as task=classification.
+    """
+    import json as _json
+    from app.services.eval_task_handler_service import (
+        _project_prepared_dir,
+        resolve_task_handler,
+    )
+
+    # Resolve the handler that would run at eval time. Mirrors the
+    # logic in build_eval_context — manifest first, fall back to the
+    # experiment's task_type, finally the recipe's task_profile.
+    task_profile = manifest.get("task_profile") if isinstance(manifest, dict) else None
+    if not task_profile and experiment_task_type:
+        task_profile = experiment_task_type
+    if not task_profile and recipe_task_profile:
+        task_profile = recipe_task_profile
+    if not task_profile:
+        return None
+    handler = resolve_task_handler(task_profile)
+    prefixes = list(
+        getattr(handler, "expected_prompt_prefixes", lambda: [])()
+    )
+    if not prefixes:
+        # Generic / QA / Safety / Alignment don't wrap with a fixed
+        # prefix; the check doesn't apply.
+        return None
+
+    # Find a prepared file to peek at. Train > val > test for
+    # representativeness (train is always the largest split).
+    prepared_dir = _project_prepared_dir(project_id)
+    candidates = [prepared_dir / name for name in ("train.jsonl", "val.jsonl", "test.jsonl")]
+    peeked_row: dict[str, Any] | None = None
+    peeked_path: str = ""
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        peeked_row = _json.loads(raw)
+                    except _json.JSONDecodeError:
+                        continue
+                    peeked_path = str(path)
+                    break
+        except OSError:
+            continue
+        if peeked_row is not None:
+            break
+    if peeked_row is None:
+        return None
+
+    # Concatenate every string-valued field — the prefix might live in
+    # any of source_text / prompt / text / input / formatted_prompt etc.
+    # depending on the adapter.
+    concat = " | ".join(
+        str(v) for v in peeked_row.values() if isinstance(v, str)
+    )
+    matched_prefix = next((p for p in prefixes if p in concat), None)
+    return {
+        "status": "match" if matched_prefix else "mismatch",
+        "handler_id": handler.profile_id,
+        "expected_prefixes": prefixes,
+        "matched_prefix": matched_prefix,
+        "peeked_row_path": peeked_path,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Individual checks. Each is async, captures exceptions, returns a
 # SmokeCheckResult. They're independent so asyncio.gather can run
@@ -566,17 +656,84 @@ async def _check_adapter_handler_format(
                 metadata={"expected_adapter": expected_adapter},
             )
         if expected_adapter == actual_adapter:
+            # γ′ — adapter ids agreeing is necessary but NOT sufficient.
+            # The SQLi-detector run #2 hit this exact false negative:
+            # recipe + manifest both said ``classification-label`` but
+            # the adapter itself wrote raw ``source_text → target_text``
+            # rows without the production prompt template. Training
+            # taught the model "complete this text", eval asked it to
+            # "Classify the following text. Reply with one of: …", and
+            # the model produced 98% unparseable predictions.
+            #
+            # Peek at the first prepared row and check whether the
+            # handler's ``expected_prompt_prefixes`` appear in any of
+            # the row's string-valued fields. If the handler declares
+            # prefixes (i.e. it builds an instruction prompt at eval
+            # time) and none of them are present in training rows, the
+            # train/eval format gap is still open even though the
+            # adapter names agree. Escalate to warn.
+            peek = _peek_prepared_row_prefix_match(
+                project_id=project_id,
+                manifest=manifest,
+                experiment_task_type=str(
+                    (selected.get("task_type") or "")
+                ).strip() or None,
+                recipe_task_profile=getattr(recipe, "task_profile", None),
+            )
+            if peek is not None and peek["status"] == "mismatch":
+                return SmokeCheckResult(
+                    name="adapter_handler_format",
+                    status="warn",
+                    elapsed_ms=elapsed,
+                    message=(
+                        f"Adapter '{actual_adapter}' matches recipe "
+                        f"'{recipe_id}' BUT the prepared rows don't "
+                        f"contain the prompt format the "
+                        f"{peek['handler_id']} handler builds at eval "
+                        f"time. Expected at least one of: "
+                        f"{peek['expected_prefixes']!r}. Trainer + eval "
+                        f"will use different prompt formats and the "
+                        f"held-out F1 will collapse even though the "
+                        f"trainer's internal eval looks fine."
+                    ),
+                    remediation=(
+                        "The adapter id matches but the adapter isn't "
+                        "wrapping rows with the handler's prompt "
+                        "template. Either (a) pick a different adapter "
+                        "that does wrap rows (open Pipeline → Data Prep "
+                        "→ Adapter Studio to inspect what each adapter "
+                        "writes), or (b) treat this as a platform bug "
+                        "on the adapter and file it — the adapter id "
+                        "shouldn't claim a task profile it doesn't "
+                        "produce."
+                    ),
+                    metadata={
+                        "expected_adapter": expected_adapter,
+                        "actual_adapter": actual_adapter,
+                        "recipe_id": recipe_id,
+                        "handler_id": peek["handler_id"],
+                        "expected_prefixes": peek["expected_prefixes"],
+                        "peeked_row_path": peek["peeked_row_path"],
+                    },
+                )
             return SmokeCheckResult(
                 name="adapter_handler_format",
                 status="ok",
                 elapsed_ms=elapsed,
                 message=(
-                    f"Adapter '{actual_adapter}' matches recipe '{recipe_id}'."
+                    f"Adapter '{actual_adapter}' matches recipe '{recipe_id}'"
+                    + (
+                        f" + prepared rows carry the {peek['handler_id']} "
+                        f"handler's prompt format."
+                        if peek is not None and peek["status"] == "match"
+                        else "."
+                    )
                 ),
                 metadata={
                     "expected_adapter": expected_adapter,
                     "actual_adapter": actual_adapter,
                     "recipe_id": recipe_id,
+                    **({"peek": peek} if peek else {}),
                 },
             )
         return SmokeCheckResult(

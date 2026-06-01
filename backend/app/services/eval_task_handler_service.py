@@ -502,6 +502,22 @@ class ClassificationHandler:
 
         return True
 
+    def expected_prompt_prefixes(self) -> list[str]:
+        """Diagnostic — strings that would appear in a prepared row if
+        its training-time prompt format matched the eval-time format
+        this handler builds. The smoke-test's ``adapter_handler_format``
+        check peeks at one prepared row and looks for any of these
+        prefixes; if none appear, the adapter wrote raw ``text→label``
+        pairs (which trains a model the eval can't decode) and the
+        check escalates to warn.
+
+        Returning a list lets handlers cover multiple acceptable
+        phrasings (the prompt template can vary by candidate set, by
+        sub-task, etc.). Returning ``[]`` means "no expected prefix"
+        — the smoke check skips the row-format peek for that handler."""
+
+        return ["Classify the following text"]
+
 
 # ── QAHandler (Phase 5.3.2) ───────────────────────────────────────────
 
@@ -1376,6 +1392,16 @@ class StructuredExtractionHandler:
 
         return True
 
+    def expected_prompt_prefixes(self) -> list[str]:
+        """See ClassificationHandler.expected_prompt_prefixes — same
+        contract; used by the smoke check to detect train/eval
+        format mismatches."""
+
+        return [
+            "Extract the following fields as JSON",
+            "Extract the relevant fields from the input",
+        ]
+
 
 # ── RAGHandler (Phase 5.3.5) ──────────────────────────────────────────
 
@@ -1680,6 +1706,11 @@ class RAGHandler:
         wrap."""
 
         return True
+
+    def expected_prompt_prefixes(self) -> list[str]:
+        """See ClassificationHandler.expected_prompt_prefixes."""
+
+        return ["Context:", "Question:"]
 
 
 # ── SafetyHandler (Phase 5.3.8) ───────────────────────────────────────
@@ -2056,6 +2087,11 @@ class VisionLanguageHandler:
 
         return True
 
+    def expected_prompt_prefixes(self) -> list[str]:
+        """See ClassificationHandler.expected_prompt_prefixes."""
+
+        return ["Describe the image:", "Question:"]
+
 
 class AudioTranscriptHandler:
     """Task handler for audio transcription + audio-conditioned QA.
@@ -2241,6 +2277,11 @@ class AudioTranscriptHandler:
         the model into chat-completion mode."""
 
         return True
+
+    def expected_prompt_prefixes(self) -> list[str]:
+        """See ClassificationHandler.expected_prompt_prefixes."""
+
+        return ["Transcribe the audio:", "Question:"]
 
 
 # ── AlignmentHandler (Phase 5.3.6) ────────────────────────────────────
@@ -2730,6 +2771,13 @@ class Seq2SeqHandler:
         sub-task scaffold."""
 
         return True
+
+    def expected_prompt_prefixes(self) -> list[str]:
+        """See ClassificationHandler.expected_prompt_prefixes. Sub-task
+        prefixes — at least one should appear in a correctly-prepared
+        Seq2Seq training row."""
+
+        return ["Translate", "Summarize:", "Paraphrase:"]
 
 
 # ── Registry + dispatcher ─────────────────────────────────────────────
