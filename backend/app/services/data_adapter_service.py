@@ -1692,20 +1692,29 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_vision_language_pair,
         "validate": _validate_vision_language_pair,
         "schema_hint": _schema_vision_language_pair,
-        # ``seq2seq`` removed (cross-pair drift cleanup): the ι-fixed
-        # adapter writes ``"Describe the image: <image:…>\nCaption:"``
-        # or ``"Question: …\nImage: <image:…>\nAnswer:"`` — neither
-        # matches Seq2SeqHandler's text-only prefixes. ``instruction_sft``
-        # remains so non-multimodal-aware resolvers can still route
-        # through QAHandler (no wrap, no β-shape gap; the wrapped
-        # source_text just reaches the trainer's chat-template path
-        # as a long prompt with the embedded ``<image:…>`` token).
-        # NOTE: canonical pair (this adapter ↔ VisionLanguageHandler)
-        # is currently reachable only when a manifest explicitly
-        # tags ``vision_language`` / ``image_captioning`` / ``vqa``
-        # — adding those profiles here is the audit's OQ #4 follow-up
-        # (out of scope for this cross-pair trim).
-        "task_profiles": ["instruction_sft"],
+        # Canonical multimodal profiles listed FIRST so the
+        # resolver default-routes to VisionLanguageHandler — pair
+        # this adapter naturally produces wrapped prompts for
+        # (ι-fixed). All three multimodal aliases register the
+        # same handler (see ``eval_task_handler_service.py``:
+        # ``register_handler("vision_language", VisionLanguageHandler)``,
+        # ``image_captioning``, ``vqa``), so a user picking any
+        # of them gets the canonical pair. ``instruction_sft``
+        # stays at the END as a non-wrapping fallback (routes to
+        # QAHandler) — the wrapped ``source_text`` still reaches
+        # the trainer fine through the chat-template path. Closed
+        # audit OQ #4: the canonical handler is now default-
+        # reachable instead of manifest-tag-only.
+        # ``seq2seq`` was previously listed but removed in the
+        # cross-pair drift cleanup; it routed to Seq2SeqHandler
+        # whose text-only wrap can't represent the
+        # ``<image:…>`` placeholder.
+        "task_profiles": [
+            "vision_language",
+            "image_captioning",
+            "vqa",
+            "instruction_sft",
+        ],
         "preferred_training_tasks": ["seq2seq", "causal_lm"],
         "output_contract": {
             "required_fields": ["text", "source_text", "target_text", "image_path"],
@@ -1719,13 +1728,21 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_audio_transcript,
         "validate": _validate_audio_transcript,
         "schema_hint": _schema_audio_transcript,
-        # ``seq2seq`` removed — mirror of vision-language-pair above.
-        # κ-fixed adapter's wrap doesn't carry seq2seq prefixes.
-        # Canonical pair (this ↔ AudioTranscriptHandler) reachable
-        # via manifest tag (``audio_transcript`` / ``audio_transcription``
-        # / ``speech_to_text``); native task_profiles routing
-        # tracked as OQ #4 follow-up.
-        "task_profiles": ["instruction_sft"],
+        # Canonical multimodal profiles listed FIRST — mirror of
+        # vision-language-pair above. AudioTranscriptHandler is
+        # registered for ``audio_transcript`` / ``audio_transcription``
+        # / ``speech_to_text``; first-position resolution lands
+        # on the canonical handler that κ wrote prompts for.
+        # ``instruction_sft`` stays at the end as a non-wrapping
+        # fallback so the wrapped ``source_text`` continues to
+        # reach trainers that go through the chat-template path.
+        # Closes audit OQ #4 for the audio side.
+        "task_profiles": [
+            "audio_transcript",
+            "audio_transcription",
+            "speech_to_text",
+            "instruction_sft",
+        ],
         "preferred_training_tasks": ["seq2seq", "causal_lm"],
         "output_contract": {
             "required_fields": ["text", "source_text", "target_text", "audio_path"],
