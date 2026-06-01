@@ -1,10 +1,28 @@
 """Data Ingestion service — handles file uploads, parsing, and storage."""
 
 import json
+import os
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+
+def _kaggle_credentials_available() -> bool:
+    """Pre-check before importing the ``kaggle`` package.
+
+    The Kaggle SDK calls ``api.authenticate()`` in its ``__init__.py``
+    and ``sys.exit(1)`` on missing credentials — ``SystemExit`` is a
+    ``BaseException`` subclass so it slips past ``except Exception``
+    and crashes the request handler. Pre-checking lets the inspect
+    endpoint return a clean structured error instead of a 500.
+
+    Returns True when env vars are set OR a kaggle.json exists.
+    """
+    if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
+        return True
+    kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+    return kaggle_json.exists()
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -485,6 +503,23 @@ async def inspect_remote_dataset(
             }
 
     elif source_type == "kaggle":
+        # Pre-check: the Kaggle SDK runs ``api.authenticate()`` in its
+        # package ``__init__.py`` and ``sys.exit(1)`` on missing creds.
+        # SystemExit slips past ``except Exception`` and 500s the
+        # request handler, so we have to refuse the import before it
+        # happens.
+        if not _kaggle_credentials_available():
+            return {
+                "source_type": "kaggle",
+                "identifier": identifier,
+                "error": "Kaggle credentials not configured.",
+                "remediation": (
+                    "Set KAGGLE_USERNAME + KAGGLE_KEY env vars or drop a "
+                    "kaggle.json at ~/.kaggle/kaggle.json. Generate a "
+                    "token at https://www.kaggle.com/settings → API."
+                ),
+                "missing_credentials": True,
+            }
         try:
             from kaggle.api.kaggle_api_extended import KaggleApi
             api = KaggleApi()
@@ -497,6 +532,21 @@ async def inspect_remote_dataset(
                 "splits": ["default"],
                 "files": [f.name for f in files],
                 "remediation": "Kaggle datasets are usually downloaded as a whole. You can select specific files after import if needed."
+            }
+        except SystemExit as e:
+            # Defense in depth — if the SDK ever changes its auth
+            # check and we miss the pre-check above, we still return
+            # cleanly instead of 500ing.
+            return {
+                "source_type": "kaggle",
+                "identifier": identifier,
+                "error": f"Kaggle SDK aborted during authentication (exit {e.code}).",
+                "remediation": (
+                    "Set KAGGLE_USERNAME + KAGGLE_KEY env vars or drop a "
+                    "kaggle.json at ~/.kaggle/kaggle.json. Generate a "
+                    "token at https://www.kaggle.com/settings → API."
+                ),
+                "missing_credentials": True,
             }
         except Exception as e:
             return {
@@ -875,13 +925,23 @@ async def ingest_remote_dataset(
         filename = f"kaggle_{safe_name}.jsonl"
         prev_kaggle_user = os.environ.get("KAGGLE_USERNAME")
         prev_kaggle_key = os.environ.get("KAGGLE_KEY")
+        # Stage caller-supplied creds into env BEFORE importing the
+        # kaggle SDK — its __init__.py calls api.authenticate() at
+        # import time and sys.exit(1)s if creds are missing.
+        if kaggle_username:
+            os.environ["KAGGLE_USERNAME"] = kaggle_username
+        if kaggle_key:
+            os.environ["KAGGLE_KEY"] = kaggle_key
+        if not _kaggle_credentials_available():
+            raise ValueError(
+                "Kaggle import requires credentials. Set "
+                "KAGGLE_USERNAME + KAGGLE_KEY env vars, drop a "
+                "kaggle.json at ~/.kaggle/kaggle.json, or pass "
+                "kaggle_username + kaggle_key in the request. "
+                "Generate a token at https://www.kaggle.com/settings → API."
+            )
         try:
             from kaggle.api.kaggle_api_extended import KaggleApi
-
-            if kaggle_username:
-                os.environ["KAGGLE_USERNAME"] = kaggle_username
-            if kaggle_key:
-                os.environ["KAGGLE_KEY"] = kaggle_key
 
             with tempfile.TemporaryDirectory(prefix="slm_kaggle_") as tmp_dir:
                 await _progress("[kaggle] authenticating and downloading dataset...")
@@ -908,6 +968,16 @@ async def ingest_remote_dataset(
                 raise ValueError("No records parsed from Kaggle dataset")
             source_mode = "live"
             await _progress(f"[kaggle] collected {len(raw_samples)} rows")
+        except SystemExit as e:
+            # The kaggle SDK calls sys.exit(1) at import-time when
+            # auth is missing — SystemExit isn't caught by the
+            # Exception branch below. Map to ValueError so the caller
+            # gets a structured error, not a process abort.
+            raise ValueError(
+                "Kaggle SDK aborted during authentication "
+                f"(exit {e.code}). Set KAGGLE_USERNAME + KAGGLE_KEY "
+                "env vars or drop a kaggle.json at ~/.kaggle/kaggle.json."
+            )
         except Exception as e:
             if settings.STRICT_EXECUTION_MODE:
                 raise StrictExecutionError("ingestion", f"Kaggle live import failed and STRICT_EXECUTION_MODE is enabled. Details: {e}")

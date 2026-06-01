@@ -38,6 +38,31 @@ class TestSprint2(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["features"]["text"], "Value")
         self.assertTrue(result["has_scripts"])
 
+    @patch("app.services.ingestion_service._kaggle_credentials_available")
+    async def test_inspect_remote_dataset_kaggle_returns_structured_error_when_no_creds(
+        self, mock_creds,
+    ):
+        """Regression: the kaggle SDK calls sys.exit(1) at import time
+        when credentials are missing — SystemExit is a BaseException
+        and slipped past ``except Exception``, crashing the request
+        handler with a 500.
+
+        The fix pre-checks credentials and returns a structured 200
+        with ``missing_credentials: True`` and a remediation string so
+        the UI can render a 'set up credentials' prompt rather than
+        propagating a 500 to the user. Reproduces by mocking the
+        creds check to return False; if the SDK import ever happens,
+        SystemExit aborts the test process.
+        """
+        mock_creds.return_value = False
+        result = await inspect_remote_dataset(
+            1, "kaggle", "user/dataset", db=self.db,
+        )
+        self.assertEqual(result["source_type"], "kaggle")
+        self.assertTrue(result.get("missing_credentials"))
+        self.assertIn("credentials not configured", result["error"])
+        self.assertIn("KAGGLE_USERNAME", result["remediation"])
+
     @patch("app.services.ingestion_service.get_or_create_raw_dataset", new_callable=AsyncMock)
     @patch("app.services.ingestion_service.resolve_project_domain_hooks", new_callable=AsyncMock)
     @patch("app.services.secret_service.get_project_secret_value", new_callable=AsyncMock)
