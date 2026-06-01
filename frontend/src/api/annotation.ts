@@ -35,6 +35,16 @@ export interface LabelJob {
     updated_at: string | null;
 }
 
+export interface InterAnnotatorAgreement {
+    /** "cohens_kappa" | "span_f1" | "preference_agreement" */
+    metric: string;
+    /** Averaged across all reviewer-pairs with ≥1 row of overlap. */
+    value: number;
+    reviewer_count: number;
+    pair_count: number;
+    overlap_rows: number;
+}
+
 export interface JobStats {
     job_id: number;
     name: string;
@@ -48,6 +58,9 @@ export interface JobStats {
     /** Story 1.6 — rows already materialized into a downstream
      *  training dataset via the promote endpoint. */
     promoted: number;
+    /** Epic F Phase 2 — present only when ≥2 distinct reviewers
+     *  have labeled at least one overlapping row. */
+    inter_annotator_agreement?: InterAnnotatorAgreement | null;
 }
 
 export type PromoteTarget = 'synthetic' | 'gold_dev';

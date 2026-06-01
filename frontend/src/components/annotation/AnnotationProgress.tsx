@@ -21,6 +21,13 @@ function computeProgressFraction(stats: JobStats): number {
     return Math.min(1, stats.labeled / denom);
 }
 
+function agreementLabel(metric: string): string {
+    if (metric === 'cohens_kappa') return 'κ';
+    if (metric === 'span_f1') return 'span-F1';
+    if (metric === 'preference_agreement') return 'agree';
+    return metric;
+}
+
 export default function AnnotationProgress({
     jobName,
     stats,
@@ -74,6 +81,33 @@ export default function AnnotationProgress({
                             data-testid="annotation-progress-assigned"
                         >
                             {stats.assigned} in flight
+                        </span>
+                    )}
+                    {stats.inter_annotator_agreement && (
+                        <span
+                            style={{
+                                marginLeft: 12,
+                                padding: '1px 6px',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-sm)',
+                                background: 'var(--bg-secondary)',
+                            }}
+                            data-testid="annotation-progress-agreement"
+                            title={
+                                'Inter-annotator agreement across '
+                                + `${stats.inter_annotator_agreement.reviewer_count}`
+                                + ' reviewers · '
+                                + `${stats.inter_annotator_agreement.overlap_rows}`
+                                + ' overlap row(s) · '
+                                + `${stats.inter_annotator_agreement.pair_count}`
+                                + ' reviewer pair(s)'
+                            }
+                        >
+                            {agreementLabel(
+                                stats.inter_annotator_agreement.metric,
+                            )}
+                            {' '}
+                            {stats.inter_annotator_agreement.value.toFixed(2)}
                         </span>
                     )}
                 </div>

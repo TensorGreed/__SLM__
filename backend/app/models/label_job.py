@@ -15,7 +15,15 @@ hard-coded domain.
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -149,4 +157,68 @@ class LabelRow(Base):
     # training-time entry.
     promoted_to_dataset_id: Mapped[int | None] = mapped_column(
         ForeignKey("datasets.id"), nullable=True, default=None
+    )
+
+
+class LabelRowReview(Base):
+    """Multi-reviewer capture for inter-annotator agreement
+    (Epic F Phase 2).
+
+    Each :class:`LabelRow` gets one *primary* label (the row's
+    ``label_payload`` / ``labeled_at`` / ``assigned_to`` fields are
+    that single canonical view), but this side-table also records
+    every individual reviewer's submission so we can compute
+    Cohen's κ / span-F1 / preference-agreement when ≥2 distinct
+    reviewers ever labeled the same row. The primary fields stay
+    authoritative for promotion + UI so the historical labeling
+    flow doesn't change.
+
+    Insertion rule: every ``submit_label`` call inserts one row
+    here keyed by (row, reviewer). Re-submissions by the same
+    reviewer overwrite their prior review (the unique constraint
+    below) so a labeler correcting themselves doesn't double-count
+    in the agreement stats.
+    """
+
+    __tablename__ = "label_row_reviews"
+    __table_args__ = (
+        # A reviewer can only have one outstanding review per row;
+        # re-submission updates the existing record. SQLite and
+        # Postgres both treat NULL reviewer_id as distinct, but
+        # in practice reviewer_id is required at insert time.
+        UniqueConstraint(
+            "row_id", "reviewer_id", name="uq_label_row_reviews_row_reviewer"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    row_id: Mapped[int] = mapped_column(
+        ForeignKey("label_rows.id"), nullable=False, index=True
+    )
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("label_jobs.id"), nullable=False, index=True
+    )
+    # Nullable to allow auth-disabled local-dev to submit without
+    # binding to a real user. Pairs/agreement math skips reviews
+    # without a reviewer_id (it's not meaningful to attribute the
+    # label to anyone in particular).
+    reviewer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, default=None, index=True
+    )
+    label_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    reviewer_notes: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        onupdate=_utcnow,
+        nullable=False,
     )

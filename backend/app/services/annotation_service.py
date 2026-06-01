@@ -41,8 +41,11 @@ from app.models.label_job import (
     KNOWN_JOB_STATUSES,
     KNOWN_LABEL_TYPES,
     LABEL_TYPE_CLASSIFICATION,
+    LABEL_TYPE_PREFERENCE_PAIR,
+    LABEL_TYPE_SPAN,
     LabelJob,
     LabelRow,
+    LabelRowReview,
 )
 from app.models.project import Project
 
@@ -295,6 +298,35 @@ async def seed_rows_from_dataset(
 # ---------------------------------------------------------------------------
 
 
+async def _fetch_unassigned_rows(
+    db: AsyncSession, *, job_id: int
+) -> list[LabelRow]:
+    """Pull every unassigned, unlabeled row for a job in insertion
+    order. Used as the ranker's input set in the active path."""
+    rows_q = await db.execute(
+        select(LabelRow)
+        .where(
+            LabelRow.job_id == job_id,
+            LabelRow.assigned_to.is_(None),
+            LabelRow.labeled_at.is_(None),
+        )
+        .order_by(LabelRow.id.asc())
+    )
+    return list(rows_q.scalars())
+
+
+def _safe_score(score_fn, batch):  # noqa: ANN001 — generic callable
+    """Wrap a Phase-1/2 scorer so any exception (missing weights,
+    OOM, NotImplementedError stub) collapses to per-row ``None``.
+    Returning all-None makes the ranker fall back to insertion
+    order, so the labeler keeps moving even when the model path
+    is broken."""
+    try:
+        return score_fn(batch)
+    except Exception:
+        return [None] * len(batch)
+
+
 async def _candidate_row_ids_for_strategy(
     db: AsyncSession,
     *,
@@ -309,67 +341,104 @@ async def _candidate_row_ids_for_strategy(
     failures (no completed experiment, model load fails, all rows
     have empty text) all collapse to ``None`` — a labeler never sees
     an error from picking the active strategy on a fresh project.
+
+    Phase 1 covered ``classification``. Phase 2 adds dispatch for
+    ``span`` (top-2 margin over the token-classification head) and
+    ``preference_pair`` (ensemble disagreement on alignment models).
+    Both paths share the lazy-import + catch-all wrapper so a
+    misconfigured project gracefully degrades to FIFO.
     """
 
     if strategy == ASSIGN_STRATEGY_FIFO:
         return None
-    if job.label_type != LABEL_TYPE_CLASSIFICATION:
-        # Span + preference-pair ranking is a Phase-2 follow-up. For
-        # now any non-classification job silently degrades to FIFO so
-        # the UI's strategy toggle is still usable on every job.
-        return None
 
     from app.services.annotation.active_learning import (
         latest_scoreable_classification_experiment,
+        latest_scoreable_preference_experiment,
+        latest_scoreable_span_experiment,
         rank_rows_by_uncertainty,
         score_classification_rows,
+        score_preference_pair_rows,
+        score_span_rows,
     )
 
-    experiment = await latest_scoreable_classification_experiment(
-        db, project_id=job.project_id
-    )
-    if experiment is None:
-        return None
-
-    cfg = experiment.config or {}
-    label_space = cfg.get("label_space") or cfg.get("label_space_preview")
-    if not isinstance(label_space, list) or not label_space:
-        # ``label_space`` is written into the runtime_environment by
-        # the training script. Without it we don't know the head's
-        # output dimension — fall back to FIFO.
-        return None
-    model_path = cfg.get("model_path") or cfg.get("output_dir")
-    if not isinstance(model_path, str) or not model_path:
-        return None
-
-    rows_q = await db.execute(
-        select(LabelRow)
-        .where(
-            LabelRow.job_id == job.id,
-            LabelRow.assigned_to.is_(None),
-            LabelRow.labeled_at.is_(None),
-        )
-        .order_by(LabelRow.id.asc())
-    )
-    rows = list(rows_q.scalars())
+    rows = await _fetch_unassigned_rows(db, job_id=job.id)
     if not rows:
         return []
 
-    def _score(batch: list[LabelRow]) -> list[float | None]:
-        try:
-            return score_classification_rows(
+    if job.label_type == LABEL_TYPE_CLASSIFICATION:
+        experiment = await latest_scoreable_classification_experiment(
+            db, project_id=job.project_id
+        )
+        if experiment is None:
+            return None
+        cfg = experiment.config or {}
+        label_space = cfg.get("label_space") or cfg.get("label_space_preview")
+        if not isinstance(label_space, list) or not label_space:
+            return None
+        model_path = cfg.get("model_path") or cfg.get("output_dir")
+        if not isinstance(model_path, str) or not model_path:
+            return None
+        return rank_rows_by_uncertainty(
+            rows,
+            score_fn=lambda batch: _safe_score(
+                lambda b: score_classification_rows(
+                    b,
+                    model_path=model_path,
+                    label_space=[str(x) for x in label_space],
+                ),
                 batch,
-                model_path=model_path,
-                label_space=[str(x) for x in label_space],
-            )
-        except Exception:
-            # Model load / inference failed (missing weights, OOM,
-            # dtype mismatch). Returning all-None makes the ranker
-            # fall back to insertion order — same as FIFO — so the
-            # labeler keeps moving.
-            return [None] * len(batch)
+            ),
+        )
 
-    return rank_rows_by_uncertainty(rows, score_fn=_score)
+    if job.label_type == LABEL_TYPE_SPAN:
+        experiment = await latest_scoreable_span_experiment(
+            db, project_id=job.project_id
+        )
+        if experiment is None:
+            return None
+        cfg = experiment.config or {}
+        model_path = cfg.get("model_path") or cfg.get("output_dir")
+        if not isinstance(model_path, str) or not model_path:
+            return None
+        span_types = (
+            (job.label_schema or {}).get("span_types") or []
+        )
+        if not isinstance(span_types, list):
+            span_types = []
+        return rank_rows_by_uncertainty(
+            rows,
+            score_fn=lambda batch: _safe_score(
+                lambda b: score_span_rows(
+                    b,
+                    model_path=model_path,
+                    span_types=[str(x) for x in span_types],
+                ),
+                batch,
+            ),
+        )
+
+    if job.label_type == LABEL_TYPE_PREFERENCE_PAIR:
+        experiment = await latest_scoreable_preference_experiment(
+            db, project_id=job.project_id
+        )
+        if experiment is None:
+            return None
+        cfg = experiment.config or {}
+        model_path = cfg.get("model_path") or cfg.get("output_dir")
+        if not isinstance(model_path, str) or not model_path:
+            return None
+        return rank_rows_by_uncertainty(
+            rows,
+            score_fn=lambda batch: _safe_score(
+                lambda b: score_preference_pair_rows(b, model_path=model_path),
+                batch,
+            ),
+        )
+
+    # Unknown / future label_type — degrade to FIFO so the toggle
+    # remains usable without an exception path.
+    return None
 
 
 async def assign_next(
@@ -542,6 +611,42 @@ async def submit_label(
         cleaned = reviewer_notes.strip()
         row.reviewer_notes = cleaned or None
     job.updated_at = now
+
+    # Phase 2: also capture this submission in label_row_reviews so
+    # we have history when ≥2 distinct reviewers ever labeled this
+    # row. The primary ``label_payload`` field above stays the
+    # authoritative single view for promotion + UI; this is a
+    # side-table for agreement math only. Re-submission by the
+    # same reviewer overwrites their existing review (the unique
+    # constraint on (row_id, reviewer_id) makes this an upsert).
+    reviewer_id = row.assigned_to
+    if reviewer_id is not None:
+        existing_q = await db.execute(
+            select(LabelRowReview).where(
+                LabelRowReview.row_id == row.id,
+                LabelRowReview.reviewer_id == reviewer_id,
+            )
+        )
+        existing = existing_q.scalar_one_or_none()
+        if existing is None:
+            db.add(
+                LabelRowReview(
+                    row_id=row.id,
+                    job_id=job_id,
+                    reviewer_id=reviewer_id,
+                    label_payload=dict(label_payload),
+                    reviewer_notes=(
+                        (reviewer_notes or "").strip() or None
+                        if reviewer_notes is not None
+                        else None
+                    ),
+                )
+            )
+        else:
+            existing.label_payload = dict(label_payload)
+            if reviewer_notes is not None:
+                existing.reviewer_notes = (reviewer_notes or "").strip() or None
+            existing.updated_at = now
     await db.flush()
 
     await _emit_annotation_audit_event(
@@ -613,6 +718,10 @@ async def job_stats(
 
     unlabeled = total - labeled - assigned
 
+    agreement = await _compute_inter_annotator_agreement(
+        db, job_id=job_id, label_type=job.label_type
+    )
+
     return {
         "job_id": job.id,
         "name": job.name,
@@ -624,6 +733,122 @@ async def job_stats(
         "assigned": assigned,
         "unlabeled": unlabeled,
         "promoted": promoted,
+        "inter_annotator_agreement": agreement,
+    }
+
+
+async def _compute_inter_annotator_agreement(
+    db: AsyncSession, *, job_id: int, label_type: str
+) -> dict[str, Any] | None:
+    """Compute Cohen's κ / span-F1 / preference-agreement over rows
+    where ≥2 distinct reviewers ever submitted a review (Epic F
+    Phase 2). Returns ``None`` when no overlapping reviews exist
+    yet — the UI hides the badge until data warrants it.
+
+    Each metric is averaged across all reviewer-pairs with at
+    least one row of overlap; the response also returns the
+    raw pair count and overlap row count so the UI can render
+    "κ=0.82 across 2 reviewers / 14 rows" without recomputing.
+    """
+    # Pull every (row_id, reviewer_id, label_payload) triple for
+    # this job. The number of distinct reviewers ÷ rows is
+    # small for typical labeling jobs, so an in-memory pivot is
+    # cheaper than a join-heavy SQL aggregate.
+    rows_q = await db.execute(
+        select(
+            LabelRowReview.row_id,
+            LabelRowReview.reviewer_id,
+            LabelRowReview.label_payload,
+        ).where(
+            LabelRowReview.job_id == job_id,
+            LabelRowReview.reviewer_id.is_not(None),
+        )
+    )
+    by_row: dict[int, dict[int, dict[str, Any]]] = {}
+    reviewer_set: set[int] = set()
+    for row_id, reviewer_id, payload in rows_q:
+        if reviewer_id is None:
+            continue
+        reviewer_set.add(int(reviewer_id))
+        by_row.setdefault(int(row_id), {})[int(reviewer_id)] = payload or {}
+
+    if len(reviewer_set) < 2:
+        return None
+
+    # Build the per-pair overlap. For each unordered (A, B) pair,
+    # collect rows both reviewed and project label_payloads to the
+    # scalar shape the agreement metric expects.
+    from app.services.annotation.active_learning import (
+        cohens_kappa,
+        preference_agreement,
+        span_f1,
+    )
+
+    reviewers_sorted = sorted(reviewer_set)
+    pair_metrics: list[float] = []
+    pair_overlap_rows = 0
+    pair_count = 0
+    for i in range(len(reviewers_sorted)):
+        for j in range(i + 1, len(reviewers_sorted)):
+            a, b = reviewers_sorted[i], reviewers_sorted[j]
+            overlap_rows = [
+                (
+                    by_row[row_id][a],
+                    by_row[row_id][b],
+                )
+                for row_id in by_row
+                if a in by_row[row_id] and b in by_row[row_id]
+            ]
+            if not overlap_rows:
+                continue
+            pair_count += 1
+            pair_overlap_rows += len(overlap_rows)
+            if label_type == LABEL_TYPE_CLASSIFICATION:
+                labels_a = [str(r[0].get("label", "")) for r in overlap_rows]
+                labels_b = [str(r[1].get("label", "")) for r in overlap_rows]
+                metric = cohens_kappa(labels_a, labels_b)
+                if metric is not None:
+                    pair_metrics.append(metric)
+            elif label_type == LABEL_TYPE_SPAN:
+                # span-F1 is per-row; average across rows in the pair.
+                row_f1s: list[float] = []
+                for pay_a, pay_b in overlap_rows:
+                    spans_a = pay_a.get("spans") or []
+                    spans_b = pay_b.get("spans") or []
+                    value = span_f1(spans_a, spans_b)
+                    if value is not None:
+                        row_f1s.append(value)
+                if row_f1s:
+                    pair_metrics.append(sum(row_f1s) / len(row_f1s))
+            elif label_type == LABEL_TYPE_PREFERENCE_PAIR:
+                picks_a = [
+                    str(r[0].get("preferred", r[0].get("choice", "")))
+                    for r in overlap_rows
+                ]
+                picks_b = [
+                    str(r[1].get("preferred", r[1].get("choice", "")))
+                    for r in overlap_rows
+                ]
+                metric = preference_agreement(picks_a, picks_b)
+                if metric is not None:
+                    pair_metrics.append(metric)
+            else:
+                continue
+
+    if not pair_metrics:
+        return None
+
+    metric_name = {
+        LABEL_TYPE_CLASSIFICATION: "cohens_kappa",
+        LABEL_TYPE_SPAN: "span_f1",
+        LABEL_TYPE_PREFERENCE_PAIR: "preference_agreement",
+    }.get(label_type, "unknown")
+    return {
+        "metric": metric_name,
+        "value": round(sum(pair_metrics) / len(pair_metrics), 4),
+        "reviewer_count": len(reviewer_set),
+        "pair_count": pair_count,
+        "overlap_rows": pair_overlap_rows,
     }
 
 

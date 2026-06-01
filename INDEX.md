@@ -359,6 +359,7 @@ session-start guidance.
 - `backend/alembic/versions/20260527_0041_gold_drift_review_queue.py` — Gold-drift review queue table (E4).
 - `backend/alembic/versions/20260528_0042_training_manifest_warm_start.py` — Training manifest warm_start JSON column (Track 1, Epic B).
 - `backend/alembic/versions/20260530_0043_sweeps_first_class.py` — First-class ``sweeps`` table + ``experiments.sweep_id`` FK + backfill.
+- `backend/alembic/versions/20260601_0044_label_row_reviews.py` — Label-row multi-reviewer capture (Epic F Phase 2).
 
 ## Frontend · API clients
 
@@ -566,6 +567,7 @@ session-start guidance.
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
 - `backend/tests/test_annotation_active_learning.py` — Epic F Phase 1 — active-learning row ranker for label-jobs.
+- `backend/tests/test_annotation_active_learning_phase2.py` — Epic F Phase 2 — span / preference-pair active strategy + Cohen's κ stats.
 - `backend/tests/test_annotation_promotion.py` — Story 1.6 — promote labeled rows → training dataset.
 - `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
 - `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint

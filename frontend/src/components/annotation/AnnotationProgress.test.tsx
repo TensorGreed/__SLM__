@@ -26,6 +26,7 @@ function statsFixture(overrides: Partial<JobStats> = {}): JobStats {
         labeled: 12,
         assigned: 1,
         unlabeled: 17,
+        promoted: 0,
         ...overrides,
     };
 }
@@ -91,6 +92,64 @@ describe('AnnotationProgress', () => {
         );
         expect(
             screen.queryByTestId('annotation-progress-assigned'),
+        ).toBeNull();
+    });
+
+    it('surfaces inter-annotator agreement badge when present (Phase 2)', () => {
+        render(
+            <AnnotationProgress
+                jobName="With agreement"
+                stats={statsFixture({
+                    inter_annotator_agreement: {
+                        metric: 'cohens_kappa',
+                        value: 0.82,
+                        reviewer_count: 3,
+                        pair_count: 3,
+                        overlap_rows: 12,
+                    },
+                })}
+            />,
+        );
+        const badge = screen.getByTestId('annotation-progress-agreement');
+        expect(badge).toHaveTextContent('κ');
+        expect(badge).toHaveTextContent('0.82');
+        // The tooltip carries the full provenance so a reviewer can
+        // trace "how many pairs / how many overlap rows" without
+        // navigating away.
+        expect(badge.getAttribute('title')).toContain('3 reviewers');
+        expect(badge.getAttribute('title')).toContain('12 overlap row');
+    });
+
+    it('renders span-F1 label for span jobs (Phase 2)', () => {
+        render(
+            <AnnotationProgress
+                jobName="Span agreement"
+                stats={statsFixture({
+                    label_type: 'span',
+                    inter_annotator_agreement: {
+                        metric: 'span_f1',
+                        value: 0.66,
+                        reviewer_count: 2,
+                        pair_count: 1,
+                        overlap_rows: 4,
+                    },
+                })}
+            />,
+        );
+        const badge = screen.getByTestId('annotation-progress-agreement');
+        expect(badge).toHaveTextContent('span-F1');
+        expect(badge).toHaveTextContent('0.66');
+    });
+
+    it('hides the agreement badge when not yet computable', () => {
+        render(
+            <AnnotationProgress
+                jobName="Solo reviewer"
+                stats={statsFixture({ inter_annotator_agreement: null })}
+            />,
+        );
+        expect(
+            screen.queryByTestId('annotation-progress-agreement'),
         ).toBeNull();
     });
 });
