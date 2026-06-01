@@ -1627,7 +1627,18 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_rag_grounded,
         "validate": _validate_rag_grounded,
         "schema_hint": _schema_rag_grounded,
-        "task_profiles": ["rag_qa", "qa", "instruction_sft", "seq2seq"],
+        # ``seq2seq`` removed (cross-pair drift cleanup): the η-fixed
+        # adapter writes ``"Answer the question using only the
+        # context…\nContext: …\nQuestion: …\nAnswer:"`` — this wrap
+        # doesn't carry Seq2SeqHandler's
+        # ``Translate/Summarize/Paraphrase`` scaffold, so a project
+        # picking ``task_profile=seq2seq`` with this adapter hit a
+        # β-shape-equivalent gap. Grounded-summarisation is exotic
+        # and not covered by any built-in recipe; users wanting
+        # text-only summarization should use ``seq2seq-pair``.
+        # ``preferred_training_tasks`` keeps ``seq2seq`` (T5/BART
+        # architecture is independent of the eval handler).
+        "task_profiles": ["rag_qa", "qa", "instruction_sft"],
         "preferred_training_tasks": ["causal_lm", "seq2seq"],
         "output_contract": {
             "required_fields": ["text", "question", "context", "answer", "source_text", "target_text"],
@@ -1655,7 +1666,19 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_structured_extraction,
         "validate": _validate_structured_extraction,
         "schema_hint": _schema_structured_extraction,
-        "task_profiles": ["structured_extraction", "seq2seq", "classification", "instruction_sft"],
+        # ``seq2seq`` + ``classification`` removed (cross-pair drift
+        # cleanup): the ζ-fixed adapter writes ``"Extract the
+        # following fields as JSON: …\nInput: …\nOutput:"`` — this
+        # wrap matches neither Seq2SeqHandler's
+        # ``Translate/Summarize/Paraphrase`` nor ClassificationHandler's
+        # ``Classify the following text``. Two β-shape-equivalent
+        # gaps closed by trimming. Users with structured outputs
+        # who want classification-style evaluation should reshape
+        # their data through ``classification-label``; users wanting
+        # to train a T5 over JSON outputs can keep using
+        # ``preferred_training_tasks=seq2seq`` (architecture is
+        # independent of eval handler).
+        "task_profiles": ["structured_extraction", "instruction_sft"],
         "preferred_training_tasks": ["seq2seq", "causal_lm", "classification"],
         "output_contract": {
             "required_fields": ["text", "source_text", "target_text"],
@@ -1669,7 +1692,20 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_vision_language_pair,
         "validate": _validate_vision_language_pair,
         "schema_hint": _schema_vision_language_pair,
-        "task_profiles": ["instruction_sft", "seq2seq"],
+        # ``seq2seq`` removed (cross-pair drift cleanup): the ι-fixed
+        # adapter writes ``"Describe the image: <image:…>\nCaption:"``
+        # or ``"Question: …\nImage: <image:…>\nAnswer:"`` — neither
+        # matches Seq2SeqHandler's text-only prefixes. ``instruction_sft``
+        # remains so non-multimodal-aware resolvers can still route
+        # through QAHandler (no wrap, no β-shape gap; the wrapped
+        # source_text just reaches the trainer's chat-template path
+        # as a long prompt with the embedded ``<image:…>`` token).
+        # NOTE: canonical pair (this adapter ↔ VisionLanguageHandler)
+        # is currently reachable only when a manifest explicitly
+        # tags ``vision_language`` / ``image_captioning`` / ``vqa``
+        # — adding those profiles here is the audit's OQ #4 follow-up
+        # (out of scope for this cross-pair trim).
+        "task_profiles": ["instruction_sft"],
         "preferred_training_tasks": ["seq2seq", "causal_lm"],
         "output_contract": {
             "required_fields": ["text", "source_text", "target_text", "image_path"],
@@ -1683,7 +1719,13 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_audio_transcript,
         "validate": _validate_audio_transcript,
         "schema_hint": _schema_audio_transcript,
-        "task_profiles": ["instruction_sft", "seq2seq"],
+        # ``seq2seq`` removed — mirror of vision-language-pair above.
+        # κ-fixed adapter's wrap doesn't carry seq2seq prefixes.
+        # Canonical pair (this ↔ AudioTranscriptHandler) reachable
+        # via manifest tag (``audio_transcript`` / ``audio_transcription``
+        # / ``speech_to_text``); native task_profiles routing
+        # tracked as OQ #4 follow-up.
+        "task_profiles": ["instruction_sft"],
         "preferred_training_tasks": ["seq2seq", "causal_lm"],
         "output_contract": {
             "required_fields": ["text", "source_text", "target_text", "audio_path"],

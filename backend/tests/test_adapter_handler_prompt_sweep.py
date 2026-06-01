@@ -287,44 +287,27 @@ class AdapterHandlerPromptSweepTests(unittest.TestCase):
         # from the adapter's declaration, or (b) fix the adapter
         # to wrap conditionally. Both are out-of-scope for this
         # sweep — listed here as acknowledged debt.
-        known_cross_pair_drift: set[tuple[str, str]] = {
-            # Each entry: adapter declares a task_profile that
-            # routes to a wrapping handler OTHER than its canonical
-            # one. Out of scope for the β-shape audit; tracked as
-            # acknowledged debt. Fix shape (for each entry) is one
-            # of: (a) remove the foreign profile from the adapter's
-            # declaration, or (b) extend the adapter to wrap
-            # conditionally based on which handler will run.
-            #
-            # ``qa-pair → Seq2SeqHandler`` was resolved by removing
-            # ``seq2seq`` from qa-pair's ``task_profiles`` declaration
-            # (the legitimate "QA data trained as seq2seq" path is
-            # already covered by ``seq2seq-pair`` adapter, whose
-            # source_aliases include ``question`` and ``answer``).
-            #
-            # rag-grounded → Seq2SeqHandler: rag-grounded writes
-            # the η-fixed ``Answer the question using only the
-            # context…\nContext: …\nQuestion: …\nAnswer:``;
-            # Seq2SeqHandler expects ``Translate/Summarize/
-            # Paraphrase``. Any rag-grounded project picking
-            # ``seq2seq`` profile hits this.
-            ("rag-grounded", "Seq2SeqHandler"),
-            # structured-extraction → ClassificationHandler: the
-            # ζ-fixed ``Extract the following fields as JSON…``
-            # wrap doesn't carry ``Classify the following text``.
-            ("structured-extraction", "ClassificationHandler"),
-            # structured-extraction → Seq2SeqHandler: same wrap;
-            # doesn't carry seq2seq prefixes.
-            ("structured-extraction", "Seq2SeqHandler"),
-            # vision-language-pair → Seq2SeqHandler: ι-fixed
-            # ``Describe the image…`` / ``Question:…Image:…Answer:``
-            # doesn't carry seq2seq prefixes.
-            ("vision-language-pair", "Seq2SeqHandler"),
-            # audio-transcript → Seq2SeqHandler: κ-fixed
-            # ``Transcribe the audio…`` / ``Question:…Audio:…Answer:``
-            # doesn't carry seq2seq prefixes.
-            ("audio-transcript", "Seq2SeqHandler"),
-        }
+        # Empty — every audit-closed adapter that previously declared a
+        # foreign wrapping profile has been trimmed. Resolved entries:
+        #   - qa-pair → Seq2SeqHandler (earlier commit): dropped
+        #     ``seq2seq`` from qa-pair.task_profiles. The "QA data
+        #     trained as seq2seq" use case is covered by
+        #     ``seq2seq-pair`` (its source_aliases accept ``question``
+        #     and ``answer``).
+        #   - rag-grounded → Seq2SeqHandler: dropped ``seq2seq``.
+        #     Grounded-summarization is exotic and not in any
+        #     built-in recipe.
+        #   - structured-extraction → ClassificationHandler AND
+        #     → Seq2SeqHandler: dropped both foreign profiles.
+        #   - vision-language-pair → Seq2SeqHandler AND
+        #     audio-transcript → Seq2SeqHandler: dropped ``seq2seq``.
+        #     Multimodal wraps with embedded ``<image:…>``/``<audio:…>``
+        #     tokens can't match seq2seq's text-only prefixes.
+        # ``preferred_training_tasks`` keeps ``seq2seq``/``classification``
+        # where applicable — that toggles the trainer architecture
+        # (independent of eval handler). A NEW cross-pair drift
+        # discovered later fails this test, forcing acknowledgment.
+        known_cross_pair_drift: set[tuple[str, str]] = set()
         observed: set[tuple[str, str]] = set()
         for adapter_id, entry in BUILTIN_ADAPTERS.items():
             canonical_cls = _CANONICAL_ADAPTER_HANDLERS.get(adapter_id)
