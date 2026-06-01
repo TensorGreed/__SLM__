@@ -506,6 +506,7 @@ session-start guidance.
 - `frontend/src/components/layout/ParentProjectBackChip.tsx` — ParentProjectBackChip — USER-SUCCESS Epic 7 Phase 7d.
 - `frontend/src/components/layout/ProjectSidebar.tsx` — Collapsible navigation hub with pipeline tabs, settings, and command-palette access.
 - `frontend/src/components/layout/TopBar.tsx` — Header with user menu, runtime settings editor, documentation link, and notification bell.
+- `frontend/src/components/layout/TrainingLossSparkline.tsx` — Inline live-loss sparkline for the NotificationBell training row.
 - `frontend/src/components/layout/WorkspaceFlowHint.tsx` — Advisory chip showing current pipeline stage progress and recommending the next action.
 - `frontend/src/components/manifest/ManifestExportButton.tsx` — ManifestExportButton — small reusable button that exports the project's
 - `frontend/src/components/manifest/ManifestSummaryCard.tsx` — ManifestSummaryCard — compact "Pipeline-as-Code" preview rendered at
@@ -581,6 +582,7 @@ session-start guidance.
 - `backend/tests/test_auto_rag_phase9b.py` — Tests for the Phase 9b inference + training-completion wiring.
 - `backend/tests/test_auto_rag_phase9d.py` — Tests for Phase 9d — auto-RAG default-on heuristic + target
 - `backend/tests/test_auto_rag_service.py` — Tests for the auto-RAG BM25 service (USER-SUCCESS Epic 9 Phase 9a).
+- `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
 - `backend/tests/test_classification_adapter_prompt_wrap.py` — β-fix tests — classification-label adapter writes the production
 - `backend/tests/test_classification_inference_path.py` — Classification-aware inference path (fix #3).
@@ -840,6 +842,7 @@ session-start guidance.
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).
 - `frontend/src/components/layout/ParentProjectBackChip.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/ProjectSidebar.test.tsx` — _(no docstring)_
+- `frontend/src/components/layout/TrainingLossSparkline.test.tsx` — _(no docstring)_
 - `frontend/src/components/manifest/ManifestExportButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/observability/EventDrilldownDrawer.test.tsx` — _(no docstring)_
 - `frontend/src/components/observability/FailureClusterList.test.tsx` — _(no docstring)_

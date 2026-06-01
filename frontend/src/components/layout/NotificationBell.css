@@ -186,6 +186,18 @@
     overflow: hidden;
 }
 
+/* Inline live-loss sparkline next to the training-job progress bar.
+   Tiny SVG (~80×16) sits right-aligned in the row's content column
+   so the user's eye lands on it AFTER the title/progress without
+   competing with them. */
+.notif-bell__loss-sparkline {
+    margin-top: 4px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 16px;
+}
+
 .notif-bell__progress-fill {
     height: 100%;
     background: var(--accent, #3b82f6);

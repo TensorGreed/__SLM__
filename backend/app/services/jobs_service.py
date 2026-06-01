@@ -404,3 +404,106 @@ def serialize_job(job: Job) -> dict[str, Any]:
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         "dismissed_at": job.dismissed_at.isoformat() if job.dismissed_at else None,
     }
+
+
+# Cap on the tail of trainer log entries the bell sparkline reads.
+# Sparkline at ~80×16px shows a coarse trend; more points just makes
+# each one narrower without adding signal. 20 points balances "enough
+# to see the shape" with "cheap to compute on every 4s poll."
+_BELL_METRICS_RECENT_CAP = 20
+
+
+def _recent_training_metrics(
+    job: Job,
+) -> list[dict[str, Any]] | None:
+    """Read the last N (step, train_loss, eval_loss) tuples from the
+    in-flight training job's experiment trainer_state.json.
+
+    Returns ``None`` for non-training jobs, jobs without a resolvable
+    experiment_id, or experiments without any checkpoint yet (very
+    first ~50 steps of a run). Returns an empty list when the
+    checkpoint exists but log_history is empty — bell renders the
+    sparkline area but with no data points.
+
+    Best-effort: any read/parse failure → ``None`` rather than
+    raising, so the bell's poll loop never breaks because of a
+    malformed JSON in a half-written trainer_state.json.
+    """
+    if job.kind != "training_start":
+        return None
+    params = job.params or {}
+    experiment_id = params.get("experiment_id")
+    if not isinstance(experiment_id, int):
+        return None
+    project_id = job.project_id
+    if project_id is None:
+        return None
+    try:
+        from app.config import settings
+        from pathlib import Path
+        import json as _json
+        exp_root = (
+            Path(settings.DATA_DIR).expanduser()
+            / "projects"
+            / str(project_id)
+            / "experiments"
+            / str(experiment_id)
+        )
+        if not exp_root.exists() or not exp_root.is_dir():
+            return None
+        best_step = -1
+        best_path: Path | None = None
+        for child in exp_root.iterdir():
+            if not child.is_dir() or not child.name.startswith("checkpoint-"):
+                continue
+            try:
+                step = int(child.name.split("-", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            if step > best_step:
+                best_step = step
+                best_path = child
+        if best_path is None:
+            return None
+        state_file = best_path / "trainer_state.json"
+        if not state_file.exists():
+            return None
+        state = _json.loads(state_file.read_text())
+        history = state.get("log_history")
+        if not isinstance(history, list):
+            return []
+        out: list[dict[str, Any]] = []
+        # Walk the tail of log_history; entries are interleaved train
+        # rows (have ``loss``) and eval rows (have ``eval_loss``).
+        # We carry both forward per step so the sparkline can show
+        # train loss as a line and eval loss as occasional markers.
+        for entry in history[-_BELL_METRICS_RECENT_CAP:]:
+            if not isinstance(entry, dict):
+                continue
+            step = entry.get("step")
+            if step is None:
+                continue
+            row: dict[str, Any] = {"step": int(step)}
+            train_loss = entry.get("loss")
+            if isinstance(train_loss, (int, float)):
+                row["train_loss"] = round(float(train_loss), 5)
+            eval_loss = entry.get("eval_loss")
+            if isinstance(eval_loss, (int, float)):
+                row["eval_loss"] = round(float(eval_loss), 5)
+            if "train_loss" in row or "eval_loss" in row:
+                out.append(row)
+        return out
+    except Exception:
+        return None
+
+
+def serialize_job_with_live_metrics(job: Job) -> dict[str, Any]:
+    """``serialize_job`` plus a ``metrics_recent`` field when the
+    job is an in-flight training run. Used by the active-jobs
+    endpoint that the bell polls; non-bell consumers stick to
+    ``serialize_job`` for stable shape."""
+    payload = serialize_job(job)
+    metrics = _recent_training_metrics(job)
+    if metrics is not None:
+        payload["metrics_recent"] = metrics
+    return payload

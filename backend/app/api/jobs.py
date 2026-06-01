@@ -15,6 +15,7 @@ from app.services.jobs_service import (
     get_job,
     list_active_jobs,
     serialize_job,
+    serialize_job_with_live_metrics,
 )
 
 
@@ -43,7 +44,9 @@ async def get_active_jobs(
     )
     return {
         "count": len(jobs),
-        "jobs": [serialize_job(j) for j in jobs],
+        # Bell consumers get the live-metrics enrichment so the
+        # sparkline can render during a training run.
+        "jobs": [serialize_job_with_live_metrics(j) for j in jobs],
     }
 
 
@@ -57,7 +60,7 @@ async def get_job_by_id(
     job = await get_job(db, job_id)
     if job is None:
         raise HTTPException(404, f"Job {job_id} not found")
-    return serialize_job(job)
+    return serialize_job_with_live_metrics(job)
 
 
 @router.post("/{job_id}/dismiss")

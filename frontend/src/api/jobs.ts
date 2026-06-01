@@ -18,6 +18,19 @@ export type JobStatus =
     | 'cancelled';
 
 
+/**
+ * One (step, train_loss, eval_loss) tuple from the training run's
+ * trainer_state.json. ``train_loss`` is present on every step the
+ * trainer logged; ``eval_loss`` only on evaluation steps. Used by
+ * the bell sparkline to show live training health during 10–15 min
+ * runs without the user needing to open the dashboard.
+ */
+export interface TrainingMetricsRecentPoint {
+    step: number;
+    train_loss?: number;
+    eval_loss?: number;
+}
+
 export interface Job {
     id: number;
     kind: string;
@@ -34,6 +47,11 @@ export interface Job {
     started_at: string | null;
     completed_at: string | null;
     dismissed_at: string | null;
+    /** Only present for in-flight training_start jobs that have at
+     *  least one checkpoint. Empty array = checkpoint exists but
+     *  log_history is empty; ``undefined`` = pre-checkpoint or
+     *  non-training job. */
+    metrics_recent?: TrainingMetricsRecentPoint[];
 }
 
 
