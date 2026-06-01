@@ -15,10 +15,18 @@
 import { create } from 'zustand';
 
 import { listActiveJobs, type Job } from '../api/jobs';
+import { computeLossTrend } from '../components/layout/TrainingLossSparkline';
 import { toast } from './toastStore';
 
 
 const POLL_INTERVAL_MS = 4000;
+
+// Number of consecutive polls in the ``up`` trend state before the
+// bell surfaces the kill-switch action. Polls happen every 4s, so 3
+// = ~12s of sustained divergence. Tight enough that we don't make the
+// user wait through half a run; loose enough that a single noisy
+// window doesn't trigger a false alarm.
+export const KILL_SWITCH_TREND_UP_THRESHOLD = 3;
 
 
 interface JobsState {
@@ -31,6 +39,11 @@ interface JobsState {
      *  up promptly). */
     bellOpen: boolean;
     lastError: string | null;
+    /** Consecutive-polls-with-trend=up counter per training job.
+     *  Reset to 0 when trend changes to flat/down. Read by the
+     *  bell's kill-switch detector; surfacing happens at
+     *  ``KILL_SWITCH_TREND_UP_THRESHOLD``. */
+    upTrendCountById: Record<number, number>;
     /** Internal: previous-tick status map so we can detect
      *  RUNNING→terminal transitions and fire a toast once. */
     _lastStatusById: Record<number, string>;
@@ -42,6 +55,36 @@ interface JobsState {
     stopPolling: () => void;
     setBellOpen: (open: boolean) => void;
     refreshAfterLocalChange: () => Promise<void>;
+}
+
+
+function _nextUpTrendCounts(
+    prev: Record<number, number>,
+    jobs: Job[],
+): Record<number, number> {
+    const next: Record<number, number> = {};
+    for (const j of jobs) {
+        if (j.kind !== 'training_start') continue;
+        if (j.status !== 'queued' && j.status !== 'running') continue;
+        // No metrics_recent yet → carry the previous count forward
+        // unchanged. A pre-checkpoint window shouldn't reset the
+        // counter; otherwise the trend would re-arm every time the
+        // first checkpoint loads after a poll.
+        if (!Array.isArray(j.metrics_recent)) {
+            if (prev[j.id]) next[j.id] = prev[j.id];
+            continue;
+        }
+        const trend = computeLossTrend(j.metrics_recent);
+        if (trend === 'up') {
+            next[j.id] = (prev[j.id] || 0) + 1;
+        } else {
+            // Reset on flat/down — a single healthy poll forgives the
+            // counter. Surfaces the kill switch only on sustained
+            // divergence, not on transient noise.
+            next[j.id] = 0;
+        }
+    }
+    return next;
 }
 
 
@@ -85,6 +128,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     isPolling: false,
     bellOpen: false,
     lastError: null,
+    upTrendCountById: {},
     _lastStatusById: {},
     _pollHandle: null,
 
@@ -101,10 +145,15 @@ export const useJobsStore = create<JobsState>((set, get) => ({
                 state._lastStatusById,
                 data.jobs,
             );
+            const upTrendCountById = _nextUpTrendCounts(
+                state.upTrendCountById,
+                data.jobs,
+            );
             set({
                 jobs: data.jobs,
                 isLoading: false,
                 _lastStatusById: transitions,
+                upTrendCountById,
             });
             // Self-stop the loop if nothing's in-flight and the
             // bell is closed — saves a poll/4s when idle.

@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { cancelJob, dismissJob, type Job } from '../../api/jobs';
 import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
+import TrainingKillSwitch from './TrainingKillSwitch';
 import TrainingLossSparkline from './TrainingLossSparkline';
 import './NotificationBell.css';
 
@@ -420,6 +421,9 @@ function JobRow({ job, onOpen, onDismiss, onCancel }: JobRowProps) {
                     >
                         <TrainingLossSparkline points={job.metrics_recent} />
                     </div>
+                )}
+                {isInFlight && job.kind === 'training_start' && (
+                    <TrainingKillSwitch job={job} />
                 )}
             </div>
             <div className="notif-bell__row-actions">

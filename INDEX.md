@@ -506,6 +506,7 @@ session-start guidance.
 - `frontend/src/components/layout/ParentProjectBackChip.tsx` — ParentProjectBackChip — USER-SUCCESS Epic 7 Phase 7d.
 - `frontend/src/components/layout/ProjectSidebar.tsx` — Collapsible navigation hub with pipeline tabs, settings, and command-palette access.
 - `frontend/src/components/layout/TopBar.tsx` — Header with user menu, runtime settings editor, documentation link, and notification bell.
+- `frontend/src/components/layout/TrainingKillSwitch.tsx` — Kill-switch action that surfaces in the NotificationBell when a
 - `frontend/src/components/layout/TrainingLossSparkline.tsx` — Inline live-loss sparkline for the NotificationBell training row.
 - `frontend/src/components/layout/WorkspaceFlowHint.tsx` — Advisory chip showing current pipeline stage progress and recommending the next action.
 - `frontend/src/components/manifest/ManifestExportButton.tsx` — ManifestExportButton — small reusable button that exports the project's
@@ -609,6 +610,7 @@ session-start guidance.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
+- `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
@@ -842,6 +844,7 @@ session-start guidance.
 - `frontend/src/components/layout/NotificationBell.test.tsx` — NotificationBell tests (Hardening Phase H1).
 - `frontend/src/components/layout/ParentProjectBackChip.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/ProjectSidebar.test.tsx` — _(no docstring)_
+- `frontend/src/components/layout/TrainingKillSwitch.test.tsx` — _(no docstring)_
 - `frontend/src/components/layout/TrainingLossSparkline.test.tsx` — _(no docstring)_
 - `frontend/src/components/manifest/ManifestExportButton.test.tsx` — _(no docstring)_
 - `frontend/src/components/observability/EventDrilldownDrawer.test.tsx` — _(no docstring)_
@@ -888,6 +891,7 @@ session-start guidance.
 - `frontend/src/pages/ProjectRecipePickerPage.test.tsx` — _(no docstring)_
 - `frontend/src/pages/ProjectWizardPage.test.tsx` — _(no docstring)_
 - `frontend/src/stores/coachModeStore.test.ts` — _(no docstring)_
+- `frontend/src/stores/jobsStore.test.ts` — Tests for the bell's up-trend counter
 - `frontend/src/utils/apiError.test.ts` — _(no docstring)_
 - `frontend/src/utils/clusterFixRouter.test.ts` — _(no docstring)_
 - `frontend/src/utils/forecastActionRouter.test.ts` — _(no docstring)_

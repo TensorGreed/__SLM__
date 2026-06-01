@@ -5303,6 +5303,88 @@ async def delete_experiment_endpoint(
     return result
 
 
+@router.post("/experiments/{experiment_id}/clone", response_model=ExperimentResponse, status_code=201)
+async def clone_experiment(
+    project_id: int,
+    experiment_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Clone an experiment into a new PENDING one with the same
+    config + a derived name. Used by the bell's kill-switch flow:
+    after cancelling a diverging run, the user can immediately
+    re-launch the same setup (which is usually what they want —
+    bad seed, transient OOM, etc. — rather than rebuilding the
+    config from scratch). The new experiment is created in
+    PENDING state; the caller decides whether to start it.
+
+    Naming: if the original is ``"foo"``, the clone becomes
+    ``"foo (retry)"`` for the first retry, ``"foo (retry 2)"``,
+    ``"foo (retry 3)"``, … so a series of failed runs stay
+    grouped + ordered in the experiments list.
+    """
+    result = await db.execute(
+        select(Experiment).where(
+            Experiment.id == experiment_id,
+            Experiment.project_id == project_id,
+        )
+    )
+    original = result.scalar_one_or_none()
+    if original is None:
+        raise HTTPException(404, f"Experiment {experiment_id} not found")
+
+    # Derive the retry name. Scan sibling experiments with the same
+    # ``name`` stem so the suffix counts forward; first retry =
+    # ``(retry)``, subsequent retries are ``(retry N)``.
+    base_name = original.name
+    # Strip an existing ``(retry)`` / ``(retry N)`` suffix from the
+    # source so chained retries don't accumulate ``(retry) (retry)``.
+    import re as _re
+    stem_match = _re.match(r"^(.*?)\s*\(retry(?:\s+\d+)?\)\s*$", base_name)
+    if stem_match:
+        base_name = stem_match.group(1).strip()
+    sibs_q = await db.execute(
+        select(Experiment.name).where(
+            Experiment.project_id == project_id,
+            Experiment.name.like(f"{base_name}%"),
+        )
+    )
+    existing_names = {row[0] for row in sibs_q}
+    candidate = f"{base_name} (retry)"
+    suffix_n = 2
+    while candidate in existing_names:
+        candidate = f"{base_name} (retry {suffix_n})"
+        suffix_n += 1
+
+    cloned_config = dict(original.config or {})
+    # Drop runtime-stamped fields the trainer adds on launch — they
+    # would otherwise pin the clone to artifacts from the original
+    # run (warm-start record, runtime environment, etc.). The clone
+    # re-resolves these at launch via the regular start_training
+    # path.
+    for runtime_only_key in (
+        "_runtime",
+        "_warm_start",
+        "_curriculum_auto_defaulted",
+        "_auto_rag_auto_defaulted",
+    ):
+        cloned_config.pop(runtime_only_key, None)
+
+    try:
+        cloned = await create_experiment(
+            db,
+            project_id,
+            candidate,
+            str(original.base_model),
+            cloned_config,
+            original.description or "",
+            original.training_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await db.commit()
+    return ExperimentResponse.model_validate(cloned)
+
+
 @router.post("/experiments/bulk-archive-failed")
 async def bulk_archive_failed_endpoint(
     project_id: int,

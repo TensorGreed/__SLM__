@@ -34,10 +34,22 @@ export interface TrainingLossSparklineProps {
 // change is the dead-zone where we render flat / amber — small
 // enough to ignore tokenizer noise, big enough that genuine
 // flat-lining shows up before the run finishes.
-const _TREND_FLAT_REL_THRESHOLD = 0.05;
+export const TREND_FLAT_REL_THRESHOLD = 0.05;
 
 
-function _trendDirection(losses: number[]): 'down' | 'flat' | 'up' {
+export type LossTrend = 'down' | 'flat' | 'up';
+
+
+/**
+ * Pure trend classifier shared by ``TrainingLossSparkline`` (for the
+ * tint) and the bell's kill-switch detector (for "diverging for N
+ * consecutive polls" logic). Extracted so a future change to the
+ * head/tail window or threshold can't drift the two consumers apart.
+ */
+export function computeLossTrend(points: TrainingMetricsRecentPoint[]): LossTrend {
+    const losses = points
+        .map((p) => p.train_loss)
+        .filter((v): v is number => typeof v === 'number');
     if (losses.length < 4) return 'flat';
     const headEnd = Math.max(1, Math.floor(losses.length * 0.25));
     const tailStart = Math.min(
@@ -50,9 +62,17 @@ function _trendDirection(losses: number[]): 'down' | 'flat' | 'up' {
     const tailMean = tail.reduce((s, v) => s + v, 0) / tail.length;
     if (headMean === 0) return 'flat';
     const relChange = (tailMean - headMean) / Math.abs(headMean);
-    if (relChange < -_TREND_FLAT_REL_THRESHOLD) return 'down';
-    if (relChange > _TREND_FLAT_REL_THRESHOLD) return 'up';
+    if (relChange < -TREND_FLAT_REL_THRESHOLD) return 'down';
+    if (relChange > TREND_FLAT_REL_THRESHOLD) return 'up';
     return 'flat';
+}
+
+
+function _trendDirection(losses: number[]): LossTrend {
+    // Adapter that lets the existing render path keep its
+    // ``losses: number[]`` shape while delegating to the exported
+    // pure helper above (which takes the public Job shape).
+    return computeLossTrend(losses.map((v) => ({ step: 0, train_loss: v })));
 }
 
 
