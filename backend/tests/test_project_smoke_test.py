@@ -362,6 +362,174 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
         check = self._checks_by_name(resp.json())["adapter_handler_format"]
         self.assertEqual(check["status"], "ok", check)
 
+    # ── classifier-head vs handler check (δ′) ──────────────────────
+
+    def _seed_completed_experiment(
+        self,
+        project_id: int,
+        *,
+        output_dir: str,
+        task_type: str = "classification",
+    ) -> int:
+        """Insert a completed Experiment row pointing at ``output_dir``
+        so the head/handler check can resolve a checkpoint to
+        inspect. Bypasses the training flow which would require
+        a real GPU + dataset."""
+        async def _go() -> int:
+            from app.models.experiment import Experiment
+            async with async_session_factory() as session:
+                exp = Experiment(
+                    project_id=project_id,
+                    name="δ′-fixture",
+                    description="head/handler smoke check fixture",
+                    status="completed",
+                    base_model="HuggingFaceTB/SmolLM2-135M-Instruct",
+                    config={"task_type": task_type},
+                    output_dir=output_dir,
+                )
+                session.add(exp)
+                await session.commit()
+                return int(exp.id)
+        return asyncio.run(_go())
+
+    def _write_seq_cls_adapter(
+        self, output_dir: Path, *, label_space: list[str] | None = None,
+    ) -> Path:
+        """Build a fake checkpoint that the δ detector will accept:
+        ``checkpoint-N/adapter_config.json`` flagging SEQ_CLS, plus
+        ``training_report.json`` with the label space. Returns the
+        checkpoint dir path."""
+        import json
+        ckpt = output_dir / "checkpoint-100"
+        ckpt.mkdir(parents=True, exist_ok=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": (
+                        "HuggingFaceTB/SmolLM2-135M-Instruct"
+                    ),
+                    "task_type": "SEQ_CLS",
+                    "modules_to_save": ["classifier", "score"],
+                    "peft_type": "LORA",
+                }
+            )
+        )
+        (output_dir / "training_report.json").write_text(
+            json.dumps(
+                {
+                    "runtime_environment": {
+                        "label_space_preview": label_space or [
+                            "benign", "injection",
+                        ],
+                    }
+                }
+            )
+        )
+        return ckpt
+
+    def test_classifier_head_check_warns_on_generation_mode_recipe(self):
+        """A SEQ_CLS-headed adapter under a generation-mode recipe
+        is the very mismatch δ unblocked. The smoke check must warn
+        with a remediation pointing at either changing the recipe
+        or retraining as causal-LM."""
+        pid = self._create_project()
+        # qa-sft routes to a generation handler (instruction/qa
+        # prompt format), not the classification handler — picking
+        # this recipe with a SEQ_CLS adapter is the bad shape.
+        self._apply_recipe(pid, "qa-sft")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_seqcls"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_seq_cls_adapter(exp_dir)
+        self._seed_completed_experiment(pid, output_dir=str(exp_dir))
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "warn", check)
+        self.assertIn("SEQ_CLS", check["message"])
+        self.assertIn("generation", check["message"])
+        self.assertIn("qa-sft", check["message"])
+        # Remediation lays out both options the user can take.
+        self.assertIn("classification", check["remediation"])
+        self.assertIn("retrain", check["remediation"].lower())
+        # Metadata exposes the head kind + label count for the UI.
+        self.assertEqual(
+            check["metadata"]["head_kind"], "sequence_classification"
+        )
+        self.assertEqual(check["metadata"]["num_labels"], 2)
+        # The overall rollup picks up the warn (no fails should fire
+        # on this recipe-applied + classifier-head fixture).
+        self.assertIn(resp.json()["overall"], {"warn", "fail"})
+
+    def test_classifier_head_check_passes_with_classification_recipe(self):
+        """SEQ_CLS adapter + classification recipe is the δ-aligned
+        shape — eval dispatches through the head's logits, no
+        mismatch. The check must land ``ok`` with a message that
+        names the experiment + recipe so a reviewer can audit the
+        path."""
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_seqcls_classif"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_seq_cls_adapter(exp_dir)
+        self._seed_completed_experiment(pid, output_dir=str(exp_dir))
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "ok", check)
+        self.assertIn("classification", check["message"])
+        self.assertIn("δ", check["message"])  # the literal δ
+        self.assertEqual(check["metadata"]["task_profile"], "classification")
+
+    def test_classifier_head_check_skips_without_experiment(self):
+        """No completed experiment yet → nothing to inspect →
+        skip. Smoke endpoint must not block a fresh project that
+        hasn't reached training yet."""
+        pid = self._create_project()
+        self._apply_recipe(pid, "classification")
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "skip", check)
+        self.assertIn(
+            "No completed experiment", check["message"]
+        )
+
+    def test_classifier_head_check_passes_for_non_seq_cls_checkpoint(self):
+        """A causal-LM (or otherwise non-SEQ_CLS) checkpoint is the
+        right shape for a generation-mode recipe — the check must
+        land ``ok`` rather than warn, since generation is the
+        correct eval path."""
+        import json
+        pid = self._create_project()
+        self._apply_recipe(pid, "qa-sft")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_causal"
+        ckpt = exp_dir / "checkpoint-50"
+        ckpt.mkdir(parents=True, exist_ok=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": (
+                        "HuggingFaceTB/SmolLM2-135M-Instruct"
+                    ),
+                    "task_type": "CAUSAL_LM",
+                    "modules_to_save": [],
+                }
+            )
+        )
+        self._seed_completed_experiment(pid, output_dir=str(exp_dir))
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "ok", check)
+        self.assertIn("not classifier-head", check["message"])
+
     def test_parallel_execution_is_faster_than_sum_of_checks(self):
         """Sanity check that the orchestrator runs checks in parallel.
         Total elapsed should be near the slowest single check, NOT

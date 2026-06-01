@@ -28,6 +28,7 @@ import asyncio
 import secrets
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -771,6 +772,255 @@ async def _check_adapter_handler_format(
         )
 
 
+def _latest_checkpoint_dir(experiment_output_dir: str) -> str | None:
+    """Return the highest-step ``checkpoint-N`` subdir under an
+    experiment output dir, or ``None`` when no checkpoint exists.
+    Used by ``_check_classifier_head_vs_handler`` to find the
+    adapter the δ detector reads."""
+    root = Path(experiment_output_dir).expanduser()
+    if not root.exists() or not root.is_dir():
+        return None
+    best_step = -1
+    best_path: Path | None = None
+    for child in root.iterdir():
+        if not child.is_dir() or not child.name.startswith("checkpoint-"):
+            continue
+        try:
+            step = int(child.name.split("-", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        if step > best_step:
+            best_step = step
+            best_path = child
+    if best_path is None:
+        # Some runtimes save the adapter at the experiment root
+        # rather than in a numbered checkpoint dir. Accept that
+        # too — the detector reads ``adapter_config.json`` from
+        # whichever directory we point it at.
+        if (root / "adapter_config.json").exists():
+            return str(root.resolve())
+        return None
+    return str(best_path.resolve())
+
+
+# Recipes whose handler reads label tokens out of a generated text
+# completion (i.e. the eval path uses ``model.generate()``). When
+# a project picks one of these profiles but the saved adapter is
+# classifier-head-shaped, the trained head's logits go unused at
+# eval time and the LM head — never trained to emit label tokens
+# — produces garbage. δ handles this for the *classification*
+# profile by dispatching through the head; this smoke check
+# warns when the *recipe* says generation but the adapter is
+# head-shaped, which δ can't auto-rescue.
+_GENERATION_MODE_TASK_PROFILES: frozenset[str] = frozenset(
+    {
+        "instruction_sft",
+        "qa",
+        "chat_sft",
+        "seq2seq",
+        "summarization",
+        "rag",
+        "structured",
+        "vision",
+        "audio",
+    }
+)
+
+
+async def _check_classifier_head_vs_handler(
+    db: AsyncSession, project_id: int,
+) -> SmokeCheckResult:
+    """Warn when an experiment's saved adapter ships a
+    classification head (PEFT ``task_type: SEQ_CLS``) while the
+    project's selected recipe routes to a generation-mode handler
+    that calls ``model.generate()`` at eval time.
+
+    This catches the very mismatch δ surfaced on the SQLi-detector
+    project before a user hits it. δ already routes classification-
+    profile projects through the head's logits; this check fires
+    only for the *misaligned* shape — where the recipe is
+    generation-mode but the adapter has a head. In that
+    configuration the model's trained head goes unused and the
+    untrained LM head produces unparseable output, the same
+    failure mode β's commit message documented.
+
+    Status:
+      * ``ok`` — adapter is classifier-head AND recipe is
+        classification (δ-aligned), OR the experiment is not
+        classifier-head shaped (generation path is the right
+        one).
+      * ``warn`` — adapter is classifier-head, recipe routes to
+        a generation handler. Held-out eval will produce
+        garbage; either re-train under the right ``task_type``
+        or change the recipe to ``classification``.
+      * ``skip`` — no experiments yet / no recipe / experiment
+        has no resolvable checkpoint dir. The check is
+        informational and not load-bearing until an experiment
+        completes.
+      * ``fail`` — the check itself errored.
+    """
+    started = time.monotonic()
+    try:
+        project = await db.get(Project, project_id)
+        elapsed_pre = int((time.monotonic() - started) * 1000)
+        if project is None:
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="skip",
+                elapsed_ms=elapsed_pre,
+                message="Project doesn't exist — head/handler check skipped.",
+            )
+        result = await db.execute(
+            select(Experiment)
+            .where(
+                Experiment.project_id == project_id,
+                Experiment.status == "completed",
+            )
+            .order_by(Experiment.id.desc())
+            .limit(1)
+        )
+        experiment = result.scalar_one_or_none()
+        if experiment is None or not experiment.output_dir:
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="skip",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                message=(
+                    "No completed experiment yet — head/handler check "
+                    "fires after the first successful training run."
+                ),
+            )
+        checkpoint = _latest_checkpoint_dir(experiment.output_dir)
+        if checkpoint is None:
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="skip",
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                message=(
+                    f"Experiment #{experiment.id} has no resolvable "
+                    f"checkpoint dir under {experiment.output_dir}."
+                ),
+            )
+
+        # Reuse δ's detector so this check + the eval dispatch
+        # agree exactly on "is this a classifier-head adapter."
+        # If the detector evolves, the smoke check tracks with it.
+        from app.services.evaluation_service import (
+            _resolve_classifier_head_artifacts,
+        )
+        artifacts = _resolve_classifier_head_artifacts(checkpoint)
+        elapsed = int((time.monotonic() - started) * 1000)
+        if artifacts is None:
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="ok",
+                elapsed_ms=elapsed,
+                message=(
+                    f"Experiment #{experiment.id} is not classifier-head "
+                    f"shaped — generation path is the right one."
+                ),
+                metadata={"experiment_id": experiment.id},
+            )
+
+        selected = project.selected_recipe or {}
+        recipe_id = (
+            selected.get("recipe_id") if isinstance(selected, dict) else None
+        )
+        recipe_task_profile: str | None = None
+        if recipe_id:
+            from app.services.recipe_service import get_recipe
+            recipe = get_recipe(recipe_id)
+            if recipe is not None:
+                recipe_task_profile = str(
+                    getattr(recipe, "task_profile", "") or ""
+                ).strip().lower() or None
+
+        if recipe_task_profile == "classification":
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="ok",
+                elapsed_ms=elapsed,
+                message=(
+                    f"Experiment #{experiment.id} ships a classifier "
+                    f"head AND recipe '{recipe_id}' routes through the "
+                    f"classification handler — δ dispatches through "
+                    f"the head's logits at eval time."
+                ),
+                metadata={
+                    "experiment_id": experiment.id,
+                    "recipe_id": recipe_id,
+                    "task_profile": recipe_task_profile,
+                    "num_labels": artifacts["num_labels"],
+                },
+            )
+        if (
+            recipe_task_profile is not None
+            and recipe_task_profile in _GENERATION_MODE_TASK_PROFILES
+        ):
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="warn",
+                elapsed_ms=elapsed,
+                message=(
+                    f"Experiment #{experiment.id} ships a "
+                    f"classification head (PEFT task_type=SEQ_CLS, "
+                    f"{artifacts['num_labels']} labels) BUT recipe "
+                    f"'{recipe_id}' routes through a generation-mode "
+                    f"handler ('{recipe_task_profile}'). The trained "
+                    f"head's logits go unused at eval time and the "
+                    f"untrained LM head will produce unparseable "
+                    f"output — the same failure mode that bit the "
+                    f"SQLi-detector project before δ landed."
+                ),
+                remediation=(
+                    "Pick one: (a) switch the project's recipe to "
+                    "'classification' so δ routes eval through the "
+                    "head's logits; or (b) retrain with "
+                    "``training_config.task_type`` left default "
+                    "(causal-LM) so the LM head learns to emit "
+                    "label tokens against the wrapped prompt. The "
+                    "trainer's val_F1 will look fine either way; "
+                    "this mismatch only bites at held-out eval."
+                ),
+                metadata={
+                    "experiment_id": experiment.id,
+                    "recipe_id": recipe_id,
+                    "task_profile": recipe_task_profile,
+                    "num_labels": artifacts["num_labels"],
+                    "head_kind": "sequence_classification",
+                },
+            )
+        # Recipe exists but task_profile isn't classification *or*
+        # a known generation profile (e.g. preference / alignment).
+        # Don't fire — δ + the smoke check can't make a confident
+        # call without knowing which handler will run at eval.
+        return SmokeCheckResult(
+            name="classifier_head_vs_handler",
+            status="skip",
+            elapsed_ms=elapsed,
+            message=(
+                f"Experiment #{experiment.id} has a classification "
+                f"head but the project's task profile "
+                f"('{recipe_task_profile or 'unset'}') isn't a known "
+                f"generation handler — can't tell whether the head "
+                f"will be used at eval."
+            ),
+            metadata={
+                "experiment_id": experiment.id,
+                "recipe_id": recipe_id,
+                "task_profile": recipe_task_profile,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        return SmokeCheckResult(
+            name="classifier_head_vs_handler",
+            status="fail",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            message="Couldn't check classifier-head / handler alignment.",
+            envelope=_envelope_from_exception(stage="training", exc=exc),
+        )
+
+
 async def _check_experiments_accessible(
     db: AsyncSession, project_id: int,
 ) -> SmokeCheckResult:
@@ -816,6 +1066,7 @@ _CHECKS: tuple = (
     _check_synth_backend,
     _check_prepared_splits,
     _check_adapter_handler_format,
+    _check_classifier_head_vs_handler,
     _check_experiments_accessible,
 )
 
