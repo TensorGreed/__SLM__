@@ -40,6 +40,7 @@ from unittest.mock import patch
 
 from app.services.evaluation_service import (
     _resolve_classifier_head_artifacts,
+    _resolve_multimodal_artifacts,
     _resolve_seq2seq_artifacts,
     _run_local_inference,
 )
@@ -432,6 +433,237 @@ class RunLocalInferenceSeq2SeqDispatchTests(unittest.TestCase):
                 temperature=0.0,
             )
         self.assertEqual(runtime["head"], "sequence_classification")
+
+
+class ResolveMultimodalArtifactsTests(unittest.TestCase):
+    """Multimodal detector — extends δ/ε to vision/audio. Same
+    shape as δ's tests: positive signal + every negative path."""
+
+    def _make_checkpoint(
+        self,
+        *,
+        loader_name: str | None = "AutoModelForVision2Seq",
+        adapter_task_type: str = "SEQ_2_SEQ_LM",
+        report_in_checkpoint: bool = False,
+    ) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="multimodal-test-"))
+        exp = root / "exp"
+        ckpt = exp / "checkpoint-100"
+        ckpt.mkdir(parents=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "fixture/vlm-base",
+                    "task_type": adapter_task_type,
+                    "peft_type": "LORA",
+                }
+            )
+        )
+        if loader_name is not None:
+            report = {
+                "runtime_environment": {
+                    "multimodal_model_loader": loader_name,
+                }
+            }
+            target = exp if not report_in_checkpoint else ckpt
+            (target / "training_report.json").write_text(json.dumps(report))
+        return ckpt
+
+    def test_detects_vision_loader(self):
+        ckpt = self._make_checkpoint(loader_name="AutoModelForVision2Seq")
+        out = _resolve_multimodal_artifacts(str(ckpt))
+        self.assertIsNotNone(out)
+        self.assertEqual(out["modality"], "vision")
+        self.assertEqual(out["model_loader_class"], "AutoModelForVision2Seq")
+        self.assertEqual(out["base_model"], "fixture/vlm-base")
+
+    def test_detects_audio_loader(self):
+        ckpt = self._make_checkpoint(loader_name="AutoModelForSpeechSeq2Seq")
+        out = _resolve_multimodal_artifacts(str(ckpt))
+        self.assertIsNotNone(out)
+        self.assertEqual(out["modality"], "audio")
+        self.assertEqual(out["model_loader_class"], "AutoModelForSpeechSeq2Seq")
+
+    def test_returns_none_when_loader_field_missing(self):
+        # Plain seq2seq checkpoint — no multimodal_model_loader in
+        # the runtime_environment. ε should claim this, not the
+        # multimodal detector.
+        ckpt = self._make_checkpoint(loader_name=None)
+        self.assertIsNone(_resolve_multimodal_artifacts(str(ckpt)))
+
+    def test_returns_none_for_non_multimodal_loader_names(self):
+        # Unknown loader name (e.g., trainer added a new
+        # specialized class we haven't taught the detector
+        # about). Defensive: don't claim it; fall through to ε.
+        ckpt = self._make_checkpoint(loader_name="AutoModelForSomeNewThing")
+        self.assertIsNone(_resolve_multimodal_artifacts(str(ckpt)))
+
+    def test_returns_none_for_missing_adapter_config(self):
+        root = Path(tempfile.mkdtemp(prefix="multimodal-no-adapter-"))
+        # Has training_report but no adapter_config — detector
+        # can't determine base model, falls through.
+        report = {
+            "runtime_environment": {
+                "multimodal_model_loader": "AutoModelForVision2Seq",
+            }
+        }
+        (root / "training_report.json").write_text(json.dumps(report))
+        self.assertIsNone(_resolve_multimodal_artifacts(str(root)))
+
+    def test_finds_report_when_colocated_with_checkpoint(self):
+        # Some runtimes copy the report into the checkpoint dir
+        # alongside adapter_config.json. Detector accepts both.
+        ckpt = self._make_checkpoint(
+            loader_name="AutoModelForVision2Seq",
+            report_in_checkpoint=True,
+        )
+        self.assertIsNotNone(_resolve_multimodal_artifacts(str(ckpt)))
+
+
+class RunLocalInferenceMultimodalDispatchTests(unittest.TestCase):
+    def _multimodal_checkpoint(self, *, loader_name: str) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="multimodal-dispatch-"))
+        exp = root / "exp"
+        ckpt = exp / "checkpoint-1"
+        ckpt.mkdir(parents=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "fixture/vlm",
+                    "task_type": "SEQ_2_SEQ_LM",
+                }
+            )
+        )
+        (exp / "training_report.json").write_text(
+            json.dumps(
+                {
+                    "runtime_environment": {
+                        "multimodal_model_loader": loader_name,
+                    }
+                }
+            )
+        )
+        return ckpt
+
+    def test_vision_checkpoint_dispatches_to_multimodal_path(self):
+        # Vision adapter must win over ε's seq2seq dispatch even
+        # though adapter_config also says SEQ_2_SEQ_LM. Dispatch
+        # order is the load-bearing contract.
+        ckpt = self._multimodal_checkpoint(
+            loader_name="AutoModelForVision2Seq"
+        )
+
+        def _fake_mm(artifacts, pairs, max_new_tokens, temperature):
+            return (
+                [{"prediction": "vision-routed"}],
+                {"engine": "transformers", "head": "vision2seq"},
+            )
+
+        with (
+            patch(
+                "app.services.evaluation_service._run_multimodal_inference",
+                new=_fake_mm,
+            ),
+            patch(
+                "app.services.evaluation_service._run_seq2seq_inference",
+                side_effect=AssertionError(
+                    "ε must not fire when multimodal detector wins"
+                ),
+            ),
+            patch(
+                "app.services.evaluation_service._run_classifier_head_inference",
+                side_effect=AssertionError(
+                    "δ must not fire for multimodal checkpoint"
+                ),
+            ),
+            patch(
+                "app.services.evaluation_service._run_transformers_inference",
+                side_effect=AssertionError(
+                    "generation path must not fire for multimodal"
+                ),
+            ),
+        ):
+            preds, runtime = _run_local_inference(
+                str(ckpt),
+                [{"prompt": "p", "reference": "r"}],
+                max_new_tokens=8,
+                temperature=0.0,
+            )
+        self.assertEqual(preds[0]["prediction"], "vision-routed")
+        self.assertEqual(runtime.get("head"), "vision2seq")
+
+    def test_audio_checkpoint_dispatches_to_multimodal_path(self):
+        ckpt = self._multimodal_checkpoint(
+            loader_name="AutoModelForSpeechSeq2Seq"
+        )
+
+        captured: dict = {}
+
+        def _fake_mm(artifacts, pairs, max_new_tokens, temperature):
+            captured["modality"] = artifacts.get("modality")
+            return (
+                [{"prediction": "audio-routed"}],
+                {"engine": "transformers", "head": "speech_seq2seq"},
+            )
+
+        with patch(
+            "app.services.evaluation_service._run_multimodal_inference",
+            new=_fake_mm,
+        ):
+            _run_local_inference(
+                str(ckpt),
+                [{"prompt": "p", "reference": "r"}],
+                max_new_tokens=8,
+                temperature=0.0,
+            )
+        # Detector correctly tagged the artifacts as audio so the
+        # inference function knows which loader to import.
+        self.assertEqual(captured["modality"], "audio")
+
+    def test_plain_seq2seq_checkpoint_still_routes_to_epsilon(self):
+        # Regression guard: a seq2seq adapter WITHOUT
+        # multimodal_model_loader in its training_report keeps
+        # going through ε. Multimodal dispatch shouldn't
+        # accidentally claim non-multimodal seq2seq runs.
+        root = Path(tempfile.mkdtemp(prefix="multimodal-plain-s2s-"))
+        exp = root / "exp"
+        ckpt = exp / "checkpoint-1"
+        ckpt.mkdir(parents=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "fixture/t5",
+                    "task_type": "SEQ_2_SEQ_LM",
+                }
+            )
+        )
+        # No training_report.json → no multimodal signal.
+
+        def _fake_s2s(artifacts, pairs, max_new_tokens, temperature):
+            return (
+                [{"prediction": "from-epsilon"}],
+                {"head": "seq2seq_lm"},
+            )
+
+        with (
+            patch(
+                "app.services.evaluation_service._run_seq2seq_inference",
+                new=_fake_s2s,
+            ),
+            patch(
+                "app.services.evaluation_service._run_multimodal_inference",
+                side_effect=AssertionError(
+                    "multimodal must not fire on plain seq2seq"
+                ),
+            ),
+        ):
+            preds, runtime = _run_local_inference(
+                str(ckpt),
+                [{"prompt": "p", "reference": "r"}],
+                max_new_tokens=8,
+                temperature=0.0,
+            )
+        self.assertEqual(preds[0]["prediction"], "from-epsilon")
 
 
 if __name__ == "__main__":

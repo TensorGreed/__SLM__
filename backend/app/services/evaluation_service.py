@@ -974,6 +974,307 @@ def _run_llama_cpp_inference(
     return predictions, runtime
 
 
+# Loader class names the trainer records in
+# ``training_report.json[runtime_environment][multimodal_model_loader]``
+# when it loaded a specialized vision/audio model class. δ-style
+# detection: the adapter's PEFT ``task_type`` is generic
+# ``SEQ_2_SEQ_LM``, but the trainer's choice of loader is the
+# disambiguating signal for vision vs audio vs plain text seq2seq.
+_VISION_LOADER_NAMES: frozenset[str] = frozenset({"AutoModelForVision2Seq"})
+_AUDIO_LOADER_NAMES: frozenset[str] = frozenset({"AutoModelForSpeechSeq2Seq"})
+
+
+def _resolve_multimodal_artifacts(
+    model_ref: str,
+) -> dict[str, Any] | None:
+    """Multimodal-eval-routing detector (extends δ/ε to vision/audio).
+
+    Both vision-language and audio-text adapters carry
+    ``task_type: SEQ_2_SEQ_LM`` in ``adapter_config.json`` — the
+    same shape ε keys on. The disambiguating signal lives in the
+    experiment's ``training_report.json`` under
+    ``runtime_environment.multimodal_model_loader``, written by
+    ``scripts/train.py`` at line 1619/1624 when the trainer
+    selected ``AutoModelForVision2Seq`` or
+    ``AutoModelForSpeechSeq2Seq`` over the default seq2seq loader.
+
+    Pre-this-fix the held-out eval path loaded
+    ``AutoModelForCausalLM`` for every checkpoint that didn't match
+    δ/ε, including multimodal ones — wrong class, generation either
+    errored or produced garbage (same shape as the head-vs-LM
+    mismatch δ closed for classification, applied to multimodal).
+
+    Returns ``{base_model, adapter_path, model_loader_class,
+    modality}`` when the checkpoint is multimodal-shaped; ``None``
+    otherwise so non-multimodal seq2seq runs stay on ε's path.
+    """
+    path = Path(model_ref).expanduser()
+    if not path.exists() or not path.is_dir():
+        return None
+    adapter_cfg_path = path / "adapter_config.json"
+    if not adapter_cfg_path.exists():
+        return None
+    try:
+        adapter_cfg = json.loads(adapter_cfg_path.read_text())
+    except Exception:
+        return None
+    base_model = adapter_cfg.get("base_model_name_or_path")
+    if not isinstance(base_model, str) or not base_model:
+        return None
+
+    candidate_reports = [
+        path / "training_report.json",
+        path.parent / "training_report.json",
+    ]
+    loader_name: str | None = None
+    for report_path in candidate_reports:
+        if not report_path.exists():
+            continue
+        try:
+            report = json.loads(report_path.read_text())
+        except Exception:
+            continue
+        runtime_env = report.get("runtime_environment") or {}
+        candidate = runtime_env.get("multimodal_model_loader")
+        if isinstance(candidate, str) and (
+            candidate in _VISION_LOADER_NAMES
+            or candidate in _AUDIO_LOADER_NAMES
+        ):
+            loader_name = candidate
+            break
+    if loader_name is None:
+        return None
+    modality = (
+        "vision" if loader_name in _VISION_LOADER_NAMES else "audio"
+    )
+    return {
+        "base_model": base_model,
+        "adapter_path": str(path),
+        "model_loader_class": loader_name,
+        "modality": modality,
+    }
+
+
+def _extract_media_path_from_pair(
+    pair: dict[str, Any], modality: str,
+) -> str | None:
+    """Pull the per-row media file path the trainer expects. Pairs
+    carry ``image_path`` / ``audio_path`` populated upstream from
+    the prepared row; the multimodal inference loop reads whichever
+    matches the experiment's modality."""
+    key = "image_path" if modality == "vision" else "audio_path"
+    value = pair.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _run_multimodal_inference(
+    artifacts: dict[str, Any],
+    pairs: list[dict],
+    max_new_tokens: int,
+    temperature: float,
+) -> tuple[list[dict], dict]:
+    """Held-out eval path for vision/audio experiments.
+
+    Loads ``AutoModelForVision2Seq`` or ``AutoModelForSpeechSeq2Seq``
+    via the detector's ``model_loader_class`` field + an
+    ``AutoProcessor`` for media ingestion. Per row, the inference
+    loads the media file from ``pair['image_path']`` /
+    ``pair['audio_path']``, runs the processor over the
+    (prompt, media) pair, and calls ``generate()`` on the resulting
+    inputs.
+
+    Best-effort media-ingestion: if the media file is missing or
+    the processor can't load it, we fall back to text-only
+    ``model.generate()`` so the run produces a row (even if the
+    model can't actually see the image/audio) rather than crashing
+    the entire eval. The row's prediction may be garbage in that
+    fallback case — but the failure mode is row-level rather than
+    job-level, and downstream metrics can flag the unparseable
+    output via the existing channels.
+    """
+    import torch
+
+    loader_class_name = artifacts["model_loader_class"]
+    if loader_class_name in _VISION_LOADER_NAMES:
+        from transformers import AutoModelForVision2Seq as loader_cls
+    elif loader_class_name in _AUDIO_LOADER_NAMES:
+        from transformers import AutoModelForSpeechSeq2Seq as loader_cls
+    else:
+        # Detector returned an unknown loader name — defensive
+        # fallback to seq2seq dispatch (caller can re-detect).
+        raise ValueError(
+            f"Unknown multimodal_model_loader: {loader_class_name!r}"
+        )
+    from peft import PeftModel
+    from transformers import AutoProcessor, AutoTokenizer
+
+    base_model = artifacts["base_model"]
+    adapter_path = artifacts["adapter_path"]
+    modality = artifacts["modality"]
+
+    load_started = perf_counter()
+    try:
+        processor = AutoProcessor.from_pretrained(
+            base_model, trust_remote_code=True,
+        )
+    except Exception:
+        processor = None
+    # Fallback tokenizer when the processor doesn't expose one, or
+    # when the eval needs text-only generate on a row whose media
+    # file failed to load.
+    tokenizer_src = (
+        adapter_path
+        if (Path(adapter_path) / "tokenizer.json").exists()
+        else base_model
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_src, trust_remote_code=True
+    )
+    if tokenizer.pad_token_id is None and tokenizer.eos_token is not None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    use_cuda = torch.cuda.is_available()
+    model_kwargs: dict[str, Any] = {"trust_remote_code": True}
+    if use_cuda and torch.cuda.is_bf16_supported():
+        model_kwargs["dtype"] = torch.bfloat16
+    elif use_cuda:
+        model_kwargs["dtype"] = torch.float16
+
+    base = loader_cls.from_pretrained(base_model, **model_kwargs)
+    try:
+        model = PeftModel.from_pretrained(base, adapter_path)
+    except Exception:
+        model = base
+    if use_cuda:
+        model = model.to("cuda")
+    model.eval()
+    load_seconds = perf_counter() - load_started
+
+    predictions: list[dict] = []
+    latencies_s: list[float] = []
+    generated_tokens_total = 0
+    media_loaded_count = 0
+    media_missing_count = 0
+    generation_started = perf_counter()
+    with torch.inference_mode():
+        for row in pairs:
+            prompt = row["prompt"]
+            reference = row["reference"]
+            media_path = _extract_media_path_from_pair(row, modality)
+            inputs = None
+            # Try the full multimodal path first.
+            if processor is not None and media_path:
+                try:
+                    if modality == "vision":
+                        from PIL import Image
+                        image = Image.open(media_path).convert("RGB")
+                        inputs = processor(
+                            images=image, text=prompt, return_tensors="pt",
+                        )
+                    else:
+                        # Audio: processor wants a raw waveform +
+                        # sampling rate. Use librosa/soundfile via
+                        # the processor's own audio-loading helper
+                        # when available; else skip to text-only.
+                        import soundfile as sf
+                        audio_array, sampling_rate = sf.read(media_path)
+                        inputs = processor(
+                            audio_array,
+                            sampling_rate=sampling_rate,
+                            return_tensors="pt",
+                        )
+                    media_loaded_count += 1
+                except Exception:
+                    inputs = None
+                    media_missing_count += 1
+            if inputs is None:
+                # Text-only fallback — model still runs but can't
+                # actually "see" the media. Row-level failure mode
+                # rather than job-level.
+                inputs = tokenizer(prompt, return_tensors="pt")
+            if use_cuda:
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+            started = perf_counter()
+            gen_kwargs: dict[str, Any] = {
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature if temperature > 0 else 1.0,
+                "do_sample": temperature > 0,
+                "pad_token_id": tokenizer.pad_token_id,
+            }
+            try:
+                output_ids = model.generate(**inputs, **gen_kwargs)
+            except Exception as gen_err:
+                # Row failure → emit an unparseable prediction
+                # rather than crashing the job. Downstream metrics
+                # flag these via the same channels as text rows.
+                latencies_s.append(perf_counter() - started)
+                predictions.append({
+                    "prompt": prompt,
+                    "formatted_prompt": "",
+                    "reference": reference,
+                    "prediction": "",
+                    "generated_tokens": 0,
+                    "latency_ms": 0.0,
+                    "error": f"generate_failed: {gen_err.__class__.__name__}",
+                })
+                continue
+            elapsed = perf_counter() - started
+            latencies_s.append(elapsed)
+            generated = output_ids[0]
+            generated_tokens = int(generated.shape[-1])
+            generated_tokens_total += generated_tokens
+            prediction = tokenizer.decode(
+                generated, skip_special_tokens=True,
+            ).strip()
+            predictions.append({
+                "prompt": prompt,
+                "formatted_prompt": "",
+                "reference": reference,
+                "prediction": prediction,
+                "generated_tokens": generated_tokens,
+                "latency_ms": round(elapsed * 1000, 3),
+            })
+
+    total_generation_seconds = perf_counter() - generation_started
+    latency_ms_values = [v * 1000 for v in latencies_s]
+    avg_latency_ms = (
+        sum(latency_ms_values) / len(latency_ms_values)
+        if latency_ms_values
+        else 0.0
+    )
+    token_tps = (
+        generated_tokens_total / total_generation_seconds
+        if total_generation_seconds > 0
+        else 0.0
+    )
+    runtime = {
+        "engine": "transformers",
+        "head": (
+            "vision2seq" if modality == "vision" else "speech_seq2seq"
+        ),
+        "device": "cuda" if use_cuda else "cpu",
+        "dtype": str(model_kwargs.get("dtype", "float32")),
+        "model_load_seconds": round(load_seconds, 3),
+        "generation_seconds": round(total_generation_seconds, 3),
+        "average_latency_ms": round(avg_latency_ms, 3),
+        "token_throughput_tps": round(token_tps, 3),
+        "chat_template_applied_count": 0,
+        "chat_template_applied": False,
+        "total_generated_tokens": generated_tokens_total,
+        "multimodal_loader_class": loader_class_name,
+        # Media-ingestion telemetry — surface so the user can see
+        # how many rows actually got their image/audio loaded vs
+        # fell back to text-only. Critical for diagnosing why a
+        # held-out F1 might look low.
+        "media_loaded_count": media_loaded_count,
+        "media_missing_count": media_missing_count,
+    }
+    return predictions, runtime
+
+
 def _resolve_seq2seq_artifacts(model_ref: str) -> dict[str, Any] | None:
     """ε-fix detection — when an experiment was trained with
     ``task_type=seq2seq`` (e.g. T5/BART-style summarisation), the
@@ -1368,6 +1669,18 @@ def _run_local_inference(
     classifier_artifacts = _resolve_classifier_head_artifacts(model_ref)
     if classifier_artifacts is not None:
         return _run_classifier_head_inference(classifier_artifacts, pairs)
+    # Multimodal eval-routing (extends δ/ε to vision/audio).
+    # Vision/audio adapters ALSO carry ``task_type: SEQ_2_SEQ_LM``
+    # in adapter_config.json — ε's detector would claim them and
+    # load AutoModelForSeq2SeqLM, which is wrong for vision
+    # (needs Vision2Seq + pixel_values) and audio (needs
+    # SpeechSeq2Seq + audio features). Check the multimodal
+    # signal BEFORE ε so the more-specific dispatch wins.
+    multimodal_artifacts = _resolve_multimodal_artifacts(model_ref)
+    if multimodal_artifacts is not None:
+        return _run_multimodal_inference(
+            multimodal_artifacts, pairs, max_new_tokens, temperature,
+        )
     # ε — when the checkpoint was trained with ``task_type=seq2seq``
     # (T5/BART-style encoder-decoder), the saved PEFT adapter
     # carries ``task_type: SEQ_2_SEQ_LM``. The default generation

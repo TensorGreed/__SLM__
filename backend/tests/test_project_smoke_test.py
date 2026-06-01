@@ -596,6 +596,131 @@ class ProjectSmokeTestApiTests(unittest.TestCase):
         self.assertEqual(check["status"], "ok", check)
         self.assertIn("not classifier-head", check["message"])
 
+    def _write_multimodal_adapter(
+        self,
+        output_dir: Path,
+        *,
+        loader_name: str = "AutoModelForVision2Seq",
+    ) -> Path:
+        """Build a fake multimodal checkpoint: adapter_config flags
+        SEQ_2_SEQ_LM + training_report records the multimodal
+        loader. Detector accepts either."""
+        import json
+        ckpt = output_dir / "checkpoint-50"
+        ckpt.mkdir(parents=True, exist_ok=True)
+        (ckpt / "adapter_config.json").write_text(
+            json.dumps(
+                {
+                    "base_model_name_or_path": "fixture/vlm",
+                    "task_type": "SEQ_2_SEQ_LM",
+                    "peft_type": "LORA",
+                }
+            )
+        )
+        (output_dir / "training_report.json").write_text(
+            json.dumps(
+                {
+                    "runtime_environment": {
+                        "multimodal_model_loader": loader_name,
+                    }
+                }
+            )
+        )
+        return ckpt
+
+    def test_classifier_head_check_passes_for_vision_under_vision_recipe(self):
+        # Aligned shape — Vision2Seq adapter + a vision recipe →
+        # multimodal dispatch will load the right class. Closes
+        # the routing gap audit identified.
+        pid = self._create_project()
+        # No built-in recipe pairs with vision-language-pair
+        # natively in our recipe service, so we apply the
+        # classification recipe and then override the project's
+        # selected_recipe to a vision-aligned profile via the
+        # update path. Simpler: just set the recipe DB row
+        # directly through the same async pattern as elsewhere.
+        async def _set_recipe(project_id: int) -> None:
+            from app.database import async_session_factory
+            from app.models.project import Project
+            async with async_session_factory() as session:
+                project = await session.get(Project, project_id)
+                assert project is not None
+                project.selected_recipe = {"recipe_id": "vision-fixture"}
+                await session.commit()
+            return None
+        # First seed an alternate recipe-aligned project_profile.
+        # We use a simple monkey: patch get_recipe to return a
+        # recipe with task_profile=vision_language.
+        from unittest.mock import patch as _patch
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_vision_aligned"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_multimodal_adapter(exp_dir)
+        self._seed_completed_experiment(
+            pid, output_dir=str(exp_dir), task_type="seq2seq",
+        )
+        asyncio.run(_set_recipe(pid))
+        from types import SimpleNamespace
+        with _patch(
+            "app.services.recipe_service.get_recipe",
+            return_value=SimpleNamespace(task_profile="vision_language"),
+        ):
+            resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "ok", check)
+        self.assertIn("vision", check["message"].lower())
+        self.assertEqual(check["metadata"]["head_kind"], "vision2seq")
+        self.assertEqual(check["metadata"]["modality"], "vision")
+
+    def test_classifier_head_check_warns_on_vision_under_causal_recipe(self):
+        # Misaligned shape — Vision2Seq adapter + a CausalLM-style
+        # recipe (qa-sft → instruction_sft). Loader is right; the
+        # prompt format won't have the multimodal scaffold the
+        # trainer wrote. Warn so the user sees the shape mismatch.
+        pid = self._create_project()
+        self._apply_recipe(pid, "qa-sft")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_vision_misaligned"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_multimodal_adapter(exp_dir)
+        self._seed_completed_experiment(
+            pid, output_dir=str(exp_dir), task_type="seq2seq",
+        )
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "warn", check)
+        self.assertIn("vision", check["message"].lower())
+        self.assertEqual(check["metadata"]["head_kind"], "vision2seq")
+        # Remediation lists vision-aligned profiles so the user
+        # knows what recipe to switch to.
+        self.assertIn("vision_language", check["remediation"])
+
+    def test_classifier_head_check_warns_on_audio_under_causal_recipe(self):
+        # Mirror for audio. Same shape — different head_kind +
+        # remediation text.
+        pid = self._create_project()
+        self._apply_recipe(pid, "qa-sft")
+        exp_dir = TEST_DATA_DIR / f"project_{pid}_exp_audio_misaligned"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        self._write_multimodal_adapter(
+            exp_dir, loader_name="AutoModelForSpeechSeq2Seq",
+        )
+        self._seed_completed_experiment(
+            pid, output_dir=str(exp_dir), task_type="seq2seq",
+        )
+
+        resp = self.client.post(f"/api/projects/{pid}/smoke-test")
+        check = self._checks_by_name(resp.json())[
+            "classifier_head_vs_handler"
+        ]
+        self.assertEqual(check["status"], "warn", check)
+        self.assertIn("audio", check["message"].lower())
+        self.assertEqual(check["metadata"]["head_kind"], "speech_seq2seq")
+        self.assertEqual(check["metadata"]["modality"], "audio")
+
     def test_parallel_execution_is_faster_than_sum_of_checks(self):
         """Sanity check that the orchestrator runs checks in parallel.
         Total elapsed should be near the slowest single check, NOT

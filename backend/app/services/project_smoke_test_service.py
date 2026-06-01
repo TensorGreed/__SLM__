@@ -902,27 +902,41 @@ async def _check_classifier_head_vs_handler(
                 ),
             )
 
-        # Reuse δ's + ε's detectors so this check + the eval
-        # dispatch agree exactly on "is this a head-shaped
+        # Reuse δ's + ε's + multimodal detectors so this check + the
+        # eval dispatch agree exactly on "is this a head-shaped
         # adapter." If a detector evolves, the smoke check
-        # tracks with it.
+        # tracks with it. Detection order mirrors the eval
+        # dispatch: SEQ_CLS → multimodal → SEQ_2_SEQ_LM →
+        # generation. Multimodal wins over SEQ_2_SEQ_LM because
+        # vision/audio adapters also carry SEQ_2_SEQ_LM in PEFT.
         from app.services.evaluation_service import (
             _resolve_classifier_head_artifacts,
+            _resolve_multimodal_artifacts,
             _resolve_seq2seq_artifacts,
         )
         artifacts = _resolve_classifier_head_artifacts(checkpoint)
+        multimodal_artifacts = (
+            _resolve_multimodal_artifacts(checkpoint) if artifacts is None else None
+        )
         seq2seq_artifacts = (
-            _resolve_seq2seq_artifacts(checkpoint) if artifacts is None else None
+            _resolve_seq2seq_artifacts(checkpoint)
+            if artifacts is None and multimodal_artifacts is None
+            else None
         )
         elapsed = int((time.monotonic() - started) * 1000)
-        if artifacts is None and seq2seq_artifacts is None:
+        if (
+            artifacts is None
+            and seq2seq_artifacts is None
+            and multimodal_artifacts is None
+        ):
             return SmokeCheckResult(
                 name="classifier_head_vs_handler",
                 status="ok",
                 elapsed_ms=elapsed,
                 message=(
-                    f"Experiment #{experiment.id} is not classifier-head "
-                    f"or seq2seq shaped — generation path is the right one."
+                    f"Experiment #{experiment.id} is not classifier-head, "
+                    f"seq2seq, or multimodal shaped — generation path is "
+                    f"the right one."
                 ),
                 metadata={"experiment_id": experiment.id},
             )
@@ -1014,6 +1028,103 @@ async def _check_classifier_head_vs_handler(
                     "recipe_id": recipe_id,
                     "task_profile": recipe_task_profile,
                     "head_kind": "sequence_classification",
+                },
+            )
+
+        # Multimodal branch — vision/audio adapters routed via the
+        # specialized Vision2Seq / SpeechSeq2Seq loaders. The
+        # aligned shape pairs a multimodal adapter with a
+        # multimodal recipe (vision_language / image_captioning /
+        # vqa for vision; audio_transcript / audio_transcription /
+        # speech_to_text for audio). Other profiles still get a
+        # functioning eval through the loader fix, but the prompt
+        # format may not match — warn so the user knows.
+        if multimodal_artifacts is not None:
+            modality = multimodal_artifacts["modality"]
+            head_kind = (
+                "vision2seq" if modality == "vision" else "speech_seq2seq"
+            )
+            aligned = (
+                frozenset({"vision_language", "image_captioning", "vqa"})
+                if modality == "vision"
+                else frozenset(
+                    {"audio_transcript", "audio_transcription", "speech_to_text"}
+                )
+            )
+            if recipe_task_profile in aligned:
+                return SmokeCheckResult(
+                    name="classifier_head_vs_handler",
+                    status="ok",
+                    elapsed_ms=elapsed,
+                    message=(
+                        f"Experiment #{experiment.id} ships a "
+                        f"{modality} multimodal head "
+                        f"({multimodal_artifacts['model_loader_class']}) "
+                        f"AND recipe '{recipe_id}' routes through a "
+                        f"{modality}-aligned profile "
+                        f"('{recipe_task_profile}') — multimodal "
+                        f"dispatch loads the right class + processor "
+                        f"at eval time."
+                    ),
+                    metadata={
+                        "experiment_id": experiment.id,
+                        "recipe_id": recipe_id,
+                        "task_profile": recipe_task_profile,
+                        "head_kind": head_kind,
+                        "modality": modality,
+                    },
+                )
+            if (
+                recipe_task_profile is not None
+                and recipe_task_profile in _GENERATION_MODE_TASK_PROFILES
+            ):
+                return SmokeCheckResult(
+                    name="classifier_head_vs_handler",
+                    status="warn",
+                    elapsed_ms=elapsed,
+                    message=(
+                        f"Experiment #{experiment.id} ships a "
+                        f"{modality} adapter "
+                        f"({multimodal_artifacts['model_loader_class']}) "
+                        f"BUT recipe '{recipe_id}' routes through "
+                        f"'{recipe_task_profile}' — the recipe's prompt "
+                        f"format won't have the multimodal scaffold the "
+                        f"trainer wrote, so held-out metrics may look "
+                        f"off even though the loader is correct."
+                    ),
+                    remediation=(
+                        f"Switch the project's recipe to a {modality}-"
+                        f"aligned profile so the prompt shape matches "
+                        f"what the multimodal adapter wrote at training. "
+                        f"For vision: {sorted(aligned)}. For audio: see "
+                        f"AudioTranscriptHandler's registered profiles."
+                    ),
+                    metadata={
+                        "experiment_id": experiment.id,
+                        "recipe_id": recipe_id,
+                        "task_profile": recipe_task_profile,
+                        "head_kind": head_kind,
+                        "modality": modality,
+                    },
+                )
+            return SmokeCheckResult(
+                name="classifier_head_vs_handler",
+                status="skip",
+                elapsed_ms=elapsed,
+                message=(
+                    f"Experiment #{experiment.id} ships a {modality} "
+                    f"head but the project's task profile "
+                    f"('{recipe_task_profile or 'unset'}') isn't a "
+                    f"known profile — can't tell whether the "
+                    f"multimodal dispatch matches the eval handler's "
+                    f"expectations."
+                ),
+                metadata={
+                    "experiment_id": experiment.id,
+                    "recipe_id": recipe_id,
+                    "task_profile": recipe_task_profile,
+                    "head_kind": head_kind,
+                    "modality": modality,
                 },
             )
 
