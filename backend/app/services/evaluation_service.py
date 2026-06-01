@@ -974,6 +974,204 @@ def _run_llama_cpp_inference(
     return predictions, runtime
 
 
+def _resolve_classifier_head_artifacts(
+    model_ref: str,
+) -> dict[str, Any] | None:
+    """δ-fix detection — when this experiment was trained with
+    ``AutoModelForSequenceClassification`` (training_config
+    ``task_type=classification``), the saved PEFT adapter carries
+    ``task_type: SEQ_CLS`` in ``adapter_config.json`` and
+    ``modules_to_save: [classifier, score]``. The held-out eval
+    path was loading ``AutoModelForCausalLM`` against that
+    checkpoint — the classifier head goes unused and the LM head
+    has never been trained to emit label tokens, so generation
+    output is garbage (this is the bug β surfaced).
+
+    Returns a dict with ``{base_model, id2label, num_labels}`` when
+    the checkpoint is classifier-head-shaped + we can resolve the
+    label space; ``None`` otherwise (caller stays on the generation
+    path).
+    """
+    path = Path(model_ref).expanduser()
+    if not path.exists() or not path.is_dir():
+        return None
+    adapter_cfg_path = path / "adapter_config.json"
+    if not adapter_cfg_path.exists():
+        return None
+    try:
+        adapter_cfg = json.loads(adapter_cfg_path.read_text())
+    except Exception:
+        return None
+    task_type = str(adapter_cfg.get("task_type") or "").upper()
+    modules_to_save = adapter_cfg.get("modules_to_save") or []
+    has_cls_modules = any(
+        m in ("classifier", "score") for m in (modules_to_save or [])
+    )
+    if task_type != "SEQ_CLS" and not has_cls_modules:
+        return None
+    base_model = adapter_cfg.get("base_model_name_or_path")
+    if not isinstance(base_model, str) or not base_model:
+        return None
+
+    # The label space is captured in training_report.json's
+    # runtime_environment by ``scripts/train.py``. Walk up from the
+    # checkpoint to find the experiment dir's report — checkpoints
+    # live at ``<exp_dir>/checkpoint-NNNN/`` so the report is one
+    # level up.
+    candidate_reports = [
+        path / "training_report.json",
+        path.parent / "training_report.json",
+    ]
+    label_space: list[str] | None = None
+    for report_path in candidate_reports:
+        if not report_path.exists():
+            continue
+        try:
+            report = json.loads(report_path.read_text())
+        except Exception:
+            continue
+        runtime_env = report.get("runtime_environment") or {}
+        preview = (
+            runtime_env.get("label_space")
+            or runtime_env.get("label_space_preview")
+            or report.get("label_space")
+            or report.get("label_space_preview")
+        )
+        if isinstance(preview, list) and preview:
+            label_space = [str(x) for x in preview]
+            break
+    if not label_space:
+        return None
+    return {
+        "base_model": base_model,
+        "adapter_path": str(path),
+        "id2label": {i: lab for i, lab in enumerate(label_space)},
+        "num_labels": len(label_space),
+    }
+
+
+def _run_classifier_head_inference(
+    artifacts: dict[str, Any],
+    pairs: list[dict],
+) -> tuple[list[dict], dict]:
+    """δ-fix inference path — load
+    ``AutoModelForSequenceClassification`` against the same base
+    model the trainer used, apply the saved PEFT adapter, and for
+    each prompt take ``argmax`` over the classifier-head logits.
+    The returned ``prediction`` string is the label name, so the
+    downstream ClassificationHandler parser matches it as-is.
+
+    No chat-template wrap — the handler-built prompt is the
+    full input (β makes train+eval byte-identical).
+    """
+    import torch
+    from peft import PeftModel
+    from transformers import (
+        AutoModelForSequenceClassification,
+        AutoTokenizer,
+    )
+
+    base_model = artifacts["base_model"]
+    adapter_path = artifacts["adapter_path"]
+    id2label: dict[int, str] = artifacts["id2label"]
+    num_labels = int(artifacts["num_labels"])
+
+    load_started = perf_counter()
+    # Tokenizer ships with the adapter dir (trainer saved it
+    # alongside the adapter weights); fall back to the base model
+    # if not present so a hand-trimmed checkpoint still loads.
+    tokenizer_src = adapter_path if (Path(adapter_path) / "tokenizer.json").exists() else base_model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_src, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token:
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
+
+    use_cuda = torch.cuda.is_available()
+    model_kwargs: dict[str, Any] = {
+        "trust_remote_code": True,
+        "num_labels": num_labels,
+    }
+    if use_cuda and torch.cuda.is_bf16_supported():
+        model_kwargs["dtype"] = torch.bfloat16
+    elif use_cuda:
+        model_kwargs["dtype"] = torch.float16
+    base = AutoModelForSequenceClassification.from_pretrained(
+        base_model, **model_kwargs
+    )
+    if len(tokenizer) > base.get_input_embeddings().num_embeddings:
+        base.resize_token_embeddings(len(tokenizer))
+    try:
+        model = PeftModel.from_pretrained(base, adapter_path)
+    except Exception:
+        # The adapter directory might be a merged full-fine-tune
+        # rather than a LoRA adapter. Fall through to the base
+        # loader's output — still classifier-head-shaped.
+        model = base
+    if use_cuda:
+        model = model.to("cuda")
+    model.eval()
+    load_seconds = perf_counter() - load_started
+
+    predictions: list[dict] = []
+    latencies_s: list[float] = []
+    generation_started = perf_counter()
+    with torch.inference_mode():
+        for row in pairs:
+            prompt = row["prompt"]
+            reference = row["reference"]
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+            )
+            if use_cuda:
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+            started = perf_counter()
+            logits = model(**inputs).logits[0].float().tolist()
+            elapsed = perf_counter() - started
+            latencies_s.append(elapsed)
+            pred_id = int(max(range(len(logits)), key=lambda i: logits[i]))
+            prediction = str(id2label.get(pred_id, str(pred_id)))
+            predictions.append(
+                {
+                    "prompt": prompt,
+                    "formatted_prompt": "",
+                    "reference": reference,
+                    "prediction": prediction,
+                    "generated_tokens": 1,
+                    "latency_ms": round(elapsed * 1000, 3),
+                }
+            )
+
+    total_generation_seconds = perf_counter() - generation_started
+    latency_ms_values = [v * 1000 for v in latencies_s]
+    avg_latency_ms = (
+        sum(latency_ms_values) / len(latency_ms_values)
+        if latency_ms_values
+        else 0.0
+    )
+    runtime = {
+        "engine": "transformers",
+        "head": "sequence_classification",
+        "device": "cuda" if use_cuda else "cpu",
+        "dtype": str(model_kwargs.get("dtype", "float32")),
+        "model_load_seconds": round(load_seconds, 3),
+        "generation_seconds": round(total_generation_seconds, 3),
+        "average_latency_ms": round(avg_latency_ms, 3),
+        "token_throughput_tps": 0.0,
+        # The classifier path doesn't apply a chat template — it
+        # reads the full handler-built prompt verbatim. Keep the
+        # field for downstream parity with the generation runtime.
+        "chat_template_applied_count": 0,
+        "chat_template_applied": False,
+        "total_generated_tokens": len(pairs),
+    }
+    return predictions, runtime
+
+
 def _run_local_inference(
     model_ref: str,
     pairs: list[dict],
@@ -988,6 +1186,14 @@ def _run_local_inference(
         return _run_llama_cpp_inference(
             model_ref, pairs, max_new_tokens, temperature, stop_sequences,
         )
+    # δ — when the checkpoint was trained with a classification
+    # head, route through the head-aware path so we use the
+    # head's logits directly. Generation against the LM head
+    # produces garbage because that head was never trained on
+    # label tokens (see β's commit message for the receipts).
+    classifier_artifacts = _resolve_classifier_head_artifacts(model_ref)
+    if classifier_artifacts is not None:
+        return _run_classifier_head_inference(classifier_artifacts, pairs)
     return _run_transformers_inference(
         model_ref, pairs, max_new_tokens, temperature, stop_sequences,
         apply_chat_template=apply_chat_template,
