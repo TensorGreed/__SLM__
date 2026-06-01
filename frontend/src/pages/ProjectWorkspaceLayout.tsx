@@ -13,6 +13,7 @@ import DecisionLogDrawer from '../components/autopilot/DecisionLogDrawer';
 import ManifestExportButton from '../components/manifest/ManifestExportButton';
 import ProgressChip from '../components/gamification/ProgressChip';
 import CoachToggle from '../components/coach/CoachToggle';
+import HealthCheckButton from '../components/shared/HealthCheckButton';
 import ParentProjectBackChip from '../components/layout/ParentProjectBackChip';
 import { useGamificationPoller } from '../components/gamification/useProgressionPoll';
 import { useProjectStore } from '../stores/projectStore';
@@ -101,6 +102,7 @@ export default function ProjectWorkspaceLayout() {
                             ) : null}
                             <ProgressChip projectId={projectId} />
                             <CoachToggle projectId={projectId} />
+                            <HealthCheckButton projectId={projectId} />
                             <ManifestExportButton
                                 projectId={projectId}
                                 projectName={activeProject.name}

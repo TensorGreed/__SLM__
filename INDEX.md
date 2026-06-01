@@ -179,6 +179,7 @@ session-start guidance.
 - `backend/app/services/plugin_contract_service.py` — Plugin contract orchestration service (priority.md P37, Wave H).
 - `backend/app/services/plugin_contracts.py` — Plugin contract definitions for BrewSLM extension modules (priority.md P37, Wave H).
 - `backend/app/services/post_eval_decision_engine_service.py` — Post-eval decision engine (USER-SUCCESS Epic 7 Phase 7a).
+- `backend/app/services/project_smoke_test_service.py` — Project smoke-test service (Diagnostics Intervention C).
 - `backend/app/services/project_template_service.py` — Project templates — cloneable starting kits for new projects.
 - `backend/app/services/rag_project_service.py` — RAG-skeleton project service (USER-SUCCESS Epic 7 Phase 7b).
 - `backend/app/services/rag_sandbox_service.py` — Lightweight RAG sandbox retrieval helpers.
@@ -381,6 +382,7 @@ session-start guidance.
 - `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
+- `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
 - `frontend/src/api/trainabilityForecast.ts` — Typed API wrapper for the trainability forecast endpoint
@@ -519,6 +521,8 @@ session-start guidance.
 - `frontend/src/components/shared/EmptyState.tsx` — EmptyState — shared component for "this page has no data yet" surfaces.
 - `frontend/src/components/shared/ErrorPanel.tsx` — Shared error rendering component (Diagnostics Intervention A).
 - `frontend/src/components/shared/GettingStartedWizard.tsx` — Eight-step pipeline walkthrough modal introducing the data-to-deployment workflow.
+- `frontend/src/components/shared/HealthCheckButton.tsx` — HealthCheckButton — Diagnostics Intervention C.
+- `frontend/src/components/shared/HealthCheckModal.tsx` — HealthCheckModal — Diagnostics Intervention C.
 - `frontend/src/components/shared/NoRecipeEmptyState.tsx` — NoRecipeEmptyState — directive CTA shown when a panel can't render
 - `frontend/src/components/shared/ReadinessPanel.tsx` — Deployment readiness checker displaying pass / warn / fail status for pre-flight requirements.
 - `frontend/src/components/shared/RecipeTileFrame.tsx` — RecipeTileFrame — shared visual container for the two recipe-tile
@@ -726,6 +730,7 @@ session-start guidance.
 - `backend/tests/test_phase9_tokenization.py` — Tests for the tokenization service — tokenizer loading and analysis.
 - `backend/tests/test_phase9_training_runtime_compat.py` — Compatibility tests for external training runtime adapters.
 - `backend/tests/test_post_eval_decision_engine.py` — Tests for the post-eval decision engine service
+- `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
@@ -830,6 +835,7 @@ session-start guidance.
 - `frontend/src/components/shared/CommandSnippet.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/EmptyState.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/ErrorPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/shared/HealthCheckModal.test.tsx` — _(no docstring)_
 - `frontend/src/components/shared/Term.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ArchetypeComparisonPanel.test.tsx` — ArchetypeComparisonPanel tests (USER-SUCCESS Epic 8 Phase 8b).
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_

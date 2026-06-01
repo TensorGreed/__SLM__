@@ -854,3 +854,30 @@ async def get_project_stats(project_id: int, db: AsyncSession = Depends(get_db))
         experiment_count=len(project.experiments) if project.experiments else 0,
         total_documents=total_docs,
     )
+
+
+@router.post("/{project_id}/smoke-test")
+async def run_project_smoke_test(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a parallel, read-only health check across every project
+    surface (recipe / gold / data-health / forecast / synth /
+    experiments / etc.).
+
+    Diagnostics Intervention C — one button that answers "is anything
+    obviously broken before I commit to a real run?". Each check
+    returns a structured result; failures carry the same envelope
+    shape ``<ErrorPanel>`` renders elsewhere so the frontend can show
+    the troubleshooting_id + remediation copy inline.
+
+    Read-only by design — no writes, no GPU, no expensive LLM calls.
+    Safe to re-run as often as the user wants.
+    """
+    from app.services.project_smoke_test_service import (
+        run_smoke_test,
+        serialize_summary,
+    )
+
+    summary = await run_smoke_test(db, project_id)
+    return serialize_summary(summary)
