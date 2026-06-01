@@ -431,6 +431,30 @@ def _adapt_record_to_text(
             "target_text": prepared_target_struct,
         })
 
+    # η-fix tail — same passthrough for the rag-grounded adapter.
+    # Detect via the RAGHandler's grounded-prompt prefix ("Answer
+    # the question using only the context"); without this the
+    # direct-text branch would overwrite the wrapped prompt with
+    # the raw ``text`` field (which η now also writes byte-for-byte
+    # against the handler, but pinning the source/target shape
+    # here keeps the trainer's view consistent regardless of which
+    # field the chat-template path consumes).
+    prepared_source_rag = row.get("source_text")
+    prepared_target_rag = row.get("target_text")
+    if (
+        isinstance(prepared_source_rag, str)
+        and prepared_source_rag.lstrip().startswith(
+            "Answer the question using only the context"
+        )
+        and isinstance(prepared_target_rag, str)
+        and prepared_target_rag.strip()
+    ):
+        return _attach_multimodal_fields(row, {
+            "text": f"{prepared_source_rag}{prepared_target_rag}",
+            "source_text": prepared_source_rag,
+            "target_text": prepared_target_rag,
+        })
+
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
         return _attach_multimodal_fields(

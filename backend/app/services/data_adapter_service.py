@@ -886,6 +886,32 @@ def _detect_rag_grounded(record: dict[str, Any], config: dict[str, Any]) -> bool
     return 1.0 if mapped else 0.0
 
 
+def _build_rag_training_prompt(context: str, question: str) -> str:
+    """Mirror of ``RAGHandler.build_prompts`` grounded branch
+    (eval_task_handler_service.py:1495-1503) so training rows
+    carry the same prompt format the eval handler builds at
+    inference.
+
+    η-fix: previously ``_map_rag_grounded`` wrote
+    ``source_text = f"{context}\\n\\n{question}"`` — no
+    instruction, no labeled ``Context:`` / ``Question:`` /
+    ``Answer:`` blocks, no refusal hint. At eval time the handler
+    wrapped inputs with the grounded instruction prompt and the
+    model produced answers in a format that didn't match what it
+    was trained against. Faithfulness + context_recall came in
+    artificially low — same shape as the classification bug β
+    closed.
+    """
+    return (
+        "Answer the question using only the context. If the "
+        "context does not contain the answer, say you don't "
+        "know.\n"
+        f"Context: {context}\n"
+        f"Question: {question}\n"
+        "Answer:"
+    )
+
+
 def _map_rag_grounded(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
     question_fields = config.get("question_fields")
     context_fields = config.get("context_fields")
@@ -927,13 +953,33 @@ def _map_rag_grounded(record: dict[str, Any], config: dict[str, Any]) -> dict[st
     if not question or not answer or not context:
         return None
 
+    # η-fix — wrap source_text with the RAGHandler instruction
+    # prompt so training rows match what the eval handler builds.
+    # ``text`` is also rebuilt byte-for-byte to use the SAME
+    # ``Context: {ctx}`` / ``Question: {q}`` / ``Answer: {a}`` shape
+    # the handler emits — pre-η the adapter rendered Context with
+    # a newline (``Context:\n{context}``) which trainer paths that
+    # consume ``text`` directly (chat-template path) saw as a
+    # different scaffold from the eval prompt. Aligning both ends
+    # the audit's "byte-for-byte" open question for RAG.
+    wrapped_prompt = _build_rag_training_prompt(context, question)
+    target_with_space = f" {answer}"
     return {
-        "text": f"Context:\n{context}\n\nQuestion: {question}\nAnswer: {answer}",
+        # Raw fields stay so downstream surfaces (data health, gold
+        # diagnostics, smoke peek, RAG context-recall introspection)
+        # keep reading what they already read.
         "question": question,
         "context": context,
         "answer": answer,
-        "source_text": f"{context}\n\n{question}",
-        "target_text": answer,
+        # ``text`` mirrors the wrapped prompt + target so a trainer
+        # consuming ``text`` directly (legacy chat-template path)
+        # sees the same scaffold the handler will rebuild at eval.
+        "text": f"{wrapped_prompt}{target_with_space}",
+        # ``source_text`` + ``target_text`` carry the wrapped prompt
+        # the SFT trainer consumes via _adapt_record_to_text. Loss
+        # is computed on target_text only.
+        "source_text": wrapped_prompt,
+        "target_text": target_with_space,
     }
 
 

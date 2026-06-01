@@ -741,6 +741,7 @@ session-start guidance.
 - `backend/tests/test_project_smoke_test.py` — Tests for the project smoke-test service (Diagnostics Intervention C).
 - `backend/tests/test_project_template_service.py` — Tests for the project_template service + endpoints.
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
+- `backend/tests/test_rag_adapter_prompt_wrap.py` — η-fix tests — rag-grounded adapter writes the production
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
