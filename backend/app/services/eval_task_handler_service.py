@@ -2775,9 +2775,25 @@ class Seq2SeqHandler:
     def expected_prompt_prefixes(self) -> list[str]:
         """See ClassificationHandler.expected_prompt_prefixes. Sub-task
         prefixes — at least one should appear in a correctly-prepared
-        Seq2Seq training row."""
+        Seq2Seq training row.
 
-        return ["Translate", "Summarize:", "Paraphrase:"]
+        θ-fix: previously this returned ``['Translate', 'Summarize:',
+        'Paraphrase:']`` — but the actual prompts emitted by
+        ``_build_prompt_text`` start with ``"Summarize the following
+        text concisely."`` and ``"Paraphrase the following text in
+        different words."`` (no colon). The pre-θ list was a
+        drift from the actual prompts — γ′ smoke check would
+        silently miss seq2seq train/eval format mismatches. The
+        list below mirrors what ``_build_prompt_text`` actually
+        writes; θ's adapter pin guarantees adapter + handler agree
+        on these prefixes byte-for-byte.
+        """
+
+        return [
+            "Translate the following",
+            "Summarize the following text",
+            "Paraphrase the following text",
+        ]
 
 
 # ── Registry + dispatcher ─────────────────────────────────────────────

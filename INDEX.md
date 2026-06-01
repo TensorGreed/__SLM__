@@ -747,6 +747,7 @@ session-start guidance.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
+- `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_

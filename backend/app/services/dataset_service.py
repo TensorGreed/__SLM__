@@ -516,6 +516,22 @@ def _normalize_rows_for_training(
     ):
         adapter_config = dict(adapter_config or {})
         adapter_config["subtask"] = resolved_subtask
+    # θ-fix — seq2seq-pair's translation branch also needs
+    # ``tgt_lang`` from manifest (mirrors
+    # ``Seq2SeqHandler._resolve_tgt_lang``). Inject the same way
+    # we inject subtask so the adapter's wrap matches the
+    # handler's translation prompt byte-for-byte. ``tgt_lang`` is
+    # also valid for non-translation subtasks (the wrap ignores
+    # it), so we always propagate when present.
+    if (
+        resolved_adapter_id == "seq2seq-pair"
+        and isinstance(manifest, dict)
+        and (not adapter_config or "tgt_lang" not in adapter_config)
+    ):
+        raw_tgt = manifest.get("tgt_lang") or manifest.get("target_language")
+        if isinstance(raw_tgt, str) and raw_tgt.strip():
+            adapter_config = dict(adapter_config or {})
+            adapter_config["tgt_lang"] = raw_tgt.strip()
     for row in rows:
         canonical = map_record_with_adapter(
             row,

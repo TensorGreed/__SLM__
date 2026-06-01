@@ -497,6 +497,49 @@ def _detect_seq2seq(record: dict[str, Any], config: dict[str, Any]) -> bool | fl
     return 1.0 if mapped else 0.0
 
 
+_SEQ2SEQ_SUBTASKS: frozenset[str] = frozenset(
+    {"translation", "summarization", "paraphrase"}
+)
+_SEQ2SEQ_DEFAULT_SUBTASK: str = "summarization"
+_SEQ2SEQ_DEFAULT_TGT_LANG: str = "the target language"
+
+
+def _build_seq2seq_training_prompt(
+    source: str, subtask: str, tgt_lang: str,
+) -> str:
+    """Mirror of ``Seq2SeqHandler._build_prompt_text``
+    (eval_task_handler_service.py:2592-2598) so training rows
+    carry the same prompt format the eval handler builds at
+    inference.
+
+    θ-fix: previously ``_map_seq2seq`` wrote ``source_text = src``
+    and ``text = "Input: {src}\\nOutput: {tgt}"`` — no subtask
+    instruction, no labeled ``Text:`` / ``Summary:``/``Translation:``
+    /``Paraphrase:`` blocks. The handler emits one of three
+    instruction-prefixed scaffolds at eval, so held-out
+    BLEU/chrF/ROUGE came in artificially low — same shape as the
+    classification bug β closed.
+    """
+    if subtask == "translation":
+        return (
+            f"Translate the following to {tgt_lang}.\n"
+            f"Text: {source}\n"
+            "Translation:"
+        )
+    if subtask == "paraphrase":
+        return (
+            "Paraphrase the following text in different words.\n"
+            f"Text: {source}\n"
+            "Paraphrase:"
+        )
+    # Default: summarization (matches handler's DEFAULT_SUBTASK).
+    return (
+        "Summarize the following text concisely.\n"
+        f"Text: {source}\n"
+        "Summary:"
+    )
+
+
 def _map_seq2seq(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
     source_fields = config.get("source_fields")
     target_fields = config.get("target_fields")
@@ -526,12 +569,39 @@ def _map_seq2seq(record: dict[str, Any], config: dict[str, Any]) -> dict[str, An
     if not source or not target:
         return None
 
+    # θ-fix — resolve subtask + tgt_lang from adapter_config (the
+    # subtask-propagation infrastructure injects ``subtask`` from
+    # manifest before the per-row map loop). The handler's
+    # ``DEFAULT_SUBTASK`` and ``_resolve_tgt_lang`` fallbacks are
+    # mirrored here so adapter + handler agree on no-manifest
+    # behaviour.
+    raw_subtask = config.get("subtask")
+    if isinstance(raw_subtask, str):
+        candidate = raw_subtask.strip().lower()
+        subtask = candidate if candidate in _SEQ2SEQ_SUBTASKS else _SEQ2SEQ_DEFAULT_SUBTASK
+    else:
+        subtask = _SEQ2SEQ_DEFAULT_SUBTASK
+    raw_tgt_lang = config.get("tgt_lang") or config.get("target_language")
+    tgt_lang_text = str(raw_tgt_lang or "").strip()
+    tgt_lang = tgt_lang_text or _SEQ2SEQ_DEFAULT_TGT_LANG
+
+    wrapped_prompt = _build_seq2seq_training_prompt(
+        source, subtask, tgt_lang,
+    )
+    target_with_space = f" {target}"
+
     return {
-        "text": f"Input: {source}\nOutput: {target}",
-        "source_text": source,
-        "target_text": target,
+        # Raw fields stay for downstream surfaces (data health,
+        # gold diagnostics, smoke peek). question/answer aliases
+        # preserved for back-compat with consumers that read them.
         "question": source,
         "answer": target,
+        # ``text`` = wrapped prompt + target so trainer paths that
+        # consume ``text`` directly (chat-template legacy path)
+        # see the same scaffold the handler will rebuild at eval.
+        "text": f"{wrapped_prompt}{target_with_space}",
+        "source_text": wrapped_prompt,
+        "target_text": target_with_space,
     }
 
 

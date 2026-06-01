@@ -455,6 +455,30 @@ def _adapt_record_to_text(
             "target_text": prepared_target_rag,
         })
 
+    # θ-fix tail — same passthrough for seq2seq-pair. Detect via
+    # any of the Seq2SeqHandler's three subtask prefixes
+    # (Translate / Summarize: / Paraphrase). Adapter writes one
+    # of these byte-for-byte; train.py must not overwrite with
+    # the raw source/target shape. Same shape as β-tail /
+    # ζ-tail / η-tail.
+    prepared_source_s2s = row.get("source_text")
+    prepared_target_s2s = row.get("target_text")
+    if (
+        isinstance(prepared_source_s2s, str)
+        and (
+            prepared_source_s2s.lstrip().startswith("Translate the following to")
+            or prepared_source_s2s.lstrip().startswith("Summarize the following text")
+            or prepared_source_s2s.lstrip().startswith("Paraphrase the following text")
+        )
+        and isinstance(prepared_target_s2s, str)
+        and prepared_target_s2s.strip()
+    ):
+        return _attach_multimodal_fields(row, {
+            "text": f"{prepared_source_s2s}{prepared_target_s2s}",
+            "source_text": prepared_source_s2s,
+            "target_text": prepared_target_s2s,
+        })
+
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
         return _attach_multimodal_fields(
