@@ -178,7 +178,7 @@ async def get_cleaned_chunks(
     import random as _random
     from pathlib import Path
     from sqlalchemy import select
-    from app.models.dataset import Dataset, RawDocument
+    from app.models.dataset import Dataset, DatasetType, RawDocument
 
     if limit < 0:
         raise HTTPException(400, "limit must be >= 0")
@@ -194,9 +194,29 @@ async def get_cleaned_chunks(
     )
     docs = list(result.scalars().all())
 
+    # Two ingest paths feed a project (see data_health_service for the
+    # full explanation): document-cleaning produces .chunks.jsonl
+    # files; dataset-import writes labelled rows directly to a
+    # SYNTHETIC / CLEANED Dataset. Synth panel's "Load from Cleaned
+    # Data" must surface BOTH so a classification project's 30K
+    # imported rows aren't invisible.
+    dataset_result = await db.execute(
+        select(Dataset).where(
+            Dataset.project_id == project_id,
+            Dataset.dataset_type.in_([DatasetType.SYNTHETIC, DatasetType.CLEANED]),
+        )
+    )
+    labelled_datasets = list(dataset_result.scalars().all())
+
     def _iter_chunk_lines():
-        """Yield (doc_id, parsed_chunk) for every chunk across every
-        document, line-by-line — never materializes the full list."""
+        """Yield parsed chunks across both ingest paths:
+
+        - ``.chunks.jsonl`` next to each RawDocument (doc pipeline)
+        - rows of each labelled SYNTHETIC/CLEANED ``.jsonl`` file
+          (dataset-import pipeline). Each row is shaped into a
+          chunk-compatible dict so the picker UI doesn't need a
+          branch.
+        """
         for doc in docs:
             if not doc.file_path:
                 continue
@@ -214,7 +234,53 @@ async def get_cleaned_chunks(
                         except _json.JSONDecodeError:
                             continue
                         chunk["document_id"] = doc.id
+                        chunk["ingest_path"] = "document"
                         yield chunk
+            except OSError:
+                continue
+
+        for ds in labelled_datasets:
+            if not ds.file_path:
+                continue
+            ds_path = Path(ds.file_path)
+            if not ds_path.exists():
+                continue
+            try:
+                with ds_path.open("r", encoding="utf-8") as handle:
+                    for row_idx, raw_line in enumerate(handle):
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        try:
+                            row = _json.loads(line)
+                        except _json.JSONDecodeError:
+                            continue
+                        # Map the row's text field into the
+                        # cleaning-chunk shape so the picker renders
+                        # uniformly. Falls back across common field
+                        # names so we don't lose rows on adapter
+                        # variants.
+                        text = (
+                            row.get("text")
+                            or row.get("input")
+                            or row.get("prompt")
+                            or row.get("question")
+                            or row.get("source")
+                            or ""
+                        )
+                        if not isinstance(text, str) or not text.strip():
+                            continue
+                        yield {
+                            # Negative document_id to flag the
+                            # dataset-import origin without colliding
+                            # with real RawDocument ids.
+                            "document_id": -int(ds.id),
+                            "chunk_id": row_idx,
+                            "text": text,
+                            "label": row.get("label"),
+                            "ingest_path": "dataset_import",
+                            "dataset_type": ds.dataset_type.value if hasattr(ds.dataset_type, "value") else str(ds.dataset_type),
+                        }
             except OSError:
                 continue
 
