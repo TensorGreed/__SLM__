@@ -479,6 +479,31 @@ def _adapt_record_to_text(
             "target_text": prepared_target_s2s,
         })
 
+    # ι-fix tail — vision-language-pair. Captioning rows start with
+    # "Describe the image:"; VQA rows start with "Question: " AND
+    # contain the "\nImage: <image:" placeholder marker (the
+    # tighter signal lets us distinguish VQA from a plain
+    # "Question: …" QA row that other adapters might write).
+    prepared_source_vl = row.get("source_text")
+    prepared_target_vl = row.get("target_text")
+    if (
+        isinstance(prepared_source_vl, str)
+        and isinstance(prepared_target_vl, str)
+        and prepared_target_vl.strip()
+        and (
+            prepared_source_vl.lstrip().startswith("Describe the image:")
+            or (
+                prepared_source_vl.lstrip().startswith("Question:")
+                and "\nImage: <image:" in prepared_source_vl
+            )
+        )
+    ):
+        return _attach_multimodal_fields(row, {
+            "text": f"{prepared_source_vl}{prepared_target_vl}",
+            "source_text": prepared_source_vl,
+            "target_text": prepared_target_vl,
+        })
+
     direct_text = _pick_first_text(row, ["text", "content"])
     if direct_text:
         return _attach_multimodal_fields(

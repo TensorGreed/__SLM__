@@ -1343,19 +1343,99 @@ def _detect_vision_language_pair(record: dict[str, Any], config: dict[str, Any])
     return 1.0 if _map_vision_language_pair(record, config) else 0.0
 
 
+_VL_SUBTASKS: frozenset[str] = frozenset({"captioning", "vqa"})
+_VL_DEFAULT_SUBTASK: str = "captioning"
+
+
+def _build_vision_language_training_prompt(
+    image_path: str, subtask: str, question: str,
+) -> str:
+    """Mirror of ``VisionLanguageHandler.build_prompts``
+    (eval_task_handler_service.py:1979-2000) so training rows
+    carry the same prompt format the eval handler builds at
+    inference.
+
+    ι-fix: previously ``_map_vision_language_pair`` wrote
+    ``source_text = "image:{path}"`` (no instruction, no
+    ``<image:…>`` placeholder brackets, no ``Caption:`` / ``Answer:``
+    cue) and ``text = "<image:{path}> {caption}"``. The model never
+    saw the eval-time captioning / VQA scaffold so held-out
+    BLEU_4/ROUGE-L came in artificially low — same shape as the
+    classification bug β closed.
+
+    Branches across both subtasks the handler supports. The
+    image-missing fallback also mirrors the handler: for
+    captioning, just emit ``"Describe the image:"`` (no
+    placeholder, no Caption: cue); for vqa, emit just the
+    question. Adapters that hit those branches won't carry a
+    handler-compatible prefix, but the handler's behaviour is
+    identical so train/eval still agree.
+    """
+    if subtask == "vqa":
+        if image_path:
+            return (
+                f"Question: {question}\n"
+                f"Image: <image:{image_path}>\n"
+                "Answer:"
+            )
+        return question
+    # Default: captioning (matches handler's DEFAULT_SUBTASK).
+    if image_path:
+        return f"Describe the image: <image:{image_path}>\nCaption:"
+    return "Describe the image:"
+
+
 def _map_vision_language_pair(record: dict[str, Any], config: dict[str, Any]) -> dict[str, Any] | None:
     image_aliases = list(config.get("image_fields") or []) or ["image_path", "image", "image_url", "image_file", "path"]
     caption_aliases = list(config.get("caption_fields") or []) or ["caption", "text", "description", "answer", "target_text"]
+    # ι-fix — VQA rows carry both a question and an answer; the
+    # adapter must extract the question separately for the handler's
+    # ``Question: …\nImage: …\nAnswer:`` scaffold. Pre-ι the adapter
+    # only picked the answer (via ``caption_aliases``) and never
+    # surfaced the question, so VQA training rows had no question
+    # in the prompt.
+    question_aliases = list(config.get("question_fields") or []) or [
+        "question", "prompt", "instruction", "query",
+    ]
     image_path = _pick_text(record, image_aliases)
     caption = _pick_text(record, caption_aliases)
     if not image_path or not caption:
         return None
+
+    # ι-fix — resolve subtask from adapter_config (the subtask-
+    # propagation infrastructure injects it from manifest). Same
+    # invalid-value tolerance pattern as θ.
+    raw_subtask = config.get("subtask")
+    if isinstance(raw_subtask, str):
+        candidate = raw_subtask.strip().lower()
+        subtask = candidate if candidate in _VL_SUBTASKS else _VL_DEFAULT_SUBTASK
+    else:
+        subtask = _VL_DEFAULT_SUBTASK
+
+    # VQA prompts need the question; captioning ignores it. We
+    # extract regardless so the raw ``question`` field is preserved
+    # for downstream surfaces that care (data health, gold review).
+    question = _pick_text(record, question_aliases)
+
+    wrapped_prompt = _build_vision_language_training_prompt(
+        image_path, subtask, question,
+    )
+    target_with_space = f" {caption}"
+
     return {
-        "text": f"<image:{image_path}> {caption}",
-        "source_text": f"image:{image_path}",
-        "target_text": caption,
+        # Raw fields preserved for data health / gold diagnostics /
+        # multimodal asset resolution.
         "image_path": image_path,
         "answer": caption,
+        "question": question or None,
+        # ``text`` = wrapped prompt + target so trainer paths that
+        # consume ``text`` directly see the same scaffold the
+        # handler will rebuild at eval. Replaces the pre-ι
+        # ``"<image:{path}> {caption}"`` shape which had no
+        # instruction.
+        "text": f"{wrapped_prompt}{target_with_space}",
+        "source_text": wrapped_prompt,
+        "target_text": target_with_space,
     }
 
 
