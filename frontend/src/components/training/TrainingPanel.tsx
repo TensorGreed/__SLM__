@@ -15,6 +15,7 @@ import { TerminalConsole } from '../shared/TerminalConsole';
 import { Term } from '../shared/Term';
 import { ReadinessPanel } from '../shared/ReadinessPanel';
 import DatasetFitCard from './DatasetFitCard';
+import ExperimentClassifierHeadBadge from './ExperimentClassifierHeadBadge';
 import ExperimentCompare from './ExperimentCompare';
 import HyperparameterSweepPanel from './HyperparameterSweepPanel';
 import ParetoComparisonPanel from './ParetoComparisonPanel';
@@ -6086,6 +6087,10 @@ export default function TrainingPanel({
                   </div>
                   <div className="training-experiment-actions">
                     <span className={`badge ${statusColor(exp.status)}`}>{exp.status}</span>
+                    <ExperimentClassifierHeadBadge
+                      taskType={exp.config?.task_type}
+                      status={exp.status}
+                    />
                     {exp.status === 'pending' && (
                       <button
                         className="btn btn-primary btn-sm"

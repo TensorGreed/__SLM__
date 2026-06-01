@@ -538,6 +538,7 @@ session-start guidance.
 - `frontend/src/components/training/ChatPlaygroundPanel.tsx` — Interactive prompt session manager supporting multiple inference backends and providers.
 - `frontend/src/components/training/CheckpointsPanel.tsx` — CheckpointsPanel — P20 Checkpoints side panel.
 - `frontend/src/components/training/DatasetFitCard.tsx` — DatasetFitCard — "Why this dataset isn't ready for SFT" explainer
+- `frontend/src/components/training/ExperimentClassifierHeadBadge.tsx` — Surfaces the "classifier head detected" signal on the experiment
 - `frontend/src/components/training/ExperimentCompare.tsx` — Multi-experiment loss-trajectory visualizer with synchronized step alignment.
 - `frontend/src/components/training/HardwareRecommenderModal.tsx` — Configuration recommender modal based on available GPU profiles and task type.
 - `frontend/src/components/training/HyperparameterSweepPanel.tsx` — HyperparameterSweepPanel — Track 1, Epic C.
@@ -849,6 +850,7 @@ session-start guidance.
 - `frontend/src/components/training/ChatPlaygroundPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/CheckpointsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/DatasetFitCard.test.tsx` — _(no docstring)_
+- `frontend/src/components/training/ExperimentClassifierHeadBadge.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/HyperparameterSweepPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/LossCurvePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/training/ParetoComparisonPanel.test.tsx` — _(no docstring)_
