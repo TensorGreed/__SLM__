@@ -1602,7 +1602,18 @@ BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
         "map_row": _map_qa_pair,
         "validate": _validate_qa_pair,
         "schema_hint": _schema_qa_pair,
-        "task_profiles": ["qa", "instruction_sft", "seq2seq"],
+        # ``seq2seq`` removed (cross-pair drift cleanup): qa-pair writes
+        # raw ``source_text = question`` which doesn't carry the
+        # Seq2SeqHandler's ``Translate/Summarize/Paraphrase`` scaffold,
+        # so a project picking ``task_profile=seq2seq`` with this
+        # adapter hit a β-shape-equivalent gap at eval. The legitimate
+        # "QA data trained as seq2seq" path is already covered by
+        # ``seq2seq-pair`` (its source_aliases include ``question``
+        # and ``answer``, so ``{question, answer}`` rows map cleanly).
+        # ``preferred_training_tasks`` keeps ``seq2seq`` because that
+        # toggles the trainer architecture (``AutoModelForSeq2SeqLM``)
+        # which is independent of the eval handler.
+        "task_profiles": ["qa", "instruction_sft"],
         "preferred_training_tasks": ["causal_lm", "seq2seq"],
         "output_contract": {
             "required_fields": ["text", "question", "answer", "source_text", "target_text"],

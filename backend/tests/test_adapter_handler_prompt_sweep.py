@@ -296,11 +296,12 @@ class AdapterHandlerPromptSweepTests(unittest.TestCase):
             # declaration, or (b) extend the adapter to wrap
             # conditionally based on which handler will run.
             #
-            # qa-pair → Seq2SeqHandler: qa-pair writes raw
-            # ``source_text = question``; Seq2SeqHandler wraps with
-            # ``Translate/Summarize/Paraphrase``. Any project that
-            # picks ``task_profile=seq2seq`` with qa-pair hits this.
-            ("qa-pair", "Seq2SeqHandler"),
+            # ``qa-pair → Seq2SeqHandler`` was resolved by removing
+            # ``seq2seq`` from qa-pair's ``task_profiles`` declaration
+            # (the legitimate "QA data trained as seq2seq" path is
+            # already covered by ``seq2seq-pair`` adapter, whose
+            # source_aliases include ``question`` and ``answer``).
+            #
             # rag-grounded → Seq2SeqHandler: rag-grounded writes
             # the η-fixed ``Answer the question using only the
             # context…\nContext: …\nQuestion: …\nAnswer:``;
