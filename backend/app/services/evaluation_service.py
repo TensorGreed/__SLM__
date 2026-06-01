@@ -363,12 +363,17 @@ async def run_evaluation(
     # Today only GenericHandler is registered, so this preserves the
     # exact metric values produced by the pre-dispatcher if/elif chain.
     # Phase 5.3.1+ (classification, seq2seq, …) override .score on
-    # their handler to produce task-appropriate metrics.
+    # their handler to produce task-appropriate metrics. Pass the
+    # experiment's task_type so build_eval_context can fall back to
+    # it when the prepared manifest has no task_profile.
+    exp_config = dict(exp.config or {})
+    experiment_task_type = str(exp_config.get("task_type") or "").strip() or None
     eval_ctx, task_handler = build_eval_context(
         project_id=project_id,
         experiment_id=experiment_id,
         eval_type=eval_type,
         dataset_name=dataset_name,
+        experiment_task_type=experiment_task_type,
     )
     metrics = dict(task_handler.score(predictions, eval_ctx))
 
@@ -686,7 +691,18 @@ def _run_transformers_inference(
     max_new_tokens: int,
     temperature: float,
     stop_sequences: list[str] | None = None,
+    *,
+    apply_chat_template: bool = True,
 ) -> tuple[list[dict], dict]:
+    """Transformers-backed text generation for eval.
+
+    ``apply_chat_template=False`` is set by the heldout-eval orchestrator
+    for handlers that build their own complete prompts (ClassificationHandler:
+    "Classify the following text. Label:") — wrapping that as a chat
+    user-message would convert the classification-tuned model into a
+    chat-completion model and yield natural-language responses instead
+    of class labels.
+    """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -759,12 +775,18 @@ def _run_transformers_inference(
         reference = row["reference"]
 
         # Wrap with the model's own chat template when present so the model
-        # sees the same prompt shape it was trained against.
-        formatted_prompt, template_applied = _apply_chat_template_if_present(
-            tokenizer, prompt
-        )
-        if template_applied:
-            chat_template_applied_count += 1
+        # sees the same prompt shape it was trained against. Handlers
+        # that build their own complete prompts (e.g. ClassificationHandler)
+        # disable this so the chat-template wrap doesn't override their
+        # task-specific format.
+        if apply_chat_template:
+            formatted_prompt, template_applied = _apply_chat_template_if_present(
+                tokenizer, prompt
+            )
+            if template_applied:
+                chat_template_applied_count += 1
+        else:
+            formatted_prompt, template_applied = prompt, False
 
         inputs = tokenizer(formatted_prompt, return_tensors="pt")
         if use_cuda:
@@ -958,14 +980,17 @@ def _run_local_inference(
     max_new_tokens: int,
     temperature: float,
     stop_sequences: list[str] | None = None,
+    *,
+    apply_chat_template: bool = True,
 ) -> tuple[list[dict], dict]:
     model_path = Path(model_ref).expanduser()
     if model_path.exists() and model_path.suffix.lower() == ".gguf":
         return _run_llama_cpp_inference(
-            model_ref, pairs, max_new_tokens, temperature, stop_sequences
+            model_ref, pairs, max_new_tokens, temperature, stop_sequences,
         )
     return _run_transformers_inference(
-        model_ref, pairs, max_new_tokens, temperature, stop_sequences
+        model_ref, pairs, max_new_tokens, temperature, stop_sequences,
+        apply_chat_template=apply_chat_template,
     )
 
 
@@ -994,11 +1019,17 @@ async def run_heldout_evaluation(
     if not dataset.file_path:
         raise ValueError(f"Dataset '{dataset.name}' has no file path")
     dataset_path = Path(dataset.file_path).expanduser().resolve()
+    # Pull the experiment's task_type so build_eval_context can fall
+    # back to it when the prepared manifest doesn't declare a
+    # task_profile (common for dataset-import projects).
+    exp_config = dict(exp.config or {})
+    experiment_task_type = str(exp_config.get("task_type") or "").strip() or None
     eval_ctx, task_handler = build_eval_context(
         project_id=project_id,
         experiment_id=experiment_id,
         eval_type=eval_type,
         dataset_name=dataset_name,
+        experiment_task_type=experiment_task_type,
     )
     pairs = _load_heldout_pairs(
         dataset_path,
@@ -1037,6 +1068,16 @@ async def run_heldout_evaluation(
                 ]
         except Exception:
             handler_stop_sequences = []
+    # Handlers that build their own complete prompts
+    # (ClassificationHandler) opt out of the model's chat-template wrap
+    # via ``wraps_own_prompt``. Without this, a classification-tuned
+    # model wrapped in a chat template becomes a chat-completion model
+    # at inference time and emits natural language instead of class
+    # labels (the very bug that motivated this code path).
+    handler_wraps_prompt = bool(
+        getattr(task_handler, "wraps_own_prompt", lambda: False)()
+    )
+    apply_chat_template = not handler_wraps_prompt
     predictions, runtime = await asyncio.to_thread(
         _run_local_inference,
         model_ref,
@@ -1044,6 +1085,7 @@ async def run_heldout_evaluation(
         effective_max_new_tokens,
         max(0.0, float(temperature)),
         handler_stop_sequences,
+        apply_chat_template=apply_chat_template,
     )
     modality_counts: dict[str, int] = {}
     for idx, pair in enumerate(pairs):

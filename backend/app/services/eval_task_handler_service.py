@@ -491,6 +491,17 @@ class ClassificationHandler:
             "\nExercise",
         ]
 
+    def wraps_own_prompt(self) -> bool:
+        """Classification builds its own complete prompt
+        ("Classify the following text. Reply with exactly one of: …
+        Label:") inside ``build_prompts``. Applying the model's chat
+        template on top would wrap that whole instruction as a user
+        message and the chat-tuned model would respond conversationally
+        instead of emitting a label. Returning True signals the
+        inference path to skip the chat-template wrap."""
+
+        return True
+
 
 # ── QAHandler (Phase 5.3.2) ───────────────────────────────────────────
 
@@ -2765,15 +2776,34 @@ def build_eval_context(
     experiment_id: int,
     eval_type: str,
     dataset_name: str,
+    experiment_task_type: str | None = None,
 ) -> tuple[EvalContext, TaskHandler]:
     """One-shot helper: read manifest, resolve handler, return both.
 
     Callers in ``evaluation_service`` use this to keep the dispatch
     site short.
+
+    ``experiment_task_type`` is the experiment's ``config.task_type``
+    field (e.g. ``classification``, ``seq2seq``, ``causal_lm``). When
+    the prepared manifest doesn't declare a ``task_profile`` — which
+    happens for projects ingested via dataset-import where the
+    adapter doesn't surface it — we fall back to the experiment's
+    task_type so the right handler still wins. Without this fallback,
+    classification projects silently routed to QAHandler + got 0%
+    on held-out eval because the chat-completion decoding path
+    doesn't match the classification-head training path.
     """
 
     manifest = read_prepared_manifest(project_id)
     task_profile = read_task_profile_from_manifest(project_id)
+    if not task_profile and experiment_task_type:
+        # Map the experiment's task_type → handler key. Identity for
+        # most values; ``causal_lm`` maps to the qa family the
+        # registry covers under several aliases.
+        mapped = _normalize_profile(experiment_task_type)
+        if mapped == "causal_lm":
+            mapped = "language_modeling"
+        task_profile = mapped
     handler = resolve_task_handler(task_profile)
     ctx = EvalContext(
         project_id=project_id,
