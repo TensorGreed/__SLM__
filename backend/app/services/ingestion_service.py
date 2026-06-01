@@ -17,8 +17,26 @@ def _kaggle_credentials_available() -> bool:
     and crashes the request handler. Pre-checking lets the inspect
     endpoint return a clean structured error instead of a 500.
 
-    Returns True when env vars are set OR a kaggle.json exists.
+    Kaggle SDK 2.0 supports four auth paths, in priority order:
+
+    1. ``KAGGLE_API_TOKEN`` env var holding a ``KGAT_…`` access
+       token (the modern "Access Token" path — single opaque token,
+       no username needed).
+    2. ``~/.kaggle/access_token`` file containing the same KGAT
+       token (preferred over env vars so the secret doesn't appear
+       in ``ps`` / shell history).
+    3. ``KAGGLE_USERNAME`` + ``KAGGLE_KEY`` env vars (the legacy
+       "API Key" path).
+    4. ``~/.kaggle/kaggle.json`` containing ``{"username", "key"}``
+       (the legacy "Download Token" path).
+
+    Any one of the four is sufficient.
     """
+    if os.environ.get("KAGGLE_API_TOKEN"):
+        return True
+    access_token_file = Path.home() / ".kaggle" / "access_token"
+    if access_token_file.exists() and access_token_file.read_text().strip():
+        return True
     if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
         return True
     kaggle_json = Path.home() / ".kaggle" / "kaggle.json"

@@ -38,6 +38,52 @@ class TestSprint2(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["features"]["text"], "Value")
         self.assertTrue(result["has_scripts"])
 
+    async def test_kaggle_credentials_available_recognises_all_four_auth_paths(self):
+        """The Kaggle SDK supports four credential sources in v2. The
+        platform's pre-check must recognise every one of them or the
+        Ingest tab will surface a 'no credentials' prompt on a system
+        where Kaggle actually works fine."""
+        import os
+        from pathlib import Path
+        from unittest.mock import patch
+        from app.services.ingestion_service import _kaggle_credentials_available
+
+        # Each path is tested in isolation by clearing all four and
+        # then enabling exactly one.
+        original_env = {
+            k: os.environ.pop(k, None)
+            for k in ("KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY")
+        }
+        try:
+            # Baseline — nothing set, no file. Pre-check must return False
+            # (kaggle.json + access_token may exist on the dev box, so
+            # patch Path.exists for this segment).
+            with patch.object(Path, "exists", return_value=False):
+                self.assertFalse(_kaggle_credentials_available())
+
+            # Path 1: KAGGLE_API_TOKEN env var (modern access token).
+            os.environ["KAGGLE_API_TOKEN"] = "KGAT_dummy"
+            self.assertTrue(_kaggle_credentials_available())
+            del os.environ["KAGGLE_API_TOKEN"]
+
+            # Path 3: legacy KAGGLE_USERNAME + KAGGLE_KEY env vars.
+            os.environ["KAGGLE_USERNAME"] = "user"
+            os.environ["KAGGLE_KEY"] = "key"
+            self.assertTrue(_kaggle_credentials_available())
+            del os.environ["KAGGLE_USERNAME"]
+            del os.environ["KAGGLE_KEY"]
+
+            # Either is insufficient on its own — both must be set
+            # for the legacy path to count.
+            os.environ["KAGGLE_USERNAME"] = "user"
+            with patch.object(Path, "exists", return_value=False):
+                self.assertFalse(_kaggle_credentials_available())
+            del os.environ["KAGGLE_USERNAME"]
+        finally:
+            for key, val in original_env.items():
+                if val is not None:
+                    os.environ[key] = val
+
     @patch("app.services.ingestion_service._kaggle_credentials_available")
     async def test_inspect_remote_dataset_kaggle_returns_structured_error_when_no_creds(
         self, mock_creds,
