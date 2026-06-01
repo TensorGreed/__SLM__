@@ -79,9 +79,12 @@ export interface LabelRow {
     reviewer_notes: string | null;
 }
 
+export type LabelAssignStrategy = "fifo" | "active";
+
 export interface NextRowResponse {
     row: LabelRow | null;
     queue_empty: boolean;
+    strategy?: LabelAssignStrategy;
 }
 
 export interface SubmitLabelBody {
@@ -148,10 +151,11 @@ export async function fetchNextRow(
     projectId: number,
     jobId: number,
     userId: number | null,
+    strategy: LabelAssignStrategy = "fifo",
 ): Promise<NextRowResponse> {
     const res = await api.post<NextRowResponse>(
         `/projects/${projectId}/label-jobs/${jobId}/next-row`,
-        { user_id: userId },
+        { user_id: userId, strategy },
     );
     return res.data;
 }

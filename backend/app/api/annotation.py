@@ -32,6 +32,8 @@ from app.models.label_job import (
 )
 from app.services.annotation.promotion import promote_labeled_rows
 from app.services.annotation_service import (
+    ASSIGN_STRATEGY_FIFO,
+    KNOWN_ASSIGN_STRATEGIES,
     assign_next,
     create_job,
     delete_job,
@@ -80,6 +82,20 @@ class NextRowRequest(BaseModel):
         default=None,
         description="Reviewer being assigned the row. Optional in "
         "auth-disabled local-dev setups; required when AUTH_ENABLED.",
+    )
+    strategy: str = Field(
+        default=ASSIGN_STRATEGY_FIFO,
+        description=(
+            "Row-selection strategy. ``fifo`` (default) hands out "
+            "rows in insertion order; ``active`` ranks the "
+            "unassigned tail by classifier-head softmax entropy "
+            "from the project's most recent completed "
+            "classification experiment, so the labeler spends "
+            "budget on rows the model is least sure about. Falls "
+            "back to FIFO silently when no scoreable experiment is "
+            "available or the job's task shape isn't supported yet."
+        ),
+        max_length=32,
     )
 
 
@@ -277,19 +293,32 @@ async def next_row(
     req: NextRowRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    if req.strategy not in KNOWN_ASSIGN_STRATEGIES:
+        raise HTTPException(
+            422,
+            (
+                f"unknown_assign_strategy: '{req.strategy}'. "
+                f"Allowed values: {sorted(KNOWN_ASSIGN_STRATEGIES)}."
+            ),
+        )
     try:
         row = await assign_next(
             db,
             project_id=project_id,
             job_id=job_id,
             user_id=req.user_id,
+            strategy=req.strategy,
         )
     except ValueError as exc:
         raise _translate_value_error(exc) from exc
     await db.commit()
     if row is None:
-        return {"row": None, "queue_empty": True}
-    return {"row": row_to_dict(row), "queue_empty": False}
+        return {"row": None, "queue_empty": True, "strategy": req.strategy}
+    return {
+        "row": row_to_dict(row),
+        "queue_empty": False,
+        "strategy": req.strategy,
+    }
 
 
 @router.post("/{job_id}/rows/{row_id}/skip")

@@ -78,6 +78,7 @@ session-start guidance.
 - `backend/app/services/adapter_studio_service.py` — Dataset Structure Explorer + Adapter Studio orchestration services.
 - `backend/app/services/alignment_dataset_service.py` — Preference dataset import/filter helpers for alignment training workflows.
 - `backend/app/services/alignment_service.py` — Preference alignment scaffolding: DPO/ORPO contracts and judge scoring.
+- `backend/app/services/annotation/active_learning.py` — Active-learning row ranker for label-job queues (Epic F).
 - `backend/app/services/annotation/promotion.py` — Annotation → training dataset bridge (Story 1.6).
 - `backend/app/services/annotation_service.py` — Annotation foundation service (Story 1.1).
 - `backend/app/services/archetype_seeds.py` — Template-derived seed contributions for the archetype cohort
@@ -564,6 +565,7 @@ session-start guidance.
 
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
+- `backend/tests/test_annotation_active_learning.py` — Epic F Phase 1 — active-learning row ranker for label-jobs.
 - `backend/tests/test_annotation_promotion.py` — Story 1.6 — promote labeled rows → training dataset.
 - `backend/tests/test_archetype_drift_nudge.py` — Tests for the Phase 8c Coach Mode archetype-drift nudge
 - `backend/tests/test_archetype_service.py` — Tests for the archetype-extraction service + endpoint
@@ -759,6 +761,7 @@ session-start guidance.
 
 ## Frontend · Tests
 
+- `frontend/src/api/annotation.test.ts` — _(no docstring)_
 - `frontend/src/api/errors.test.ts` — _(no docstring)_
 - `frontend/src/components/annotation/AnnotationProgress.test.tsx` — AnnotationProgress contract.
 - `frontend/src/components/annotation/ClassificationLabeler.test.tsx` — ClassificationLabeler contract.

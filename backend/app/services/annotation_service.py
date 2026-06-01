@@ -40,10 +40,22 @@ from app.models.label_job import (
     JOB_STATUS_ACTIVE,
     KNOWN_JOB_STATUSES,
     KNOWN_LABEL_TYPES,
+    LABEL_TYPE_CLASSIFICATION,
     LabelJob,
     LabelRow,
 )
 from app.models.project import Project
+
+# Strategies the next-row endpoint accepts. ``fifo`` is the historical
+# behaviour (order by LabelRow.id ascending); ``active`` ranks
+# unassigned rows by model uncertainty using the active-learning
+# helper. Unknown strategies raise ``unknown_assign_strategy`` so a
+# typo can't silently degrade to FIFO without the caller noticing.
+ASSIGN_STRATEGY_FIFO = "fifo"
+ASSIGN_STRATEGY_ACTIVE = "active"
+KNOWN_ASSIGN_STRATEGIES: frozenset[str] = frozenset(
+    {ASSIGN_STRATEGY_FIFO, ASSIGN_STRATEGY_ACTIVE}
+)
 
 
 def _utcnow() -> datetime:
@@ -283,12 +295,90 @@ async def seed_rows_from_dataset(
 # ---------------------------------------------------------------------------
 
 
+async def _candidate_row_ids_for_strategy(
+    db: AsyncSession,
+    *,
+    job: LabelJob,
+    strategy: str,
+) -> list[int] | None:
+    """Return a precomputed order of candidate row ids for the active
+    strategy, or ``None`` to mean "use the FIFO fallback below."
+
+    Kept in its own helper so the assign-loop stays a thin CAS layer
+    around an opaque "next candidate" generator. Active-learning
+    failures (no completed experiment, model load fails, all rows
+    have empty text) all collapse to ``None`` — a labeler never sees
+    an error from picking the active strategy on a fresh project.
+    """
+
+    if strategy == ASSIGN_STRATEGY_FIFO:
+        return None
+    if job.label_type != LABEL_TYPE_CLASSIFICATION:
+        # Span + preference-pair ranking is a Phase-2 follow-up. For
+        # now any non-classification job silently degrades to FIFO so
+        # the UI's strategy toggle is still usable on every job.
+        return None
+
+    from app.services.annotation.active_learning import (
+        latest_scoreable_classification_experiment,
+        rank_rows_by_uncertainty,
+        score_classification_rows,
+    )
+
+    experiment = await latest_scoreable_classification_experiment(
+        db, project_id=job.project_id
+    )
+    if experiment is None:
+        return None
+
+    cfg = experiment.config or {}
+    label_space = cfg.get("label_space") or cfg.get("label_space_preview")
+    if not isinstance(label_space, list) or not label_space:
+        # ``label_space`` is written into the runtime_environment by
+        # the training script. Without it we don't know the head's
+        # output dimension — fall back to FIFO.
+        return None
+    model_path = cfg.get("model_path") or cfg.get("output_dir")
+    if not isinstance(model_path, str) or not model_path:
+        return None
+
+    rows_q = await db.execute(
+        select(LabelRow)
+        .where(
+            LabelRow.job_id == job.id,
+            LabelRow.assigned_to.is_(None),
+            LabelRow.labeled_at.is_(None),
+        )
+        .order_by(LabelRow.id.asc())
+    )
+    rows = list(rows_q.scalars())
+    if not rows:
+        return []
+
+    def _score(batch: list[LabelRow]) -> list[float | None]:
+        try:
+            return score_classification_rows(
+                batch,
+                model_path=model_path,
+                label_space=[str(x) for x in label_space],
+            )
+        except Exception:
+            # Model load / inference failed (missing weights, OOM,
+            # dtype mismatch). Returning all-None makes the ranker
+            # fall back to insertion order — same as FIFO — so the
+            # labeler keeps moving.
+            return [None] * len(batch)
+
+    return rank_rows_by_uncertainty(rows, score_fn=_score)
+
+
 async def assign_next(
     db: AsyncSession,
     *,
     project_id: int,
     job_id: int,
     user_id: int | None,
+    strategy: str = ASSIGN_STRATEGY_FIFO,
 ) -> LabelRow | None:
     """Atomically hand one unlabeled, unassigned row to ``user_id``.
 
@@ -296,24 +386,59 @@ async def assign_next(
     work. Concurrent callers will not see the same row because the
     UPDATE checks ``assigned_to IS NULL`` again — a SQLite-safe
     compare-and-set that retries on lost-update races.
+
+    ``strategy`` chooses the ordering: ``"fifo"`` (default) hands out
+    rows in insertion order; ``"active"`` ranks the unassigned tail
+    by classifier-head softmax entropy via the project's most recent
+    completed classification experiment, so the labeler spends
+    budget on rows the model is least sure about (Epic F).
+    Unknown strategies raise ``unknown_assign_strategy``.
     """
+
+    if strategy not in KNOWN_ASSIGN_STRATEGIES:
+        raise ValueError("unknown_assign_strategy")
 
     job = await get_job(db, project_id=project_id, job_id=job_id)
     if job is None:
         raise ValueError("label_job_not_found")
 
+    preferred_ids: list[int] | None = await _candidate_row_ids_for_strategy(
+        db, job=job, strategy=strategy
+    )
+
     for _ in range(10):
-        result = await db.execute(
-            select(LabelRow)
-            .where(
-                LabelRow.job_id == job_id,
-                LabelRow.assigned_to.is_(None),
-                LabelRow.labeled_at.is_(None),
+        row: LabelRow | None = None
+        if preferred_ids:
+            # Walk the active-ranking list in order and grab the first
+            # row that's still unassigned. We refresh from the DB
+            # rather than trusting the cached object so a concurrent
+            # CAS race in another worker doesn't get clobbered.
+            while preferred_ids:
+                candidate_id = preferred_ids[0]
+                cand_q = await db.execute(
+                    select(LabelRow).where(
+                        LabelRow.id == candidate_id,
+                        LabelRow.assigned_to.is_(None),
+                        LabelRow.labeled_at.is_(None),
+                    )
+                )
+                row = cand_q.scalar_one_or_none()
+                if row is not None:
+                    break
+                preferred_ids.pop(0)
+
+        if row is None:
+            result = await db.execute(
+                select(LabelRow)
+                .where(
+                    LabelRow.job_id == job_id,
+                    LabelRow.assigned_to.is_(None),
+                    LabelRow.labeled_at.is_(None),
+                )
+                .order_by(LabelRow.id.asc())
+                .limit(1)
             )
-            .order_by(LabelRow.id.asc())
-            .limit(1)
-        )
-        row = result.scalar_one_or_none()
+            row = result.scalar_one_or_none()
         if row is None:
             return None
 
@@ -330,6 +455,10 @@ async def assign_next(
         if upd.rowcount and upd.rowcount > 0:
             await db.refresh(row)
             return row
+        # Lost the race — drop this id from the preferred list so the
+        # next iteration walks past it.
+        if preferred_ids and preferred_ids[0] == row.id:
+            preferred_ids.pop(0)
 
     return None
 

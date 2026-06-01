@@ -17,6 +17,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
     type CreateJobBody,
     type LabelJob,
+    type LabelAssignStrategy,
     type LabelJobDetail,
     type LabelRow,
     type LabelType,
@@ -359,6 +360,17 @@ function AnnotateLabelerView({
     const [error, setError] = useState<string>('');
     const [busy, setBusy] = useState(false);
     const [promoting, setPromoting] = useState(false);
+    // Row-selection strategy: ``fifo`` (default) hands out rows in
+    // insertion order; ``active`` ranks unassigned rows by the
+    // project's most recent classifier-head softmax entropy. Persist
+    // across reloads via localStorage so a labeler doesn't have to
+    // re-toggle every session. The backend falls back to FIFO when
+    // no scoreable experiment exists, so picking active on a fresh
+    // project is harmless.
+    const [strategy, setStrategy] = useState<LabelAssignStrategy>(() => {
+        const stored = localStorage.getItem('slm_annotate_strategy');
+        return stored === 'active' ? 'active' : 'fifo';
+    });
 
     const reviewerId = (() => {
         const raw = localStorage.getItem('slm_user_id');
@@ -379,7 +391,12 @@ function AnnotateLabelerView({
     const loadNext = useCallback(async () => {
         setBusy(true);
         try {
-            const next = await fetchNextRow(projectId, jobId, reviewerId);
+            const next = await fetchNextRow(
+                projectId,
+                jobId,
+                reviewerId,
+                strategy,
+            );
             setCurrentRow(next.row);
             setQueueEmpty(next.queue_empty);
         } catch (err) {
@@ -387,7 +404,21 @@ function AnnotateLabelerView({
         } finally {
             setBusy(false);
         }
-    }, [projectId, jobId, reviewerId]);
+    }, [projectId, jobId, reviewerId, strategy]);
+
+    const handleStrategyChange = useCallback(
+        (next: LabelAssignStrategy) => {
+            if (next === strategy) return;
+            setStrategy(next);
+            try {
+                localStorage.setItem('slm_annotate_strategy', next);
+            } catch {
+                // Storage quota / private mode — strategy state still
+                // persists in memory for the current session.
+            }
+        },
+        [strategy],
+    );
 
     useEffect(() => {
         void refreshStats();
@@ -500,6 +531,77 @@ function AnnotateLabelerView({
             </div>
 
             <AnnotationProgress jobName={job.name} stats={job.stats} />
+
+            {job.label_type === 'classification' && (
+                <div
+                    style={{
+                        marginTop: 'var(--space-md)',
+                        padding: 'var(--space-sm) var(--space-md)',
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 'var(--space-md)',
+                        flexWrap: 'wrap',
+                        fontSize: '0.85rem',
+                    }}
+                    data-testid="annotate-strategy-toggle"
+                >
+                    <strong style={{ minWidth: 'auto' }}>Order:</strong>
+                    <label
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            cursor: 'pointer',
+                        }}
+                    >
+                        <input
+                            type="radio"
+                            name="annotate-strategy"
+                            value="fifo"
+                            checked={strategy === 'fifo'}
+                            onChange={() => handleStrategyChange('fifo')}
+                            disabled={busy}
+                            data-testid="annotate-strategy-fifo"
+                        />
+                        FIFO (insertion order)
+                    </label>
+                    <label
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            cursor: 'pointer',
+                        }}
+                        title="Ranks unassigned rows by your most recent classification experiment's softmax entropy. Falls back to FIFO when no completed classification experiment exists yet."
+                    >
+                        <input
+                            type="radio"
+                            name="annotate-strategy"
+                            value="active"
+                            checked={strategy === 'active'}
+                            onChange={() => handleStrategyChange('active')}
+                            disabled={busy}
+                            data-testid="annotate-strategy-active"
+                        />
+                        Active learning (most uncertain first)
+                    </label>
+                    {strategy === 'active' && (
+                        <span
+                            style={{
+                                color: 'var(--text-secondary)',
+                                fontStyle: 'italic',
+                            }}
+                            data-testid="annotate-strategy-hint"
+                        >
+                            Uses your latest completed classification model;
+                            FIFO until a trained experiment exists.
+                        </span>
+                    )}
+                </div>
+            )}
 
             {job.stats.labeled > 0 && (
                 <div
