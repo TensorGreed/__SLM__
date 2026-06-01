@@ -647,9 +647,18 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     <select
                         id="playbook-ollama-model-picker"
                         value={selectedOllamaModel ?? ''}
-                        onChange={(e) =>
-                            setSelectedOllamaModel(e.target.value || null)
-                        }
+                        onChange={(e) => {
+                            const next = e.target.value || null;
+                            setSelectedOllamaModel(next);
+                            // Picking an Ollama model also clears the
+                            // cloud pick — the user can only have one
+                            // backend active at a time. The mirror of
+                            // the cloud-provider onChange clear.
+                            if (next) {
+                                setCloudProvider(null);
+                                setCloudModel(null);
+                            }
+                        }}
                         data-testid="playbook-picker-ollama-model"
                     >
                         <option value="">
@@ -668,6 +677,26 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                     </select>
                 </div>
             )}
+
+            {/* Active-backend disclosure — single source of truth for
+                "what will run when you click Generate". Resolves the
+                cloud > ollama > auto precedence visibly so the user
+                never has to wonder. */}
+            <div
+                className="playbook-picker__active-backend"
+                data-testid="playbook-picker-active-backend"
+                role="status"
+            >
+                <span className="playbook-picker__active-backend-label">
+                    Will run on:
+                </span>
+                <code className="playbook-picker__active-backend-value">
+                    {effectiveBackend
+                        ?? (ollamaAutoPick
+                            ? `auto · ollama:${ollamaAutoPick}`
+                            : 'auto (server picks)')}
+                </code>
+            </div>
 
             <div className="playbook-picker__actions">
                 <button

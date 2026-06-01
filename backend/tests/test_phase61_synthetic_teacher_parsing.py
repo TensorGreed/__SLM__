@@ -202,6 +202,71 @@ class Phase61ForceJsonPayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("response_format", payload)
         self.assertNotIn("format", payload)
 
+    async def test_anthropic_url_dispatches_to_call_anthropic_chat(self):
+        """The legacy synthetic flow used to refuse any non-OpenAI
+        endpoint — picking Anthropic in the legacy panel just sent
+        an OpenAI-compat payload to /v1/messages which 4xx'd. The
+        fix detects ``anthropic.com`` in the URL + dispatches through
+        ``call_anthropic_chat`` which handles the x-api-key auth +
+        the system-as-top-level request shape correctly."""
+        from unittest.mock import AsyncMock, patch
+        from app.services.cloud_llm_service import CloudLlmResponse
+
+        canned = CloudLlmResponse(
+            content='{"pairs": [{"question": "x", "answer": "y"}]}',
+            model="claude-haiku-4-5-20251001",
+            prompt_tokens=12,
+            completion_tokens=34,
+        )
+        with patch(
+            "app.services.cloud_llm_service.call_anthropic_chat",
+            new=AsyncMock(return_value=canned),
+        ) as mock_anth:
+            result = await call_teacher_model(
+                prompt="generate Q&A",
+                system_prompt="You are a teacher",
+                api_url="https://api.anthropic.com/v1/messages",
+                api_key="sk-ant-test",
+                model_name="claude-haiku-4-5-20251001",
+            )
+        # Anthropic helper was called with the right shape.
+        mock_anth.assert_called_once()
+        kw = mock_anth.call_args.kwargs
+        self.assertEqual(kw["api_key"], "sk-ant-test")
+        self.assertEqual(kw["model"], "claude-haiku-4-5-20251001")
+        self.assertEqual(kw["system_prompt"], "You are a teacher")
+        self.assertEqual(kw["user_prompt"], "generate Q&A")
+        # Return shape matches the OpenAI-compat path so downstream
+        # parsing works without a branch.
+        self.assertIn("content", result)
+        self.assertIn("tokens_used", result)
+        self.assertIn("model", result)
+        self.assertEqual(result["model"], "claude-haiku-4-5-20251001")
+        self.assertEqual(result["tokens_used"], 46)
+
+    async def test_anthropic_url_without_api_key_raises_clear_error(self):
+        """Empty key + Anthropic URL is the most common misconfiguration
+        (user picked Anthropic in the legacy panel but hasn't saved a
+        key yet). Must surface a clear, actionable error pointing at
+        the Settings → Secrets affordance — not a generic
+        '401 from Anthropic' that leaks the upstream noise.
+
+        Patches ``TEACHER_MODEL_API_KEY`` to "" so the settings
+        fallback doesn't paper over the empty caller-passed key."""
+        from unittest.mock import patch
+        from app.config import settings as app_settings
+
+        with patch.object(app_settings, "TEACHER_MODEL_API_KEY", ""):
+            with self.assertRaises(ValueError) as ctx:
+                await call_teacher_model(
+                    prompt="generate",
+                    api_url="https://api.anthropic.com/v1/messages",
+                    api_key="",
+                    model_name="claude-haiku-4-5-20251001",
+                )
+        self.assertIn("Anthropic", str(ctx.exception))
+        self.assertIn("Secrets", str(ctx.exception))
+
 
 class Phase61UniversalTeacherConfigTests(unittest.IsolatedAsyncioTestCase):
     """Model-agnostic guardrails: defaults that serve every backend (OpenAI,

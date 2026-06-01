@@ -116,6 +116,39 @@ async def call_teacher_model(
     if not url:
         raise ValueError("Teacher model API URL not configured. Set TEACHER_MODEL_API_URL in .env")
 
+    # Anthropic dispatch — their /v1/messages API isn't OpenAI-compatible
+    # (uses x-api-key auth, system at top-level, different response shape),
+    # so we route through call_anthropic_chat instead of building the
+    # OpenAI-compat payload below. Detection is URL-based to keep the
+    # legacy call sites (which only pass api_url + api_key) unchanged.
+    if "anthropic.com" in (url or "").lower():
+        if not key:
+            raise ValueError(
+                "Anthropic teacher model requires an API key. Save one "
+                "under Project Settings → Secrets (provider="
+                "'cloud_llm_anthropic', key_name='api_key')."
+            )
+        from app.services.cloud_llm_service import (
+            CloudLlmError,
+            call_anthropic_chat,
+        )
+        try:
+            anth_resp = await call_anthropic_chat(
+                api_key=key,
+                model=model_name,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except CloudLlmError as e:
+            raise ValueError(f"Anthropic teacher call failed: {e}") from e
+        return {
+            "content": anth_resp.content or "",
+            "tokens_used": (anth_resp.prompt_tokens or 0) + (anth_resp.completion_tokens or 0),
+            "model": anth_resp.model or model_name,
+        }
+
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"

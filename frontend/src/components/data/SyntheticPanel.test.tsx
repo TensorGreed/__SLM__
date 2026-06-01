@@ -84,6 +84,11 @@ function installGetRouter(overrides: Record<string, any> = {}) {
                 },
             };
         }
+        if (url.endsWith('/secrets')) {
+            return {
+                data: overrides['secrets'] ?? { secrets: [] },
+            };
+        }
         if (url.includes('/synthetic/tasks/')) {
             // Default polling reply: completed immediately with zero
             // rows. Tests that exercise the async path override this.
@@ -366,6 +371,71 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         // Server's auto-pick won the initial selection (user's saved
         // 'llama3' free-text default isn't in the installed list).
         expect(select.value).toBe('qwen2.5:14b-instruct-q4_K_M');
+    });
+
+    it('exposes OpenAI / Deepseek / Anthropic as first-class provider options with pre-filled URLs', async () => {
+        installGetRouter();
+        render(<SyntheticPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-legacy-provider')).toBeInTheDocument();
+        });
+        const select = screen.getByTestId('synth-legacy-provider') as HTMLSelectElement;
+        // All four cloud-or-local providers present (custom still
+        // available for power users who point at something else).
+        const text = select.textContent ?? '';
+        expect(text).toMatch(/Ollama/);
+        expect(text).toMatch(/OpenAI/);
+        expect(text).toMatch(/Deepseek/);
+        expect(text).toMatch(/Anthropic/);
+        expect(text).toMatch(/Custom Endpoint/);
+
+        // Pick Deepseek → URL pre-fills to the Deepseek host + model
+        // suggestion populates. Locked URL badge appears.
+        await userEvent.selectOptions(select, 'deepseek');
+        const urlInput = screen.getByTestId('synth-legacy-api-url') as HTMLInputElement;
+        await waitFor(() => {
+            expect(urlInput.value).toMatch(/api\.deepseek\.com/);
+        });
+        expect(urlInput.readOnly).toBe(true);
+
+        // Pick Anthropic → URL pre-fills to the Anthropic messages
+        // endpoint (backend detects this + dispatches to
+        // call_anthropic_chat).
+        await userEvent.selectOptions(select, 'anthropic');
+        await waitFor(() => {
+            expect(urlInput.value).toMatch(/api\.anthropic\.com/);
+        });
+    });
+
+    it('shows the "saved on project" badge when a cloud provider has a key already', async () => {
+        installGetRouter({
+            secrets: {
+                secrets: [
+                    {
+                        provider: 'cloud_llm_deepseek',
+                        key_name: 'api_key',
+                        value_hint: 'sk-...AB',
+                    },
+                ],
+            },
+        });
+        render(<SyntheticPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-legacy-provider')).toBeInTheDocument();
+        });
+        // Provider dropdown labels the deepseek option with the saved-key check.
+        const select = screen.getByTestId('synth-legacy-provider') as HTMLSelectElement;
+        const options = Array.from(select.options).map((o) => o.textContent);
+        expect(options.find((t) => t?.includes('Deepseek'))).toMatch(/✓/);
+        // After selecting it, the inline 'saved on project' badge renders.
+        await userEvent.selectOptions(select, 'deepseek');
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-legacy-saved-key-badge')).toBeInTheDocument();
+        });
+        // The API-key input shows the 'using saved key' placeholder
+        // instead of forcing the user to paste anything.
+        const keyInput = screen.getByTestId('synth-legacy-api-key') as HTMLInputElement;
+        expect(keyInput.placeholder).toMatch(/saved key/);
     });
 
     it('falls back to the free-text model input when Ollama is unreachable', async () => {

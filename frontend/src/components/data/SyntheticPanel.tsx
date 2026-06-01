@@ -87,8 +87,46 @@ function extractErrorMessage(error: unknown): string {
     return 'Generation failed. Check teacher model settings.';
 }
 
+// Legacy-flow provider presets — each one fills in its canonical
+// API URL + a sensible default model so users don't have to
+// remember the endpoint URL or model id. ``ollama`` stays special
+// (free-text / dropdown chosen by the dedicated picker below);
+// ``custom`` lets power users point at anything OpenAI-compatible.
+const LEGACY_PROVIDER_PRESETS: Record<string, { apiUrl: string; defaultModel: string; secretCoords: { provider: string; keyName: string } | null }> = {
+    ollama: {
+        apiUrl: 'http://localhost:11434/v1/chat/completions',
+        defaultModel: 'llama3',
+        secretCoords: null,  // no API key needed for local Ollama
+    },
+    openai: {
+        apiUrl: 'https://api.openai.com/v1/chat/completions',
+        defaultModel: 'gpt-4o-mini',
+        secretCoords: { provider: 'cloud_llm_openai', keyName: 'api_key' },
+    },
+    deepseek: {
+        apiUrl: 'https://api.deepseek.com/v1/chat/completions',
+        defaultModel: 'deepseek-chat',
+        secretCoords: { provider: 'cloud_llm_deepseek', keyName: 'api_key' },
+    },
+    anthropic: {
+        // Anthropic isn't OpenAI-compatible — the backend detects
+        // this URL and dispatches to call_anthropic_chat instead of
+        // the OpenAI-style call_teacher_model path. Keeping the URL
+        // here so the user sees what's being hit + so power users
+        // can override.
+        apiUrl: 'https://api.anthropic.com/v1/messages',
+        defaultModel: 'claude-haiku-4-5-20251001',
+        secretCoords: { provider: 'cloud_llm_anthropic', keyName: 'api_key' },
+    },
+    custom: {
+        apiUrl: '',
+        defaultModel: '',
+        secretCoords: null,
+    },
+};
+
 export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanelProps) {
-    type Provider = 'ollama' | 'openai' | 'custom';
+    type Provider = 'ollama' | 'openai' | 'deepseek' | 'anthropic' | 'custom';
     const [provider, setProvider] = useState<Provider>('ollama');
     const [generationMode, setGenerationMode] = useState<GenerationMode>('qa');
 
@@ -309,6 +347,10 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                 const normalizedUrl = apiUrlToken.toLowerCase();
                 if (normalizedUrl.includes('api.openai.com')) {
                     setProvider('openai');
+                } else if (normalizedUrl.includes('api.deepseek.com')) {
+                    setProvider('deepseek');
+                } else if (normalizedUrl.includes('api.anthropic.com')) {
+                    setProvider('anthropic');
                 } else if (normalizedUrl.includes('localhost:11434') || normalizedUrl.includes('127.0.0.1:11434')) {
                     setProvider('ollama');
                 } else {
@@ -341,15 +383,56 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
         };
     }, [projectId]);
 
+    // Tracks which secret coordinates (provider, key_name) exist on
+    // this project. Populated from GET /secrets — the list endpoint
+    // doesn't echo the raw values (good — they stay server-side); we
+    // only learn whether a coordinate is saved so the UI can flip
+    // 'paste your key' to 'Saved key in use' on provider switch.
+    type SecretCoord = { provider: string; keyName: string };
+    const [savedSecretCoords, setSavedSecretCoords] = useState<SecretCoord[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        api.get<{ secrets: { provider: string; key_name: string }[] }>(
+            `/projects/${projectId}/secrets`,
+        )
+            .then((res) => {
+                if (cancelled) return;
+                setSavedSecretCoords(
+                    (res.data?.secrets || []).map((s) => ({
+                        provider: s.provider, keyName: s.key_name,
+                    })),
+                );
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setSavedSecretCoords([]);
+            });
+        return () => { cancelled = true; };
+    }, [projectId]);
+
+    // True when the active provider has a key saved on this project.
+    // Drives the 'Saved key in use' badge and lets the user submit
+    // without re-pasting (the backend resolves the saved value via
+    // use_saved_secrets=true).
+    const hasSavedProviderKey = useMemo(() => {
+        const preset = LEGACY_PROVIDER_PRESETS[provider];
+        if (!preset?.secretCoords) return false;
+        return savedSecretCoords.some(
+            (s) => s.provider === preset.secretCoords!.provider
+                && s.keyName === preset.secretCoords!.keyName,
+        );
+    }, [provider, savedSecretCoords]);
+
     const handleProviderChange = (p: Provider) => {
         setProvider(p);
-        if (p === 'ollama') {
-            setApiUrl('http://localhost:11434/v1/chat/completions');
-            setModelName('llama3');
-            setApiKey('');
-        } else if (p === 'openai') {
-            setApiUrl('https://api.openai.com/v1/chat/completions');
-            setModelName('gpt-4o');
+        const preset = LEGACY_PROVIDER_PRESETS[p];
+        if (preset) {
+            if (preset.apiUrl) setApiUrl(preset.apiUrl);
+            if (preset.defaultModel) setModelName(preset.defaultModel);
+            else setModelName('');
+            // Clear any session-typed key — the next API call resolves
+            // it from project secrets when use_saved_secrets=true (the
+            // legacy generate endpoint already does this by default).
             setApiKey('');
         } else {
             setApiUrl('');
@@ -811,9 +894,22 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                     <div style={{ display: 'grid', gridTemplateColumns: provider === 'ollama' ? '1fr 1fr' : '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
                         <div className="form-group">
                             <label className="form-label">Provider</label>
-                            <select className="input" value={provider} onChange={e => handleProviderChange(e.target.value as Provider)}>
+                            <select
+                                className="input"
+                                value={provider}
+                                onChange={e => handleProviderChange(e.target.value as Provider)}
+                                data-testid="synth-legacy-provider"
+                            >
                                 <option value="ollama">Local (Ollama)</option>
-                                <option value="openai">Cloud (OpenAI)</option>
+                                <option value="openai">
+                                    OpenAI{savedSecretCoords.some(s => s.provider === 'cloud_llm_openai') ? ' ✓' : ''}
+                                </option>
+                                <option value="deepseek">
+                                    Deepseek{savedSecretCoords.some(s => s.provider === 'cloud_llm_deepseek') ? ' ✓' : ''}
+                                </option>
+                                <option value="anthropic">
+                                    Anthropic{savedSecretCoords.some(s => s.provider === 'cloud_llm_anthropic') ? ' ✓' : ''}
+                                </option>
                                 <option value="custom">Custom Endpoint</option>
                             </select>
                         </div>
@@ -839,14 +935,46 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                         </div>
                         {provider !== 'ollama' && (
                             <div className="form-group">
-                                <label className="form-label">API Key</label>
-                                <input className="input" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." />
+                                <label className="form-label">
+                                    API Key
+                                    {hasSavedProviderKey && (
+                                        <span
+                                            style={{ color: 'rgb(34, 197, 94)', fontSize: '0.8em', marginLeft: 6 }}
+                                            data-testid="synth-legacy-saved-key-badge"
+                                        >
+                                            ✓ saved on project
+                                        </span>
+                                    )}
+                                </label>
+                                <input
+                                    className="input"
+                                    type="password"
+                                    value={apiKey}
+                                    onChange={e => setApiKey(e.target.value)}
+                                    placeholder={hasSavedProviderKey ? '(using saved key)' : 'sk-...'}
+                                    data-testid="synth-legacy-api-key"
+                                />
                             </div>
                         )}
                     </div>
                     <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label className="form-label">API URL {provider === 'openai' && <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8em' }}>(Locked)</span>}</label>
-                        <input className="input" value={apiUrl} onChange={e => setApiUrl(e.target.value)} readOnly={provider === 'openai'} style={{ opacity: provider === 'openai' ? 0.7 : 1, fontFamily: 'monospace' }} />
+                        <label className="form-label">
+                            API URL
+                            {(provider === 'openai' || provider === 'deepseek' || provider === 'anthropic') && (
+                                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8em' }}> (locked — provider preset)</span>
+                            )}
+                        </label>
+                        <input
+                            className="input"
+                            value={apiUrl}
+                            onChange={e => setApiUrl(e.target.value)}
+                            readOnly={provider === 'openai' || provider === 'deepseek' || provider === 'anthropic'}
+                            style={{
+                                opacity: (provider === 'openai' || provider === 'deepseek' || provider === 'anthropic') ? 0.7 : 1,
+                                fontFamily: 'monospace',
+                            }}
+                            data-testid="synth-legacy-api-url"
+                        />
                     </div>
                 </div>
 

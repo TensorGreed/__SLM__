@@ -935,6 +935,77 @@ describe('PlaybookPickerPanel', () => {
         expect(asyncCalls[0][1].backend).toBe('cloud:openai:gpt-4o-mini');
     });
 
+    it('shows an active-backend indicator that resolves cloud > ollama > auto', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            ollamaModelsResponse: {
+                project_id: 1,
+                ollama_available: true,
+                default: 'qwen2.5:14b-instruct-q4_K_M',
+                models: [
+                    { name: 'qwen2.5:14b-instruct-q4_K_M', size_bytes: 1, parameter_size: '14.8B', family: 'qwen2' },
+                    { name: 'llama3:latest', size_bytes: 1, parameter_size: '8.0B', family: 'llama' },
+                ],
+            },
+            cloudModelsResponse: {
+                project_id: 1,
+                providers: [
+                    { provider: 'openai', key_saved: true, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] },
+                    { provider: 'anthropic', key_saved: false, models: [] },
+                    { provider: 'deepseek', key_saved: false, models: [] },
+                ],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-active-backend')).toBeInTheDocument();
+        });
+        // Initial: no pick → indicator shows the auto-pick.
+        let indicator = screen.getByTestId('playbook-picker-active-backend');
+        expect(indicator.textContent).toMatch(/auto.*qwen2\.5:14b/);
+
+        // Pick Ollama llama3 → indicator updates to ollama:llama3:latest.
+        await userEvent.selectOptions(
+            screen.getByTestId('playbook-picker-ollama-model'),
+            'llama3:latest',
+        );
+        await waitFor(() => {
+            indicator = screen.getByTestId('playbook-picker-active-backend');
+            expect(indicator.textContent).toMatch(/ollama:llama3:latest/);
+        });
+
+        // Pick OpenAI → ollama pin should clear AND indicator shows cloud.
+        await userEvent.selectOptions(
+            screen.getByTestId('playbook-picker-cloud-provider'),
+            'openai',
+        );
+        await userEvent.selectOptions(
+            screen.getByTestId('playbook-picker-cloud-model'),
+            'gpt-4o-mini',
+        );
+        await waitFor(() => {
+            indicator = screen.getByTestId('playbook-picker-active-backend');
+            expect(indicator.textContent).toMatch(/cloud:openai:gpt-4o-mini/);
+        });
+        // The Ollama dropdown reset to Auto when cloud was picked.
+        const ollamaSelect = screen.getByTestId('playbook-picker-ollama-model') as HTMLSelectElement;
+        expect(ollamaSelect.value).toBe('');
+
+        // Now pick Ollama again — that should clear the cloud pick
+        // (bidirectional mutual exclusion).
+        await userEvent.selectOptions(ollamaSelect, 'llama3:latest');
+        await waitFor(() => {
+            indicator = screen.getByTestId('playbook-picker-active-backend');
+            expect(indicator.textContent).toMatch(/ollama:llama3:latest/);
+        });
+        const cloudSelect = screen.getByTestId('playbook-picker-cloud-provider') as HTMLSelectElement;
+        expect(cloudSelect.value).toBe('');
+    });
+
     it('shows a 0-rows diagnostic (no retry) when dry-run returns empty output without a refusal', async () => {
         installFullRouter({
             playbooks: {
