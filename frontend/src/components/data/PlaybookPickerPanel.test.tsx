@@ -248,6 +248,7 @@ describe('PlaybookPickerPanel', () => {
         playbooks: unknown;
         backendsResponse?: unknown;
         ollamaModelsResponse?: unknown;
+        cloudModelsResponse?: unknown;
     }) {
         const backendsResponse = opts.backendsResponse ?? {
             project_id: 1,
@@ -261,11 +262,18 @@ describe('PlaybookPickerPanel', () => {
             default: null,
             ollama_available: false,
         };
+        const cloudModelsResponse = opts.cloudModelsResponse ?? {
+            project_id: 1,
+            providers: [],
+        };
         apiMock.get.mockImplementation(async (url: string) => {
-            // Order matters — /backends/ollama/models must match before
-            // the generic /backends prefix.
+            // Order matters — /backends/ollama/models + /cloud/models
+            // must match before the generic /backends prefix.
             if (url.includes('/synthetic/backends/ollama/models')) {
                 return { data: ollamaModelsResponse };
+            }
+            if (url.includes('/synthetic/backends/cloud/models')) {
+                return { data: cloudModelsResponse };
             }
             if (url.includes('/synthetic/backends')) {
                 return { data: backendsResponse };
@@ -827,6 +835,104 @@ describe('PlaybookPickerPanel', () => {
         );
         expect(asyncCalls.length).toBe(1);
         expect(asyncCalls[0][1].backend).toMatch(/qwen2\.5/);
+    });
+
+    it('renders the cloud provider picker with key-saved status + curated models per provider', async () => {
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            cloudModelsResponse: {
+                project_id: 1,
+                providers: [
+                    {
+                        provider: 'openai',
+                        key_saved: true,
+                        models: [
+                            { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
+                            { id: 'gpt-4o', label: 'GPT-4o' },
+                        ],
+                    },
+                    { provider: 'anthropic', key_saved: false, models: [{ id: 'claude-haiku-4-5-20251001', label: 'Haiku' }] },
+                    { provider: 'deepseek', key_saved: false, models: [{ id: 'deepseek-chat', label: 'V3 chat' }] },
+                ],
+            },
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-cloud-provider')).toBeInTheDocument();
+        });
+        const providerSelect = screen.getByTestId('playbook-picker-cloud-provider') as HTMLSelectElement;
+        // All 3 providers appear with their key-saved badges.
+        const text = providerSelect.textContent ?? '';
+        expect(text).toMatch(/openai/);
+        expect(text).toMatch(/key saved/);
+        expect(text).toMatch(/no key/);
+        // Picking the no-key provider surfaces the inline 'save key first' hint.
+        await userEvent.selectOptions(providerSelect, 'anthropic');
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-cloud-no-key')).toBeInTheDocument();
+        });
+        // Picking the key-saved provider enables the model dropdown.
+        await userEvent.selectOptions(providerSelect, 'openai');
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-cloud-model')).toBeInTheDocument();
+        });
+        const modelSelect = screen.getByTestId('playbook-picker-cloud-model') as HTMLSelectElement;
+        expect(modelSelect.disabled).toBe(false);
+        expect(modelSelect.textContent).toMatch(/GPT-4o mini/);
+    });
+
+    it('pins the chosen cloud provider + model through to dry-run as cloud:<provider>:<model>', async () => {
+        const dryRunCalls: any[] = [];
+        installRouter({
+            playbooks: {
+                project_id: 1,
+                recipe_id: 'classification',
+                playbooks: [{ recipe_id: 'classification', mode: 'positives_paraphrase' }],
+            },
+            cloudModelsResponse: {
+                project_id: 1,
+                providers: [
+                    { provider: 'openai', key_saved: true, models: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }] },
+                    { provider: 'anthropic', key_saved: false, models: [] },
+                    { provider: 'deepseek', key_saved: false, models: [] },
+                ],
+            },
+        });
+        apiMock.post.mockImplementation(async (url: string, body: any) => {
+            if (url.endsWith('/run-playbook/dry-run')) {
+                dryRunCalls.push(body);
+                return {
+                    data: {
+                        ok: true, accepted_count: 1, refusal_detected: false,
+                        raw_llm_snippet: '{"x":1}', backend_used: 'cloud:openai:gpt-4o-mini',
+                        elapsed_sec: 1.2, prompt_snippet: '',
+                        rows: [{ payload: { x: 1 }, synth_confidence: 1, synth_source: 's' }],
+                    },
+                };
+            }
+            return { data: { id: 99, status: 'queued', kind: 'synth_playbook' } };
+        });
+        renderPanel(<PlaybookPickerPanel projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('playbook-picker-cloud-provider')).toBeInTheDocument();
+        });
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-provider'), 'openai');
+        await userEvent.selectOptions(screen.getByTestId('playbook-picker-cloud-model'), 'gpt-4o-mini');
+        await userEvent.click(screen.getByTestId('playbook-picker-run'));
+        await waitFor(() => {
+            expect(dryRunCalls.length).toBeGreaterThanOrEqual(1);
+        });
+        expect(dryRunCalls[0].backend).toBe('cloud:openai:gpt-4o-mini');
+        // Async-job call also fired with the cloud backend.
+        const asyncCalls = apiMock.post.mock.calls.filter(
+            (c) => String(c[0]).endsWith('?async_job=true'),
+        );
+        expect(asyncCalls.length).toBe(1);
+        expect(asyncCalls[0][1].backend).toBe('cloud:openai:gpt-4o-mini');
     });
 
     it('shows a 0-rows diagnostic (no retry) when dry-run returns empty output without a refusal', async () => {

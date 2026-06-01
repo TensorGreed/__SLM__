@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import type {
+    CloudProviderEntry,
     DryRunPlaybookResult,
     OllamaModelInfo,
     PlaybookCatalogEntry,
@@ -23,6 +24,7 @@ import type {
 } from '../../api/synthPlaybook';
 import {
     dryRunPlaybook,
+    listCloudModels,
     listOllamaModels,
     listPlaybooks,
     listSynthBackends,
@@ -127,6 +129,14 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
     const [ollamaModels, setOllamaModels] = useState<OllamaModelInfo[]>([]);
     const [ollamaAutoPick, setOllamaAutoPick] = useState<string | null>(null);
     const [selectedOllamaModel, setSelectedOllamaModel] = useState<string | null>(null);
+    // Cloud picker — OpenAI / Anthropic / Deepseek. ``cloudProvider``
+    // null means 'don't use cloud' (Ollama/auto wins). When set, the
+    // model dropdown shows only that provider's curated models. The
+    // effective backend pin becomes ``cloud:<provider>:<model>`` and
+    // the API layer resolves the saved key before instantiating.
+    const [cloudProviders, setCloudProviders] = useState<CloudProviderEntry[]>([]);
+    const [cloudProvider, setCloudProvider] = useState<string | null>(null);
+    const [cloudModel, setCloudModel] = useState<string | null>(null);
     // P1 — pre-flight + inline diagnostic state. ``preflight`` holds
     // the dry-run result (refusal_detected etc.) so the panel can
     // render an inline error + retry-with-Qwen affordance instead of
@@ -163,18 +173,43 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                 setOllamaModels([]);
                 setOllamaAutoPick(null);
             });
+        // Cloud catalog is install-static (OpenAI / Anthropic /
+        // Deepseek with curated model lists) — only the ``key_saved``
+        // flag is per-project. Fail-soft if the endpoint 5xx's so the
+        // panel still renders with just the local options.
+        listCloudModels(projectId)
+            .then((data) => {
+                if (cancelled) return;
+                setCloudProviders(data.providers || []);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setCloudProviders([]);
+            });
         return () => {
             cancelled = true;
         };
     }, [projectId]);
 
     // Resolve the effective backend string the server should use,
-    // given the user's two picks (backend kind + ollama model). null
-    // means "let the server auto-pick".
+    // given the user's three picks (cloud > ollama model > backend
+    // kind). null means "let the server auto-pick". Cloud wins
+    // because it's the most-explicit choice — the user typed in a
+    // provider AND a model.
     const effectiveBackend = useMemo<string | null>(() => {
+        if (cloudProvider && cloudModel) {
+            return `cloud:${cloudProvider}:${cloudModel}`;
+        }
         if (selectedOllamaModel) return `ollama:${selectedOllamaModel}`;
         return selectedBackend;
-    }, [selectedBackend, selectedOllamaModel]);
+    }, [selectedBackend, selectedOllamaModel, cloudProvider, cloudModel]);
+
+    // The active cloud provider's catalog row (models + key_saved).
+    // Used by the model dropdown + the 'Save key first' affordance.
+    const activeCloudProvider = useMemo(
+        () => cloudProviders.find((p) => p.provider === cloudProvider) ?? null,
+        [cloudProviders, cloudProvider],
+    );
 
     useEffect(() => {
         let cancelled = false;
@@ -538,6 +573,67 @@ export default function PlaybookPickerPanel({ projectId }: Props) {
                         </p>
                     )}
                 </>
+            )}
+
+            {cloudProviders.length > 0 && (
+                <div
+                    className="playbook-picker__count"
+                    data-testid="playbook-picker-cloud-row"
+                >
+                    <label htmlFor="playbook-cloud-provider-picker">
+                        Cloud provider
+                    </label>
+                    <select
+                        id="playbook-cloud-provider-picker"
+                        value={cloudProvider ?? ''}
+                        onChange={(e) => {
+                            const next = e.target.value || null;
+                            setCloudProvider(next);
+                            // Reset the model when the provider changes
+                            // so we never carry an OpenAI model id over
+                            // to Anthropic's dropdown.
+                            setCloudModel(null);
+                            // Picking a cloud provider also clears the
+                            // local Ollama pin — the effective backend
+                            // is one or the other, not both.
+                            if (next) setSelectedOllamaModel(null);
+                        }}
+                        data-testid="playbook-picker-cloud-provider"
+                    >
+                        <option value="">None (use local)</option>
+                        {cloudProviders.map((p) => (
+                            <option key={p.provider} value={p.provider}>
+                                {p.provider}{p.key_saved ? ' ✓ key saved' : ' · no key'}
+                            </option>
+                        ))}
+                    </select>
+                    {activeCloudProvider && (
+                        <select
+                            value={cloudModel ?? ''}
+                            onChange={(e) => setCloudModel(e.target.value || null)}
+                            disabled={!activeCloudProvider.key_saved}
+                            data-testid="playbook-picker-cloud-model"
+                            aria-label={`${activeCloudProvider.provider} model`}
+                        >
+                            <option value="">Pick a model…</option>
+                            {activeCloudProvider.models.map((m) => (
+                                <option key={m.id} value={m.id}>{m.label}</option>
+                            ))}
+                        </select>
+                    )}
+                    {activeCloudProvider && !activeCloudProvider.key_saved && (
+                        <p
+                            className="playbook-picker__cloud-no-key"
+                            data-testid="playbook-picker-cloud-no-key"
+                        >
+                            No <strong>{activeCloudProvider.provider}</strong> API
+                            key saved on this project. Save one in Project
+                            Settings → Secrets (or via the gold generator's
+                            "Save key for this project" toggle) and reload
+                            this panel.
+                        </p>
+                    )}
+                </div>
             )}
 
             {ollamaModels.length > 0 && (

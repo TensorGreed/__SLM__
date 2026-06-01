@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../../api/client';
+import { listOllamaModels, type OllamaModelInfo } from '../../api/synthPlaybook';
 import PlaybookPickerPanel from './PlaybookPickerPanel';
 import SynthReviewQueue from './SynthReviewQueue';
 import StepFooter from '../shared/StepFooter';
@@ -126,6 +127,10 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     const [apiUrl, setApiUrl] = useState('http://localhost:11434/v1/chat/completions');
     const [apiKey, setApiKey] = useState('');
     const [modelName, setModelName] = useState('llama3');
+    // Ollama-installed model list — populates the model dropdown when
+    // the provider picker is set to 'ollama'. Fetched once on mount;
+    // empty/failed fetches fall back to the legacy free-text input.
+    const [ollamaModelList, setOllamaModelList] = useState<OllamaModelInfo[]>([]);
     const [generatedPairs, setGeneratedPairs] = useState<any[]>([]);
     const [generatedConversations, setGeneratedConversations] = useState<any[]>([]);
     const [generatedSpans, setGeneratedSpans] = useState<SpanRow[]>([]);
@@ -173,6 +178,34 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
     // — duplicate fetch is cheap (returns 6 entries max) and avoids
     // prop-drilling state through this 1300-line component.
     const [recipeRequired, setRecipeRequired] = useState<boolean | null>(null);
+    // Load installed Ollama models once so the legacy generator's
+    // "Model Name" field can render a dropdown instead of a free-text
+    // input when provider=ollama. Fail-soft: if Ollama is down, the
+    // existing text input renders as before.
+    useEffect(() => {
+        let cancelled = false;
+        listOllamaModels(projectId)
+            .then((res) => {
+                if (cancelled) return;
+                setOllamaModelList(res.models || []);
+                // If the model the user has selected isn't installed,
+                // and the auto-pick exists, switch to it so they're not
+                // calling Ollama with a model that 404s.
+                if (
+                    res.default
+                    && !res.models.some((m) => m.name === modelName)
+                ) {
+                    setModelName(res.default);
+                }
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setOllamaModelList([]);
+            });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps — modelName intentionally
+        //   read-once on mount; we don't want the auto-switch effect to refire on every keystroke.
+    }, [projectId]);
     useEffect(() => {
         let cancelled = false;
         api.get<{ recipe_required?: boolean }>(
@@ -786,7 +819,23 @@ export default function SyntheticPanel({ projectId, onNextStep }: SyntheticPanel
                         </div>
                         <div className="form-group">
                             <label className="form-label">Model Name</label>
-                            <input className="input" value={modelName} onChange={e => setModelName(e.target.value)} placeholder={provider === 'ollama' ? 'llama3' : 'gpt-4o'} />
+                            {provider === 'ollama' && ollamaModelList.length > 0 ? (
+                                <select
+                                    className="input"
+                                    value={modelName}
+                                    onChange={e => setModelName(e.target.value)}
+                                    data-testid="synth-legacy-ollama-model"
+                                    aria-label="Model Name"
+                                >
+                                    {ollamaModelList.map(m => (
+                                        <option key={m.name} value={m.name}>
+                                            {m.name}{m.parameter_size ? ` · ${m.parameter_size}` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <input className="input" value={modelName} onChange={e => setModelName(e.target.value)} placeholder={provider === 'ollama' ? 'llama3' : 'gpt-4o'} />
+                            )}
                         </div>
                         {provider !== 'ollama' && (
                             <div className="form-group">

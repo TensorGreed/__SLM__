@@ -24,6 +24,89 @@ from app.services.synthetic_service import (
 router = APIRouter(prefix="/projects/{project_id}/synthetic", tags=["Synthetic"])
 
 
+# Cloud provider → (secret_provider, key_name) for resolving saved
+# API keys before instantiating a CloudLlmBackend. Mirrors the
+# gold-generate flow's ``_PROVIDER_SECRET_MAP`` exactly so users only
+# enter their key once per project.
+_CLOUD_PROVIDER_SECRET_COORDS: dict[str, tuple[str, str]] = {
+    "openai": ("cloud_llm_openai", "api_key"),
+    "anthropic": ("cloud_llm_anthropic", "api_key"),
+    "deepseek": ("cloud_llm_deepseek", "api_key"),
+}
+
+
+# Curated catalog of cloud models the synth panel offers. Mirrors the
+# gold-generate flow's known-good defaults so users see the same
+# names in both surfaces. Frontend reads this via
+# ``/synthetic/backends/cloud/models``.
+_CLOUD_MODELS_CATALOG: dict[str, list[dict[str, str]]] = {
+    "openai": [
+        {"id": "gpt-4o-mini", "label": "GPT-4o mini (fast + cheap)"},
+        {"id": "gpt-4o", "label": "GPT-4o (flagship)"},
+        {"id": "gpt-4.1", "label": "GPT-4.1"},
+        {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini"},
+    ],
+    "anthropic": [
+        {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5 (fast + cheap)"},
+        {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"},
+        {"id": "claude-opus-4-7", "label": "Claude Opus 4.7"},
+    ],
+    "deepseek": [
+        {"id": "deepseek-chat", "label": "Deepseek V3 chat (cheap)"},
+        {"id": "deepseek-reasoner", "label": "Deepseek R1 reasoner"},
+    ],
+}
+
+
+async def _resolve_cloud_backend_override(
+    db: AsyncSession, project_id: int, backend_pin: str | None,
+):
+    """If ``backend_pin`` looks like ``cloud:<provider>:<model>``,
+    resolve the project's saved API key and return a constructed
+    ``CloudLlmBackend``. Returns ``None`` for all other pin shapes
+    so the existing ``pick_backend()`` path handles them.
+
+    Raises ``HTTPException(400)`` for malformed pins and
+    ``HTTPException(402)`` (payment required — semantically closest)
+    when no API key is saved for the requested provider. The 402
+    distinction matters: the frontend renders a "save key first"
+    affordance for 402 and a generic error toast for 400/500."""
+    if not backend_pin or not backend_pin.startswith("cloud:"):
+        return None
+    parts = backend_pin.split(":", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        raise HTTPException(
+            400,
+            f"Malformed cloud backend pin {backend_pin!r}. Expected "
+            f"'cloud:<provider>:<model>' (e.g. 'cloud:openai:gpt-4o-mini').",
+        )
+    _, provider, model = parts
+    coords = _CLOUD_PROVIDER_SECRET_COORDS.get(provider)
+    if coords is None:
+        raise HTTPException(
+            400,
+            f"Unknown cloud provider {provider!r}. Supported: "
+            f"{', '.join(_CLOUD_PROVIDER_SECRET_COORDS.keys())}.",
+        )
+    secret_provider, key_name = coords
+    from app.services.secret_service import get_project_secret_value
+
+    api_key = await get_project_secret_value(
+        db, project_id, secret_provider, key_name,
+    )
+    if not api_key:
+        raise HTTPException(
+            402,
+            f"No {provider} API key saved for this project. Save one "
+            f"under Project Settings → Secrets (or via the gold "
+            f"generator's 'Save key for this project' option) and "
+            f"retry.",
+        )
+    from app.services.synth_backends import CloudLlmBackend
+
+    return CloudLlmBackend(provider=provider, model=model, api_key=api_key)
+
+
 class GenerateRequest(BaseModel):
     source_text: str = Field(..., min_length=10)
     num_pairs: int = Field(5, ge=1, le=50)
@@ -733,6 +816,41 @@ async def list_ollama_models(project_id: int):  # noqa: ARG001 — install-globa
     }
 
 
+@router.get("/backends/cloud/models")
+async def list_cloud_models(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Curated cloud-LLM catalog (OpenAI / Anthropic / Deepseek) +
+    which providers have an API key saved for THIS project. Drives
+    the synth panel's cloud picker so the user sees:
+
+      - all three providers + curated model lists
+      - a green check + "Key saved" badge for providers with creds
+      - a "Save key first" prompt for providers without creds
+
+    Project secrets live under ``cloud_llm_<provider>:api_key`` (the
+    same coordinates the gold-generate flow uses), so a user who's
+    already saved a key in one panel sees it pre-filled in the other.
+    """
+    from app.services.secret_service import get_project_secret_value
+
+    out_providers: list[dict[str, object]] = []
+    for provider, (secret_provider, key_name) in _CLOUD_PROVIDER_SECRET_COORDS.items():
+        try:
+            api_key = await get_project_secret_value(
+                db, project_id, secret_provider, key_name,
+            )
+        except Exception:  # noqa: BLE001 — secrets store hiccup ≠ block the panel
+            api_key = None
+        out_providers.append({
+            "provider": provider,
+            "key_saved": bool(api_key),
+            "models": list(_CLOUD_MODELS_CATALOG.get(provider, [])),
+        })
+    return {"project_id": project_id, "providers": out_providers}
+
+
 @router.get("/playbooks")
 async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_db)):
     """Catalog of registered playbooks compatible with the project's
@@ -898,13 +1016,21 @@ async def run_synth_playbook(
                 from app.database import async_session_factory
 
                 async with async_session_factory() as runner_db:
+                    # If the user pinned a cloud backend, resolve the
+                    # API key from project secrets + hand a fully-
+                    # constructed CloudLlmBackend to run_playbook so
+                    # pick_backend() doesn't have to learn auth.
+                    cloud_override = await _resolve_cloud_backend_override(
+                        runner_db, project_id, req.backend,
+                    )
                     result = await run_playbook(
                         runner_db,
                         project_id,
                         mode,
                         target_count=req.target_count,
                         target_class=req.target_class,
-                        backend=req.backend,
+                        backend=req.backend if cloud_override is None else None,
+                        backend_override=cloud_override,
                     )
                     await runner_db.commit()
             finally:
@@ -993,13 +1119,17 @@ async def run_synth_playbook(
         )
 
     try:
+        cloud_override = await _resolve_cloud_backend_override(
+            db, project_id, req.backend,
+        )
         result = await run_playbook(
             db,
             project_id,
             mode,
             target_count=req.target_count,
             target_class=req.target_class,
-            backend=req.backend,
+            backend=req.backend if cloud_override is None else None,
+            backend_override=cloud_override,
         )
     except SynthBackendError as e:
         raise HTTPException(503, str(e))
@@ -1061,15 +1191,23 @@ async def dry_run_synth_playbook(
         raise HTTPException(400, f"Unknown synth mode '{req.mode}'.")
 
     try:
+        cloud_override = await _resolve_cloud_backend_override(
+            db, project_id, req.backend,
+        )
         # Force target_count=1 — the user's chosen count is for the
         # real run, not the pre-flight.
         result = await run_playbook(
             db, project_id, mode,
             target_count=1,
             target_class=req.target_class,
-            backend=req.backend,
+            backend=req.backend if cloud_override is None else None,
+            backend_override=cloud_override,
             dry_run=True,
         )
+    except HTTPException:
+        # Re-raise the 402-no-key / 400-malformed-pin errors from
+        # _resolve_cloud_backend_override — don't 503-wrap them.
+        raise
     except ValueError as e:
         message = str(e)
         if "not found" in message.lower():

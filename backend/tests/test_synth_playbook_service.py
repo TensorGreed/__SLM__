@@ -570,6 +570,133 @@ class RunPlaybookIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400, resp.text)
 
+    def test_cloud_models_endpoint_returns_three_providers_with_curated_models(self):
+        """The synth panel renders a cloud picker even before any key
+        is saved — the user needs to see what providers exist + what
+        models each one offers BEFORE going to Project Settings to
+        save a key. Endpoint contract: always 200, always 3 providers,
+        always a non-empty curated models list per provider."""
+        project = self._instantiate_template("ticket-router", "Cloud Models")
+        pid = project["id"]
+        resp = self.client.get(
+            f"/api/projects/{pid}/synthetic/backends/cloud/models",
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        providers = {p["provider"] for p in body["providers"]}
+        self.assertEqual(providers, {"openai", "anthropic", "deepseek"})
+        for entry in body["providers"]:
+            # Fresh project — no keys saved.
+            self.assertFalse(entry["key_saved"])
+            self.assertGreater(len(entry["models"]), 0)
+            for m in entry["models"]:
+                self.assertIn("id", m)
+                self.assertIn("label", m)
+
+    def test_cloud_backend_pin_without_saved_key_returns_402(self):
+        """402 (payment required) is reserved for 'no API key saved' on
+        cloud-pinned playbook runs. The frontend renders a 'save key
+        first' affordance for 402; a 400 would show a generic toast.
+        Critical that the status code is stable here."""
+        project = self._instantiate_template("ticket-router", "Cloud No Key")
+        pid = project["id"]
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+            json={
+                "mode": "positives_paraphrase",
+                "target_count": 1,
+                "backend": "cloud:openai:gpt-4o-mini",
+            },
+        )
+        self.assertEqual(resp.status_code, 402, resp.text)
+        self.assertIn("API key", resp.json()["detail"])
+        self.assertIn("openai", resp.json()["detail"])
+
+    def test_malformed_cloud_pin_returns_400(self):
+        """``cloud:something`` (only 2 colons-separated parts) is
+        malformed — frontend bug, not user-actionable. 400 with a
+        clear remediation string."""
+        project = self._instantiate_template("ticket-router", "Cloud Malformed")
+        pid = project["id"]
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+            json={
+                "mode": "positives_paraphrase",
+                "target_count": 1,
+                "backend": "cloud:openai",
+            },
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("Malformed", resp.json()["detail"])
+
+    def test_unknown_cloud_provider_returns_400(self):
+        project = self._instantiate_template("ticket-router", "Cloud Unknown Provider")
+        pid = project["id"]
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+            json={
+                "mode": "positives_paraphrase",
+                "target_count": 1,
+                "backend": "cloud:gemini:flash",
+            },
+        )
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertIn("Unknown cloud provider", resp.json()["detail"])
+
+    def test_cloud_backend_dispatches_to_provider_when_key_saved(self):
+        """End-to-end: stash a fake OpenAI key in project secrets,
+        mock the cloud_llm_service call, run a cloud-pinned dry-run,
+        verify the CloudLlmBackend was constructed + the response
+        round-tripped through the playbook parser."""
+        import asyncio
+        from unittest.mock import patch
+        from app.database import async_session_factory
+        from app.services.secret_service import upsert_project_secret
+        from app.services.cloud_llm_service import CloudLlmResponse
+
+        project = self._instantiate_template("ticket-router", "Cloud Dispatch")
+        pid = project["id"]
+
+        async def _save_key():
+            async with async_session_factory() as db:
+                await upsert_project_secret(
+                    db, pid, "cloud_llm_openai", "api_key",
+                    value="sk-test-fake",
+                )
+                await db.commit()
+        asyncio.run(_save_key())
+
+        canned_resp = CloudLlmResponse(
+            content='{"text": "Refund please", "label": "billing"}\n',
+            model="gpt-4o-mini",
+            prompt_tokens=10,
+            completion_tokens=20,
+        )
+        with patch(
+            "app.services.synth_backends.cloud_llm.call_openai_chat",
+            return_value=canned_resp,
+        ) as mock_call:
+            resp = self.client.post(
+                f"/api/projects/{pid}/synthetic/run-playbook/dry-run",
+                json={
+                    "mode": "positives_paraphrase",
+                    "target_count": 1,
+                    "backend": "cloud:openai:gpt-4o-mini",
+                },
+            )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["backend_used"], "cloud:openai:gpt-4o-mini")
+        mock_call.assert_called_once()
+        # The CloudLlmBackend forwarded the saved key + chosen model.
+        kwargs = mock_call.call_args.kwargs
+        self.assertEqual(kwargs["api_key"], "sk-test-fake")
+        self.assertEqual(kwargs["model"], "gpt-4o-mini")
+        # force_json=False so the JSONL playbook prompt isn't
+        # constrained into a single top-level JSON object.
+        self.assertFalse(kwargs["force_json"])
+
     def test_ollama_models_endpoint_returns_structured_payload_when_daemon_up(self):
         """Smoke test against the actual local Ollama daemon if
         running. Tolerates 'daemon down' (returns ollama_available=False)

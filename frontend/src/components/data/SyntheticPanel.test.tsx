@@ -74,6 +74,16 @@ function installGetRouter(overrides: Record<string, any> = {}) {
                 },
             };
         }
+        if (url.includes('/synthetic/backends/ollama/models')) {
+            return {
+                data: overrides['ollama-models'] ?? {
+                    project_id: 1,
+                    models: [],
+                    default: null,
+                    ollama_available: false,
+                },
+            };
+        }
         if (url.includes('/synthetic/tasks/')) {
             // Default polling reply: completed immediately with zero
             // rows. Tests that exercise the async path override this.
@@ -327,5 +337,56 @@ describe('SyntheticPanel — QA + Conversation parity (USER-SUCCESS Epic 2c)', (
         expect(
             document.querySelector('#synth-review-queue'),
         ).toBeNull();
+    });
+
+    it('renders the Ollama model dropdown in the legacy Q&A form when models are installed', async () => {
+        installGetRouter({
+            'ollama-models': {
+                project_id: 1,
+                ollama_available: true,
+                default: 'qwen2.5:14b-instruct-q4_K_M',
+                models: [
+                    { name: 'qwen2.5:14b-instruct-q4_K_M', size_bytes: 1, parameter_size: '14.8B', family: 'qwen2' },
+                    { name: 'llama3:latest', size_bytes: 1, parameter_size: '8.0B', family: 'llama' },
+                ],
+            },
+        });
+        render(<SyntheticPanel projectId={1} />);
+        await waitFor(() => {
+            // Provider defaults to ollama, so the dropdown should
+            // render automatically once the models endpoint resolves.
+            expect(screen.getByTestId('synth-legacy-ollama-model')).toBeInTheDocument();
+        });
+        const select = screen.getByTestId('synth-legacy-ollama-model') as HTMLSelectElement;
+        // Both installed models appear with parameter-size badges.
+        const text = select.textContent ?? '';
+        expect(text).toMatch(/qwen2\.5:14b/);
+        expect(text).toMatch(/14\.8B/);
+        expect(text).toMatch(/llama3:latest/);
+        // Server's auto-pick won the initial selection (user's saved
+        // 'llama3' free-text default isn't in the installed list).
+        expect(select.value).toBe('qwen2.5:14b-instruct-q4_K_M');
+    });
+
+    it('falls back to the free-text model input when Ollama is unreachable', async () => {
+        installGetRouter({
+            'ollama-models': {
+                project_id: 1,
+                ollama_available: false,
+                default: null,
+                models: [],
+                error: 'connection refused',
+            },
+        });
+        render(<SyntheticPanel projectId={1} />);
+        // Default form should mount + the free-text input is the
+        // only model-picker rendered (no dropdown when daemon is
+        // down — picker would be empty + misleading).
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-generation-mode')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('synth-legacy-ollama-model'),
+        ).not.toBeInTheDocument();
     });
 });

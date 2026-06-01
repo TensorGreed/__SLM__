@@ -23,6 +23,7 @@ from .base import (
     pick_backend,
     pick_schema_aware_backend_describe,
 )
+from .cloud_llm import CloudLlmBackend
 from .nemo import NemoBackend
 from .ollama import OllamaBackend
 from .teacher import TeacherModelBackend
@@ -34,6 +35,11 @@ from .vllm import VllmBackend
 # unchanged — users opt into the power-user backends by pinning them
 # via the picker. vLLM lands after NeMo so a user with both
 # configured still gets NeMo first (matches the Phase 5a/5b ordering).
+#
+# CloudLlmBackend is INTENTIONALLY EXCLUDED from auto-pick — cloud
+# generation costs real money and users must opt in explicitly via
+# the picker (which knows how to resolve the API key from project
+# secrets before constructing the backend instance).
 BACKEND_REGISTRY: list[type[SynthBackend]] = [
     OllamaBackend,
     TeacherModelBackend,
@@ -44,6 +50,7 @@ BACKEND_REGISTRY: list[type[SynthBackend]] = [
 
 __all__ = [
     "BACKEND_REGISTRY",
+    "CloudLlmBackend",
     "NemoBackend",
     "OllamaBackend",
     "SynthBackend",

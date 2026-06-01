@@ -202,6 +202,7 @@ session-start guidance.
 - `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).
 - `backend/app/services/synth_backends/base.py` — SynthBackend protocol + registry helpers (USER-SUCCESS Epic 2).
+- `backend/app/services/synth_backends/cloud_llm.py` — Cloud-LLM synth backend — OpenAI, Anthropic, Deepseek.
 - `backend/app/services/synth_backends/nemo.py` — NVIDIA NeMo Data Designer / NIM synth backend (USER-SUCCESS Epic 5 Phase 5a + 5b).
 - `backend/app/services/synth_backends/ollama.py` — Ollama-based synthetic-data backend (USER-SUCCESS Epic 2).
 - `backend/app/services/synth_backends/teacher.py` — Teacher-model backend — fallback that talks to whatever

@@ -174,6 +174,42 @@ export async function listOllamaModels(
 }
 
 
+// ─────────────────────────────────────────────────────────────────────
+// Cloud-LLM catalog (OpenAI / Anthropic / Deepseek). The platform
+// ships the same backend wrapper for all three; the only per-project
+// state is whether an API key is saved under the relevant secret.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface CloudModelEntry {
+    id: string;
+    label: string;
+}
+
+export interface CloudProviderEntry {
+    provider: 'openai' | 'anthropic' | 'deepseek';
+    /** True when a key is saved at ``cloud_llm_<provider>:api_key``
+     *  on this project. The picker uses this to badge providers with
+     *  a green check + enable the model dropdown. Providers without
+     *  a saved key show a 'Save key first' affordance instead. */
+    key_saved: boolean;
+    models: CloudModelEntry[];
+}
+
+export interface CloudModelsResponse {
+    project_id: number;
+    providers: CloudProviderEntry[];
+}
+
+export async function listCloudModels(
+    projectId: number,
+): Promise<CloudModelsResponse> {
+    const resp = await api.get(
+        `/projects/${projectId}/synthetic/backends/cloud/models`,
+    );
+    return resp.data as CloudModelsResponse;
+}
+
+
 // Hardening Phase H1 — async-job variant. Returns the Job stub (202).
 // Caller starts polling via useJobsStore and shows progress in the
 // top-bar notification bell instead of blocking on the LLM call.
