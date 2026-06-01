@@ -567,6 +567,7 @@ session-start guidance.
 
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
+- `backend/tests/test_adapter_handler_prompt_sweep.py` — Permanent regression guard for β-shape prompt-format gaps
 - `backend/tests/test_adapter_subtask_resolver.py` — Tests for the shared subtask-propagation infrastructure.
 - `backend/tests/test_annotation_active_learning.py` — Epic F Phase 1 — active-learning row ranker for label-jobs.
 - `backend/tests/test_annotation_active_learning_phase2.py` — Epic F Phase 2 — span / preference-pair active strategy + Cohen's κ stats.
