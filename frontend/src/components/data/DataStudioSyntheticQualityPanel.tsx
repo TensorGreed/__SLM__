@@ -93,6 +93,47 @@ function FindingCard({
     );
 }
 
+/**
+ * Arc B — deep-link a source group into SynthReviewQueue with the
+ * ``focus_synth_source`` query already populated. The synthetic panel
+ * reads this URL parameter on mount and SynthReviewQueue renders its
+ * one-click "Accept all N <source> rows" banner. Without the deep-
+ * link the user lands on the queue and has to find the row group
+ * themselves, scrolling past unrelated buckets.
+ *
+ * Falls back to the bare ``target_tab`` when the source label is
+ * empty (legacy un-tagged rows can't be deep-filtered).
+ */
+function _buildSourceReviewTarget(group: DataStudioSyntheticQualitySourceGroup): string {
+    if (group.target_tab !== 'synthetic' || !group.source) {
+        return group.target_tab;
+    }
+    // The ``#synth-review-queue`` hash is what SyntheticPanel watches
+    // to scroll the queue into view on mount (Phase 5c contract).
+    return `synthetic?focus_synth_source=${encodeURIComponent(group.source)}#synth-review-queue`;
+}
+
+/**
+ * Arc B — pick a CTA label that signals what the user will actually
+ * do. "Review N pending" is concrete; "Open source review" was a
+ * generic phrase that the user couldn't size up before clicking.
+ */
+function _sourceReviewLabel(group: DataStudioSyntheticQualitySourceGroup): string {
+    if (group.pending > 0) {
+        return `Review ${formatNumber(group.pending)} pending`;
+    }
+    if (group.low_confidence > 0) {
+        return `Review ${formatNumber(group.low_confidence)} low confidence`;
+    }
+    if (group.missing_required > 0) {
+        return `Review ${formatNumber(group.missing_required)} missing fields`;
+    }
+    if (group.accepted > 0) {
+        return `View ${formatNumber(group.accepted)} accepted`;
+    }
+    return 'Open source review';
+}
+
 function SourceGroupCard({
     group,
     onOpenTarget,
@@ -100,8 +141,12 @@ function SourceGroupCard({
     group: DataStudioSyntheticQualitySourceGroup;
     onOpenTarget: (target: string) => void;
 }) {
+    const deepLinkTarget = _buildSourceReviewTarget(group);
     return (
-        <article className="data-studio-synth-quality__source">
+        <article
+            className="data-studio-synth-quality__source"
+            data-testid={`data-studio-synth-quality-source-${group.key}`}
+        >
             <div className="data-studio-synth-quality__source-head">
                 <strong>{group.source}</strong>
                 <span>{formatNumber(group.count)} rows</span>
@@ -113,9 +158,14 @@ function SourceGroupCard({
                 <span>{formatNumber(group.missing_required)} missing fields</span>
                 <span>{formatPercent(group.avg_gold_similarity)} Gold similarity</span>
             </div>
-            <button type="button" className="btn btn-secondary" onClick={() => onOpenTarget(group.target_tab)}>
+            <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onOpenTarget(deepLinkTarget)}
+                data-testid={`data-studio-synth-quality-source-cta-${group.key}`}
+            >
                 <ExternalLink size={15} aria-hidden="true" />
-                Open source review
+                {_sourceReviewLabel(group)}
             </button>
         </article>
     );

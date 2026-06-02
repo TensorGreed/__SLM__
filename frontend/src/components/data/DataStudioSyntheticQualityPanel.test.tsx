@@ -238,6 +238,84 @@ describe('DataStudioSyntheticQualityPanel', () => {
         expect(apiMock.get).toHaveBeenCalledWith('/projects/1/data-studio/synthetic-quality');
     });
 
+    // ─────────────────────────────────────────────────────────────────
+    // Arc B — source-group cards deep-link the user to the review
+    // queue with ``focus_synth_source`` pre-set. Without the deep-
+    // link, clicking "Open source review" dumped them on the queue
+    // with no filter applied, forcing them to scroll past unrelated
+    // buckets to find the right rows.
+    // ─────────────────────────────────────────────────────────────────
+
+    it('source group CTA deep-links with focus_synth_source + #synth-review-queue hash', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: qualityPayload });
+        const onOpenTarget = vi.fn();
+
+        render(<DataStudioSyntheticQualityPanel projectId={1} onOpenTarget={onOpenTarget} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-synth-quality-source-playbook-classification-positives-paraphrase'),
+            ).toBeInTheDocument();
+        });
+
+        fireEvent.click(
+            screen.getByTestId(
+                'data-studio-synth-quality-source-cta-playbook-classification-positives-paraphrase',
+            ),
+        );
+        // playbook:classification:positives_paraphrase → encoded source
+        // with the #synth-review-queue hash so SyntheticPanel scrolls.
+        expect(onOpenTarget).toHaveBeenCalledWith(
+            'synthetic?focus_synth_source=playbook%3Aclassification%3Apositives_paraphrase#synth-review-queue',
+        );
+    });
+
+    it('labels the source CTA "Review N pending" when pending rows exist', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: qualityPayload });
+        render(<DataStudioSyntheticQualityPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-synth-quality-source-cta-playbook-classification-positives-paraphrase'),
+            ).toBeInTheDocument();
+        });
+        // positives_paraphrase group has pending=2 → "Review 2 pending".
+        expect(
+            screen.getByTestId('data-studio-synth-quality-source-cta-playbook-classification-positives-paraphrase'),
+        ).toHaveTextContent('Review 2 pending');
+        // hard_negatives has pending=0 + accepted=2 → "View 2 accepted".
+        expect(
+            screen.getByTestId('data-studio-synth-quality-source-cta-playbook-classification-hard-negatives'),
+        ).toHaveTextContent('View 2 accepted');
+    });
+
+    it('falls back to bare target_tab when the source label is empty (legacy un-tagged rows)', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...qualityPayload,
+                source_groups: [
+                    {
+                        ...qualityPayload.source_groups[0],
+                        key: 'legacy-untagged',
+                        source: '',
+                        pending: 5,
+                    },
+                ],
+            },
+        });
+        const onOpenTarget = vi.fn();
+        render(<DataStudioSyntheticQualityPanel projectId={1} onOpenTarget={onOpenTarget} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-synth-quality-source-cta-legacy-untagged'),
+            ).toBeInTheDocument();
+        });
+
+        fireEvent.click(
+            screen.getByTestId('data-studio-synth-quality-source-cta-legacy-untagged'),
+        );
+        // No source label → can't deep-filter, so route to bare tab.
+        expect(onOpenTarget).toHaveBeenCalledWith('synthetic');
+    });
+
     it('renders an empty state when no synthetic rows exist', async () => {
         apiMock.get.mockResolvedValueOnce({
             data: {

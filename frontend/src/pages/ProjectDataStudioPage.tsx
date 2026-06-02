@@ -447,37 +447,51 @@ export default function ProjectDataStudioPage() {
 
     const openDataStudioTarget = useCallback(
         (target: string, sectionToken?: string | null) => {
+            // Arc B — support a ``?…`` query suffix on the target string
+            // so panels can deep-link (e.g. ``synthetic?focus_synth_source=
+            // playbook:classification:positives_paraphrase``) without
+            // every caller threading an options bag. The router base
+            // is everything before the first ``?``; the query is
+            // re-appended when navigating.
+            const queryIdx = target.indexOf('?');
+            const baseTarget = queryIdx >= 0 ? target.slice(0, queryIdx) : target;
+            const queryString = queryIdx >= 0 ? target.slice(queryIdx) : '';
             const sectionId = normalizeSectionToken(sectionToken);
             if (sectionId) {
                 openDataStudioSection(sectionId);
                 return;
             }
-            if (isTabKey(target)) {
-                openPipelineTab(target);
+            if (isTabKey(baseTarget)) {
+                if (queryString) {
+                    setActiveTab(baseTarget);
+                    navigate(`/project/${projectId}/pipeline/${baseTarget}${queryString}`);
+                    return;
+                }
+                openPipelineTab(baseTarget);
                 return;
             }
-            if (target === 'annotate') {
-                navigate(`/project/${projectId}/annotate`);
+            if (baseTarget === 'annotate') {
+                navigate(`/project/${projectId}/annotate${queryString}`);
                 return;
             }
-            if (target === 'domain') {
-                navigate(`/project/${projectId}/domain`);
+            if (baseTarget === 'domain') {
+                navigate(`/project/${projectId}/domain${queryString}`);
                 return;
             }
-            if (target === 'domain-packs') {
-                navigate(`/project/${projectId}/domain/packs`);
+            if (baseTarget === 'domain-packs') {
+                navigate(`/project/${projectId}/domain/packs${queryString}`);
                 return;
             }
-            if (target === 'domain-profiles') {
-                navigate(`/project/${projectId}/domain/profiles`);
+            if (baseTarget === 'domain-profiles') {
+                navigate(`/project/${projectId}/domain/profiles${queryString}`);
                 return;
             }
-            const targetSectionId = normalizeSectionToken(target);
+            const targetSectionId = normalizeSectionToken(baseTarget);
             if (targetSectionId) {
                 openDataStudioSection(targetSectionId);
             }
         },
-        [navigate, openDataStudioSection, openPipelineTab, projectId],
+        [navigate, openDataStudioSection, openPipelineTab, projectId, setActiveTab],
     );
 
     const toggleSection = useCallback(
