@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { apiMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
+        post: vi.fn(),
     },
 }));
 
@@ -267,6 +268,7 @@ const versionPayload = {
 describe('DataStudioDatasetVersionsPanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
+        apiMock.post.mockReset();
     });
 
     it('renders reusable dataset versions and routes to training/eval workflows', async () => {
@@ -389,5 +391,87 @@ describe('DataStudioDatasetVersionsPanel', () => {
 
         fireEvent.click(screen.getAllByRole('button', { name: /Open Dataset Prep/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('dataprep');
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc A — inline "Re-prepare to fix drift" CTA. Only renders when
+    // an artifact's version/row-count disagrees with the manifest; on
+    // the all-clean payload above the button must be hidden so the
+    // toolbar doesn't pollute itself with an action that would re-
+    // build identical files.
+    // ─────────────────────────────────────────────────────────────────
+
+    it('hides the re-prepare button when artifacts all match the manifest', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: versionPayload });
+        render(<DataStudioDatasetVersionsPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-dataset-versions')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('data-studio-versions-re-prepare'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('shows the re-prepare button when an artifact disagrees with the manifest', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...versionPayload,
+                verdict: 'attention',
+                latest_artifacts: [
+                    {
+                        ...versionPayload.latest_artifacts[0],
+                        version_matches_manifest: false,
+                    },
+                    ...versionPayload.latest_artifacts.slice(1),
+                ],
+            },
+        });
+        render(<DataStudioDatasetVersionsPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-versions-re-prepare'),
+            ).toBeInTheDocument();
+        });
+    });
+
+    it('POSTs to /dataset/split and refreshes on re-prepare success', async () => {
+        const driftedPayload = {
+            ...versionPayload,
+            verdict: 'attention',
+            latest_artifacts: [
+                {
+                    ...versionPayload.latest_artifacts[0],
+                    row_count_matches_manifest: false,
+                },
+                ...versionPayload.latest_artifacts.slice(1),
+            ],
+        };
+        apiMock.get.mockResolvedValueOnce({ data: driftedPayload });
+        apiMock.post.mockResolvedValueOnce({
+            data: { train_count: 96, val_count: 12, test_count: 12 },
+        });
+        apiMock.get.mockResolvedValueOnce({ data: versionPayload });
+
+        render(<DataStudioDatasetVersionsPanel projectId={9} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-versions-re-prepare'),
+            ).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTestId('data-studio-versions-re-prepare'));
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/9/dataset/split',
+                {},
+            );
+        });
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-versions-run-flash'),
+            ).toHaveTextContent(/Re-prepared 120 rows/);
+        });
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
     });
 });

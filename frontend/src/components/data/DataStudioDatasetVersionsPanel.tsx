@@ -10,18 +10,23 @@ import {
     FileCheck2,
     GitBranch,
     History,
+    Play,
     RefreshCw,
     ShieldCheck,
     Workflow,
 } from 'lucide-react';
 
-import { getDataStudioDatasetVersions } from '../../api/dataStudio';
+import {
+    getDataStudioDatasetVersions,
+    runDataStudioPrepareDataset,
+} from '../../api/dataStudio';
 import type {
     DataStudioDatasetVersionArtifact,
     DataStudioDatasetVersionHistoryItem,
     DataStudioDatasetVersionSignal,
     DataStudioDatasetVersions,
     DataStudioIssue,
+    RunPrepareDatasetResult,
 } from '../../api/dataStudio';
 import './DataStudioDatasetVersionsPanel.css';
 
@@ -182,6 +187,12 @@ export default function DataStudioDatasetVersionsPanel({
     const [versions, setVersions] = useState<DataStudioDatasetVersions | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Arc A — inline re-prepare when manifest drift is detected.
+    // Same backend call as the Prepare panel's "Run prepare now"; the
+    // UI shows it only when there's actually drift to fix.
+    const [running, setRunning] = useState(false);
+    const [runFlash, setRunFlash] = useState<string | null>(null);
+    const [runError, setRunError] = useState<string | null>(null);
 
     const loadVersions = async () => {
         setLoading(true);
@@ -196,6 +207,33 @@ export default function DataStudioDatasetVersionsPanel({
         }
     };
 
+    const handleRePrepare = async () => {
+        setRunning(true);
+        setRunFlash(null);
+        setRunError(null);
+        try {
+            const result: RunPrepareDatasetResult = await runDataStudioPrepareDataset(projectId);
+            const total =
+                Number(result.train_count || 0)
+                + Number(result.val_count || 0)
+                + Number(result.test_count || 0);
+            setRunFlash(
+                total > 0
+                    ? `Re-prepared ${total.toLocaleString()} rows — manifest now matches train/val/test.`
+                    : 'Re-prepared dataset splits — refreshing version checks.',
+            );
+            await loadVersions();
+        } catch (err: any) {
+            setRunError(
+                err?.response?.data?.detail
+                || err?.message
+                || 'Re-prepare failed.',
+            );
+        } finally {
+            setRunning(false);
+        }
+    };
+
     useEffect(() => {
         void loadVersions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,6 +245,19 @@ export default function DataStudioDatasetVersionsPanel({
     );
     const entryPoints = useMemo(
         () => versions?.entry_points.slice(0, 3) ?? [],
+        [versions],
+    );
+    // Arc A — only surface the "Re-prepare" button when an artifact
+    // actually disagrees with the manifest (version ref OR row count).
+    // No drift → don't pollute the toolbar with a button that would
+    // re-build identical files.
+    const hasManifestDrift = useMemo(
+        () =>
+            (versions?.latest_artifacts ?? []).some(
+                (a) =>
+                    a.file_exists
+                    && (!a.version_matches_manifest || !a.row_count_matches_manifest),
+            ),
         [versions],
     );
 
@@ -300,10 +351,27 @@ export default function DataStudioDatasetVersionsPanel({
             </div>
 
             <div className="data-studio-versions__entrypoints">
+                {hasManifestDrift && (
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => void handleRePrepare()}
+                        disabled={running}
+                        title="Re-build train/validation/test JSONLs so the manifest version + row counts realign."
+                        data-testid="data-studio-versions-re-prepare"
+                    >
+                        <Play size={15} aria-hidden="true" />
+                        {running ? 'Re-preparing…' : 'Re-prepare to fix drift'}
+                    </button>
+                )}
                 {entryPoints.map((entry) => (
                     <button
                         type="button"
-                        className={entry.target_tab === 'dataprep' ? 'btn btn-primary' : 'btn btn-secondary'}
+                        className={
+                            entry.target_tab === 'dataprep' && !hasManifestDrift
+                                ? 'btn btn-primary'
+                                : 'btn btn-secondary'
+                        }
                         key={entry.target_tab}
                         onClick={() => onOpenTarget(entry.target_tab)}
                     >
@@ -312,6 +380,22 @@ export default function DataStudioDatasetVersionsPanel({
                     </button>
                 ))}
             </div>
+            {runFlash && (
+                <p
+                    className="data-studio-versions__run-flash"
+                    data-testid="data-studio-versions-run-flash"
+                >
+                    {runFlash}
+                </p>
+            )}
+            {runError && (
+                <p
+                    className="data-studio-versions__run-error"
+                    data-testid="data-studio-versions-run-error"
+                >
+                    {runError}
+                </p>
+            )}
 
             <div className="data-studio-versions__reuse">
                 <div className={`data-studio-versions__reuse-item data-studio-versions__reuse-item--${statusClass(versions.reuse_readiness.training.status)}`}>

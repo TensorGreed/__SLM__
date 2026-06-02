@@ -1427,6 +1427,36 @@ export async function getDataStudioPrepareDataset(
     return resp.data as DataStudioPrepareDataset;
 }
 
+
+/**
+ * Arc A — "Run prepare now" inline from Data Studio.
+ *
+ * Posts an empty body to ``POST /projects/<id>/dataset/split`` so the
+ * backend resolves ratios from the recipe's profile defaults + the
+ * project's saved adapter preference (no client overrides). Returns
+ * the new SplitManifest so the caller can refresh its read-only view.
+ *
+ * The verdict gate on the panel (``can_prepare`` flag from the readiness
+ * summary) is what actually decides whether the button is enabled —
+ * this client does not re-validate; if the backend refuses (400/422),
+ * the caller surfaces the error inline.
+ */
+export interface RunPrepareDatasetResult {
+    manifest_path?: string | null;
+    train_count?: number | null;
+    val_count?: number | null;
+    test_count?: number | null;
+    resolved_split_config?: Record<string, unknown> | null;
+    [key: string]: unknown;
+}
+
+export async function runDataStudioPrepareDataset(
+    projectId: number,
+): Promise<RunPrepareDatasetResult> {
+    const resp = await api.post(`/projects/${projectId}/dataset/split`, {});
+    return resp.data as RunPrepareDatasetResult;
+}
+
 export interface DataStudioDatasetVersionSummary {
     prepared_dataset_count: number;
     total_version_count: number;

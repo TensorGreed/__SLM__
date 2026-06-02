@@ -11,16 +11,21 @@ import {
     ExternalLink,
     FileText,
     GitBranch,
+    Play,
     RefreshCw,
     ShieldCheck,
 } from 'lucide-react';
 
-import { getDataStudioPrepareDataset } from '../../api/dataStudio';
+import {
+    getDataStudioPrepareDataset,
+    runDataStudioPrepareDataset,
+} from '../../api/dataStudio';
 import type {
     DataStudioIssue,
     DataStudioPrepareCheck,
     DataStudioPrepareDataset,
     DataStudioPrepareSplitItem,
+    RunPrepareDatasetResult,
 } from '../../api/dataStudio';
 import './DataStudioPrepareDatasetPanel.css';
 
@@ -139,6 +144,11 @@ export default function DataStudioPrepareDatasetPanel({
     const [prepare, setPrepare] = useState<DataStudioPrepareDataset | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Arc A — inline run. The button is gated by ``can_prepare`` from
+    // the readiness summary; the panel never re-validates locally.
+    const [running, setRunning] = useState(false);
+    const [runFlash, setRunFlash] = useState<string | null>(null);
+    const [runError, setRunError] = useState<string | null>(null);
 
     const loadPrepare = async () => {
         setLoading(true);
@@ -150,6 +160,33 @@ export default function DataStudioPrepareDatasetPanel({
             setError(err?.response?.data?.detail || err?.message || 'Failed to load Data Studio prepare checks.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleRunPrepare = async () => {
+        setRunning(true);
+        setRunFlash(null);
+        setRunError(null);
+        try {
+            const result: RunPrepareDatasetResult = await runDataStudioPrepareDataset(projectId);
+            const total =
+                Number(result.train_count || 0)
+                + Number(result.val_count || 0)
+                + Number(result.test_count || 0);
+            setRunFlash(
+                total > 0
+                    ? `Prepared ${total.toLocaleString()} rows (train ${Number(result.train_count || 0).toLocaleString()} · val ${Number(result.val_count || 0).toLocaleString()} · test ${Number(result.test_count || 0).toLocaleString()}).`
+                    : 'Prepared dataset splits — refreshing checks.',
+            );
+            await loadPrepare();
+        } catch (err: any) {
+            setRunError(
+                err?.response?.data?.detail
+                || err?.message
+                || 'Prepare dataset failed.',
+            );
+        } finally {
+            setRunning(false);
         }
     };
 
@@ -257,6 +294,21 @@ export default function DataStudioPrepareDatasetPanel({
                 <button
                     type="button"
                     className="btn btn-primary"
+                    onClick={() => void handleRunPrepare()}
+                    disabled={!prepare.can_prepare || running}
+                    title={
+                        prepare.can_prepare
+                            ? 'Build train/validation/test JSONLs in place using the current recipe + mapping.'
+                            : 'Resolve blockers above before running prepare.'
+                    }
+                    data-testid="data-studio-prepare-run"
+                >
+                    <Play size={15} aria-hidden="true" />
+                    {running ? 'Preparing…' : 'Run prepare now'}
+                </button>
+                <button
+                    type="button"
+                    className="btn btn-secondary"
                     onClick={() => onOpenTarget(prepare.entry_point.target_tab)}
                 >
                     <ExternalLink size={15} aria-hidden="true" />
@@ -264,13 +316,29 @@ export default function DataStudioPrepareDatasetPanel({
                 </button>
                 <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="btn btn-ghost"
                     onClick={() => onOpenTarget('dataprep')}
                 >
                     <FileText size={15} aria-hidden="true" />
                     Adapter preview
                 </button>
             </div>
+            {runFlash && (
+                <p
+                    className="data-studio-prepare__run-flash"
+                    data-testid="data-studio-prepare-run-flash"
+                >
+                    {runFlash}
+                </p>
+            )}
+            {runError && (
+                <p
+                    className="data-studio-prepare__run-error"
+                    data-testid="data-studio-prepare-run-error"
+                >
+                    {runError}
+                </p>
+            )}
 
             <div className="data-studio-prepare__body">
                 <div className="data-studio-prepare__checks">

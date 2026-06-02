@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { apiMock } = vi.hoisted(() => ({
     apiMock: {
         get: vi.fn(),
+        post: vi.fn(),
     },
 }));
 
@@ -189,6 +190,7 @@ const preparePayload = {
 describe('DataStudioPrepareDatasetPanel', () => {
     beforeEach(() => {
         apiMock.get.mockReset();
+        apiMock.post.mockReset();
     });
 
     it('renders split readiness and routes mutating work to Dataset Prep', async () => {
@@ -309,5 +311,90 @@ describe('DataStudioPrepareDatasetPanel', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /Synthetic rows pending review/i }));
         expect(onOpenTarget).toHaveBeenCalledWith('synthetic');
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc A — inline "Run prepare now" button. Verdict drives whether
+    // it's enabled; click POSTs to /dataset/split with NO overrides so
+    // the backend resolves ratios/adapter from project preferences.
+    // ─────────────────────────────────────────────────────────────────
+
+    it('enables "Run prepare now" when can_prepare is true', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
+        render(<DataStudioPrepareDatasetPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument();
+        });
+        const runBtn = screen.getByTestId('data-studio-prepare-run') as HTMLButtonElement;
+        expect(runBtn.disabled).toBe(false);
+        expect(runBtn.textContent).toMatch(/Run prepare now/);
+    });
+
+    it('disables "Run prepare now" when can_prepare is false (blocked verdict)', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...preparePayload,
+                verdict: 'blocked',
+                can_prepare: false,
+            },
+        });
+        render(<DataStudioPrepareDatasetPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument();
+        });
+        const runBtn = screen.getByTestId('data-studio-prepare-run') as HTMLButtonElement;
+        expect(runBtn.disabled).toBe(true);
+    });
+
+    it('POSTs an empty split body and refreshes the panel on success', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
+        apiMock.post.mockResolvedValueOnce({
+            data: { train_count: 96, val_count: 12, test_count: 12 },
+        });
+        // The handler triggers a second GET to refresh the readiness
+        // summary; mock it to keep the panel mounted.
+        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
+
+        render(<DataStudioPrepareDatasetPanel projectId={7} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTestId('data-studio-prepare-run'));
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/7/dataset/split',
+                {},
+            );
+        });
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-prepare-run-flash'),
+            ).toHaveTextContent(/Prepared 120 rows/);
+        });
+        // Refresh fetched the readiness payload again.
+        expect(apiMock.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces a backend error inline without refreshing', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: preparePayload });
+        apiMock.post.mockRejectedValueOnce({
+            response: { data: { detail: 'recipe not selected' } },
+        });
+
+        render(<DataStudioPrepareDatasetPanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-prepare-run')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTestId('data-studio-prepare-run'));
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('data-studio-prepare-run-error'),
+            ).toHaveTextContent(/recipe not selected/);
+        });
+        // No refresh on failure.
+        expect(apiMock.get).toHaveBeenCalledTimes(1);
     });
 });
