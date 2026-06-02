@@ -184,8 +184,17 @@ cd frontend && npx tsc --noEmit                         # type check
 cd frontend && npx vite build                           # production build
 ```
 
-- Pre-existing failing CoachStrip tests (~23) have been deferred. Don't
-  treat them as regressions — verify with `git stash` + re-run if unsure.
+- Pre-existing failing **EvalPanel** tests (23 across 6 files:
+  `EvalPanel.alignment` / `.extraction` / `.qa` / `.rag` / `.spanset` /
+  `EvalPanel.test.tsx`) have been deferred. They went stale during the
+  `a8bf40c V1 ML-native viz` refactor that reshaped the predictions card —
+  the per-row badges (`Preferred chosen`, `JSON: valid`, etc.) still exist
+  in `EvalPanel.tsx` but the test fixtures expect a render path that the
+  refactor moved. Don't treat them as regressions — verify with `git stash`
+  + re-run if unsure. Fix scope: rewrite each test's API mock + rendering
+  expectations against the current panel structure (~2-3 hr task).
+  The earlier CoachStrip failures CLAUDE.md flagged have since been fixed
+  (27/27 pass as of 2026-06-02).
 - Mocks: use `vi.hoisted({ apiMock: { get, post, put, delete } })` +
   `vi.mock('../../api/client', () => ({ default: apiMock }))`. See
   `NotificationBell.test.tsx` for the pattern.
