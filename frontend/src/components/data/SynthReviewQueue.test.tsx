@@ -219,7 +219,7 @@ describe('SynthReviewQueue', () => {
 
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'accept' },
+            { row_ids: [1], action: 'accept', reject_reason: null },
         );
     });
 
@@ -265,7 +265,7 @@ describe('SynthReviewQueue', () => {
         });
         expect(apiMock.post).toHaveBeenCalledWith(
             '/projects/1/synthetic/review-queue/bulk-update',
-            { row_ids: [1], action: 'reject' },
+            { row_ids: [1], action: 'reject', reject_reason: null },
         );
     });
 
@@ -361,7 +361,7 @@ describe('SynthReviewQueue', () => {
             // the sibling hard_negatives group.
             expect(apiMock.post).toHaveBeenCalledWith(
                 '/projects/1/synthetic/review-queue/bulk-update',
-                { row_ids: [1, 2], action: 'accept' },
+                { row_ids: [1, 2], action: 'accept', reject_reason: null },
             );
         });
         // Banner auto-dismisses once the source bucket is drained.
@@ -407,6 +407,229 @@ describe('SynthReviewQueue', () => {
         await userEvent.click(screen.getByRole('button', { name: /Retry/i }));
         await waitFor(() => {
             expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+    });
+
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc 5 — soft-reject. Rejected rows stay on disk until the
+    // explicit purge step; the section groups them by reject_reason
+    // so a noisy synth run becomes one card per cause.
+    // ─────────────────────────────────────────────────────────────────
+
+    const REJECTED_PAYLOAD = {
+        project_id: 1,
+        dataset_id: 12,
+        total_rows: 6,
+        total_pending: 0,
+        total_accepted: 0,
+        total_rejected: 4,
+        groups: [],
+        accepted_groups: [],
+        rejected_groups: [
+            {
+                synth_source: 'playbook:classification:positives_paraphrase',
+                count: 3,
+                truncated: false,
+                rows: [
+                    {
+                        id: 10,
+                        synth_confidence: 0.4,
+                        preview: '{"text": "bad row a"}',
+                        payload: { text: 'bad row a', reject_reason: 'low_confidence' },
+                    },
+                    {
+                        id: 11,
+                        synth_confidence: 0.3,
+                        preview: '{"text": "bad row b"}',
+                        payload: { text: 'bad row b', reject_reason: 'low_confidence' },
+                    },
+                    {
+                        id: 12,
+                        synth_confidence: 0.5,
+                        preview: '{"text": "dup row"}',
+                        payload: { text: 'dup row', reject_reason: 'duplicate' },
+                    },
+                ],
+            },
+            {
+                synth_source: 'playbook:classification:hard_negatives',
+                count: 1,
+                truncated: false,
+                rows: [
+                    {
+                        id: 13,
+                        synth_confidence: 0.2,
+                        preview: '{"text": "unlabelled row"}',
+                        payload: { text: 'unlabelled row' },
+                    },
+                ],
+            },
+        ],
+    };
+
+    it('renders the rejected section grouped by reject_reason', async () => {
+        apiMock.get.mockResolvedValue({ data: REJECTED_PAYLOAD });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-rejected')).toBeInTheDocument();
+        });
+        const section = screen.getByTestId('synth-review-queue-rejected');
+        expect(section.textContent).toMatch(/4\s+rejected rows/);
+        // Three distinct reason buckets: low_confidence, duplicate, (no reason).
+        expect(
+            screen.getByTestId('synth-review-queue-rejected-reason-low_confidence'),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByTestId('synth-review-queue-rejected-reason-duplicate'),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByTestId('synth-review-queue-rejected-reason-(no reason)'),
+        ).toBeInTheDocument();
+    });
+
+    it('does not render the rejected section when no rejected rows exist', async () => {
+        apiMock.get.mockResolvedValue({ data: SAMPLE_PAYLOAD });
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('synth-review-queue-rejected'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('purges all rejected rows when "Purge all" is clicked', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: REJECTED_PAYLOAD });
+        apiMock.post.mockResolvedValueOnce({
+            data: { purged: 4, retained: 0, total_rows: 0 },
+        });
+        // After the purge, the next list call returns the empty state.
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...REJECTED_PAYLOAD,
+                total_rejected: 0,
+                rejected_groups: [],
+            },
+        });
+
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-purge-all')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('synth-review-queue-purge-all'));
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/review-queue/purge',
+                { reasons: null },
+            );
+        });
+        // Confirmation flash surfaces what landed.
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('synth-review-queue-purge-flash'),
+            ).toHaveTextContent(/Purged 4 rows/);
+        });
+        // List re-fetched after the purge — section disappears.
+        await waitFor(() => {
+            expect(
+                screen.queryByTestId('synth-review-queue-rejected'),
+            ).not.toBeInTheDocument();
+        });
+    });
+
+    it('purges a single reason cohort when "Purge this reason" is clicked', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: REJECTED_PAYLOAD });
+        apiMock.post.mockResolvedValueOnce({
+            data: { purged: 2, retained: 2, total_rows: 2 },
+        });
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                ...REJECTED_PAYLOAD,
+                total_rejected: 2,
+                rejected_groups: [
+                    {
+                        synth_source: 'playbook:classification:positives_paraphrase',
+                        count: 1,
+                        truncated: false,
+                        rows: [REJECTED_PAYLOAD.rejected_groups[0].rows[2]],
+                    },
+                    REJECTED_PAYLOAD.rejected_groups[1],
+                ],
+            },
+        });
+
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('synth-review-queue-purge-reason-low_confidence'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('synth-review-queue-purge-reason-low_confidence'),
+        );
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/review-queue/purge',
+                { reasons: ['low_confidence'] },
+            );
+        });
+        // low_confidence card gone, duplicate + (no reason) remain.
+        await waitFor(() => {
+            expect(
+                screen.queryByTestId('synth-review-queue-rejected-reason-low_confidence'),
+            ).not.toBeInTheDocument();
+        });
+        expect(
+            screen.getByTestId('synth-review-queue-rejected-reason-duplicate'),
+        ).toBeInTheDocument();
+    });
+
+    it('purges the no-reason cohort with reasons=[""]', async () => {
+        // Rows that were rejected without a tag still need a way to
+        // be purged. The backend treats reasons=[""] as the
+        // empty-reason filter.
+        apiMock.get.mockResolvedValueOnce({ data: REJECTED_PAYLOAD });
+        apiMock.post.mockResolvedValueOnce({
+            data: { purged: 1, retained: 3, total_rows: 3 },
+        });
+        apiMock.get.mockResolvedValueOnce({ data: REJECTED_PAYLOAD });
+
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('synth-review-queue-purge-reason-(no reason)'),
+            ).toBeInTheDocument();
+        });
+        await userEvent.click(
+            screen.getByTestId('synth-review-queue-purge-reason-(no reason)'),
+        );
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/1/synthetic/review-queue/purge',
+                { reasons: [''] },
+            );
+        });
+    });
+
+    it('surfaces a backend error from the purge endpoint', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: REJECTED_PAYLOAD });
+        apiMock.post.mockRejectedValueOnce({
+            response: { data: { detail: 'synthetic.jsonl missing' } },
+        });
+
+        render(<SynthReviewQueue projectId={1} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('synth-review-queue-purge-all')).toBeInTheDocument();
+        });
+        await userEvent.click(screen.getByTestId('synth-review-queue-purge-all'));
+        await waitFor(() => {
+            expect(
+                screen.getByTestId('synth-review-queue-purge-error'),
+            ).toHaveTextContent(/synthetic.jsonl missing/);
         });
     });
 });

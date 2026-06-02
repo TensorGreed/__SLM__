@@ -180,6 +180,14 @@ async def list_review_queue(
         r for r in all_rows
         if r.get("review_status") in (None, "accepted")
     ]
+    # Arc 5 — soft-reject. Rejected rows used to be physically
+    # deleted; now they stay on disk with ``review_status=rejected``
+    # so the user can review what was rejected, recover an
+    # accidentally-rejected row, and bulk-purge with reason
+    # filtering. Matches the project preference: rejected rows
+    # are selectable + bulk-droppable rather than vanishing
+    # immediately.
+    rejected = [r for r in all_rows if r.get("review_status") == "rejected"]
 
     return {
         "project_id": project_id,
@@ -187,9 +195,13 @@ async def list_review_queue(
         "total_rows": len(all_rows),
         "total_pending": len(pending),
         "total_accepted": len(accepted),
+        "total_rejected": len(rejected),
         "groups": _bucket_rows_by_source(pending),
         "accepted_groups": _bucket_rows_by_source(
             accepted, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP,
+        ),
+        "rejected_groups": _bucket_rows_by_source(
+            rejected, rows_per_group_cap=ACCEPTED_ROWS_PER_GROUP_CAP,
         ),
     }
 
@@ -200,22 +212,31 @@ async def bulk_update_review_queue(
     *,
     row_ids: list[int],
     action: ReviewAction,
+    reject_reason: str | None = None,
 ) -> dict[str, Any]:
     """Bulk apply an accept / reject to a set of pending rows.
 
     - ``accept`` flips ``review_status`` from ``"pending"`` to
       ``"accepted"`` for matching rows. Accepted rows are picked up
       by the next dataset prep run.
-    - ``reject`` REMOVES the rows from synthetic.jsonl entirely.
-      Rejected rows can't be recovered — they're considered bad
-      synthetic data and should not enter the training corpus, the
-      review queue, or any future eval.
+    - ``reject`` flips ``review_status`` to ``"rejected"`` AND
+      stamps ``reject_reason`` (when supplied) on the row. Rows
+      stay on disk so the user can:
+        * review what was rejected (Rejected section in the UI);
+        * recover an accidentally-rejected row by re-marking it
+          ``pending`` (future feature);
+        * bulk-purge a reason cohort via ``purge_rejected_rows``.
+      Prior behavior (physical delete) ran against the project
+      preference "rejected rows are selectable + bulk-droppable" —
+      vanishing rows aren't selectable.
 
     Returns a summary dict with counts (`accepted` / `rejected` /
     `not_found` / `not_pending`) so the UI can show what landed.
     """
     if action not in ("accept", "reject"):
         raise ValueError("action must be 'accept' or 'reject'")
+    if reject_reason is not None:
+        reject_reason = str(reject_reason).strip() or None
     if not row_ids:
         return {
             "accepted": 0,
@@ -250,9 +271,12 @@ async def bulk_update_review_queue(
                 row["review_status"] = "accepted"
                 accepted_count += 1
                 new_rows.append(row)
-            else:  # reject
+            else:  # reject — soft (mark, don't delete)
+                row["review_status"] = "rejected"
+                if reject_reason:
+                    row["reject_reason"] = reject_reason
                 rejected_count += 1
-                # Don't append — row is dropped from disk.
+                new_rows.append(row)
         else:
             new_rows.append(row)
 
@@ -280,4 +304,77 @@ async def bulk_update_review_queue(
         "not_found": not_found,
         "not_pending": not_pending,
         "total_remaining_pending": remaining_pending,
+    }
+
+
+async def purge_rejected_rows(
+    db: AsyncSession,
+    project_id: int,
+    *,
+    reasons: list[str] | None = None,
+) -> dict[str, Any]:
+    """Physically remove rejected rows from synthetic.jsonl. The
+    soft-reject in ``bulk_update_review_queue`` keeps rejected
+    rows around so the user can review them; this is the explicit
+    "I've reviewed the rejected pile, now delete it" step that
+    drops them for good.
+
+    ``reasons`` filters by ``reject_reason`` — when set, only
+    rejected rows whose reason is in the list (or who have a
+    matching empty-reason entry when ``""`` is passed) get
+    purged. When omitted, every rejected row is removed.
+
+    Returns a summary dict ``{purged: <count>, retained: <count>,
+    total_rows: <count>}`` so the UI can confirm what landed.
+    """
+    path = _synthetic_jsonl_path(project_id)
+    rows = _read_all_rows(path)
+    if not rows:
+        return {"purged": 0, "retained": 0, "total_rows": 0}
+
+    reason_filter: set[str] | None = None
+    if reasons is not None:
+        reason_filter = {
+            str(r).strip() for r in reasons if isinstance(r, str)
+        }
+        # Empty-set filter would purge nothing — treat as "no
+        # filter" for caller convenience.
+        if not reason_filter:
+            reason_filter = None
+
+    purged_count = 0
+    retained_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("review_status") != "rejected":
+            retained_rows.append(row)
+            continue
+        if reason_filter is not None:
+            row_reason = str(row.get("reject_reason") or "").strip()
+            if row_reason not in reason_filter:
+                retained_rows.append(row)
+                continue
+        purged_count += 1
+        # Don't append — row is physically dropped here.
+
+    if purged_count > 0:
+        _atomic_write_rows(path, retained_rows)
+        # Keep the Dataset's record_count in sync with the file
+        # the same way bulk_update_review_queue does — the
+        # next dataset-prep read counts rows + would silently
+        # mismatch otherwise.
+        ds_result = await db.execute(
+            select(Dataset).where(
+                Dataset.project_id == project_id,
+                Dataset.dataset_type == DatasetType.SYNTHETIC,
+            )
+        )
+        dataset = ds_result.scalar_one_or_none()
+        if dataset is not None:
+            dataset.record_count = len(retained_rows)
+            await db.flush()
+
+    return {
+        "purged": purged_count,
+        "retained": len(retained_rows),
+        "total_rows": len(retained_rows),
     }

@@ -309,10 +309,25 @@ export interface ReviewQueueResponse {
     total_rows: number;
     total_pending: number;
     total_accepted: number;
+    /** Arc 5 — soft-reject. Rejected rows stay on disk with
+     *  ``review_status="rejected"`` so they can be reviewed and
+     *  bulk-purged by reason. */
+    total_rejected?: number;
     groups: ReviewQueueGroup[];
     /** Accepted rows (passed review or pre-Epic-2a legacy rows).
      *  Surfaces what's queued for the next dataset prep. */
     accepted_groups: ReviewQueueGroup[];
+    /** Arc 5 — rejected rows grouped by ``synth_source``. The
+     *  per-row ``payload`` carries ``reject_reason`` when set by
+     *  the bulk-update endpoint. */
+    rejected_groups?: ReviewQueueGroup[];
+}
+
+
+export interface PurgeRejectedResult {
+    purged: number;
+    retained: number;
+    total_rows: number;
 }
 
 export interface BulkUpdateResult {
@@ -330,11 +345,37 @@ export async function listSynthReviewQueue(projectId: number): Promise<ReviewQue
 
 export async function bulkUpdateSynthReviewQueue(
     projectId: number,
-    args: { rowIds: number[]; action: 'accept' | 'reject' },
+    args: {
+        rowIds: number[];
+        action: 'accept' | 'reject';
+        // Arc 5 — optional reason label stamped on each rejected
+        // row (e.g. 'duplicate', 'schema_invalid', 'low_confidence').
+        // Ignored when action='accept'.
+        rejectReason?: string | null;
+    },
 ): Promise<BulkUpdateResult> {
     const resp = await api.post(`/projects/${projectId}/synthetic/review-queue/bulk-update`, {
         row_ids: args.rowIds,
         action: args.action,
+        reject_reason: args.rejectReason ?? null,
     });
     return resp.data as BulkUpdateResult;
+}
+
+
+/**
+ * Arc 5 — physically remove rejected synth rows from
+ * synthetic.jsonl. Soft-reject keeps them on disk for review;
+ * this is the explicit "drop the pile" step. ``reasons`` filters
+ * by ``reject_reason`` cohort; omit to purge every rejected row.
+ */
+export async function purgeRejectedSynthRows(
+    projectId: number,
+    args: { reasons?: string[] | null } = {},
+): Promise<PurgeRejectedResult> {
+    const resp = await api.post(
+        `/projects/${projectId}/synthetic/review-queue/purge`,
+        { reasons: args.reasons ?? null },
+    );
+    return resp.data as PurgeRejectedResult;
 }

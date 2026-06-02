@@ -361,3 +361,161 @@
     gap: var(--space-sm);
     flex-shrink: 0;
 }
+
+
+/* Arc 5 — soft-reject (rejected rows held on disk, grouped by reason). */
+
+.synth-review-queue__rejected {
+    margin-top: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    border: 1px dashed var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: rgba(244, 63, 94, 0.04);
+    color: var(--text-secondary);
+}
+
+.synth-review-queue__rejected-summary {
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.synth-review-queue__rejected-headline strong {
+    color: var(--text-primary);
+}
+
+.synth-review-queue__rejected-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.synth-review-queue__rejected-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+}
+
+.synth-review-queue__rejected-purge-all {
+    padding: 4px 10px;
+    border: 1px solid var(--border-danger, #f43f5e);
+    background: rgba(244, 63, 94, 0.10);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.synth-review-queue__rejected-purge-all:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.synth-review-queue__rejected-help {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    flex: 1;
+}
+
+.synth-review-queue__rejected-help code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+.synth-review-queue__rejected-error {
+    margin: var(--space-xs) 0;
+    color: var(--text-danger, #f43f5e);
+    font-size: 12px;
+}
+
+.synth-review-queue__rejected-flash {
+    margin: var(--space-xs) 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.synth-review-queue__rejected-groups {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+}
+
+.synth-review-queue__rejected-group {
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-primary);
+}
+
+.synth-review-queue__rejected-group-summary {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.synth-review-queue__rejected-reason-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 1px 6px;
+    background: rgba(244, 63, 94, 0.12);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+}
+
+.synth-review-queue__rejected-count {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-left: auto;
+}
+
+.synth-review-queue__rejected-purge-reason {
+    padding: 2px 8px;
+    border: 1px solid var(--border-muted);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.synth-review-queue__rejected-purge-reason:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.synth-review-queue__rejected-row-list {
+    list-style: none;
+    padding: 0;
+    margin: var(--space-xs) 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.synth-review-queue__rejected-row {
+    display: grid;
+    grid-template-columns: 44px max-content 1fr;
+    align-items: start;
+    gap: var(--space-sm);
+}
+
+.synth-review-queue__rejected-row code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.synth-review-queue__rejected-source {
+    color: var(--text-secondary);
+}

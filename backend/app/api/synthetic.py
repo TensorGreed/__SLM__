@@ -891,6 +891,31 @@ async def list_synth_playbooks(project_id: int, db: AsyncSession = Depends(get_d
 class BulkReviewQueueRequest(BaseModel):
     row_ids: list[int] = Field(..., description="IDs of pending synth rows to update.")
     action: str = Field(..., description="'accept' or 'reject'.")
+    # Arc 5 — when action='reject', the caller may attach a free-form
+    # reason ("schema_invalid", "duplicate", "low_confidence", etc.)
+    # that gets stamped on the row. The Rejected section in the UI
+    # groups + filters by this so the user can bulk-purge a reason
+    # cohort. Ignored for 'accept'.
+    reject_reason: str | None = Field(
+        default=None,
+        description=(
+            "Optional label for a bulk reject (e.g. 'duplicate', "
+            "'schema_invalid'). Stamped on each rejected row so the "
+            "Rejected section can group + purge by reason."
+        ),
+        max_length=64,
+    )
+
+
+class PurgeRejectedRequest(BaseModel):
+    reasons: list[str] | None = Field(
+        default=None,
+        description=(
+            "When set, only rejected rows whose ``reject_reason`` "
+            "is in this list get physically removed. When omitted "
+            "(or empty), all rejected rows are purged."
+        ),
+    )
 
 
 @router.get("/review-queue")
@@ -917,8 +942,11 @@ async def bulk_update_synth_review_queue(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk accept or reject pending synth rows. Accepted rows flip
-    to `review_status="accepted"` and become eligible for training;
-    rejected rows are removed from synthetic.jsonl permanently.
+    to ``review_status="accepted"`` and become eligible for
+    training; rejected rows flip to ``review_status="rejected"``
+    (Arc 5 soft-reject) and stay on disk for review + bulk-purge.
+    Pass ``reject_reason`` to tag each rejected row with a label
+    the Rejected section's group-by-reason UI uses.
     """
     from app.services.synth_review_queue_service import bulk_update_review_queue
 
@@ -929,6 +957,27 @@ async def bulk_update_synth_review_queue(
         project_id,
         row_ids=req.row_ids,
         action=req.action,  # type: ignore[arg-type]
+        reject_reason=req.reject_reason,
+    )
+
+
+@router.post("/review-queue/purge")
+async def purge_rejected_synth_rows(
+    project_id: int,
+    req: PurgeRejectedRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Physically remove rejected synth rows from synthetic.jsonl.
+    Arc-5 soft-reject keeps rejected rows around for review; this
+    is the explicit "I've reviewed the rejected pile, drop it"
+    step. Pass ``reasons`` to purge a specific reason cohort
+    (e.g. just the ``duplicate`` rows); omit to purge every
+    rejected row.
+    """
+    from app.services.synth_review_queue_service import purge_rejected_rows
+
+    return await purge_rejected_rows(
+        db, project_id, reasons=req.reasons,
     )
 
 

@@ -535,7 +535,13 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         self.assertEqual(statuses[1], "accepted")
         self.assertEqual(statuses[2], "pending")
 
-    def test_bulk_reject_removes_rows_from_disk(self):
+    def test_bulk_reject_soft_marks_rows_keeps_them_on_disk(self):
+        # Arc 5 — soft-reject. Rejected rows used to be physically
+        # deleted; now they stay on disk with
+        # ``review_status="rejected"`` so the user can review them,
+        # bulk-purge by reason, or recover (future feature). Project
+        # preference "rejected rows are selectable + bulk-droppable"
+        # required this — vanishing rows aren't selectable.
         project = self._instantiate_template("policy-qa-style", "Queue Reject Test")
         pid = project["id"]
         self._seed_synth_rows(pid, [
@@ -549,12 +555,122 @@ class ReviewQueueIntegrationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
         self.assertEqual(payload["rejected"], 2)
-        # File should now be empty (or contain only non-rejected rows).
+        # File retains the rows but their status flipped to "rejected".
         path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
-        if path.exists():
-            with path.open() as f:
-                rows = [json.loads(l) for l in f if l.strip()]
-            self.assertEqual(rows, [])
+        self.assertTrue(path.exists())
+        with path.open() as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual(row["review_status"], "rejected")
+
+    def test_bulk_reject_stamps_reject_reason_when_provided(self):
+        # Arc 5 — the new reject_reason field gets stamped on each
+        # rejected row. UI uses this to group + filter the Rejected
+        # section ("show me just the 'duplicate' rejects").
+        project = self._instantiate_template("policy-qa-style", "Queue Reject Reason Test")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 10, "question": "Q", "answer": "A", "synth_source": "playbook:qa-sft", "synth_confidence": 0.7, "review_status": "pending"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/bulk-update",
+            json={"row_ids": [10], "action": "reject", "reject_reason": "duplicate"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        with path.open() as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        self.assertEqual(rows[0]["review_status"], "rejected")
+        self.assertEqual(rows[0]["reject_reason"], "duplicate")
+
+    def test_list_review_queue_returns_rejected_groups(self):
+        # Rejected rows surface in their own ``rejected_groups``
+        # bucket alongside the existing pending ``groups`` +
+        # accepted_groups. ``total_rejected`` counter is new too.
+        project = self._instantiate_template("policy-qa-style", "Queue Rejected Groups")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q1", "answer": "A1", "synth_source": "playbook:qa-sft", "synth_confidence": 0.9, "review_status": "pending"},
+            {"id": 2, "question": "Q2", "answer": "A2", "synth_source": "playbook:qa-sft", "synth_confidence": 0.6, "review_status": "rejected", "reject_reason": "low_confidence"},
+            {"id": 3, "question": "Q3", "answer": "A3", "synth_source": "playbook:qa-sft", "synth_confidence": 0.65, "review_status": "rejected", "reject_reason": "duplicate"},
+        ])
+        resp = self.client.get(f"/api/projects/{pid}/synthetic/review-queue")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["total_pending"], 1)
+        self.assertEqual(payload["total_rejected"], 2)
+        # Rejected rows surface under their synth_source group with
+        # the same row shape (preview + payload) as pending rows.
+        self.assertEqual(len(payload["rejected_groups"]), 1)
+        rejected_group = payload["rejected_groups"][0]
+        self.assertEqual(rejected_group["synth_source"], "playbook:qa-sft")
+        self.assertEqual(rejected_group["count"], 2)
+
+    def test_purge_rejected_endpoint_removes_all_when_no_reasons_filter(self):
+        # Purge with no reasons filter → all rejected rows drop.
+        # Pending + accepted rows untouched.
+        project = self._instantiate_template("policy-qa-style", "Queue Purge All")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q1", "answer": "A1", "synth_source": "p", "synth_confidence": 0.9, "review_status": "pending"},
+            {"id": 2, "question": "Q2", "answer": "A2", "synth_source": "p", "synth_confidence": 0.6, "review_status": "rejected", "reject_reason": "duplicate"},
+            {"id": 3, "question": "Q3", "answer": "A3", "synth_source": "p", "synth_confidence": 0.7, "review_status": "rejected", "reject_reason": "low_confidence"},
+            {"id": 4, "question": "Q4", "answer": "A4", "synth_source": "p", "synth_confidence": 0.95, "review_status": "accepted"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/purge",
+            json={},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["purged"], 2)
+        self.assertEqual(payload["retained"], 2)
+        # Disk-side: only pending + accepted rows survive.
+        path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        with path.open() as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        statuses = {row["review_status"] for row in rows}
+        self.assertEqual(statuses, {"pending", "accepted"})
+
+    def test_purge_rejected_endpoint_filters_by_reasons(self):
+        # Reason cohort filter: only ``duplicate`` rows go. The
+        # ``low_confidence`` rejected row stays on disk.
+        project = self._instantiate_template("policy-qa-style", "Queue Purge Filtered")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q1", "answer": "A1", "synth_source": "p", "synth_confidence": 0.6, "review_status": "rejected", "reject_reason": "duplicate"},
+            {"id": 2, "question": "Q2", "answer": "A2", "synth_source": "p", "synth_confidence": 0.6, "review_status": "rejected", "reject_reason": "duplicate"},
+            {"id": 3, "question": "Q3", "answer": "A3", "synth_source": "p", "synth_confidence": 0.7, "review_status": "rejected", "reject_reason": "low_confidence"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/purge",
+            json={"reasons": ["duplicate"]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["purged"], 2)
+        self.assertEqual(payload["retained"], 1)
+        path = settings.DATA_DIR / "projects" / str(pid) / "synthetic" / "synthetic.jsonl"
+        with path.open() as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+        # Only the low_confidence row remains.
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["reject_reason"], "low_confidence")
+
+    def test_purge_rejected_endpoint_is_idempotent_when_nothing_rejected(self):
+        # No rejected rows → purge is a no-op + returns 0/0.
+        project = self._instantiate_template("policy-qa-style", "Queue Purge Idempotent")
+        pid = project["id"]
+        self._seed_synth_rows(pid, [
+            {"id": 1, "question": "Q", "answer": "A", "synth_source": "p", "synth_confidence": 0.9, "review_status": "pending"},
+        ])
+        resp = self.client.post(
+            f"/api/projects/{pid}/synthetic/review-queue/purge",
+            json={},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["purged"], 0)
 
     def test_bulk_update_handles_unknown_action(self):
         project = self._instantiate_template("email-chat-tone", "Queue Bad Action")

@@ -19,6 +19,7 @@ import type {
 import {
     bulkUpdateSynthReviewQueue,
     listSynthReviewQueue,
+    purgeRejectedSynthRows,
 } from '../../api/synthPlaybook';
 import './SynthReviewQueue.css';
 
@@ -40,6 +41,11 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [flash, setFlash] = useState<string | null>(null);
+    // Arc 5 — purge confirmation lives on the parent so it survives
+    // the post-purge re-render (after a successful purge the rejected
+    // section unmounts; the flash needs to outlive it).
+    const [purgeFlash, setPurgeFlash] = useState<string | null>(null);
+    const [purgeError, setPurgeError] = useState<string | null>(null);
     // ``focusActive`` lets the user dismiss the focus banner without
     // losing the navigation context (URL hash + query stay). Set when
     // the focusSource prop arrives; cleared on dismiss + on successful
@@ -66,6 +72,21 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
     useEffect(() => {
         load();
     }, [load]);
+
+    const handlePurgeCompleted = useCallback(
+        async (result: import('../../api/synthPlaybook').PurgeRejectedResult) => {
+            setPurgeFlash(
+                `Purged ${result.purged} row${result.purged === 1 ? '' : 's'} from synthetic.jsonl. ${result.retained} rejected row${result.retained === 1 ? '' : 's'} remaining.`,
+            );
+            setPurgeError(null);
+            await load();
+        },
+        [load],
+    );
+    const handlePurgeError = useCallback((msg: string) => {
+        setPurgeError(msg);
+        setPurgeFlash(null);
+    }, []);
 
     const handleBulkUpdate = useCallback(
         async (action: 'accept' | 'reject') => {
@@ -182,17 +203,29 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
         );
     }
 
-    if (!data || (data.total_pending === 0 && data.total_accepted === 0)) {
+    const totalRejected = data?.total_rejected ?? 0;
+    if (
+        !data
+        || (data.total_pending === 0 && data.total_accepted === 0 && totalRejected === 0)
+    ) {
         return (
             <section className="synth-review-queue synth-review-queue--empty" data-testid="synth-review-queue-empty">
                 <p>No synth rows pending review.</p>
+                {purgeFlash && (
+                    <p
+                        className="synth-review-queue__rejected-flash"
+                        data-testid="synth-review-queue-purge-flash"
+                    >
+                        {purgeFlash}
+                    </p>
+                )}
             </section>
         );
     }
 
-    // If only accepted rows exist (queue is empty), render a compact
-    // "what's queued for training" summary so approved rows are
-    // visible somewhere in the UI.
+    // If only accepted / rejected rows exist (queue is empty), render
+    // a compact "what's queued for training + what's on hold" summary
+    // so non-pending state stays visible.
     if (data.total_pending === 0) {
         return (
             <section className="synth-review-queue" data-testid="synth-review-queue">
@@ -203,7 +236,37 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     </p>
                 </header>
                 <TotalCountStrip data={data} />
-                <AcceptedRowsSection groups={data.accepted_groups} totalAccepted={data.total_accepted} />
+                {data.accepted_groups.length > 0 && (
+                    <AcceptedRowsSection
+                        groups={data.accepted_groups}
+                        totalAccepted={data.total_accepted}
+                    />
+                )}
+                {purgeFlash && (
+                    <p
+                        className="synth-review-queue__rejected-flash"
+                        data-testid="synth-review-queue-purge-flash"
+                    >
+                        {purgeFlash}
+                    </p>
+                )}
+                {purgeError && (
+                    <p
+                        className="synth-review-queue__rejected-error"
+                        data-testid="synth-review-queue-purge-error"
+                    >
+                        {purgeError}
+                    </p>
+                )}
+                {(data.rejected_groups?.length ?? 0) > 0 && (
+                    <RejectedRowsSection
+                        projectId={projectId}
+                        groups={data.rejected_groups || []}
+                        totalRejected={totalRejected}
+                        onPurgeCompleted={handlePurgeCompleted}
+                        onPurgeError={handlePurgeError}
+                    />
+                )}
             </section>
         );
     }
@@ -347,6 +410,31 @@ export default function SynthReviewQueue({ projectId, focusSource }: Props) {
                     totalAccepted={data.total_accepted}
                 />
             )}
+            {purgeFlash && (
+                <p
+                    className="synth-review-queue__rejected-flash"
+                    data-testid="synth-review-queue-purge-flash"
+                >
+                    {purgeFlash}
+                </p>
+            )}
+            {purgeError && (
+                <p
+                    className="synth-review-queue__rejected-error"
+                    data-testid="synth-review-queue-purge-error"
+                >
+                    {purgeError}
+                </p>
+            )}
+            {(data.rejected_groups?.length ?? 0) > 0 && (
+                <RejectedRowsSection
+                    projectId={projectId}
+                    groups={data.rejected_groups || []}
+                    totalRejected={data.total_rejected ?? 0}
+                    onPurgeCompleted={handlePurgeCompleted}
+                    onPurgeError={handlePurgeError}
+                />
+            )}
         </section>
     );
 }
@@ -465,6 +553,211 @@ function AcceptedGroupCard({ group }: AcceptedGroupCardProps) {
             ) : (
                 <p className="synth-review-queue__accepted-empty">(no preview rows)</p>
             )}
+        </details>
+    );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Arc 5 — soft-reject. Rejected rows stay on disk so the user can
+// audit *why* a batch was rejected before purging. The backend groups
+// by ``synth_source`` (mirrors pending/accepted); inside the section
+// the rows are re-grouped by ``reject_reason`` so a noisy synth run
+// becomes one card per cause-of-rejection with a per-reason "Purge"
+// button. Per [rejected-rows-selectable] memory: never all-or-nothing.
+// ─────────────────────────────────────────────────────────────────────
+
+const NO_REASON_KEY = '(no reason)';
+
+interface RejectedRow {
+    id: number;
+    synth_source: string;
+    synth_confidence: number;
+    preview: string;
+    reason: string;
+}
+
+function _flattenRejectedRows(groups: ReviewQueueGroup[]): RejectedRow[] {
+    const rows: RejectedRow[] = [];
+    for (const group of groups) {
+        for (const row of group.rows) {
+            const reasonRaw = (row.payload as Record<string, unknown>)?.reject_reason;
+            const reason =
+                typeof reasonRaw === 'string' && reasonRaw.trim().length > 0
+                    ? reasonRaw.trim()
+                    : NO_REASON_KEY;
+            rows.push({
+                id: row.id,
+                synth_source: group.synth_source,
+                synth_confidence: row.synth_confidence ?? 0,
+                preview: row.preview,
+                reason,
+            });
+        }
+    }
+    return rows;
+}
+
+function _groupByReason(rows: RejectedRow[]): Map<string, RejectedRow[]> {
+    const out = new Map<string, RejectedRow[]>();
+    for (const row of rows) {
+        const bucket = out.get(row.reason) ?? [];
+        bucket.push(row);
+        out.set(row.reason, bucket);
+    }
+    return out;
+}
+
+
+interface RejectedRowsSectionProps {
+    projectId: number;
+    groups: ReviewQueueGroup[];
+    totalRejected: number;
+    onPurgeCompleted: (
+        result: import('../../api/synthPlaybook').PurgeRejectedResult,
+    ) => Promise<void> | void;
+    onPurgeError: (msg: string) => void;
+}
+
+function RejectedRowsSection({
+    projectId,
+    groups,
+    totalRejected,
+    onPurgeCompleted,
+    onPurgeError,
+}: RejectedRowsSectionProps) {
+    const [purging, setPurging] = useState<string | null>(null);
+
+    const rows = _flattenRejectedRows(groups);
+    const byReason = _groupByReason(rows);
+    const reasonKeys = Array.from(byReason.keys()).sort();
+
+    const handlePurge = useCallback(
+        async (scope: string, reasons: string[] | null) => {
+            setPurging(scope);
+            try {
+                const result = await purgeRejectedSynthRows(projectId, { reasons });
+                await onPurgeCompleted(result);
+            } catch (err: any) {
+                onPurgeError(
+                    err?.response?.data?.detail || err?.message || 'Purge failed',
+                );
+            } finally {
+                setPurging(null);
+            }
+        },
+        [projectId, onPurgeCompleted, onPurgeError],
+    );
+
+    return (
+        <details
+            className="synth-review-queue__rejected"
+            data-testid="synth-review-queue-rejected"
+        >
+            <summary className="synth-review-queue__rejected-summary">
+                <span className="synth-review-queue__rejected-headline">
+                    <strong>{totalRejected}</strong> rejected row{totalRejected === 1 ? '' : 's'} held on disk
+                </span>
+                <span className="synth-review-queue__rejected-hint">
+                    ({reasonKeys.length} reason{reasonKeys.length === 1 ? '' : 's'} — click to expand)
+                </span>
+            </summary>
+            <div className="synth-review-queue__rejected-toolbar">
+                <button
+                    type="button"
+                    className="synth-review-queue__rejected-purge-all"
+                    onClick={() => handlePurge('__all__', null)}
+                    disabled={purging !== null || rows.length === 0}
+                    data-testid="synth-review-queue-purge-all"
+                >
+                    {purging === '__all__' ? 'Purging…' : `Purge all ${rows.length}`}
+                </button>
+                <p className="synth-review-queue__rejected-help">
+                    Soft-reject keeps rows on disk for audit. Purge removes them from <code>synthetic.jsonl</code> and decrements the dataset record count.
+                </p>
+            </div>
+            <div className="synth-review-queue__rejected-groups">
+                {reasonKeys.map((reason) => (
+                    <RejectedReasonCard
+                        key={reason}
+                        reason={reason}
+                        rows={byReason.get(reason) || []}
+                        purging={purging === reason}
+                        disablePurge={purging !== null}
+                        onPurge={() =>
+                            handlePurge(
+                                reason,
+                                reason === NO_REASON_KEY ? [''] : [reason],
+                            )
+                        }
+                    />
+                ))}
+            </div>
+        </details>
+    );
+}
+
+
+interface RejectedReasonCardProps {
+    reason: string;
+    rows: RejectedRow[];
+    purging: boolean;
+    disablePurge: boolean;
+    onPurge: () => void;
+}
+
+function RejectedReasonCard({
+    reason,
+    rows,
+    purging,
+    disablePurge,
+    onPurge,
+}: RejectedReasonCardProps) {
+    const cardTestId = `synth-review-queue-rejected-reason-${reason}`;
+    return (
+        <details
+            className="synth-review-queue__rejected-group"
+            data-testid={cardTestId}
+        >
+            <summary className="synth-review-queue__rejected-group-summary">
+                <span className="synth-review-queue__rejected-reason-badge">
+                    {reason}
+                </span>
+                <span className="synth-review-queue__rejected-count">
+                    {rows.length}
+                </span>
+                <button
+                    type="button"
+                    className="synth-review-queue__rejected-purge-reason"
+                    onClick={(e) => {
+                        // Don't toggle the <details> on button click.
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onPurge();
+                    }}
+                    disabled={disablePurge}
+                    data-testid={`synth-review-queue-purge-reason-${reason}`}
+                >
+                    {purging ? 'Purging…' : 'Purge this reason'}
+                </button>
+            </summary>
+            <ul className="synth-review-queue__rejected-row-list">
+                {rows.map((row) => (
+                    <li
+                        key={row.id}
+                        className="synth-review-queue__rejected-row"
+                        data-testid={`synth-review-queue-rejected-row-${row.id}`}
+                    >
+                        <span className="synth-review-queue__confidence">
+                            {Math.round((row.synth_confidence ?? 0) * 100)}%
+                        </span>
+                        <code className="synth-review-queue__rejected-source">
+                            {row.synth_source || '(no source)'}
+                        </code>
+                        <code>{row.preview}</code>
+                    </li>
+                ))}
+            </ul>
         </details>
     );
 }
