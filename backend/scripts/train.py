@@ -2809,12 +2809,68 @@ def _run_training_attempt(
                 return int(tid)
 
             kd_capture_rows = load_teacher_capture(distillation_capture_path)
+
+            # Chat-template sub-gap fix for KD (Arc 1, item 1):
+            # when the project's eval handler doesn't wrap its own
+            # prompt (QA / language_modeling / chat_sft / etc.),
+            # held-out eval applies the model's chat template at
+            # inference. Pre-this-fix the student trained on raw
+            # ``prompt + completion`` tokens — train/eval format
+            # divergence. Resolve the project's handler here and,
+            # for the non-wrapping family, pass a transform that
+            # apply_chat_template's the prompt before tokenization.
+            # For the wraps_own_prompt family the capture-time
+            # β-fix (commit 3672f05) already wrote the wrapped
+            # string into ``wrapped_prompt`` on each row, and
+            # build_offline_kd_records skips the transform for
+            # those rows — no double-wrap.
+            _kd_prompt_transform = None
+            try:
+                from app.services.eval_task_handler_service import (
+                    read_task_profile_from_manifest,
+                    resolve_task_handler,
+                )
+                _kd_task_profile = read_task_profile_from_manifest(
+                    int(args.project)
+                )
+                _kd_handler = resolve_task_handler(_kd_task_profile)
+                _kd_wraps = bool(
+                    getattr(_kd_handler, "wraps_own_prompt", lambda: False)()
+                )
+                _has_chat_template = hasattr(
+                    processor_tokenizer, "apply_chat_template"
+                ) and bool(getattr(processor_tokenizer, "chat_template", None))
+                if not _kd_wraps and _has_chat_template:
+                    def _kd_apply_chat_template(text: str) -> str:
+                        return processor_tokenizer.apply_chat_template(
+                            [{"role": "user", "content": text}],
+                            tokenize=False,
+                            add_generation_prompt=True,
+                        )
+                    _kd_prompt_transform = _kd_apply_chat_template
+                    runtime_environment[
+                        "offline_kd_prompt_transform"
+                    ] = "chat_template"
+                else:
+                    runtime_environment[
+                        "offline_kd_prompt_transform"
+                    ] = (
+                        "skipped_wraps_own_prompt"
+                        if _kd_wraps
+                        else "skipped_no_chat_template"
+                    )
+            except Exception as resolve_err:  # noqa: BLE001
+                runtime_environment["offline_kd_prompt_transform"] = (
+                    f"unresolved: {resolve_err.__class__.__name__}"
+                )
+
             kd_records, kd_stats = build_offline_kd_records(
                 kd_capture_rows,
                 _kd_encode,
                 _kd_token_to_id,
                 top_k=distillation_offline_top_k,
                 max_seq_length=max_seq_length,
+                prompt_transform=_kd_prompt_transform,
             )
             if not kd_records:
                 raise ValueError(

@@ -221,6 +221,7 @@ def build_offline_kd_records(
     max_seq_length: int = 1024,
     ignore_index: int = -100,
     pad_id: int = TEACHER_PAD_ID,
+    prompt_transform: Callable[[str], str] | None = None,
 ) -> tuple[list[OfflineKDRecord], dict[str, int]]:
     """Turn captured rows into causal-LM training records with aligned teacher
     targets, ready for ``OfflineKDCollator`` + ``OfflineDistillationTrainer``.
@@ -235,6 +236,19 @@ def build_offline_kd_records(
     are injected (the student tokenizer) so this is testable with a fake vocab.
     The teacher position ↔ completion token alignment is exact only under the
     same-tokenizer assumption (see module docstring).
+
+    ``prompt_transform`` closes the chat-template sub-gap of the KD β-fix.
+    The capture-time β-fix (commit 3672f05) covered handlers whose
+    ``wraps_own_prompt() == True`` by persisting a ``wrapped_prompt`` on the
+    captured row. For the QA / language_modeling family (``wraps_own_prompt
+    == False``), held-out eval applies the model's chat template at inference
+    but the student previously trained on raw ``prompt + completion`` tokens.
+    When provided, ``prompt_transform`` is applied to the row's prompt BEFORE
+    ``encode_fn`` is called — typically a function that runs
+    ``tokenizer.apply_chat_template`` so the student trains on the same
+    chat-template-wrapped scaffold the eval will build. Rows that already
+    carry a ``wrapped_prompt`` from capture-time wrapping skip the
+    transform (already byte-aligned to a wraps-own-prompt handler).
     """
     records: list[OfflineKDRecord] = []
     stats = {
@@ -248,6 +262,27 @@ def build_offline_kd_records(
 
     for row in capture_rows:
         prompt = _extract_prompt_text(row)
+        # Chat-template sub-gap fix: apply the transform only when
+        # the row didn't already carry a handler-wrapped prompt from
+        # capture time (the wraps_own_prompt branch — Classification,
+        # Structured, RAG, Seq2Seq, VisionLanguage, AudioTranscript).
+        # ``_extract_prompt_text`` already preferred ``wrapped_prompt``
+        # when present, so we detect that by checking the raw field
+        # directly rather than re-walking the alias list.
+        has_capture_wrap = isinstance(row.get("wrapped_prompt"), str) and bool(
+            row.get("wrapped_prompt", "").strip()
+        )
+        if prompt_transform is not None and not has_capture_wrap and prompt:
+            try:
+                transformed = prompt_transform(prompt)
+            except Exception:
+                # Transform shouldn't crash the whole build — fall
+                # back to the untransformed prompt rather than the
+                # entire record. Same defensive shape as the rest
+                # of this builder's per-row error handling.
+                transformed = prompt
+            if isinstance(transformed, str) and transformed.strip():
+                prompt = transformed
         completion = str(row.get("teacher_completion") or row.get("answer") or "").strip()
         pos_ids, pos_logprobs, mstats = build_teacher_target_topk(
             row, token_to_id, top_k=top_k, pad_id=pad_id

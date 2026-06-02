@@ -234,5 +234,211 @@ class KdCaptureExtractPromptTextPreferenceTests(unittest.TestCase):
         self.assertEqual(_extract_prompt_text(row), "real")
 
 
+class BuildOfflineKdRecordsPromptTransformTests(unittest.TestCase):
+    """Chat-template sub-gap fix (Arc 1, item 1) —
+    ``build_offline_kd_records`` accepts an optional
+    ``prompt_transform`` that wraps the row's prompt before
+    tokenization. Used by the trainer to apply
+    ``tokenizer.apply_chat_template`` for QA-family KD projects
+    so the student trains on the same chat-template-wrapped
+    scaffold the eval will build.
+
+    Pins:
+      * Transform is applied when the row has no
+        ``wrapped_prompt`` (capture-time wrap absent → student
+        needs the chat-template wrap to match eval).
+      * Transform is SKIPPED when the row already has a
+        ``wrapped_prompt`` (capture-time wrap present →
+        already byte-aligned to a wraps-own-prompt handler;
+        applying chat template again would double-wrap).
+      * Transform = None preserves legacy behaviour (raw prompt
+        tokenization).
+      * A throwing transform doesn't crash the build — falls
+        back to the untransformed prompt for that row.
+    """
+
+    def _capture_row(
+        self,
+        *,
+        prompt: str = "what is 2+2?",
+        completion: str = "4",
+        wrapped: str | None = None,
+        teacher_positions: int = 1,
+    ) -> dict:
+        # Minimal capture-row shape the builder needs.
+        row: dict = {
+            "question": prompt,
+            "teacher_completion": completion,
+            # One teacher position per token for simplicity — the
+            # builder requires at least one position to keep the
+            # row.
+            "teacher_logits": [
+                {"position": p, "top_k": [["x", -0.1]]}
+                for p in range(teacher_positions)
+            ],
+        }
+        if wrapped is not None:
+            row["wrapped_prompt"] = wrapped
+        return row
+
+    @staticmethod
+    def _fake_encoder():
+        # Map each token in the input to a fake numeric id. Use
+        # split() so we can write tests that look at exact token
+        # counts.
+        vocab: dict[str, int] = {"<unk>": 0}
+
+        def encode(text: str) -> list[int]:
+            ids: list[int] = []
+            for tok in text.split():
+                if tok not in vocab:
+                    vocab[tok] = len(vocab)
+                ids.append(vocab[tok])
+            return ids
+
+        def token_to_id(token: str):
+            return vocab.get(token, 0)
+
+        return encode, token_to_id
+
+    def test_transform_applied_when_no_wrapped_prompt(self):
+        from app.services.distillation.kd_capture import (
+            build_offline_kd_records,
+        )
+        encode, token_to_id = self._fake_encoder()
+        # The chat-template-shaped wrap: prepend two prefix tokens
+        # the model expects (representing the user/assistant
+        # turn structure).
+        def _transform(p: str) -> str:
+            return f"<|user|> {p} <|assistant|>"
+        row = self._capture_row(
+            prompt="hello world",
+            completion="hi",
+        )
+        records, _ = build_offline_kd_records(
+            [row], encode, token_to_id,
+            top_k=1, max_seq_length=64,
+            prompt_transform=_transform,
+        )
+        self.assertEqual(len(records), 1)
+        # Prompt tokens are masked in labels. Count them via the
+        # label prefix length. After the transform, "hello world"
+        # has 4 tokens (<|user|>, hello, world, <|assistant|>) +
+        # untransformed it'd have 2 (hello, world).
+        ignore = -100
+        masked_prefix = next(
+            (i for i, lab in enumerate(records[0]["labels"]) if lab != ignore),
+            len(records[0]["labels"]),
+        )
+        self.assertEqual(masked_prefix, 4)
+
+    def test_transform_skipped_when_wrapped_prompt_present(self):
+        # The β-fix path already populated ``wrapped_prompt`` from
+        # the capture (handler.build_prompts ran at capture time).
+        # The chat-template transform must NOT fire — else the
+        # wrapped prompt would get double-wrapped and diverge
+        # from what the eval handler rebuilds at inference.
+        from app.services.distillation.kd_capture import (
+            build_offline_kd_records,
+        )
+        encode, token_to_id = self._fake_encoder()
+        called: list[str] = []
+        def _transform(p: str) -> str:
+            called.append(p)
+            return f"<|user|> {p} <|assistant|>"
+        row = self._capture_row(
+            prompt="what is 2+2?",
+            completion="4",
+            wrapped="Classify the following text. …\nText: 2+2\nLabel:",
+        )
+        records, _ = build_offline_kd_records(
+            [row], encode, token_to_id,
+            top_k=1, max_seq_length=64,
+            prompt_transform=_transform,
+        )
+        # Transform never called → no double-wrap.
+        self.assertEqual(called, [])
+        # Prompt tokens come from the wrapped_prompt (which
+        # ``_extract_prompt_text`` already prefers over the raw
+        # question field).
+        ignore = -100
+        masked_prefix = next(
+            (i for i, lab in enumerate(records[0]["labels"]) if lab != ignore),
+            len(records[0]["labels"]),
+        )
+        # ``Classify the following text. …\nText: 2+2\nLabel:``
+        # split() gives 7 tokens.
+        self.assertGreater(masked_prefix, 4)
+
+    def test_no_transform_preserves_legacy_behaviour(self):
+        # Regression guard for the existing trainer call sites
+        # (and any test fixture) that didn't previously pass
+        # prompt_transform. The default ``None`` keeps raw
+        # tokenization.
+        from app.services.distillation.kd_capture import (
+            build_offline_kd_records,
+        )
+        encode, token_to_id = self._fake_encoder()
+        row = self._capture_row(prompt="alpha beta", completion="gamma")
+        records, _ = build_offline_kd_records(
+            [row], encode, token_to_id,
+            top_k=1, max_seq_length=64,
+        )
+        ignore = -100
+        masked_prefix = next(
+            (i for i, lab in enumerate(records[0]["labels"]) if lab != ignore),
+            len(records[0]["labels"]),
+        )
+        # Raw "alpha beta" → 2 tokens, no chat-template prefix.
+        self.assertEqual(masked_prefix, 2)
+
+    def test_throwing_transform_falls_back_to_raw_prompt(self):
+        # Defensive: a buggy transform must not crash the entire
+        # build. Same shape as the capture-time handler-failure
+        # tolerance.
+        from app.services.distillation.kd_capture import (
+            build_offline_kd_records,
+        )
+        encode, token_to_id = self._fake_encoder()
+        def _transform(p: str) -> str:
+            raise RuntimeError("kaboom")
+        row = self._capture_row(prompt="alpha beta", completion="gamma")
+        records, _ = build_offline_kd_records(
+            [row], encode, token_to_id,
+            top_k=1, max_seq_length=64,
+            prompt_transform=_transform,
+        )
+        self.assertEqual(len(records), 1)
+        # The build succeeded with the raw-prompt fallback.
+        ignore = -100
+        masked_prefix = next(
+            (i for i, lab in enumerate(records[0]["labels"]) if lab != ignore),
+            len(records[0]["labels"]),
+        )
+        self.assertEqual(masked_prefix, 2)
+
+    def test_empty_transform_output_falls_back_to_raw(self):
+        # Transform returns empty/whitespace → use the raw prompt
+        # rather than train on an empty prompt block (which would
+        # produce a record with zero prompt tokens, breaking
+        # downstream loss masking).
+        from app.services.distillation.kd_capture import (
+            build_offline_kd_records,
+        )
+        encode, token_to_id = self._fake_encoder()
+        row = self._capture_row(prompt="alpha beta", completion="gamma")
+        records, _ = build_offline_kd_records(
+            [row], encode, token_to_id,
+            top_k=1, max_seq_length=64,
+            prompt_transform=lambda _p: "   ",
+        )
+        ignore = -100
+        masked_prefix = next(
+            (i for i, lab in enumerate(records[0]["labels"]) if lab != ignore),
+            len(records[0]["labels"]),
+        )
+        self.assertEqual(masked_prefix, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
