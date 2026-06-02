@@ -580,6 +580,54 @@ def _row_has_text(value: Any) -> bool:
     return bool(str(value or "").strip())
 
 
+# Prefixes the β/ζ/η/θ/ι/κ adapter-wrap tails write into
+# ``source_text``. Used by the chat-template re-wrap pass to
+# distinguish wraps_own_prompt rows (already byte-aligned to their
+# canonical handler) from QA-family rows (which need the tokenizer-
+# chat-template re-wrap when the opt-in flag is set). Adding a new
+# wrap-true handler means adding its prefix here AND extending the
+# `_adapt_record_to_text` tail above with the corresponding
+# passthrough — both layers stay in sync.
+_WRAPS_OWN_PROMPT_PREFIXES: tuple[str, ...] = (
+    "Classify the following text",
+    "Extract the following fields as JSON",
+    "Extract the relevant fields from the input",
+    "Answer the question using only the context",
+    "Translate the following to",
+    "Summarize the following text",
+    "Paraphrase the following text",
+    "Describe the image:",
+    "Transcribe the audio:",
+)
+
+
+def _is_wraps_own_prompt_row(row: dict[str, Any]) -> bool:
+    """True when ``source_text`` starts with any handler-wrap prefix
+    a β/ζ/η/θ/ι/κ adapter tail would have produced. Used by the
+    chat-template re-wrap pass to skip rows that are already
+    byte-aligned to their canonical handler — applying the chat
+    template on top would double-wrap and diverge from the eval
+    format.
+
+    VL/Audio VQA rows (``Question: …\nImage:`` / ``Question: …\nAudio:``)
+    are also wraps_own_prompt-shaped; their multimodal placeholder
+    is the disambiguator vs a plain QA ``Question: …`` row that
+    other adapters write. The ι/κ trainer tails use the same
+    marker test; we mirror it here.
+    """
+    src = row.get("source_text")
+    if not isinstance(src, str):
+        return False
+    stripped = src.lstrip()
+    if stripped.startswith(_WRAPS_OWN_PROMPT_PREFIXES):
+        return True
+    if stripped.startswith("Question:") and (
+        "\nImage: <image:" in src or "\nAudio: <audio:" in src
+    ):
+        return True
+    return False
+
+
 def _is_valid_adapted_row(row: dict[str, Any], task_type: str) -> bool:
     task = str(task_type or "causal_lm").strip().lower()
     if task == "causal_lm":
@@ -1409,6 +1457,60 @@ def _run_training_attempt(
 
         train_text = train_ds.map(to_text_record, remove_columns=train_ds.column_names)
         train_text = train_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
+
+        # Chat-template byte-alignment pass (opt-in via
+        # ``use_tokenizer_chat_template`` config flag). Closes the
+        # residual train/eval format gap for QA-family rows
+        # (handlers where ``wraps_own_prompt() == False``): the
+        # ``_qa_to_chat_text`` heuristic format the trainer uses
+        # differs at the byte level from what
+        # ``tokenizer.apply_chat_template`` emits at eval. When the
+        # flag is on AND the tokenizer carries a chat_template,
+        # re-shape QA rows so the student trains on the same string
+        # the eval handler will rebuild at inference. wraps_own_prompt
+        # rows (β/ζ/η/θ/ι/κ-wrapped) are detected by source_text
+        # prefix and skipped — they're already byte-aligned via
+        # their adapter wraps.
+        if (
+            _coerce_bool(config.get("use_tokenizer_chat_template"), False)
+            and hasattr(processor_tokenizer, "apply_chat_template")
+            and bool(getattr(processor_tokenizer, "chat_template", None))
+        ):
+            def _rewrap_qa_row(row: dict[str, Any]) -> dict[str, Any]:
+                if _is_wraps_own_prompt_row(row):
+                    return row
+                question = str(row.get("source_text") or "").strip()
+                answer = str(row.get("target_text") or "").strip()
+                if not question or not answer:
+                    return row
+                try:
+                    wrapped = processor_tokenizer.apply_chat_template(
+                        [{"role": "user", "content": question}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                except Exception:
+                    return row
+                if not isinstance(wrapped, str) or not wrapped:
+                    return row
+                # Student tokenizes ``text``; trainer's
+                # ``source_text`` / ``target_text`` are diagnostic.
+                # The wrapped prompt + answer + EOS reproduces the
+                # eval-time shape (eval calls apply_chat_template
+                # then generates from there).
+                return {
+                    **row,
+                    "text": f"{wrapped}{answer}",
+                    "source_text": wrapped,
+                    "target_text": answer,
+                }
+
+            train_text = train_text.map(_rewrap_qa_row)
+            runtime_environment["chat_template_rewrap"] = "applied"
+        elif _coerce_bool(config.get("use_tokenizer_chat_template"), False):
+            runtime_environment["chat_template_rewrap"] = (
+                "skipped_no_chat_template"
+            )
         if len(train_text) == 0:
             raise ValueError(
                 (
@@ -1420,6 +1522,17 @@ def _run_training_attempt(
         if eval_ds is not None:
             eval_text = eval_ds.map(to_text_record, remove_columns=eval_ds.column_names)
             eval_text = eval_text.filter(lambda row: _is_valid_adapted_row(row, normalized_task_type))
+            # Symmetric re-wrap so val metrics agree with the
+            # held-out eval format. Without this, train_text gets
+            # apply_chat_template wrapping but eval_text doesn't,
+            # and val loss / val F1 stop being comparable to
+            # held-out — surprises during training.
+            if (
+                _coerce_bool(config.get("use_tokenizer_chat_template"), False)
+                and hasattr(processor_tokenizer, "apply_chat_template")
+                and bool(getattr(processor_tokenizer, "chat_template", None))
+            ):
+                eval_text = eval_text.map(_rewrap_qa_row)
             if len(eval_text) == 0:
                 eval_text = None
 

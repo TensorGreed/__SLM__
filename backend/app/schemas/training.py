@@ -13,6 +13,24 @@ class TrainingConfig(BaseModel):
     base_model: str = Field(..., description="HuggingFace model ID or local path")
     training_mode: TrainingMode = TrainingMode.SFT
     chat_template: str = Field("llama3", description="Chat template format (llama3, chatml, zephyr, phi3)")
+    use_tokenizer_chat_template: bool = Field(
+        False,
+        description=(
+            "When True, QA-family training rows (handlers whose "
+            "wraps_own_prompt() is False — qa / chat_sft / "
+            "instruction_sft / language_modeling) are re-shaped via "
+            "``tokenizer.apply_chat_template`` at trainer-input time "
+            "so the student sees the same byte-identical scaffold the "
+            "held-out eval will build at inference. Closes a residual "
+            "train/eval format gap left by the hardcoded "
+            "``_qa_to_chat_text`` template. Defaults False to preserve "
+            "existing-project training format; flip on for new "
+            "projects training a chat-template-aware base. No effect "
+            "on wraps_own_prompt rows (Classification / Structured / "
+            "RAG / Seq2Seq / Vision / Audio) — those are already "
+            "byte-aligned via the β/ζ/η/θ/ι/κ adapter wraps."
+        ),
+    )
     task_type: str = Field(
         "causal_lm",
         description="Task adapter type (causal_lm, seq2seq, classification)",
