@@ -28,6 +28,37 @@ import './DataStudioSyntheticPlaybookCenterPanel.css';
 interface DataStudioSyntheticPlaybookCenterPanelProps {
     projectId: number;
     onOpenSynthetic: () => void;
+    /**
+     * Arc C — when an unmet prerequisite has a clear setup
+     * destination, the panel routes through this callback so the
+     * user can act in one click instead of bouncing back to the
+     * pipeline tabs and finding the right surface themselves.
+     * Optional so legacy callers that only need ``onOpenSynthetic``
+     * keep working without a no-op handler.
+     */
+    onOpenTarget?: (target: string) => void;
+}
+
+/**
+ * Arc C — per-prerequisite setup affordance. The backend already
+ * stamps a ``target_tab`` on each prerequisite, but the *button label*
+ * needs to be specific ("Configure Ollama" beats "Open synthetic")
+ * for the user to know what they'll see on the other side. This map
+ * keys off ``prerequisite.id`` (stable contract from
+ * data_studio_service._synthetic_library_prerequisites). Unknown ids
+ * fall back to a generic "Set up" label.
+ */
+const PREREQUISITE_SETUP_LABEL: Record<string, string> = {
+    recipe: 'Pick a recipe',
+    playbook_mode: 'Pick a playbook mode',
+    mapping: 'Fix mapping',
+    gold_examples: 'Open Gold Set',
+    local_ollama: 'Configure Ollama',
+    review_gate: 'Review pending rows',
+};
+
+function prerequisiteSetupLabel(item: DataStudioSyntheticPrerequisite): string {
+    return PREREQUISITE_SETUP_LABEL[item.id] || 'Set up';
 }
 
 const SYNTHETIC_VERDICT_COPY: Record<DataStudioSyntheticPlaybookCenter['verdict'], { label: string; detail: string }> = {
@@ -211,6 +242,7 @@ function DomainLibraryCard({
 export default function DataStudioSyntheticPlaybookCenterPanel({
     projectId,
     onOpenSynthetic,
+    onOpenTarget,
 }: DataStudioSyntheticPlaybookCenterPanelProps) {
     const [center, setCenter] = useState<DataStudioSyntheticPlaybookCenter | null>(null);
     const [loading, setLoading] = useState(true);
@@ -407,18 +439,44 @@ export default function DataStudioSyntheticPlaybookCenterPanel({
                     )}
 
                     <div className="data-studio-synth__prerequisites">
-                        {center.prerequisites.map((item) => (
-                            <div
-                                className={`data-studio-synth__prereq data-studio-synth__prereq--${item.status}`}
-                                key={item.id}
-                            >
-                                <span>{prerequisiteIcon(item)}</span>
-                                <div>
-                                    <strong>{item.label}</strong>
-                                    <small>{item.message}</small>
-                                </div>
-                            </div>
-                        ))}
+                        {center.prerequisites.map((item) => {
+                            // Arc C — unmet prerequisites become a one-
+                            // click route to the surface that resolves
+                            // them. Met prerequisites stay as static
+                            // info rows (a button on a checked item
+                            // would be confusing).
+                            const isMet = item.status === 'met';
+                            if (isMet || !onOpenTarget) {
+                                return (
+                                    <div
+                                        className={`data-studio-synth__prereq data-studio-synth__prereq--${item.status}`}
+                                        key={item.id}
+                                    >
+                                        <span>{prerequisiteIcon(item)}</span>
+                                        <div>
+                                            <strong>{item.label}</strong>
+                                            <small>{item.message}</small>
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            return (
+                                <button
+                                    type="button"
+                                    className={`data-studio-synth__prereq data-studio-synth__prereq--${item.status} data-studio-synth__prereq--actionable`}
+                                    key={item.id}
+                                    onClick={() => onOpenTarget(item.target_tab)}
+                                    data-testid={`data-studio-synth-prereq-${item.id}`}
+                                >
+                                    <span>{prerequisiteIcon(item)}</span>
+                                    <div>
+                                        <strong>{item.label}</strong>
+                                        <small>{item.message}</small>
+                                    </div>
+                                    <b>{prerequisiteSetupLabel(item)}</b>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
 

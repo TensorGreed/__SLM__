@@ -679,6 +679,7 @@ export default function ProjectDataStudioPage() {
                     <DataStudioSyntheticPlaybookCenterPanel
                         projectId={projectId}
                         onOpenSynthetic={() => openPipelineTab('synthetic')}
+                        onOpenTarget={openDataStudioTarget}
                     />
                 ),
             },

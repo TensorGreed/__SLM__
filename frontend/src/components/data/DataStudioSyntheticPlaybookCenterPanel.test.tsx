@@ -416,4 +416,105 @@ describe('DataStudioSyntheticPlaybookCenterPanel', () => {
         expect(screen.getAllByText('Recipe not selected').length).toBeGreaterThan(0);
         expect(screen.getAllByText(/Pick a recipe/i).length).toBeGreaterThan(0);
     });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc C — turn unmet prerequisites into one-click setup
+    // affordances. Met items stay as static info rows; the rest become
+    // buttons with a specific setup label and route through the
+    // optional ``onOpenTarget`` callback.
+    // ─────────────────────────────────────────────────────────────────
+
+    const unmetPayload = {
+        ...syntheticPayload,
+        prerequisites: [
+            {
+                id: 'recipe',
+                label: 'Recipe selected',
+                status: 'met',
+                message: 'Classification is active.',
+                target_tab: 'data',
+            },
+            {
+                id: 'local_ollama',
+                label: 'Local Ollama',
+                status: 'attention',
+                message: 'Ollama is the free local default; start Ollama or pull a local model.',
+                target_tab: 'synthetic',
+            },
+            {
+                id: 'mapping',
+                label: 'Required fields',
+                status: 'missing',
+                message: 'Required field "label" has no source mapping.',
+                target_tab: 'dataprep',
+            },
+        ],
+    };
+
+    it('renders unmet prerequisites as actionable buttons with specific setup labels', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: unmetPayload });
+        render(
+            <DataStudioSyntheticPlaybookCenterPanel
+                projectId={1}
+                onOpenSynthetic={vi.fn()}
+                onOpenTarget={vi.fn()}
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-synth-prereq-local_ollama')).toBeInTheDocument();
+        });
+
+        // Met prerequisite (recipe) is NOT a button.
+        expect(
+            screen.queryByTestId('data-studio-synth-prereq-recipe'),
+        ).toBeNull();
+        // Unmet prereqs render with the curated setup label.
+        expect(
+            screen.getByTestId('data-studio-synth-prereq-local_ollama'),
+        ).toHaveTextContent('Configure Ollama');
+        expect(
+            screen.getByTestId('data-studio-synth-prereq-mapping'),
+        ).toHaveTextContent('Fix mapping');
+    });
+
+    it('routes the unmet prerequisite click through onOpenTarget(target_tab)', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: unmetPayload });
+        const onOpenTarget = vi.fn();
+        render(
+            <DataStudioSyntheticPlaybookCenterPanel
+                projectId={1}
+                onOpenSynthetic={vi.fn()}
+                onOpenTarget={onOpenTarget}
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getByTestId('data-studio-synth-prereq-mapping')).toBeInTheDocument();
+        });
+
+        fireEvent.click(screen.getByTestId('data-studio-synth-prereq-mapping'));
+        expect(onOpenTarget).toHaveBeenCalledWith('dataprep');
+
+        fireEvent.click(screen.getByTestId('data-studio-synth-prereq-local_ollama'));
+        expect(onOpenTarget).toHaveBeenCalledWith('synthetic');
+    });
+
+    it('falls back to static rows when no onOpenTarget is provided (backward compat)', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: unmetPayload });
+        render(
+            <DataStudioSyntheticPlaybookCenterPanel
+                projectId={1}
+                onOpenSynthetic={vi.fn()}
+            />,
+        );
+        await waitFor(() => {
+            expect(screen.getAllByText('Local Ollama').length).toBeGreaterThan(0);
+        });
+        // No actionable button when the page hasn't wired up the route.
+        expect(
+            screen.queryByTestId('data-studio-synth-prereq-local_ollama'),
+        ).toBeNull();
+        expect(
+            screen.queryByTestId('data-studio-synth-prereq-mapping'),
+        ).toBeNull();
+    });
 });

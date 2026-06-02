@@ -420,6 +420,45 @@
     align-items: flex-start;
 }
 
+/* Arc C — actionable variant: render the row as a clickable button
+ * (with the setup-label suffix in `<b>`) instead of a static info
+ * row. Reset button defaults so the existing typography stays put. */
+button.data-studio-synth__prereq {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: var(--space-xs);
+    margin: 0;
+    text-align: left;
+    width: 100%;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+}
+
+button.data-studio-synth__prereq:hover {
+    border-color: var(--border-muted);
+    background: var(--bg-tertiary);
+}
+
+button.data-studio-synth__prereq:focus-visible {
+    outline: 2px solid var(--accent, #3b82f6);
+    outline-offset: 1px;
+}
+
+.data-studio-synth__prereq--actionable > b {
+    align-self: center;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 2px 8px;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    white-space: nowrap;
+}
+
 .data-studio-synth__prereq > span,
 .data-studio-synth__issue > span {
     width: 24px;
