@@ -15,6 +15,8 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { CoachSuggestion } from '../../api/coach';
+import CoachSuggestionTrace from './CoachSuggestionTrace';
+import './CoachSuggestionTrace.css';
 import {
     augmentFromClusterAsync,
     runPlaybookAsync,
@@ -414,6 +416,7 @@ export default function CoachSuggestionCard({
                         <Fragment key={idx}>{node}</Fragment>
                     ))}
                 </div>
+                <CoachSuggestionTrace suggestion={suggestion} />
             </div>
             <div
                 style={{

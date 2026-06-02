@@ -433,6 +433,7 @@ session-start guidance.
 - `frontend/src/components/autopilot/DecisionLogDrawer.tsx` — Persistent Autopilot Decision Log drawer (priority.md P6).
 - `frontend/src/components/coach/CoachStrip.tsx` — Per-panel Coach Mode strip (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/coach/CoachSuggestion.tsx` — One Coach Mode suggestion card with a click-to-execute action
+- `frontend/src/components/coach/CoachSuggestionTrace.tsx` — Decision-trace disclosure for a Coach suggestion (Arc 4).
 - `frontend/src/components/coach/CoachToggle.tsx` — TopBar toggle for Coach Mode (USER-SUCCESS Epic 4 Phase 1).
 - `frontend/src/components/compression/CompressionPanel.tsx` — Model quantization UI with format selection, ONNX/GGUF conversion, and benchmark reporting.
 - `frontend/src/components/dashboard/DemoProjectTiles.tsx` — DemoProjectTiles — entry-point tiles on the project list that seed a
@@ -788,6 +789,7 @@ session-start guidance.
 - `frontend/src/components/annotation/SpanLabeler.test.tsx` — SpanLabeler contract.
 - `frontend/src/components/coach/CoachStrip.test.tsx` — _(no docstring)_
 - `frontend/src/components/coach/CoachSuggestion.test.tsx` — _(no docstring)_
+- `frontend/src/components/coach/CoachSuggestionTrace.test.tsx` — Arc 4 — Coach decision-trace disclosure.
 - `frontend/src/components/coach/CoachToggle.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/DemoProjectTiles.test.tsx` — _(no docstring)_
 - `frontend/src/components/dashboard/FirstRunCheatSheet.test.tsx` — _(no docstring)_

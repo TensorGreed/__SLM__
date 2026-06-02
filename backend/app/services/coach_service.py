@@ -247,6 +247,15 @@ def _archetype_drift_nudge(
         "body": body,
         "severity": severity,
         "action": action,
+        # rule_id pins which side of the archetype-drift heuristic
+        # fired: ``archetype-drift.dominant`` when one feature
+        # dominates the drift, ``archetype-drift.broad`` when
+        # multiple features are below their archetype band.
+        "rule_id": (
+            "archetype-drift.dominant"
+            if dominant.get("feature_id")
+            else "archetype-drift.broad"
+        ),
         "context": {
             "n_below_features": len(below),
             "n_user_projects": n_user,
@@ -341,10 +350,19 @@ async def _data_stage_suggestions(
             "body": body,
             "severity": severity,
             "action": action,
+            # rule_id: the decision-rule the trace UI labels. Tells
+            # the user "this fired because row_count <= thin_max"
+            # vs "this fired because row_count < comfortable_min".
+            "rule_id": (
+                "gold-row-count.thin"
+                if row_count <= GOLD_ROW_THIN_MAX
+                else "gold-row-count.below-comfortable"
+            ),
             "context": {
                 "gold_row_count": row_count,
                 "comfortable_threshold": GOLD_ROW_COMFORTABLE_MIN,
                 "thin_threshold": GOLD_ROW_THIN_MAX,
+                "topup_target": topup,
             },
         })
 
@@ -628,9 +646,22 @@ async def _gold_set_stage_suggestions(
                 ),
                 "params": action_params,
             },
+            # rule_id distinguishes "block" severity (one class is
+            # critically under-represented) from "warn" severity
+            # (skew exists but isn't blocking). Trace UI labels the
+            # specific rule that matched so a future audit can grep
+            # ``rule_id`` rather than parsing severity + class
+            # signal back-derivation.
+            "rule_id": (
+                "class-imbalance.block"
+                if class_signal["severity"] == "block"
+                else "class-imbalance.warn"
+            ),
             "context": {
                 "underrepresented_classes": under,
                 "headline": class_signal.get("headline"),
+                "target_class": target_class,
+                "topup_target": CLASS_BALANCE_TOPUP_DEFAULT,
                 "schema_aware_backend": schema_aware_pin,
             },
         })

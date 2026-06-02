@@ -1,0 +1,99 @@
+/* Decision-trace disclosure for a Coach suggestion (Arc 4).
+   The card itself uses inline styles (severity-tinted bg / border),
+   but the trace's signal list is a stable structural element that
+   benefits from a class-based stylesheet — and the strict
+   inline-style lint requires named classes for new surfaces. */
+
+.coach-suggestion-trace-toggle {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    background: transparent;
+    color: var(--text-tertiary);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    letter-spacing: 0.02em;
+}
+.coach-suggestion-trace-toggle:hover {
+    color: var(--text-secondary);
+    border-color: var(--border-muted);
+    border-style: solid;
+}
+
+.coach-suggestion-trace {
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+}
+
+.coach-suggestion-trace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
+.coach-suggestion-trace-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10px;
+}
+
+.coach-suggestion-trace-close {
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+}
+.coach-suggestion-trace-close:hover {
+    color: var(--text-primary);
+}
+
+.coach-suggestion-trace-rule {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed var(--border-muted);
+}
+
+.coach-suggestion-trace-signals {
+    margin: 0;
+    padding: 0;
+    display: grid;
+    /* Two-column auto-width grid: key / value. Wraps for long
+       values rather than overflowing. */
+    grid-template-columns: max-content 1fr;
+    gap: 2px 8px;
+}
+
+.coach-suggestion-trace-signal {
+    display: contents;
+}
+
+.coach-suggestion-trace-key {
+    color: var(--text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.coach-suggestion-trace-value {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    overflow-wrap: anywhere;
+}

@@ -28,11 +28,15 @@ export interface CoachSuggestion {
     body: string;
     severity: CoachSeverity;
     action: CoachAction;
-    // Free-form context the backend attaches so the UI can show
-    // numbers / thresholds inline if it wants to (e.g. the row count
-    // that triggered the suggestion). Currently unused by the strip
-    // but reserved so the contract is stable across phases.
+    // Decision-trace fields (Arc 4) — surface WHY a suggestion is
+    // firing, not just what it suggests. ``context`` carries the
+    // signal values the coach rule observed (row counts, ratios,
+    // thresholds, etc.). ``rule_id`` (when set) names the specific
+    // decision rule that matched, so the UI can label the trace
+    // ("Rule: low-gold-row-count fired because gold_rows=12, threshold=50").
+    // Both optional so non-enriched suggestion builders still work.
     context?: Record<string, unknown>;
+    rule_id?: string;
 }
 
 export interface CoachStageResponse {

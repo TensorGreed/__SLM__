@@ -221,6 +221,12 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s["context"]["gold_row_count"], 30)
         # Body framing for thin sets emphasizes the 100-row floor.
         self.assertIn("100", s["body"])
+        # Arc 4 — rule_id distinguishes which side of the rule
+        # tripped. Thin gold lands on ``.thin``.
+        self.assertEqual(s["rule_id"], "gold-row-count.thin")
+        # Topup target threaded through the context for the trace.
+        self.assertIn("topup_target", s["context"])
+        self.assertGreater(s["context"]["topup_target"], 0)
 
     async def test_mid_tier_gold_triggers_warning_severity(self):
         suggestions = await self._suggestions_for_row_count(180)
@@ -228,6 +234,8 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
         s = suggestions[0]
         self.assertEqual(s["severity"], "warning")
         self.assertEqual(s["context"]["gold_row_count"], 180)
+        # Mid-tier lands on the ``.below-comfortable`` branch.
+        self.assertEqual(s["rule_id"], "gold-row-count.below-comfortable")
 
     async def test_comfortable_gold_emits_no_suggestion(self):
         suggestions = await self._suggestions_for_row_count(
@@ -444,6 +452,14 @@ class CoachServiceGoldSetStageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             s["action"]["params"]["target_count"],
             CLASS_BALANCE_TOPUP_DEFAULT,
+        )
+        # Arc 4 — rule_id stamps the "block" branch + the trace
+        # context carries the underrepresented target_class +
+        # topup_target so the UI can render the full decision.
+        self.assertEqual(s["rule_id"], "class-imbalance.block")
+        self.assertEqual(s["context"]["target_class"], "technical")
+        self.assertEqual(
+            s["context"]["topup_target"], CLASS_BALANCE_TOPUP_DEFAULT,
         )
 
     async def test_class_imbalance_auto_pins_schema_aware_backend_when_available(self):
