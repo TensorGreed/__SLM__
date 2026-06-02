@@ -1406,6 +1406,17 @@
     align-items: center;
 }
 
+/* Inline live-loss sparkline + kill switch on the experiment row
+   for in-flight training runs. Mirrors what the NotificationBell
+   renders so users on the dashboard get the same training-health
+   signal without watching the bell. Children align with the rest
+   of the action row (status badge, classifier-head badge, buttons). */
+.training-experiment-live-signals {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .training-plan-card__badges {
     display: flex;
     gap: 6px;

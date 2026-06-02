@@ -585,3 +585,197 @@ describe('FailureClustersPanel', () => {
         expect(navigateMock).toHaveBeenCalledTimes(1);
     });
 });
+
+
+// Arc 2 — failure-cluster drill-down: surface per-row handler
+// diagnostics inside the expanded exemplar view. Backend extracts
+// RAG context + faithfulness, alignment chosen/rejected, structured
+// is_valid_json + missing_required_fields when ``predictions_preview``
+// rows carry them; panel renders whichever apply.
+describe('FailureClustersPanel — handler diagnostic drill-down', () => {
+    beforeEach(() => {
+        apiMock.get.mockReset();
+        apiMock.post.mockReset();
+        apiMock.patch.mockReset();
+        apiMock.put.mockReset();
+        apiMock.delete.mockReset();
+    });
+
+    function _clusterResponseWithExemplar(exemplar: Record<string, unknown>) {
+        return {
+            ...CLUSTER_RESPONSE,
+            clusters: [
+                {
+                    ...CLUSTER_RESPONSE.clusters[0],
+                    exemplars: [exemplar],
+                },
+            ],
+        };
+    }
+
+    async function _expandFirstCluster(user: ReturnType<typeof userEvent.setup>) {
+        // The cluster header is a button — clicking expands the
+        // exemplar list. Mirrors the existing
+        // "expands a cluster on click" test pattern.
+        const headers = await screen.findAllByRole('button', {
+            name: /hallucination/i,
+        });
+        // The first matching button is the cluster's expand
+        // toggle (the summary chip uses the same reason_code
+        // text but isn't a button).
+        await user.click(headers[0]);
+    }
+
+    it('renders row-level metric scoreboard when exemplar carries EM/F1', async () => {
+        // Per-row EM/F1 scoreboard. Pre-Arc-2 these existed on
+        // the exemplar but were never rendered.
+        apiMock.get.mockResolvedValueOnce({
+            data: _clusterResponseWithExemplar({
+                prompt: 'Q?', reference: 'A', prediction: 'wrong',
+                row_exact_match: 0.0, row_f1: 0.25,
+            }),
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        const user = userEvent.setup();
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        await _expandFirstCluster(user);
+        expect(await screen.findByTestId('exemplar-em')).toHaveTextContent('EM: 0.00');
+        expect(screen.getByTestId('exemplar-f1')).toHaveTextContent('F1: 0.25');
+    });
+
+    it('renders RAG context + faithfulness diagnostics when present', async () => {
+        // For legal/medical/compliance use cases, "did the
+        // answer cite the right context" is THE failure mode
+        // that matters. Surfacing it inline avoids a
+        // multi-page-jump debugging flow.
+        apiMock.get.mockResolvedValueOnce({
+            data: _clusterResponseWithExemplar({
+                prompt: 'When was Acme founded?',
+                reference: '1999',
+                prediction: '2003',
+                rag_context: 'Acme was founded in 1999 by Jane Doe.',
+                rag_faithfulness: 0.2,
+                rag_context_recall: 0.5,
+                rag_is_faithful: false,
+            }),
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        const user = userEvent.setup();
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        await _expandFirstCluster(user);
+
+        const rag = await screen.findByTestId('exemplar-rag');
+        expect(rag).toHaveTextContent(/Acme was founded in 1999/);
+        expect(
+            screen.getByTestId('exemplar-rag-faithfulness'),
+        ).toHaveTextContent('faithfulness: 0.20');
+        expect(
+            screen.getByTestId('exemplar-rag-recall'),
+        ).toHaveTextContent('recall: 0.50');
+        // The "not supported by context" flag is the load-bearing
+        // signal — surfaces the worst-case RAG failure mode
+        // (model hallucinated despite having context).
+        expect(
+            screen.getByTestId('exemplar-rag-unfaithful'),
+        ).toBeInTheDocument();
+    });
+
+    it('renders alignment chosen/rejected diagnostics for DPO failures', async () => {
+        // AlignmentHandler populates these when a DPO/ORPO eval
+        // row has preference_correct=false. Drill-down shows the
+        // researcher exactly where the model went wrong.
+        apiMock.get.mockResolvedValueOnce({
+            data: _clusterResponseWithExemplar({
+                prompt: 'Which is better?',
+                reference: 'Answer A',
+                prediction: 'Answer B',
+                alignment_chosen: 'Answer A — correct',
+                alignment_rejected: 'Answer B — wrong',
+                alignment_chosen_sim: 0.30,
+                alignment_rejected_sim: 0.95,
+                alignment_preference_correct: false,
+            }),
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        const user = userEvent.setup();
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        await _expandFirstCluster(user);
+
+        const alignment = await screen.findByTestId('exemplar-alignment');
+        expect(alignment).toBeInTheDocument();
+        expect(
+            screen.getByTestId('exemplar-alignment-wrong'),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByTestId('exemplar-chosen-sim'),
+        ).toHaveTextContent('sim 0.30');
+        expect(
+            screen.getByTestId('exemplar-rejected-sim'),
+        ).toHaveTextContent('sim 0.95');
+    });
+
+    it('renders structured-extraction validity diagnostics', async () => {
+        // StructuredExtractionHandler populates is_valid_json +
+        // missing_required_fields per row. Two failure modes:
+        // malformed JSON vs valid-but-incomplete JSON.
+        apiMock.get.mockResolvedValueOnce({
+            data: _clusterResponseWithExemplar({
+                prompt: 'Extract person + company.',
+                reference: '{"name":"John","company":"Acme"}',
+                prediction: '{"name":"John"}',
+                is_valid_json: true,
+                missing_required_fields: ['company'],
+            }),
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        const user = userEvent.setup();
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        await _expandFirstCluster(user);
+
+        const structured = await screen.findByTestId('exemplar-structured');
+        expect(structured).toBeInTheDocument();
+        expect(screen.getByTestId('exemplar-json-valid')).toHaveTextContent('JSON: valid');
+        expect(
+            screen.getByTestId('exemplar-missing-fields'),
+        ).toHaveTextContent('missing: company');
+    });
+
+    it('renders the malformed-JSON flag for invalid structured output', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: _clusterResponseWithExemplar({
+                prompt: 'Extract fields.',
+                reference: '{"a":1}',
+                prediction: 'not-json',
+                is_valid_json: false,
+            }),
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        const user = userEvent.setup();
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        await _expandFirstCluster(user);
+        expect(
+            await screen.findByTestId('exemplar-json-invalid'),
+        ).toHaveTextContent('malformed JSON');
+    });
+
+    it('hides all drill-down blocks when no handler fields are present', async () => {
+        // Regression guard — basic prompt/ref/pred exemplars
+        // (no handler diagnostics) render exactly like before.
+        // Confirms the new sections are conditionally gated.
+        apiMock.get.mockResolvedValueOnce({
+            data: _clusterResponseWithExemplar({
+                prompt: 'Q?', reference: 'A', prediction: 'B',
+            }),
+        });
+        renderPanel(<FailureClustersPanel projectId={1} evalResults={EVAL_RESULTS} />);
+        const user = userEvent.setup();
+        await waitFor(() => expect(apiMock.get).toHaveBeenCalled());
+        await _expandFirstCluster(user);
+
+        await screen.findByText('Q?');
+        expect(screen.queryByTestId('exemplar-rag')).toBeNull();
+        expect(screen.queryByTestId('exemplar-alignment')).toBeNull();
+        expect(screen.queryByTestId('exemplar-structured')).toBeNull();
+        expect(screen.queryByTestId('exemplar-em')).toBeNull();
+    });
+});

@@ -259,16 +259,44 @@ def _extract_failures_from_eval_result(
                 if f1_score(prediction, reference) >= 0.75:
                     continue
 
-            failures.append(
-                {
-                    "prompt": prompt,
-                    "reference": reference,
-                    "prediction": prediction,
-                    "input_modality": str(row.get("input_modality") or "text").strip().lower() or "text",
-                    "eval_type": eval_type,
-                    "source": "details.predictions_preview",
-                }
-            )
+            failure: dict[str, Any] = {
+                "prompt": prompt,
+                "reference": reference,
+                "prediction": prediction,
+                "input_modality": str(row.get("input_modality") or "text").strip().lower() or "text",
+                "eval_type": eval_type,
+                "source": "details.predictions_preview",
+            }
+            # Forward handler-specific per-row diagnostics through
+            # to the failure cluster so the drill-down view can
+            # show "why did this row fail" beyond prompt/ref/pred.
+            # The RAG handler populates rag_context + faithfulness;
+            # AlignmentHandler populates chosen/rejected/preference;
+            # StructuredExtraction populates row_field_results.
+            # Carry them through unmodified — the frontend decides
+            # what to render based on which fields are present.
+            for handler_field in (
+                "rag_context",
+                "rag_has_context",
+                "rag_faithfulness",
+                "rag_context_recall",
+                "rag_is_faithful",
+                "rag_unsupported_rate",
+                "alignment_chosen",
+                "alignment_rejected",
+                "alignment_chosen_sim",
+                "alignment_rejected_sim",
+                "alignment_preference_correct",
+                "row_field_results",
+                "row_exact_match",
+                "row_f1",
+                "is_valid_json",
+                "missing_required_fields",
+            ):
+                value = row.get(handler_field)
+                if value is not None:
+                    failure[handler_field] = value
+            failures.append(failure)
             if len(failures) >= max_failures:
                 return failures
 

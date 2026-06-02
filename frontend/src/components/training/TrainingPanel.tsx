@@ -7,6 +7,8 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client';
 import type { ErrorEnvelope } from '../../api/errors';
 import { parseErrorEnvelope } from '../../api/errors';
+import type { Job as JobShape } from '../../api/jobs';
+import { useJobsStore } from '../../stores/jobsStore';
 import { toast } from '../../stores/toastStore';
 import EmptyState from '../shared/EmptyState';
 import ErrorPanel from '../shared/ErrorPanel';
@@ -17,6 +19,7 @@ import { ReadinessPanel } from '../shared/ReadinessPanel';
 import DatasetFitCard from './DatasetFitCard';
 import ExperimentClassifierHeadBadge from './ExperimentClassifierHeadBadge';
 import ExperimentCompare from './ExperimentCompare';
+import ExperimentLiveSignals from './ExperimentLiveSignals';
 import HyperparameterSweepPanel from './HyperparameterSweepPanel';
 import ParetoComparisonPanel from './ParetoComparisonPanel';
 import LossCurvePanel from './LossCurvePanel';
@@ -781,6 +784,23 @@ export default function TrainingPanel({
   setupMode = 'advanced',
 }: TrainingPanelProps) {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
+  // Subscribe to the jobs store so each in-flight experiment row
+  // can render a live-loss sparkline + kill switch inline (mirrors
+  // the bell). The store polls /api/jobs/active every 4s while any
+  // training_start job is in-flight; metrics_recent flows through
+  // from the experiment's trainer_state.json. Job-by-experiment-id
+  // lookup is memoised so per-row render doesn't re-scan the list.
+  const allJobs = useJobsStore((s) => s.jobs);
+  const jobByExperimentId = useMemo(() => {
+    const map = new Map<number, JobShape>();
+    for (const j of allJobs) {
+      if (j.kind !== 'training_start') continue;
+      const expId = (j.params as Record<string, unknown> | undefined)
+        ?.experiment_id;
+      if (typeof expId === 'number') map.set(expId, j);
+    }
+    return map;
+  }, [allJobs]);
   const [showCreate, setShowCreate] = useState(Boolean(forceCreateVisible && !hideCreateControls));
   const [activeExperiment, setActiveExperiment] = useState<Experiment | null>(null);
   const [metrics, setMetrics] = useState<TrainingMetric[]>([]);
@@ -6090,6 +6110,9 @@ export default function TrainingPanel({
                     <ExperimentClassifierHeadBadge
                       taskType={exp.config?.task_type}
                       status={exp.status}
+                    />
+                    <ExperimentLiveSignals
+                      job={jobByExperimentId.get(exp.id)}
                     />
                     {exp.status === 'pending' && (
                       <button

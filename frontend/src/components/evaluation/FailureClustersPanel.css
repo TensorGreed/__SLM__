@@ -217,6 +217,40 @@
     display: block;
 }
 
+/* Per-row drill-down sections inside a failure-cluster exemplar
+   (Arc 2). Each handler family (RAG / Alignment / Structured)
+   surfaces its own diagnostic block: retrieved context for RAG,
+   chosen-vs-rejected for alignment, JSON-validity for structured.
+   Visually separated so the reviewer can scan multiple
+   exemplars without losing the "this section answers WHY this
+   row failed" framing. */
+.failure-cluster-ex-metrics {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    padding: 2px 0;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.failure-cluster-ex-rag,
+.failure-cluster-ex-alignment,
+.failure-cluster-ex-structured {
+    margin-top: 4px;
+    padding: 4px 6px;
+    border-left: 2px solid var(--border-muted);
+    background: var(--bg-secondary);
+    font-size: 0.8rem;
+}
+.failure-cluster-ex-sim {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+.failure-cluster-ex-flag {
+    color: var(--color-error);
+    font-weight: 600;
+    margin-right: 8px;
+}
+
 .failure-clusters-remediation {
     border-top: 1px solid var(--border-default);
     padding-top: var(--space-md);

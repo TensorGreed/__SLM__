@@ -112,6 +112,39 @@ def _build_exemplar(row: dict[str, Any]) -> dict[str, Any]:
         value = row.get(optional)
         if value not in (None, ""):
             exemplar[optional] = value if isinstance(value, (int, float)) else _clean_text(value)
+    # Handler-specific diagnostics — forward through when the
+    # upstream failure extract surfaced them. Lets the frontend
+    # drill-down render "why this row failed" (retrieved context,
+    # chosen vs rejected, JSON field-level pass/fail) beyond the
+    # bare prompt/reference/prediction triple. Truncated through
+    # ``_fallback_exemplar_text`` for the long-text fields so a
+    # 50KB context block doesn't bloat the cluster payload.
+    for long_text_field in ("rag_context", "alignment_chosen", "alignment_rejected"):
+        value = row.get(long_text_field)
+        if value not in (None, ""):
+            exemplar[long_text_field] = _fallback_exemplar_text(
+                value, limit=600,
+            )
+    for scalar_field in (
+        "rag_has_context",
+        "rag_faithfulness",
+        "rag_context_recall",
+        "rag_is_faithful",
+        "rag_unsupported_rate",
+        "alignment_chosen_sim",
+        "alignment_rejected_sim",
+        "alignment_preference_correct",
+        "row_exact_match",
+        "row_f1",
+        "is_valid_json",
+    ):
+        value = row.get(scalar_field)
+        if value is not None:
+            exemplar[scalar_field] = value
+    for list_field in ("missing_required_fields",):
+        value = row.get(list_field)
+        if isinstance(value, list) and value:
+            exemplar[list_field] = list(value)
     return exemplar
 
 

@@ -54,6 +54,29 @@ interface ClusterExemplar {
     metric_name?: string;
     metric_value?: number | null;
     test_type?: string;
+    // Handler-specific drill-down diagnostics (Arc 2). Server
+    // populates whichever apply to the row's eval handler:
+    //  - RAG: rag_context + faithfulness/context_recall scalars
+    //  - AlignmentHandler: chosen/rejected text + similarity +
+    //    preference_correct flag
+    //  - StructuredExtraction: is_valid_json + missing fields
+    //  - Generic: row-level EM/F1 (helps diagnose which metric
+    //    failed when both run)
+    rag_context?: string;
+    rag_has_context?: boolean;
+    rag_faithfulness?: number | null;
+    rag_context_recall?: number | null;
+    rag_is_faithful?: boolean;
+    rag_unsupported_rate?: number | null;
+    alignment_chosen?: string;
+    alignment_rejected?: string;
+    alignment_chosen_sim?: number | null;
+    alignment_rejected_sim?: number | null;
+    alignment_preference_correct?: boolean;
+    row_exact_match?: number | null;
+    row_f1?: number | null;
+    is_valid_json?: boolean;
+    missing_required_fields?: string[];
 }
 
 interface FailureCluster {
@@ -434,6 +457,182 @@ export default function FailureClustersPanel({
                                                         <div className="failure-cluster-ex-note">
                                                             judge: {ex.judge_score}/5
                                                             {ex.judge_rationale ? ` — ${ex.judge_rationale}` : ''}
+                                                        </div>
+                                                    )}
+                                                    {/* Per-row metric scoreboard — surfaces
+                                                        which specific metric this row
+                                                        failed on (EM vs F1, faithfulness,
+                                                        etc.). Pre-Arc-2 these existed in
+                                                        the payload but the panel never
+                                                        rendered them. */}
+                                                    {(
+                                                        typeof ex.row_exact_match === 'number'
+                                                        || typeof ex.row_f1 === 'number'
+                                                        || ex.metric_name
+                                                    ) && (
+                                                        <div className="failure-cluster-ex-metrics">
+                                                            {typeof ex.row_exact_match === 'number' && (
+                                                                <span data-testid="exemplar-em">
+                                                                    EM: {ex.row_exact_match.toFixed(2)}
+                                                                </span>
+                                                            )}
+                                                            {typeof ex.row_f1 === 'number' && (
+                                                                <span data-testid="exemplar-f1">
+                                                                    F1: {ex.row_f1.toFixed(2)}
+                                                                </span>
+                                                            )}
+                                                            {ex.metric_name
+                                                                && typeof ex.metric_value === 'number' && (
+                                                                <span data-testid="exemplar-metric">
+                                                                    {ex.metric_name}: {ex.metric_value.toFixed(2)}
+                                                                </span>
+                                                            )}
+                                                            {ex.test_type && (
+                                                                <span data-testid="exemplar-test-type">
+                                                                    test: {ex.test_type}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {/* RAG handler diagnostics — retrieved
+                                                        context + faithfulness score. Most
+                                                        load-bearing drill-down for legal /
+                                                        medical / compliance use cases
+                                                        where "did the answer cite the
+                                                        right source" is the failure mode
+                                                        that actually matters. */}
+                                                    {ex.rag_context && (
+                                                        <div
+                                                            className="failure-cluster-ex-rag"
+                                                            data-testid="exemplar-rag"
+                                                        >
+                                                            <span className="failure-cluster-ex-label">
+                                                                context
+                                                            </span>
+                                                            <span className="failure-cluster-ex-text">
+                                                                {ex.rag_context}
+                                                            </span>
+                                                            {(
+                                                                typeof ex.rag_faithfulness === 'number'
+                                                                || typeof ex.rag_context_recall === 'number'
+                                                            ) && (
+                                                                <div className="failure-cluster-ex-metrics">
+                                                                    {typeof ex.rag_faithfulness === 'number' && (
+                                                                        <span data-testid="exemplar-rag-faithfulness">
+                                                                            faithfulness: {ex.rag_faithfulness.toFixed(2)}
+                                                                        </span>
+                                                                    )}
+                                                                    {typeof ex.rag_context_recall === 'number' && (
+                                                                        <span data-testid="exemplar-rag-recall">
+                                                                            recall: {ex.rag_context_recall.toFixed(2)}
+                                                                        </span>
+                                                                    )}
+                                                                    {ex.rag_is_faithful === false && (
+                                                                        <span
+                                                                            className="failure-cluster-ex-flag"
+                                                                            data-testid="exemplar-rag-unfaithful"
+                                                                        >
+                                                                            ✗ answer NOT supported by context
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {/* AlignmentHandler diagnostics —
+                                                        chosen vs rejected with similarity
+                                                        + preference correctness flag. The
+                                                        load-bearing info for DPO/ORPO
+                                                        debugging: did the model prefer the
+                                                        right completion? */}
+                                                    {(ex.alignment_chosen || ex.alignment_rejected) && (
+                                                        <div
+                                                            className="failure-cluster-ex-alignment"
+                                                            data-testid="exemplar-alignment"
+                                                        >
+                                                            {ex.alignment_preference_correct === false && (
+                                                                <span
+                                                                    className="failure-cluster-ex-flag"
+                                                                    data-testid="exemplar-alignment-wrong"
+                                                                >
+                                                                    ✗ preferred rejected
+                                                                </span>
+                                                            )}
+                                                            {ex.alignment_chosen && (
+                                                                <div>
+                                                                    <span className="failure-cluster-ex-label">
+                                                                        chosen
+                                                                    </span>
+                                                                    <span className="failure-cluster-ex-text">
+                                                                        {ex.alignment_chosen}
+                                                                    </span>
+                                                                    {typeof ex.alignment_chosen_sim === 'number' && (
+                                                                        <span
+                                                                            className="failure-cluster-ex-sim"
+                                                                            data-testid="exemplar-chosen-sim"
+                                                                        >
+                                                                            {' '}sim {ex.alignment_chosen_sim.toFixed(2)}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {ex.alignment_rejected && (
+                                                                <div>
+                                                                    <span className="failure-cluster-ex-label">
+                                                                        rejected
+                                                                    </span>
+                                                                    <span className="failure-cluster-ex-text">
+                                                                        {ex.alignment_rejected}
+                                                                    </span>
+                                                                    {typeof ex.alignment_rejected_sim === 'number' && (
+                                                                        <span
+                                                                            className="failure-cluster-ex-sim"
+                                                                            data-testid="exemplar-rejected-sim"
+                                                                        >
+                                                                            {' '}sim {ex.alignment_rejected_sim.toFixed(2)}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {/* StructuredExtraction diagnostics —
+                                                        the JSON validity badge + missing
+                                                        fields list. Tells the reviewer
+                                                        whether the model emitted invalid
+                                                        JSON vs valid JSON missing
+                                                        required fields. */}
+                                                    {(
+                                                        typeof ex.is_valid_json === 'boolean'
+                                                        || (ex.missing_required_fields
+                                                            && ex.missing_required_fields.length > 0)
+                                                    ) && (
+                                                        <div
+                                                            className="failure-cluster-ex-structured"
+                                                            data-testid="exemplar-structured"
+                                                        >
+                                                            {ex.is_valid_json === false && (
+                                                                <span
+                                                                    className="failure-cluster-ex-flag"
+                                                                    data-testid="exemplar-json-invalid"
+                                                                >
+                                                                    ✗ malformed JSON
+                                                                </span>
+                                                            )}
+                                                            {ex.is_valid_json === true && (
+                                                                <span data-testid="exemplar-json-valid">
+                                                                    JSON: valid
+                                                                </span>
+                                                            )}
+                                                            {ex.missing_required_fields
+                                                                && ex.missing_required_fields.length > 0 && (
+                                                                <span
+                                                                    className="failure-cluster-ex-flag"
+                                                                    data-testid="exemplar-missing-fields"
+                                                                >
+                                                                    {' '}missing: {ex.missing_required_fields.join(', ')}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </li>
