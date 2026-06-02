@@ -232,3 +232,97 @@
         grid-template-columns: 1fr;
     }
 }
+
+
+/* Arc 1 — per-turn provenance footer (adapter id + RAG hits + latency
+ * vs. session average). Sits inside the assistant message bubble so
+ * each turn carries its own "why did this answer that?" trace. */
+
+.playground-message__provenance {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border-muted, rgba(255, 255, 255, 0.10));
+    font-size: 11px;
+    color: var(--text-tertiary, rgba(255, 255, 255, 0.55));
+}
+
+.playground-message__provenance-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.playground-message__provenance-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid var(--border-muted, rgba(255, 255, 255, 0.10));
+    border-radius: 999px;
+    background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
+    color: inherit;
+    font-size: 11px;
+    font-family: inherit;
+    line-height: 1.4;
+}
+
+.playground-message__provenance-chip code {
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.70));
+}
+
+.playground-message__provenance-chip small {
+    color: var(--text-tertiary, rgba(255, 255, 255, 0.55));
+    font-size: 10px;
+}
+
+button.playground-message__provenance-chip {
+    cursor: pointer;
+}
+
+button.playground-message__provenance-chip:hover:not(:disabled) {
+    border-color: var(--accent, #3b82f6);
+}
+
+button.playground-message__provenance-chip:disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.playground-message__provenance-chip--faster {
+    border-color: var(--accent-success, #22c55e);
+    color: var(--accent-success, #22c55e);
+}
+
+.playground-message__provenance-chip--slower {
+    border-color: var(--accent-warning, #f59e0b);
+    color: var(--accent-warning, #f59e0b);
+}
+
+.playground-message__provenance-hits {
+    list-style: decimal;
+    padding-left: 20px;
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.70));
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.playground-message__provenance-hits li {
+    line-height: 1.5;
+}
+
+.playground-message__provenance-hits code {
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+}
+
+.playground-message__provenance-hits p {
+    margin: 2px 0 0;
+    color: var(--text-tertiary, rgba(255, 255, 255, 0.55));
+    overflow-wrap: anywhere;
+}

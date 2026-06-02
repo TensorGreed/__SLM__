@@ -2,7 +2,7 @@
  * Interactive prompt session manager supporting multiple inference backends and providers.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import api from '../../api/client';
 import './ChatPlaygroundPanel.css';
@@ -10,10 +10,44 @@ import './ChatPlaygroundPanel.css';
 type PlaygroundProvider = 'openai_compatible' | 'llama_cpp' | 'mock';
 type PlaygroundRole = 'system' | 'user' | 'assistant';
 
+/**
+ * Arc 1 — per-turn provenance footer (adapter id + RAG hits + latency
+ * vs. session average). The chat used to surface "what served this
+ * reply" only at the bottom of the panel, and only for the most recent
+ * turn. That made it impossible to compare turns or debug "why did the
+ * model answer that?" without opening the network tab.
+ *
+ * The backend response already carries everything needed
+ * (resolved_model_name, latency_ms, auto_rag.retrieved); this type
+ * pins the subset the UI stashes on the message itself so the footer
+ * survives across new turns + session restores.
+ */
+interface PlaygroundRagHit {
+  rowId: string;
+  score: number;
+  preview: string;
+}
+
+interface PlaygroundMessageProvenance {
+  adapterId: string | null;
+  provider: string | null;
+  latencyMs: number | null;
+  ragApplied: boolean;
+  ragHits: PlaygroundRagHit[];
+  /** Backend may report a skip_reason when RAG was intended but no
+   *  index was available — surface so the user understands the empty
+   *  hit list isn't "no retrieval happened, model just answered". */
+  ragSkipReason: string | null;
+  /** First-class flag for reroute-to-RAG sibling projects (no LoRA
+   *  loaded; serving the base model + retrieval). */
+  ragFirstActive: boolean;
+}
+
 interface PlaygroundMessage {
   role: PlaygroundRole;
   content: string;
   createdAt: number;
+  provenance?: PlaygroundMessageProvenance;
 }
 
 interface PlaygroundModelOption {
@@ -74,6 +108,19 @@ interface PlaygroundSessionDetailResponse {
   messages?: Array<{ role?: string; content?: string }>;
 }
 
+interface PlaygroundChatAutoRagBlock {
+  applied?: boolean;
+  k?: number;
+  query?: string;
+  retrieved?: Array<{
+    row_id?: string | number;
+    score?: number;
+    payload?: Record<string, unknown>;
+  }>;
+  skip_reason?: string | null;
+  preamble_inserted_at?: number;
+}
+
 interface PlaygroundChatResponse {
   provider: string;
   model_name: string;
@@ -89,6 +136,8 @@ interface PlaygroundChatResponse {
   reply: string;
   latency_ms?: number;
   session_id?: number | null;
+  auto_rag?: PlaygroundChatAutoRagBlock;
+  rag_first_active?: boolean;
 }
 
 interface PlaygroundLogEvent {
@@ -143,6 +192,80 @@ interface PromptPreset {
 
 interface ChatPlaygroundPanelProps {
   projectId: number;
+}
+
+/**
+ * Arc 1 — extract a compact preview from a RAG-retrieved payload so
+ * the footer can show context-snippet identity without dumping the
+ * whole row. Walks the conventional QA-pair keys first (question,
+ * answer, text) and falls back to JSON for shapes we don't recognise.
+ * Capped to keep the footer readable.
+ */
+function _ragPayloadPreview(payload: Record<string, unknown> | null | undefined): string {
+  if (!payload) return '';
+  const cap = 140;
+  for (const key of ['question', 'text', 'prompt', 'input', 'content']) {
+    const value = (payload as Record<string, unknown>)[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const trimmed = value.trim().replace(/\s+/g, ' ');
+      return trimmed.length > cap ? `${trimmed.slice(0, cap)}…` : trimmed;
+    }
+  }
+  try {
+    const text = JSON.stringify(payload);
+    return text.length > cap ? `${text.slice(0, cap)}…` : text;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Arc 1 — build the per-turn provenance bag from a chat response
+ * (either the typed non-streaming body or a generic streaming SSE
+ * `final` event). The two payload shapes diverge slightly so this
+ * helper accepts both — keeping the streaming/non-streaming append
+ * paths from drifting on what they stash.
+ */
+function _buildProvenance(
+  source: PlaygroundChatResponse | Record<string, unknown>,
+): PlaygroundMessageProvenance {
+  const adapterId =
+    (source as PlaygroundChatResponse).resolved_model_name
+    || (source as Record<string, unknown>).resolved_model_name as string
+    || (source as PlaygroundChatResponse).model_name
+    || ((source as Record<string, unknown>).model_name as string)
+    || null;
+  const provider =
+    (source as PlaygroundChatResponse).resolved_provider
+    || ((source as Record<string, unknown>).resolved_provider as string)
+    || (source as PlaygroundChatResponse).provider
+    || ((source as Record<string, unknown>).provider as string)
+    || null;
+  const latencyRaw = (source as PlaygroundChatResponse).latency_ms
+    ?? ((source as Record<string, unknown>).latency_ms as number | undefined);
+  const latencyMs = Number.isFinite(Number(latencyRaw)) ? Number(latencyRaw) : null;
+  const autoRag = ((source as PlaygroundChatResponse).auto_rag
+    || ((source as Record<string, unknown>).auto_rag as PlaygroundChatAutoRagBlock | undefined)
+    || {}) as PlaygroundChatAutoRagBlock;
+  const retrieved = Array.isArray(autoRag.retrieved) ? autoRag.retrieved : [];
+  const ragHits: PlaygroundRagHit[] = retrieved.map((chunk) => ({
+    rowId: String(chunk?.row_id ?? ''),
+    score: Number.isFinite(Number(chunk?.score)) ? Number(chunk?.score) : 0,
+    preview: _ragPayloadPreview(chunk?.payload as Record<string, unknown>),
+  }));
+  const ragFirstActive = Boolean(
+    (source as PlaygroundChatResponse).rag_first_active
+    ?? ((source as Record<string, unknown>).rag_first_active as boolean | undefined),
+  );
+  return {
+    adapterId: adapterId ? String(adapterId) : null,
+    provider: provider ? String(provider) : null,
+    latencyMs,
+    ragApplied: Boolean(autoRag.applied),
+    ragHits,
+    ragSkipReason: autoRag.skip_reason ? String(autoRag.skip_reason) : null,
+    ragFirstActive,
+  };
 }
 
 const DEFAULT_API_URL = 'http://localhost:11434/v1/chat/completions';
@@ -230,6 +353,22 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
   const [ragLoading, setRagLoading] = useState(false);
   const [ragError, setRagError] = useState('');
   const [ragResult, setRagResult] = useState<RagCompareResponse | null>(null);
+
+  // Arc 1 — session-local average latency across all stored assistant
+  // turns. Per-turn footer shows the delta vs. this average so the
+  // user can see "this turn was 2x slower" without leaving the panel.
+  const sessionAvgLatencyMs = useMemo(() => {
+    const samples: number[] = [];
+    for (const msg of messages) {
+      const value = msg.provenance?.latencyMs;
+      if (msg.role === 'assistant' && typeof value === 'number' && Number.isFinite(value)) {
+        samples.push(value);
+      }
+    }
+    if (samples.length === 0) return null;
+    const total = samples.reduce((sum, n) => sum + n, 0);
+    return total / samples.length;
+  }, [messages]);
 
   const loadSessions = async () => {
     setSessionsLoading(true);
@@ -496,12 +635,14 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
       setError('Playground returned an empty assistant reply.');
       return;
     }
+    const provenance = _buildProvenance(res.data || {});
     setMessages((prev) => [
       ...prev,
       {
         role: 'assistant',
         content: reply,
         createdAt: Date.now(),
+        provenance,
       },
     ]);
     setLastMeta({
@@ -572,12 +713,14 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
             const reply = String(parsed.reply || draft).trim();
             setStreamingReply('');
             if (reply) {
+              const provenance = _buildProvenance(parsed);
               setMessages((prev) => [
                 ...prev,
                 {
                   role: 'assistant',
                   content: reply,
                   createdAt: Date.now(),
+                  provenance,
                 },
               ]);
             } else {
@@ -911,6 +1054,13 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
               >
                 <div className="playground-message__role">{message.role}</div>
                 <div className="playground-message__content">{message.content}</div>
+                {message.role === 'assistant' && message.provenance ? (
+                  <MessageProvenanceFooter
+                    provenance={message.provenance}
+                    sessionAvgLatencyMs={sessionAvgLatencyMs}
+                    messageKey={`${message.role}-${message.createdAt}`}
+                  />
+                ) : null}
               </div>
             ))}
             {streamingReply ? (
@@ -1005,6 +1155,138 @@ export default function ChatPlaygroundPanel({ projectId }: ChatPlaygroundPanelPr
           {loading ? (streamEnabled ? 'Streaming...' : 'Sending...') : 'Send'}
         </button>
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Arc 1 — collapsible per-turn provenance footer. Surfaces the three
+ * "why did this turn answer that?" signals the user previously had to
+ * open the network tab to see: which adapter served the reply, how
+ * many RAG chunks were retrieved (and their top score), and how this
+ * turn's latency compares to the session average.
+ *
+ * Click "context" to expand the retrieved chunks inline. When the
+ * backend reports ``skip_reason`` (intended-RAG that fell back), the
+ * footer flags it so the user understands the empty hit list isn't
+ * "no retrieval ran".
+ */
+interface MessageProvenanceFooterProps {
+  provenance: PlaygroundMessageProvenance;
+  sessionAvgLatencyMs: number | null;
+  /** Stable key so testids stay unique per message bubble. */
+  messageKey: string;
+}
+
+function _truncateMid(value: string, cap: number = 40): string {
+  if (value.length <= cap) return value;
+  const half = Math.floor((cap - 1) / 2);
+  return `${value.slice(0, half)}…${value.slice(value.length - half)}`;
+}
+
+function _formatLatencyDelta(
+  current: number,
+  avg: number | null,
+): { label: string; tone: 'neutral' | 'faster' | 'slower' } | null {
+  if (avg === null || avg <= 0) return null;
+  const ratio = current / avg;
+  // Treat ±10% as effectively-average — no point flagging noise.
+  if (Math.abs(ratio - 1) < 0.10) {
+    return { label: 'at session avg', tone: 'neutral' };
+  }
+  if (ratio < 1) {
+    return { label: `${Math.round((1 - ratio) * 100)}% faster than avg`, tone: 'faster' };
+  }
+  return { label: `${Math.round((ratio - 1) * 100)}% slower than avg`, tone: 'slower' };
+}
+
+function MessageProvenanceFooter({
+  provenance,
+  sessionAvgLatencyMs,
+  messageKey,
+}: MessageProvenanceFooterProps) {
+  const [expanded, setExpanded] = useState(false);
+  const latencyDelta =
+    typeof provenance.latencyMs === 'number'
+      ? _formatLatencyDelta(provenance.latencyMs, sessionAvgLatencyMs)
+      : null;
+  const topRagScore =
+    provenance.ragHits.length > 0
+      ? Math.max(...provenance.ragHits.map((hit) => hit.score))
+      : null;
+  const hasRagBlock =
+    provenance.ragApplied
+    || provenance.ragHits.length > 0
+    || provenance.ragSkipReason
+    || provenance.ragFirstActive;
+
+  return (
+    <div
+      className="playground-message__provenance"
+      data-testid={`playground-provenance-${messageKey}`}
+    >
+      <div className="playground-message__provenance-row">
+        {provenance.adapterId ? (
+          <span
+            className="playground-message__provenance-chip"
+            title={`Served by ${provenance.adapterId}${provenance.provider ? ` (${provenance.provider})` : ''}`}
+            data-testid={`playground-provenance-${messageKey}-adapter`}
+          >
+            via <code>{_truncateMid(provenance.adapterId)}</code>
+          </span>
+        ) : null}
+        {provenance.latencyMs !== null ? (
+          <span
+            className={`playground-message__provenance-chip playground-message__provenance-chip--latency${latencyDelta ? ` playground-message__provenance-chip--${latencyDelta.tone}` : ''}`}
+            data-testid={`playground-provenance-${messageKey}-latency`}
+          >
+            {provenance.latencyMs.toFixed(0)} ms
+            {latencyDelta ? <small> ({latencyDelta.label})</small> : null}
+          </span>
+        ) : null}
+        {hasRagBlock ? (
+          <button
+            type="button"
+            className="playground-message__provenance-chip playground-message__provenance-chip--rag"
+            onClick={() => setExpanded((value) => !value)}
+            disabled={provenance.ragHits.length === 0}
+            data-testid={`playground-provenance-${messageKey}-rag`}
+            aria-label={
+              provenance.ragHits.length === 0
+                ? 'RAG retrieval block (no expandable hits)'
+                : `${expanded ? 'Hide' : 'Show'} ${provenance.ragHits.length} retrieved RAG chunk${provenance.ragHits.length === 1 ? '' : 's'}`
+            }
+          >
+            {provenance.ragHits.length > 0 ? (
+              <>
+                RAG: {provenance.ragHits.length} hit{provenance.ragHits.length === 1 ? '' : 's'}
+                {topRagScore !== null ? (
+                  <small> (top {topRagScore.toFixed(2)})</small>
+                ) : null}
+              </>
+            ) : provenance.ragSkipReason ? (
+              <>RAG skipped <small>({provenance.ragSkipReason})</small></>
+            ) : (
+              <>RAG-first base model</>
+            )}
+          </button>
+        ) : null}
+      </div>
+      {expanded && provenance.ragHits.length > 0 ? (
+        <ol
+          className="playground-message__provenance-hits"
+          data-testid={`playground-provenance-${messageKey}-hits`}
+        >
+          {provenance.ragHits.map((hit, idx) => (
+            <li key={`${hit.rowId || idx}-${idx}`}>
+              <code>{hit.rowId || `chunk #${idx + 1}`}</code>
+              <small> score {hit.score.toFixed(3)}</small>
+              {hit.preview ? <p>{hit.preview}</p> : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </div>
   );
 }
