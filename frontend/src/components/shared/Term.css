@@ -88,3 +88,23 @@
     font-size: 0.78rem;
     color: var(--text-secondary);
 }
+
+/* Arc G — Academy deep-link footer. Pinned at the bottom of the
+ * popover; sits below example/body so the lesson link doesn't push
+ * the definition off-screen. Opens in a new tab so the user doesn't
+ * lose their project context. */
+.term-popover-academy {
+    display: block;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border-default);
+    font-size: 0.78rem;
+    color: var(--accent, #3b82f6);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.term-popover-academy:hover,
+.term-popover-academy:focus-visible {
+    text-decoration: underline;
+}

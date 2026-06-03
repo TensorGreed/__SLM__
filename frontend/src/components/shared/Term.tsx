@@ -94,6 +94,19 @@ export function Term({ id, label, plural = false, advanced = false, silent = fal
                     <span className="term-popover-aka">Also known as: {aka}</span>
                     <span className="term-popover-body">{plainLanguage}</span>
                     {example && <span className="term-popover-example">Example: {example}</span>}
+                    {definition.academyUrl && (
+                        <a
+                            className="term-popover-academy"
+                            href={definition.academyUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            // Keep the click inside the popover instead of
+                            // toggling pinned/closed state on the parent.
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            Learn more on BrewSLM Academy →
+                        </a>
+                    )}
                 </span>
             )}
         </span>

@@ -100,4 +100,45 @@ describe('Term component', () => {
         const tooltip = await screen.findByRole('tooltip');
         expect(tooltip).toHaveTextContent(/backend that actually runs training/i);
     });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc G — "Learn more →" Academy deep-link footer. Renders the
+    // anchor when the concept has an academyUrl; opens in a new tab
+    // so the user doesn't lose their project context. Concepts
+    // without an academyUrl render no footer at all.
+    // ─────────────────────────────────────────────────────────────────
+
+    it('renders the "Learn more" Academy footer when academyUrl is set', async () => {
+        apiMock.get.mockResolvedValue({ data: { entries: [] } });
+        const user = userEvent.setup();
+        render(<Term id="gold_set" />);
+        await user.click(screen.getByRole('button'));
+        const tooltip = await screen.findByRole('tooltip');
+        const link = tooltip.querySelector('a.term-popover-academy');
+        expect(link).not.toBeNull();
+        expect(link?.getAttribute('href')).toBe(
+            'https://brewslm.com/academy/sft-fundamentals/gold-sets.html',
+        );
+        expect(link?.getAttribute('target')).toBe('_blank');
+        expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+        expect(link?.textContent).toMatch(/Learn more on BrewSLM Academy/);
+    });
+
+    it('does not render the Academy footer for a concept without academyUrl', async () => {
+        // Patch the registry temporarily — pretend ``adapter`` has no
+        // academyUrl. Restore in the afterEach via reset().
+        const definitions = (await import('./glossary')).TERM_DEFINITIONS;
+        const original = definitions.adapter.academyUrl;
+        definitions.adapter.academyUrl = undefined;
+        try {
+            apiMock.get.mockResolvedValue({ data: { entries: [] } });
+            const user = userEvent.setup();
+            render(<Term id="adapter" />);
+            await user.click(screen.getByRole('button'));
+            const tooltip = await screen.findByRole('tooltip');
+            expect(tooltip.querySelector('a.term-popover-academy')).toBeNull();
+        } finally {
+            definitions.adapter.academyUrl = original;
+        }
+    });
 });

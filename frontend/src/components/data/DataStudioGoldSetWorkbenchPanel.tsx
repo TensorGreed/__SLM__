@@ -20,6 +20,7 @@ import type {
     DataStudioGoldSetFieldCoverage,
     DataStudioGoldSetWorkbench,
 } from '../../api/dataStudio';
+import Term from '../shared/Term';
 import './DataStudioGoldSetWorkbenchPanel.css';
 
 interface DataStudioGoldSetWorkbenchPanelProps {
@@ -168,7 +169,7 @@ export default function DataStudioGoldSetWorkbenchPanel({
             <div className="data-studio-gold__header">
                 <div>
                     <p className="data-studio-gold__eyebrow">Gold Set</p>
-                    <h3>Gold Set workbench</h3>
+                    <h3><Term id="gold_set" advanced /> workbench</h3>
                     <p>{verdict.detail}</p>
                 </div>
                 <div className="data-studio-gold__actions">
