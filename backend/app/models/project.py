@@ -156,6 +156,24 @@ class Project(Base):
         default=None,
         nullable=True,
     )
+    # Arc H — End-goal contract. Coach Mode + Data Studio compute a
+    # single "% toward your stated goal" metric from this. Canonical
+    # shape:
+    #   {
+    #     "target_metric": "f1" | "pass_rate" | "accuracy",
+    #     "target_threshold": float,   # 0.0-1.0
+    #     "deadline": "YYYY-MM-DD" | null,
+    #     "title": str | null,         # human-facing label
+    #     "stated_at": ISO8601 timestamp,
+    #   }
+    # Nullable so existing projects round-trip unchanged; the goal
+    # service treats null as "no goal set yet" and renders progress
+    # against a sensible default (target_metric=f1, threshold=0.70).
+    goal: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

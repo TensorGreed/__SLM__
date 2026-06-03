@@ -157,6 +157,7 @@ session-start guidance.
 - `backend/app/services/frontier_comparison_service.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/app/services/gamification/achievements.py` — Declarative achievement catalog (Lab Journal).
 - `backend/app/services/gamification_service.py` — Lab Journal — per-project gamification progression service.
+- `backend/app/services/goal_service.py` — Arc H — End-goal contract + progress ledger.
 - `backend/app/services/gold_llm_service.py` — LLM-assisted gold-set generation across all supported recipes.
 - `backend/app/services/gold_service.py` — Gold evaluation dataset service — create, import, and manage gold Q&A sets.
 - `backend/app/services/gold_set_diagnostics_service.py` — Gold-set diagnostics for V4 of the ML-native visualisations arc.
@@ -360,6 +361,7 @@ session-start guidance.
 - `backend/alembic/versions/20260528_0042_training_manifest_warm_start.py` — Training manifest warm_start JSON column (Track 1, Epic B).
 - `backend/alembic/versions/20260530_0043_sweeps_first_class.py` — First-class ``sweeps`` table + ``experiments.sweep_id`` FK + backfill.
 - `backend/alembic/versions/20260601_0044_label_row_reviews.py` — Label-row multi-reviewer capture (Epic F Phase 2).
+- `backend/alembic/versions/20260603_0045_project_goal.py` — Arc H — Project end-goal contract.
 
 ## Frontend · API clients
 
@@ -377,6 +379,7 @@ session-start guidance.
 - `frontend/src/api/experimentCompare.ts` — Typed client for the eval-aware experiment comparison endpoint (E3).
 - `frontend/src/api/frontierComparison.ts` — Typed wrapper for the Track 1 Epic D SLM-vs-frontier benchmark report.
 - `frontend/src/api/gamification.ts` — Typed wrappers for the Lab Journal (gamification) API.
+- `frontend/src/api/goal.ts` — Arc H — Project end-goal contract + progress ledger client.
 - `frontend/src/api/jobs.ts` — Typed client for the Jobs framework (Hardening Phase H1).
 - `frontend/src/api/projectTemplates.ts` — Typed wrappers for the project-template catalog + instantiation API.
 - `frontend/src/api/quickstart.ts` — Typed wrappers for the project-guide quickstart endpoints
@@ -462,6 +465,7 @@ session-start guidance.
 - `frontend/src/components/data/DatasetVersionPanel.tsx` — Panel listing prepared dataset versions with record counts, types, and creation timestamps.
 - `frontend/src/components/data/DocumentSampleAccordion.tsx` — Inline 10-random-rows preview for the Ingested Documents table.
 - `frontend/src/components/data/EDADashboard.tsx` — Exploratory data analysis dashboard with row counts, token distribution, toxicity, and outlier detection.
+- `frontend/src/components/data/GoalLedgerCard.tsx` — Arc H — Goal progress ledger card.
 - `frontend/src/components/data/GoldEntryAddForm.tsx` — GoldEntryAddForm — per-recipe inline form for manually adding a
 - `frontend/src/components/data/GoldEntryRowBody.tsx` — GoldEntryRowBody — shared per-recipe body renderer for a single
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.tsx` — GoldSetDiagnosticsPanel — V4 of the ML-native visualisations arc.
@@ -620,6 +624,7 @@ session-start guidance.
 - `backend/tests/test_forecast_calibration.py` — Tests for forecast vs reality calibration (USER-SUCCESS Epic 1, T5).
 - `backend/tests/test_frontier_comparison.py` — SLM-vs-frontier benchmark report (Track 1, Epic D).
 - `backend/tests/test_gamification_service.py` — Gamification (Lab Journal) progression service.
+- `backend/tests/test_goal_service.py` — Tests for goal_service + the /goal/progress + /goal endpoints (Arc H).
 - `backend/tests/test_gold_add_per_recipe.py` — Endpoint tests for ``POST /api/projects/{id}/gold/add`` after the
 - `backend/tests/test_gold_llm_service.py` — Tests for the LLM-assisted gold-set generation path.
 - `backend/tests/test_gold_set_diagnostics.py` — V4 of the ML-native visualisations arc — gold-set class balance
@@ -811,6 +816,7 @@ session-start guidance.
 - `frontend/src/components/data/DataStudioSyntheticRecommendationsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/DatasetImportWizard.test.tsx` — Phase F — UI wizard contract.
 - `frontend/src/components/data/DocumentSampleAccordion.test.tsx` — Document-sample accordion contract.
+- `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_

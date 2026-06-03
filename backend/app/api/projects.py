@@ -881,3 +881,86 @@ async def run_project_smoke_test(
 
     summary = await run_smoke_test(db, project_id)
     return serialize_summary(summary)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Arc H — End-goal contract + progress ledger.
+#
+# Coach Mode + Data Studio render "% toward your stated goal" from this
+# data. The progress endpoint is read-only and safe to poll; setting /
+# clearing the goal is one-shot per call.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class GoalSetRequest(BaseModel):
+    """User-stated goal payload. ``target_metric`` must be one of the
+    supported metrics on goal_service.SUPPORTED_METRICS; the service
+    raises ValueError otherwise (translated to 400 here)."""
+
+    target_metric: str
+    target_threshold: float
+    deadline: str | None = None
+    title: str | None = None
+
+
+@router.get("/{project_id}/goal/progress")
+async def get_project_goal_progress(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the goal progress ledger for the project.
+
+    Always returns a fully-formed payload: when no goal is set, the
+    service falls back to a sensible default (f1 ≥ 0.70) and the
+    response carries ``has_explicit_goal: false`` so the UI can prompt
+    the user to state their own goal.
+    """
+    from app.services.goal_service import compute_progress
+    try:
+        return await compute_progress(db, project_id)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail.startswith(f"Project {project_id} not found"):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+
+
+@router.put("/{project_id}/goal")
+async def set_project_goal(
+    project_id: int,
+    req: GoalSetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist the user's stated goal on the project."""
+    from app.services.goal_service import set_goal
+    try:
+        goal = await set_goal(
+            db,
+            project_id,
+            target_metric=req.target_metric,
+            target_threshold=req.target_threshold,
+            deadline=req.deadline,
+            title=req.title,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        if detail.startswith(f"Project {project_id} not found"):
+            raise HTTPException(404, detail)
+        raise HTTPException(400, detail)
+    await db.commit()
+    return {"project_id": project_id, "goal": goal}
+
+
+@router.delete("/{project_id}/goal")
+async def clear_project_goal(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Drop the project's stated goal. Idempotent."""
+    from app.services.goal_service import clear_goal
+    try:
+        await clear_goal(db, project_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    await db.commit()
+    return {"project_id": project_id, "cleared": True}

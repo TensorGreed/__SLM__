@@ -15,6 +15,7 @@ import {
     getDataStudioOverview,
 } from '../../api/dataStudio';
 import type { DataStudioOverview } from '../../api/dataStudio';
+import GoalLedgerCard from './GoalLedgerCard';
 import './DataStudioOverviewPanel.css';
 
 interface DataStudioOverviewPanelProps {
@@ -117,6 +118,13 @@ export default function DataStudioOverviewPanel({
             className={`data-studio-overview data-studio-overview--${overview.verdict}`}
             data-testid="data-studio-overview"
         >
+            {/* Arc H — single "% toward your stated goal" widget at
+                the top of the overview. Renders the goal ledger
+                (data_ready / gold_set / predicted_pass / eval_pass_rate)
+                with Term-linked components so each row teaches the
+                user via Academy deep-links. */}
+            <GoalLedgerCard projectId={projectId} />
+
             <div className="data-studio-overview__header">
                 <div>
                     <p className="data-studio-overview__eyebrow">Data Studio</p>
