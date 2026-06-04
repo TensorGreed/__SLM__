@@ -280,4 +280,159 @@ describe('GoalLedgerCard', () => {
         });
         expect(screen.getByText('network down')).toBeInTheDocument();
     });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc R-2 slice 2 — gate breakdown sub-rows expand the
+    // eval_pass_rate component into the gates the project's eval pack
+    // actually enforces. Compound with Arc G: each gate's metric_id
+    // wraps in <Term> so the row carries the Academy deep-link.
+    // ─────────────────────────────────────────────────────────────────
+
+    function _withEvalGates(overrides: Partial<Record<string, unknown>> = {}) {
+        return _progressFixture({
+            components: [
+                {
+                    id: 'data_ready', label: 'Training data ready', value: 1.0,
+                    status: 'met', detail: 'ready', concept_id: 'task_shape',
+                },
+                {
+                    id: 'gold_set', label: 'Gold Set ready', value: 1.0,
+                    status: 'met', detail: 'ready', concept_id: 'gold_set',
+                },
+                {
+                    id: 'predicted_pass', label: 'Predicted pass probability', value: 0.78,
+                    status: 'met', detail: 'forecast 78%', concept_id: 'predicted_f1_confidence',
+                },
+                {
+                    id: 'eval_pass_rate',
+                    label: 'Eval pass rate',
+                    value: 0.62,
+                    status: 'attention',
+                    detail: 'Latest eval 62% (your bar is 85%).',
+                    concept_id: 'pass_rate',
+                    gate_breakdown: [
+                        // Citation gate fails — actual 0.72 < 0.75 threshold.
+                        {
+                            gate_id: 'min_citation_rate',
+                            metric_id: 'citation_rate',
+                            operator: 'gte',
+                            threshold: 0.75,
+                            required: true,
+                            actual: 0.72,
+                            passed: false,
+                        },
+                        // Hallucination gate fails — actual 0.18 > 0.15 ceiling.
+                        {
+                            gate_id: 'max_hallucination_rate',
+                            metric_id: 'hallucination_rate',
+                            operator: 'lte',
+                            threshold: 0.15,
+                            required: true,
+                            actual: 0.18,
+                            passed: false,
+                        },
+                        // Refusal gate passes — actual 0.85 ≥ 0.80 threshold.
+                        {
+                            gate_id: 'min_appropriate_refusal_rate',
+                            metric_id: 'appropriate_refusal_rate',
+                            operator: 'gte',
+                            threshold: 0.80,
+                            required: true,
+                            actual: 0.85,
+                            passed: true,
+                        },
+                        // Optional format gate — actual null (Slice-2
+                        // metric not implemented yet); UI shows pending.
+                        {
+                            gate_id: 'min_format_consistency',
+                            metric_id: 'format_consistency',
+                            operator: 'gte',
+                            threshold: 0.75,
+                            required: false,
+                            actual: null,
+                            passed: true,  // optional + missing → backend reports passed=true
+                        },
+                    ],
+                },
+            ],
+            ...overrides,
+        });
+    }
+
+    it('renders the gate breakdown when the eval_pass_rate component carries one', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: _withEvalGates() });
+        render(<GoalLedgerCard projectId={7} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('goal-ledger-gate-breakdown-eval_pass_rate')).toBeInTheDocument();
+        });
+        // One sub-row per gate.
+        expect(screen.getByTestId('goal-ledger-gate-min_citation_rate')).toBeInTheDocument();
+        expect(screen.getByTestId('goal-ledger-gate-max_hallucination_rate')).toBeInTheDocument();
+        expect(screen.getByTestId('goal-ledger-gate-min_appropriate_refusal_rate')).toBeInTheDocument();
+        expect(screen.getByTestId('goal-ledger-gate-min_format_consistency')).toBeInTheDocument();
+    });
+
+    it('formats fractional gate values as percentages', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: _withEvalGates() });
+        render(<GoalLedgerCard projectId={7} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('goal-ledger-gate-min_citation_rate-actual')).toBeInTheDocument();
+        });
+        // 0.72 → "72%"; 0.18 → "18%".
+        expect(
+            screen.getByTestId('goal-ledger-gate-min_citation_rate-actual').textContent,
+        ).toMatch(/72%/);
+        expect(
+            screen.getByTestId('goal-ledger-gate-max_hallucination_rate-actual').textContent,
+        ).toMatch(/18%/);
+        // The threshold renders alongside the actual value in the
+        // dedicated threshold cell.
+        const citationRow = screen.getByTestId('goal-ledger-gate-min_citation_rate');
+        expect(citationRow.textContent).toMatch(/≥ 75%/);
+        const halluRow = screen.getByTestId('goal-ledger-gate-max_hallucination_rate');
+        expect(halluRow.textContent).toMatch(/≤ 15%/);
+    });
+
+    it('renders pending placeholder for gates with null actual values', async () => {
+        apiMock.get.mockResolvedValueOnce({ data: _withEvalGates() });
+        render(<GoalLedgerCard projectId={7} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('goal-ledger-gate-min_format_consistency-actual')).toBeInTheDocument();
+        });
+        // Null actual → "—" placeholder, not "0%" which would be
+        // misleading (the metric isn't computed yet).
+        expect(
+            screen.getByTestId('goal-ledger-gate-min_format_consistency-actual').textContent,
+        ).toBe('—');
+    });
+
+    it('omits the gate breakdown when the component has no gates', async () => {
+        // Component without ``gate_breakdown`` field — backend reports
+        // empty list. The card should not render the expandable
+        // section at all so we don't show an empty drawer.
+        apiMock.get.mockResolvedValueOnce({ data: _progressFixture() });
+        render(<GoalLedgerCard projectId={7} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('goal-ledger')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('goal-ledger-gate-breakdown-eval_pass_rate'),
+        ).toBeNull();
+    });
+
+    it('wraps each gate metric_id in a Term button (Arc G compound)', async () => {
+        // The gate row renders <Term id={metric_id} label={...}>.
+        // The Term registry was extended in Slice 2 with the 4 new
+        // discipline metric concepts; the button surfaces them as
+        // clickable Term triggers carrying the Academy deep-link.
+        apiMock.get.mockResolvedValueOnce({ data: _withEvalGates() });
+        render(<GoalLedgerCard projectId={7} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('goal-ledger-gate-min_citation_rate')).toBeInTheDocument();
+        });
+        const citationRow = screen.getByTestId('goal-ledger-gate-min_citation_rate');
+        // Term renders a <button class="term-trigger"> — assert
+        // its presence as a proxy for "registry entry exists".
+        expect(citationRow.querySelector('button.term-trigger')).not.toBeNull();
+    });
 });

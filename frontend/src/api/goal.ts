@@ -24,6 +24,24 @@ export interface ProjectGoal {
     stated_at: string | null;
 }
 
+/** Arc R-2 slice 2 — per-gate detail on the eval_pass_rate component.
+ *  Backend (goal_service._compute_gate_breakdown) projects the project's
+ *  eval pack's gate evaluations into this list so the ledger row can
+ *  expand into the gates the pack actually enforces (citation_rate /
+ *  hallucination_rate / appropriate_refusal_rate / etc.). */
+export interface GoalGateBreakdown {
+    gate_id: string;
+    metric_id: string;
+    operator: 'gte' | 'lte';
+    threshold: number | null;
+    required: boolean;
+    /** The metric value from the latest EvalResult. Null when the
+     *  pack requires the metric but the handler didn't emit it
+     *  (e.g. format_consistency is still pending implementation). */
+    actual: number | null;
+    passed: boolean;
+}
+
 export interface GoalProgressComponent {
     id: 'data_ready' | 'gold_set' | 'predicted_pass' | 'eval_pass_rate' | string;
     label: string;
@@ -37,6 +55,10 @@ export interface GoalProgressComponent {
      *  ``<Term id={concept_id}>`` so each component carries an inline
      *  "Learn more on BrewSLM Academy" link (Arc G). */
     concept_id: string;
+    /** Arc R-2 slice 2 — only present on the eval_pass_rate component
+     *  when the project's eval pack has gates AND an eval has run.
+     *  Empty / undefined otherwise so the card degrades gracefully. */
+    gate_breakdown?: GoalGateBreakdown[];
 }
 
 export interface GoalProgressResponse {

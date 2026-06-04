@@ -304,6 +304,136 @@ class GoalServiceApiTests(unittest.TestCase):
                 f"concept_id changed for {component['id']} — update frontend Term registry too",
             )
 
+    # ─────────────────────────────────────────────────────────────
+    # Arc R-2 slice 2 — gate_breakdown on the eval_pass_rate
+    # component. Empty when no eval has run; populated when an
+    # eval exists, projecting the project's eval pack's gate
+    # checks through into the ledger row.
+    # ─────────────────────────────────────────────────────────────
+
+    def test_eval_pass_rate_gate_breakdown_empty_without_eval(self):
+        pid = self._create_project()
+        body = self.client.get(f"/api/projects/{pid}/goal/progress").json()
+        comp = {c["id"]: c for c in body["components"]}
+        # Field present + an empty list (frontend treats this as
+        # "no breakdown to render"); never missing entirely so
+        # the type contract stays stable.
+        self.assertIn("gate_breakdown", comp["eval_pass_rate"])
+        self.assertEqual(comp["eval_pass_rate"]["gate_breakdown"], [])
+
+    async def _apply_recipe(self, project_id: int, recipe_id: str) -> None:
+        # Use the public endpoint instead of touching project.selected_recipe
+        # directly so the recipe-apply service stamps every adjacent field
+        # (adapter preset, eval_pack_id, etc.).
+        resp = self.client.put(
+            f"/api/projects/{project_id}/recipe",
+            json={"recipe_id": recipe_id},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+    def test_gate_breakdown_populates_when_eval_run_on_rag_protocol_project(self):
+        pid = self._create_project()
+        # Apply the rag-protocol recipe; its eval_pack_id is now the
+        # discipline pack (Arc R-2 slice 1).
+        asyncio.run(self._apply_recipe(pid, "rag-protocol"))
+        # Seed an eval result with the metric fields the discipline
+        # pack reads (citation_rate alias → faithfulness_rate, etc.)
+        asyncio.run(self._seed_rag_eval_result(
+            pid,
+            pass_rate=0.62,
+            metrics={
+                "f1": 0.62,
+                "faithfulness_rate": 0.72,      # gates as citation_rate (≥0.75 required)
+                "unsupported_token_rate_mean": 0.18,  # gates as hallucination_rate (≤0.15 required)
+                "appropriate_refusal_rate": 0.85,     # ≥0.80 required → passes
+            },
+        ))
+
+        body = self.client.get(f"/api/projects/{pid}/goal/progress").json()
+        comp = {c["id"]: c for c in body["components"]}
+        breakdown = comp["eval_pass_rate"]["gate_breakdown"]
+        # The discipline pack ships 6 gates (4 required + 2 optional).
+        self.assertGreaterEqual(len(breakdown), 4)
+        by_gate = {g["gate_id"]: g for g in breakdown}
+        self.assertIn("min_citation_rate", by_gate)
+        self.assertIn("max_hallucination_rate", by_gate)
+        self.assertIn("min_appropriate_refusal_rate", by_gate)
+        self.assertIn("min_f1", by_gate)
+
+        # Citation: actual 0.72 < 0.75 threshold → not passed.
+        citation = by_gate["min_citation_rate"]
+        self.assertEqual(citation["operator"], "gte")
+        self.assertEqual(citation["threshold"], 0.75)
+        self.assertAlmostEqual(citation["actual"], 0.72, places=3)
+        self.assertFalse(citation["passed"])
+
+        # Hallucination: actual 0.18 > 0.15 threshold → not passed.
+        # Uses lte operator.
+        hallucination = by_gate["max_hallucination_rate"]
+        self.assertEqual(hallucination["operator"], "lte")
+        self.assertEqual(hallucination["threshold"], 0.15)
+        self.assertAlmostEqual(hallucination["actual"], 0.18, places=3)
+        self.assertFalse(hallucination["passed"])
+
+        # Refusal: actual 0.85 ≥ 0.80 → passes.
+        refusal = by_gate["min_appropriate_refusal_rate"]
+        self.assertEqual(refusal["operator"], "gte")
+        self.assertTrue(refusal["passed"])
+
+    def test_gate_breakdown_metric_ids_match_frontend_glossary(self):
+        # Tripwire — the gate_breakdown's metric_id is what the
+        # frontend wraps in <Term id={metric_id}>. If a future commit
+        # renames a metric_id without updating the glossary, the UI
+        # silently loses the Academy deep-link. Better to fail loud.
+        pid = self._create_project()
+        asyncio.run(self._apply_recipe(pid, "rag-protocol"))
+        asyncio.run(self._seed_rag_eval_result(pid, pass_rate=0.62, metrics={"f1": 0.62}))
+
+        body = self.client.get(f"/api/projects/{pid}/goal/progress").json()
+        comp = {c["id"]: c for c in body["components"]}
+        breakdown = comp["eval_pass_rate"]["gate_breakdown"]
+        # The discipline metrics the frontend glossary MUST carry.
+        expected_glossary_ids = {
+            "f1",
+            "citation_rate",
+            "hallucination_rate",
+            "appropriate_refusal_rate",
+            "format_consistency",
+            "safety_pass_rate",
+        }
+        actual_metric_ids = {g["metric_id"] for g in breakdown}
+        self.assertTrue(
+            actual_metric_ids.issubset(expected_glossary_ids),
+            f"new metric_id detected in gate_breakdown that may lack a "
+            f"frontend glossary entry: {actual_metric_ids - expected_glossary_ids}. "
+            f"Add it to frontend/src/components/shared/glossary.ts.",
+        )
+
+    async def _seed_rag_eval_result(
+        self, project_id: int, pass_rate: float, metrics: dict[str, float],
+    ) -> None:
+        async with async_session_factory() as db:
+            exp = Experiment(
+                project_id=project_id,
+                name="exp",
+                base_model="HuggingFaceTB/SmolLM2-135M-Instruct",
+                status=ExperimentStatus.COMPLETED,
+            )
+            db.add(exp)
+            await db.flush()
+            ev = EvalResult(
+                experiment_id=exp.id,
+                dataset_name="gold",
+                # Use a task_profile the rag-protocol recipe's pack
+                # surfaces so _select_task_spec resolves correctly.
+                eval_type="rag_qa",
+                metrics=metrics,
+                pass_rate=pass_rate,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(ev)
+            await db.commit()
+
 
 if __name__ == "__main__":
     unittest.main()

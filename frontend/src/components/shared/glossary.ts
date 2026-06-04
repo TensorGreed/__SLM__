@@ -270,6 +270,47 @@ export const TERM_DEFINITIONS: Record<string, TermDefinition> = {
         fallback: 'How big a step the optimiser takes on each update. Too high = loss explodes; too low = training is glacial. For LoRA on small models 1e-4 to 5e-4 is the usual safe band.',
         academyUrl: `${ACADEMY_ROOT}/sft-fundamentals/learning-rate-and-schedules.html`,
     },
+    // ── Arc R-2 RAG-protocol discipline metrics ─────────────────────
+    // These appear as ``metric_id`` on each gate inside the goal
+    // ledger's ``gate_breakdown`` array. The frontend wraps the
+    // metric label in <Term id="..."> so each sub-row carries the
+    // Academy deep-link (Arc G compound).
+    citation_rate: {
+        id: 'citation_rate',
+        advancedLabel: 'Citation Rate',
+        beginnerLabel: 'Citation Rate',
+        glossaryKey: 'citation rate',
+        category: 'evaluation',
+        fallback: 'Share of predictions whose token overlap with the retrieved context meets the faithfulness threshold (0.7). The rag-protocol training drills imprint this behaviour via the [#N] citation signal — a low score means the model is answering without grounding in the retrieved passages.',
+        academyUrl: `${ACADEMY_ROOT}/with-brewslm/auto-rag-and-reroute.html`,
+    },
+    hallucination_rate: {
+        id: 'hallucination_rate',
+        advancedLabel: 'Hallucination Rate',
+        beginnerLabel: 'Hallucination Rate',
+        glossaryKey: 'hallucination rate',
+        category: 'evaluation',
+        fallback: 'Mean fraction of prediction tokens NOT supported by the retrieved context. Lower is better — the discipline pack uses a ≤0.15 ceiling. A high score means the model is filling in facts the context never gave it.',
+        academyUrl: `${ACADEMY_ROOT}/foundations/how-language-models-work.html`,
+    },
+    appropriate_refusal_rate: {
+        id: 'appropriate_refusal_rate',
+        advancedLabel: 'Appropriate Refusal Rate',
+        beginnerLabel: 'Refusal Match Rate',
+        glossaryKey: 'appropriate refusal rate',
+        category: 'evaluation',
+        fallback: 'Fraction of rows where the model\'s refusal behaviour matched the gold\'s — refuses when the gold refuses, answers when the gold answers. NOT a blanket-refusal incentive. A model that refuses every question scores 0.0 because it never matches the gold\'s answer signal.',
+        academyUrl: `${ACADEMY_ROOT}/with-brewslm/auto-rag-and-reroute.html`,
+    },
+    format_consistency: {
+        id: 'format_consistency',
+        advancedLabel: 'Format Consistency',
+        beginnerLabel: 'Format Consistency',
+        glossaryKey: 'format consistency',
+        category: 'evaluation',
+        fallback: 'How consistent the output format is across predictions — answers cluster into a small set of templated shapes (length, citation marker placement, sentence structure). Currently optional pending the Slice-2 implementation; today the gate is wired but the metric is not yet computed.',
+        academyUrl: `${ACADEMY_ROOT}/sft-fundamentals/decoding-controls.html`,
+    },
 };
 
 export function getTermDefinition(id: string): TermDefinition | null {

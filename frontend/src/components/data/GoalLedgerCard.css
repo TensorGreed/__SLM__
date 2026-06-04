@@ -179,6 +179,77 @@
     color: var(--text-secondary);
 }
 
+/* Arc R-2 slice 2 — gate breakdown sub-rows on the eval_pass_rate
+ * component. Renders when the project's eval pack has gates and
+ * an eval has run; each row reads "<metric> <actual> <threshold>"
+ * with status colour-coding. */
+.goal-ledger__gates {
+    margin-top: 8px;
+    border-top: 1px dashed var(--border-muted);
+    padding-top: 8px;
+}
+
+.goal-ledger__gates summary {
+    cursor: pointer;
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.goal-ledger__gates summary small {
+    color: var(--text-tertiary);
+}
+
+.goal-ledger__gates ul {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.goal-ledger__gate {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: var(--space-sm);
+    align-items: baseline;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: var(--fs-xs);
+}
+
+.goal-ledger__gate--met { background: rgba(34, 197, 94, 0.06); }
+.goal-ledger__gate--attention { background: rgba(245, 158, 11, 0.08); }
+.goal-ledger__gate--pending { background: var(--bg-tertiary); }
+
+.goal-ledger__gate-label {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.goal-ledger__gate-optional {
+    color: var(--text-tertiary);
+}
+
+.goal-ledger__gate-actual {
+    font-family: var(--font-mono, monospace);
+    font-weight: 600;
+}
+
+.goal-ledger__gate-actual--met { color: var(--accent-success, #22c55e); }
+.goal-ledger__gate-actual--attention { color: var(--accent-warning, #f59e0b); }
+.goal-ledger__gate-actual--pending { color: var(--text-tertiary); }
+
+.goal-ledger__gate-threshold {
+    color: var(--text-tertiary);
+    font-family: var(--font-mono, monospace);
+}
+
 .goal-ledger__blockers {
     border-top: 1px dashed var(--border-muted);
     padding-top: var(--space-md);

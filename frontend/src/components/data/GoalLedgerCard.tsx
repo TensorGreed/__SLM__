@@ -24,6 +24,7 @@ import {
 } from '../../api/goal';
 import type {
     GoalComponentStatus,
+    GoalGateBreakdown,
     GoalProgressComponent,
     GoalProgressResponse,
 } from '../../api/goal';
@@ -56,10 +57,72 @@ function _ledgerStatusCopy(
 }
 
 
+/**
+ * Arc R-2 slice 2 — pretty-format a metric value for the gate
+ * breakdown rows. Sub-1 values render as percentages so the user
+ * can compare them to the matching threshold at a glance ("Citation
+ * 78% / ≥75%"); larger or null values render verbatim.
+ */
+function _formatGateValue(value: number | null): string {
+    if (value === null || value === undefined) return '—';
+    if (!Number.isFinite(value)) return String(value);
+    if (Math.abs(value) <= 1.0) {
+        return `${Math.round(value * 100)}%`;
+    }
+    return value.toFixed(3);
+}
+
+
+function _formatGateThreshold(gate: GoalGateBreakdown): string {
+    if (gate.threshold === null) return 'n/a';
+    const value = Math.abs(gate.threshold) <= 1.0
+        ? `${Math.round(gate.threshold * 100)}%`
+        : gate.threshold.toFixed(3);
+    return gate.operator === 'lte' ? `≤ ${value}` : `≥ ${value}`;
+}
+
+
+/**
+ * Arc R-2 slice 2 — sub-row rendering for the goal ledger's
+ * eval_pass_rate component when the project's eval pack carries
+ * gates (e.g. the rag-protocol discipline pack). Each gate's
+ * ``metric_id`` wraps in <Term> so the row carries the Academy
+ * deep-link via Arc G compound.
+ */
+function GateBreakdownRow({ gate }: { gate: GoalGateBreakdown }) {
+    const status: GoalComponentStatus = gate.actual === null
+        ? 'pending'
+        : (gate.passed ? 'met' : 'attention');
+    return (
+        <li
+            className={`goal-ledger__gate goal-ledger__gate--${status}`}
+            data-testid={`goal-ledger-gate-${gate.gate_id}`}
+        >
+            <span className="goal-ledger__gate-label">
+                <Term id={gate.metric_id} label={gate.metric_id.replace(/_/g, ' ')} />
+                {gate.required ? null : (
+                    <small className="goal-ledger__gate-optional"> (optional)</small>
+                )}
+            </span>
+            <span
+                className={`goal-ledger__gate-actual goal-ledger__gate-actual--${status}`}
+                data-testid={`goal-ledger-gate-${gate.gate_id}-actual`}
+            >
+                {_formatGateValue(gate.actual)}
+            </span>
+            <span className="goal-ledger__gate-threshold">
+                {_formatGateThreshold(gate)}
+            </span>
+        </li>
+    );
+}
+
+
 function ComponentRow({ component }: { component: GoalProgressComponent }) {
     const pct = component.value === null
         ? 0
         : Math.round(component.value * 100);
+    const breakdown = component.gate_breakdown || [];
     return (
         <li
             className={`goal-ledger__component goal-ledger__component--${component.status}`}
@@ -82,6 +145,21 @@ function ComponentRow({ component }: { component: GoalProgressComponent }) {
                 />
             </div>
             <p className="goal-ledger__component-detail">{component.detail}</p>
+            {breakdown.length > 0 && (
+                <details
+                    className="goal-ledger__gates"
+                    data-testid={`goal-ledger-gate-breakdown-${component.id}`}
+                >
+                    <summary>
+                        Gate breakdown <small>({breakdown.length} gate{breakdown.length === 1 ? '' : 's'})</small>
+                    </summary>
+                    <ul>
+                        {breakdown.map((gate) => (
+                            <GateBreakdownRow key={gate.gate_id} gate={gate} />
+                        ))}
+                    </ul>
+                </details>
+            )}
         </li>
     );
 }

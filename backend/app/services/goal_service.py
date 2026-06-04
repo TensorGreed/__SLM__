@@ -223,10 +223,22 @@ def _predicted_pass_component(
 
 
 async def _eval_pass_rate_component(
-    db: AsyncSession, project_id: int, target_threshold: float,
-) -> tuple[float | None, str, list[str]]:
+    db: AsyncSession,
+    project_id: int,
+    target_threshold: float,
+    project: Project,
+) -> tuple[float | None, str, list[str], list[dict[str, Any]]]:
     """Latest EvalResult.pass_rate for the project (across all experiments)
-    scored against the target threshold. None when no eval has run yet."""
+    scored against the target threshold. None when no eval has run yet.
+
+    Arc R-2 slice 2 — also computes a per-gate breakdown so the
+    ledger row can expand into the gates the project's eval pack
+    actually enforces (citation rate, hallucination cap, refusal
+    match, etc. for the rag-protocol discipline pack). Returns a
+    structured list keyed off the project's selected recipe's
+    ``eval_pack_id``. Empty list when no eval has run or the pack
+    has no gates.
+    """
     result = await db.execute(
         select(EvalResult)
         .join(Experiment, EvalResult.experiment_id == Experiment.id)
@@ -239,6 +251,7 @@ async def _eval_pass_rate_component(
         return (
             None,
             "No eval has run yet.",
+            [],
             [],
         )
     pass_rate = float(latest.pass_rate)
@@ -253,7 +266,92 @@ async def _eval_pass_rate_component(
         blockers = [
             f"Eval pass rate {pass_rate:.0%}, below your {target_threshold:.0%} target.",
         ]
-    return (ratio, detail, blockers)
+    gate_breakdown = _compute_gate_breakdown(project, latest)
+    return (ratio, detail, blockers, gate_breakdown)
+
+
+def _compute_gate_breakdown(
+    project: Project, latest_eval: EvalResult,
+) -> list[dict[str, Any]]:
+    """Run the project's eval-pack gates against the latest EvalResult.
+
+    Returns a list of gate-eval dicts ``{gate_id, metric_id,
+    operator, threshold, required, actual, passed}``. The frontend
+    GoalLedgerCard expands the eval_pass_rate component into this
+    list so the user sees citation_rate / hallucination_rate /
+    appropriate_refusal_rate / etc. as concrete sub-rows instead of
+    a single opaque pass-rate number.
+
+    Pack resolution: the project's selected recipe carries an
+    ``eval_pack_id``. We resolve it via the same registry the
+    eval pipeline uses; falls back to the default pack when the
+    recipe doesn't override. When no task_spec matches, returns an
+    empty list (the ledger row degrades to the bare pass-rate
+    detail).
+
+    All imports live inside the function to avoid a circular
+    import on module load: evaluation_pack_service imports from
+    domain_runtime_service, which transitively imports from this
+    file's parent package.
+    """
+    from app.services.evaluation_pack_service import (
+        get_evaluation_pack,
+        _build_metric_snapshot,
+        _evaluate_gate,
+        _select_task_spec,
+        DEFAULT_EVALUATION_PACK_ID,
+    )
+
+    selected_recipe = project.selected_recipe or {}
+    pack_id = selected_recipe.get("eval_pack_id") or DEFAULT_EVALUATION_PACK_ID
+    pack = get_evaluation_pack(str(pack_id))
+    if pack is None:
+        return []
+    # Use the task_profile the eval was actually scored under.
+    # Falls back to the pack's default when the EvalResult doesn't
+    # carry one explicitly.
+    eval_task_profile = (
+        latest_eval.eval_type
+        or pack.get("default_task_profile")
+        or "instruction_sft"
+    )
+    task_spec, _selected_profile, _fallback = _select_task_spec(pack, eval_task_profile)
+    gates = [
+        gate for gate in (task_spec.get("gates") or [])
+        if isinstance(gate, dict)
+    ]
+    if not gates:
+        return []
+
+    # Build the metric-value lookup from this single EvalResult.
+    # _build_metric_snapshot expects a {eval_type → EvalResult} dict;
+    # passing one entry is fine.
+    latest_by_type = {latest_eval.eval_type: latest_eval}
+    metric_values, metric_sources = _build_metric_snapshot(latest_by_type)
+    metric_schema = dict(task_spec.get("metric_schema") or {})
+
+    breakdown: list[dict[str, Any]] = []
+    for gate in gates:
+        check = _evaluate_gate(
+            gate,
+            values=metric_values,
+            sources=metric_sources,
+            metric_schema=metric_schema,
+        )
+        # Strip the noisy ``source`` dict and the reason code — the
+        # ledger UI just needs the actionable fields. Reason codes
+        # like "missing_metric_optional" are surfaced via the
+        # actual=None state on the UI side.
+        breakdown.append({
+            "gate_id": check["gate_id"],
+            "metric_id": check["metric_id"],
+            "operator": check["operator"],
+            "threshold": check["threshold"],
+            "required": check["required"],
+            "actual": check["actual"],
+            "passed": check["passed"],
+        })
+    return breakdown
 
 
 async def compute_progress(
@@ -275,8 +373,8 @@ async def compute_progress(
     data_value, data_detail, data_blockers = await _data_ready_component(db, project_id)
     gold_value, gold_detail, gold_blockers = await _gold_set_component(db, project_id)
     pred_value, pred_detail, pred_blockers = _predicted_pass_component(project, target_threshold)
-    eval_value, eval_detail, eval_blockers = await _eval_pass_rate_component(
-        db, project_id, target_threshold,
+    eval_value, eval_detail, eval_blockers, eval_gate_breakdown = await _eval_pass_rate_component(
+        db, project_id, target_threshold, project,
     )
 
     components = [
@@ -311,6 +409,12 @@ async def compute_progress(
             "status": _status_for(eval_value),
             "detail": eval_detail,
             "concept_id": "pass_rate",
+            # Arc R-2 slice 2 — per-gate breakdown so the ledger row
+            # expands into citation_rate / hallucination_rate /
+            # appropriate_refusal_rate when the project's recipe ships
+            # a custom pack (e.g. rag-protocol). Empty list when no
+            # eval has run or the pack has no gates.
+            "gate_breakdown": eval_gate_breakdown,
         },
     ]
 
