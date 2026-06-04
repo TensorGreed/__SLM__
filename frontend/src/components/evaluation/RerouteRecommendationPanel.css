@@ -79,6 +79,69 @@
     font-weight: bold;
 }
 
+.reroute-card__signal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+/* Arc L — Decision-trace disclosure. Per-signal "Why this fired?"
+ * expands to a compact key/value table of the backend's evidence
+ * dict so the user can audit the rule's reasoning. */
+.reroute-card__signal-evidence {
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.reroute-card__signal-evidence summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-style: italic;
+    list-style: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.reroute-card__signal-evidence summary::before {
+    content: '▸ ';
+    color: var(--text-tertiary);
+}
+
+.reroute-card__signal-evidence[open] summary::before {
+    content: '▾ ';
+}
+
+.reroute-card__signal-evidence dl {
+    margin: 6px 0 0;
+    padding: 6px 10px;
+    border-left: 2px solid var(--border-muted);
+    background: rgba(148, 163, 184, 0.04);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.reroute-card__signal-evidence-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-sm);
+    align-items: baseline;
+}
+
+.reroute-card__signal-evidence-row dt {
+    color: var(--text-secondary);
+}
+
+.reroute-card__signal-evidence-row dd {
+    margin: 0;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
 .reroute-card__rationale {
     font-size: var(--font-size-sm);
     color: var(--text-secondary);

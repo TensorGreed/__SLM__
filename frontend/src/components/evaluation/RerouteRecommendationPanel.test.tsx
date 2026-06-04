@@ -255,4 +255,101 @@ describe('RerouteRecommendationPanel', () => {
         // No navigate fired.
         expect(locationAssignMock).not.toHaveBeenCalled();
     });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Arc L — Decision-trace disclosure. The backend's RerouteSignal
+    // already carries an ``evidence`` dict (jaccard scores, keyword
+    // hits, density ratios) but the previous panel only rendered the
+    // human-readable ``.detail`` text. The trace surfaces the
+    // evidence so the user can audit the decision-engine's reasoning
+    // before clicking "Switch to RAG".
+    // ─────────────────────────────────────────────────────────────────
+
+    it('renders a "Why this fired?" disclosure with the evidence dict per signal', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: makeAnalysis({
+                kind: 'try_rag',
+                firedSignalIds: ['goldset_answer_diversity_high'],
+            }),
+        });
+        renderPanel();
+        await waitFor(() => {
+            expect(screen.getByTestId('reroute-card-try-rag')).toBeInTheDocument();
+        });
+        // The disclosure mounts on the fired signal.
+        const disclosure = screen.getByTestId(
+            'reroute-card-signal-evidence-goldset_answer_diversity_high',
+        );
+        expect(disclosure).toBeInTheDocument();
+        // mean_pairwise_jaccard = 0.05 from the fixture; rendered as
+        // a labelled row in the evidence table.
+        const row = screen.getByTestId(
+            'reroute-card-signal-evidence-goldset_answer_diversity_high-mean_pairwise_jaccard',
+        );
+        expect(row.textContent).toMatch(/0\.050/);
+    });
+
+    it('renders array evidence with head + tail count', async () => {
+        apiMock.get.mockResolvedValueOnce({
+            data: makeAnalysis({
+                kind: 'try_rag',
+                firedSignalIds: ['brief_mentions_retrieval'],
+            }),
+        });
+        renderPanel();
+        await waitFor(() => {
+            expect(screen.getByTestId('reroute-card-try-rag')).toBeInTheDocument();
+        });
+        // matched_keywords is a one-element array in the fixture.
+        const row = screen.getByTestId(
+            'reroute-card-signal-evidence-brief_mentions_retrieval-matched_keywords',
+        );
+        expect(row.textContent).toMatch(/answer questions about/);
+    });
+
+    it('omits the disclosure when a fired signal has no evidence', async () => {
+        // Defensive: backend can ship a signal without an evidence
+        // dict (legacy or disabled diagnostic). The disclosure should
+        // disappear entirely rather than render an empty drawer.
+        const analysis = makeAnalysis({
+            kind: 'try_rag',
+            firedSignalIds: ['brief_mentions_retrieval'],
+        });
+        // Strip evidence from the fired signal.
+        analysis.signals = analysis.signals.map((s) =>
+            s.id === 'brief_mentions_retrieval' ? { ...s, evidence: {} } : s,
+        );
+        apiMock.get.mockResolvedValueOnce({ data: analysis });
+        renderPanel();
+        await waitFor(() => {
+            expect(screen.getByTestId('reroute-card-try-rag')).toBeInTheDocument();
+        });
+        expect(
+            screen.queryByTestId('reroute-card-signal-evidence-brief_mentions_retrieval'),
+        ).toBeNull();
+    });
+
+    it('renders numeric evidence with the configured precision (3 decimals)', async () => {
+        const analysis = makeAnalysis({
+            kind: 'try_rag',
+            firedSignalIds: ['input_output_density_low'],
+        });
+        analysis.signals = analysis.signals.map((s) =>
+            s.id === 'input_output_density_low'
+                ? { ...s, evidence: { density: 0.018273, density_threshold: 0.05, rows_sampled: 120 } }
+                : s,
+        );
+        apiMock.get.mockResolvedValueOnce({ data: analysis });
+        renderPanel();
+        await waitFor(() => {
+            expect(screen.getByTestId('reroute-card-try-rag')).toBeInTheDocument();
+        });
+        // Sub-100 decimals → 3 places; integers preserved.
+        expect(
+            screen.getByTestId('reroute-card-signal-evidence-input_output_density_low-density').textContent,
+        ).toMatch(/0\.018/);
+        expect(
+            screen.getByTestId('reroute-card-signal-evidence-input_output_density_low-rows_sampled').textContent,
+        ).toMatch(/120/);
+    });
 });

@@ -244,7 +244,10 @@ function RerouteCard({
                             data-testid={`reroute-card-signal-${s.id}`}
                         >
                             <span className="reroute-card__signal-bullet" aria-hidden="true">•</span>
-                            <span>{s.detail}</span>
+                            <div className="reroute-card__signal-body">
+                                <span>{s.detail}</span>
+                                <SignalEvidence signal={s} />
+                            </div>
                         </li>
                     ))}
                 </ul>
@@ -357,4 +360,100 @@ function formatPassRate(rate: number | null): string {
         return 'an indeterminate score';
     }
     return `F1 ${rate.toFixed(2)}`;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Arc L — Decision-trace disclosure.
+//
+// The backend's RerouteSignal already carries an ``evidence`` dict
+// (matched_keywords, jaccard scores, density ratios, thresholds), but
+// the previous panel surfaced only the human-readable ``.detail`` and
+// dropped the evidence on the floor. Without the numbers the user
+// can't decide "is this signal correctly firing?" or "is the rule
+// being too aggressive?" — they're asked to trust a verdict with no
+// audit trail.
+//
+// This helper renders the evidence dict as a compact key/value table
+// inside a "Why this fired?" disclosure on every fired signal.
+// Numbers are rendered with up to 3 decimals; lists collapse to a
+// comma-separated preview with a tail count when long; booleans and
+// strings pass through verbatim.
+// ─────────────────────────────────────────────────────────────────────
+
+const EVIDENCE_KEYS_TO_LABEL: Record<string, string> = {
+    matched_keywords: 'Matched keywords',
+    matched_count: 'Match count',
+    keyword_pool_size: 'Keyword pool',
+    jaccard: 'Jaccard similarity',
+    jaccard_threshold: 'Jaccard threshold',
+    rows_sampled: 'Rows sampled',
+    density: 'Output / input density',
+    density_threshold: 'Density threshold',
+    pass_rate: 'Pass rate',
+    pass_rate_threshold: 'Pass rate threshold',
+};
+
+
+function _formatEvidenceValue(value: unknown): string {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return String(value);
+        if (Math.abs(value) >= 100 || Number.isInteger(value)) {
+            return String(value);
+        }
+        return value.toFixed(3);
+    }
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (Array.isArray(value)) {
+        const head = value.slice(0, 4).map((item) => String(item));
+        const tail = value.length - head.length;
+        return tail > 0 ? `${head.join(', ')} +${tail} more` : head.join(', ');
+    }
+    if (typeof value === 'object') {
+        try {
+            const text = JSON.stringify(value);
+            return text.length > 140 ? `${text.slice(0, 140)}…` : text;
+        } catch {
+            return '[object]';
+        }
+    }
+    return String(value);
+}
+
+
+function _evidenceLabel(key: string): string {
+    return EVIDENCE_KEYS_TO_LABEL[key] || key.replace(/_/g, ' ');
+}
+
+
+function SignalEvidence({ signal }: { signal: RerouteSignal }) {
+    const evidence = signal.evidence || {};
+    const entries = Object.entries(evidence);
+    if (entries.length === 0) {
+        // Backend can ship a signal without evidence (e.g. legacy or
+        // disabled diagnostic). Hide the disclosure entirely so the
+        // user doesn't open an empty drawer.
+        return null;
+    }
+    return (
+        <details
+            className="reroute-card__signal-evidence"
+            data-testid={`reroute-card-signal-evidence-${signal.id}`}
+        >
+            <summary>Why this fired?</summary>
+            <dl>
+                {entries.map(([key, value]) => (
+                    <div
+                        key={key}
+                        className="reroute-card__signal-evidence-row"
+                        data-testid={`reroute-card-signal-evidence-${signal.id}-${key}`}
+                    >
+                        <dt>{_evidenceLabel(key)}</dt>
+                        <dd>{_formatEvidenceValue(value)}</dd>
+                    </div>
+                ))}
+            </dl>
+        </details>
+    );
 }
