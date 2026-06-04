@@ -50,9 +50,13 @@ from typing import Any, Literal, TypedDict
 
 # Public type — recipes that have a Phase 9a corpus shape. Add a new
 # entry to the map below when a new recipe gains a RAG corpus shape.
-# Today: QA-SFT only.
+# Arc R-1: rag-protocol indexes (context, question, answer) so the
+# retrieval surface mirrors the protocol-aware fine-tune's training
+# shape. Stage 2 customers (ecom-FAQ / legal / support) bolt their
+# own data onto the same shape.
 _RECIPE_TO_TEXT_KEYS: dict[str, tuple[str, ...]] = {
     "qa-sft": ("question", "answer"),
+    "rag-protocol": ("context", "question", "answer"),
 }
 
 

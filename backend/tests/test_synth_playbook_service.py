@@ -108,10 +108,13 @@ class PlaybookUnitTests(unittest.TestCase):
         modes_present = {p["mode"] for p in catalog}
         self.assertIn("positives_paraphrase", modes_present)
         # Every recipe must have positives_paraphrase available.
+        # Arc R-1 added ``rag-protocol`` → 7 recipes with paraphrase
+        # playbooks (rag-protocol ships its citation-drill variant
+        # under POSITIVES_PARAPHRASE).
         recipes_with_paraphrase = {
             p["recipe_id"] for p in catalog if p["mode"] == "positives_paraphrase"
         }
-        self.assertEqual(len(recipes_with_paraphrase), 6)
+        self.assertEqual(len(recipes_with_paraphrase), 7)
 
     def test_qa_sft_paraphrase_preserves_answer_text(self):
         # The QA paraphrase playbook must drop confidence when the

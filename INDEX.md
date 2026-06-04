@@ -225,6 +225,9 @@ session-start guidance.
 - `backend/app/services/synth_playbooks/generic_sft_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `generic-sft` recipe.
 - `backend/app/services/synth_playbooks/qa_sft_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `qa-sft` recipe.
 - `backend/app/services/synth_playbooks/qa_sft_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `qa-sft` recipe.
+- `backend/app/services/synth_playbooks/rag_protocol_format.py` — Arc R-1 — FORMAT_ROBUSTNESS playbook for the ``rag-protocol`` recipe.
+- `backend/app/services/synth_playbooks/rag_protocol_paraphrase.py` — Arc R-1 — POSITIVES_PARAPHRASE playbook for the ``rag-protocol`` recipe.
+- `backend/app/services/synth_playbooks/rag_protocol_refusals.py` — Arc R-1 — REFUSALS playbook for the ``rag-protocol`` recipe.
 - `backend/app/services/synth_playbooks/span_extraction_cluster_targeted.py` — CLUSTER_TARGETED playbook for the `span-extraction` recipe.
 - `backend/app/services/synth_playbooks/span_extraction_hard_negatives.py` — HARD_NEGATIVES playbook for the `span-extraction` recipe.
 - `backend/app/services/synth_playbooks/span_extraction_paraphrase.py` — POSITIVES_PARAPHRASE playbook for the `span-extraction` recipe.
@@ -760,6 +763,7 @@ session-start guidance.
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
 - `backend/tests/test_rag_adapter_prompt_wrap.py` — η-fix tests — rag-grounded adapter writes the production
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
+- `backend/tests/test_rag_protocol_recipe.py` — Tests for the rag-protocol recipe + its three playbooks (Arc R-1).
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).

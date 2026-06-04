@@ -33,9 +33,10 @@ SCORING_MODE_SPAN_SET = "span_set"
 class RecipeCatalogTests(unittest.TestCase):
     """Sanity checks on the built-in recipe catalog itself."""
 
-    def test_ships_six_built_in_recipes(self):
+    def test_ships_seven_built_in_recipes(self):
+        # Arc R-1 added ``rag-protocol`` — the 7th built-in recipe.
         recipes = recipe_service.list_recipes()
-        self.assertEqual(len(recipes), 6)
+        self.assertEqual(len(recipes), 7)
         ids = {r.id for r in recipes}
         self.assertEqual(
             ids,
@@ -46,6 +47,7 @@ class RecipeCatalogTests(unittest.TestCase):
                 "summarization",
                 "code-review",
                 "generic-sft",
+                "rag-protocol",
             },
         )
 
@@ -97,8 +99,8 @@ class RecipeCatalogTests(unittest.TestCase):
             recipe_service.RECIPE_CATALOG_VERSION,
         )
         self.assertEqual(catalog["catalog_source"], "builtin")
-        self.assertEqual(catalog["recipe_count"], 6)
-        self.assertEqual(len(catalog["recipes"]), 6)
+        self.assertEqual(catalog["recipe_count"], 7)
+        self.assertEqual(len(catalog["recipes"]), 7)
 
     def test_supported_task_profiles_subset_of_data_adapter_set(self):
         for profile in recipe_service.list_supported_task_profiles_for_recipes():
@@ -198,8 +200,8 @@ class RecipeApiTests(unittest.TestCase):
         resp = self.client.get("/api/recipes")
         self.assertEqual(resp.status_code, 200, resp.text)
         payload = resp.json()
-        self.assertEqual(payload["recipe_count"], 6)
-        self.assertEqual(len(payload["recipes"]), 6)
+        self.assertEqual(payload["recipe_count"], 7)
+        self.assertEqual(len(payload["recipes"]), 7)
         self.assertEqual(
             payload["catalog_version"],
             recipe_service.RECIPE_CATALOG_VERSION,

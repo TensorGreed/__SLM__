@@ -46,6 +46,14 @@ from . import qa_sft_cluster_targeted  # noqa: F401
 from . import span_extraction_cluster_targeted  # noqa: F401
 from . import summarization_cluster_targeted  # noqa: F401
 
+# Arc R-1: rag-protocol playbooks — recipe trains a model to USE a
+# retrieval index correctly (cite, refuse, format consistently).
+# Three modes wired up front so the first synth run on a fresh
+# rag-protocol project has every protocol drill available.
+from . import rag_protocol_paraphrase  # noqa: F401 — POSITIVES_PARAPHRASE
+from . import rag_protocol_refusals  # noqa: F401 — REFUSALS
+from . import rag_protocol_format  # noqa: F401 — FORMAT_ROBUSTNESS
+
 
 __all__ = [
     "Playbook",

@@ -550,6 +550,124 @@ def _generic_sft_recipe() -> Recipe:
     )
 
 
+def _rag_protocol_recipe() -> Recipe:
+    """Arc R-1 — protocol-aware RAG fine-tune.
+
+    Trains a model on (context, question, answer-with-citation) tuples
+    so the resulting model knows how to USE a RAG index correctly:
+    cite the chunk it pulled, refuse when context is insufficient,
+    and hew to a consistent response format. Domain-agnostic — the
+    same recipe works for ecommerce FAQ, legal QA, support, and
+    internal knowledge bases. Stage 2 (the customer's actual data)
+    bolts on via the existing auto-RAG / RAG-first runtime; the
+    recipe owns the *protocol*, not the *facts*.
+
+    Pairs with the ``rag-grounded`` adapter (which already maps
+    context/question/answer to RAGHandler) and the ``rag_qa`` task
+    profile (which scores SQuAD EM/F1 + faithfulness +
+    context_recall).
+
+    Curated playbooks generate three signal types from gold seeds:
+      - POSITIVES_PARAPHRASE → citation drills (answers must
+        reference the chunk id)
+      - REFUSALS             → context-insufficient examples with
+        templated refusal copy
+      - FORMAT_ROBUSTNESS    → varied question phrasings demanding
+        identical answer formatting
+    """
+    return Recipe(
+        id="rag-protocol",
+        name="Protocol-aware RAG Assistant",
+        headline="Train a model to USE a retrieval index correctly — cite, refuse, format consistently.",
+        description=(
+            "For projects that deploy with retrieval (auto-RAG / RAG-first). "
+            "The recipe trains the model on RAG-shaped triples (context, "
+            "question, answer-with-citation) so it learns to cite the "
+            "chunk it used, refuse when context is insufficient, and "
+            "produce consistently-formatted answers. The customer-"
+            "specific facts come from their own BM25 index at inference "
+            "time — the recipe owns the protocol, not the domain."
+        ),
+        icon="📚",
+        task_profile="rag_qa",
+        adapter_id="rag-grounded",
+        scoring_mode="field_match",
+        default_input_column="question",
+        default_output_column="answer",
+        suggested_base_model="HuggingFaceTB/SmolLM2-135M-Instruct",
+        alt_base_models=[
+            "Qwen/Qwen2.5-0.5B-Instruct",
+            "Qwen/Qwen2.5-3B-Instruct",
+            "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        ],
+        target_profile="vllm_server",
+        training_plan_profile="balanced",
+        eval_pack_id="evalpack.general.default",
+        gold_template=GoldTemplate(
+            shape_label="context_question_answer_with_citation",
+            min_rows_recommended=60,
+            fields=[
+                GoldFieldSpec(
+                    name="context",
+                    description=(
+                        "The retrieved chunk(s) the model should ground its "
+                        "answer in. Multi-chunk context can be concatenated "
+                        "with [#1] / [#2] markers."
+                    ),
+                ),
+                GoldFieldSpec(
+                    name="question",
+                    description="The user-facing question.",
+                ),
+                GoldFieldSpec(
+                    name="answer",
+                    description=(
+                        "The grounded answer. Include the chunk citation "
+                        "(e.g. [#1]) when the answer pulls from a specific "
+                        "passage. For refusal cases, use the templated "
+                        "phrase \"I don't have enough context to answer "
+                        "that.\""
+                    ),
+                ),
+            ],
+            example_row={
+                "context": "[#1] Our refund policy allows returns within 30 days of delivery for unused items in original packaging.",
+                "question": "How long do I have to return an item?",
+                "answer": "You have 30 days from delivery to return unused items in their original packaging [#1].",
+            },
+        ),
+        sample_eval_prompts=[
+            "Context: [#1] Free standard shipping on orders over $50. → Question: When does free shipping kick in?",
+            "Context: [#1] Premium tier includes 24/7 phone support. → Question: What's the refund window?",
+            "Context: (none) → Question: What's your return policy?",
+        ],
+        data_acquisition_hints=[
+            "Pair existing FAQ entries with their source paragraph (the context) — most knowledge bases already have this implicit linkage.",
+            "Generate refusal examples synthetically: for each context-irrelevant question, the answer should be the templated 'not enough context' phrase.",
+            "Mine support transcripts: agent answers cite specific KB articles — that linkage is your context-question-answer triple.",
+        ],
+        shape_signatures=[
+            ShapeSignature(
+                columns=[
+                    ShapeColumn(
+                        name_patterns=["context", "passage", "chunk", "source", "evidence"],
+                        column_role="auxiliary",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["question", "query", "prompt", "q"],
+                        column_role="input",
+                    ),
+                    ShapeColumn(
+                        name_patterns=["answer", "response", "output", "a"],
+                        column_role="output",
+                    ),
+                ],
+                base_confidence=0.86,
+            ),
+        ],
+    )
+
+
 _BUILTIN_RECIPE_FACTORIES = [
     _qa_sft_recipe,
     _classification_recipe,
@@ -557,6 +675,7 @@ _BUILTIN_RECIPE_FACTORIES = [
     _summarization_recipe,
     _code_review_recipe,
     _generic_sft_recipe,
+    _rag_protocol_recipe,
 ]
 
 
