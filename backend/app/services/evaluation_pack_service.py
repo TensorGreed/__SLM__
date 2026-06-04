@@ -99,6 +99,58 @@ _BASE_METRIC_SCHEMA: dict[str, dict[str, Any]] = {
         "expected_range": [0.0, 1.0],
         "aliases": ["groundedness", "rag_qa.groundedness", "llm_judge_pass_rate", "f1"],
     },
+    # Arc R-2 — RAG-protocol discipline metrics. The rag-grounded
+    # eval handler (RAGHandler.score) already emits faithfulness_rate
+    # and unsupported_token_rate_mean; appropriate_refusal_rate was
+    # added in the same arc. format_consistency is a placeholder
+    # for the Slice-2 implementation (clustering-based output-shape
+    # consistency) — the gate uses ``required=False`` so the pack
+    # stays usable until the metric is computed.
+    "citation_rate": {
+        "description": (
+            "Share of predictions whose token overlap with the retrieved "
+            "context meets the faithfulness threshold (0.7). Mirrors the "
+            "rag-protocol training-time citation signal."
+        ),
+        "expected_range": [0.0, 1.0],
+        "aliases": ["citation_rate", "faithfulness_rate", "rag_qa.faithfulness_rate"],
+    },
+    "hallucination_rate": {
+        "description": (
+            "Mean fraction of prediction tokens NOT supported by the "
+            "retrieved context. Lower is better — gates use the ``lte`` "
+            "operator against this metric."
+        ),
+        "expected_range": [0.0, 1.0],
+        "aliases": [
+            "hallucination_rate",
+            "unsupported_token_rate_mean",
+            "rag_qa.unsupported_rate",
+        ],
+    },
+    "appropriate_refusal_rate": {
+        "description": (
+            "Fraction of rows where the model's refusal/answer behaviour "
+            "matched the gold's. Rewards following the gold signal — "
+            "refuse when the gold refuses, answer when the gold answers — "
+            "NOT a blanket-refusal incentive."
+        ),
+        "expected_range": [0.0, 1.0],
+        "aliases": [
+            "appropriate_refusal_rate",
+            "refusal_match_rate",
+            "rag_qa.appropriate_refusal_rate",
+        ],
+    },
+    "format_consistency": {
+        "description": (
+            "Consistency of response format across predictions (clustering / "
+            "length-bucketed shape agreement). Optional gate; the metric is "
+            "computed in a follow-on slice."
+        ),
+        "expected_range": [0.0, 1.0],
+        "aliases": ["format_consistency", "rag_qa.format_consistency"],
+    },
 }
 
 
@@ -631,6 +683,84 @@ _BUILTIN_EVALUATION_PACKS: list[dict[str, Any]] = [
         "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
         "default_task_profile": "qa",
         "task_specs": _default_task_specs_for_pack("finance"),
+    },
+    # Arc R-2 — RAG-protocol discipline pack. Paired with the
+    # ``rag-protocol`` recipe (Arc R-1). The 4 protocol-specific
+    # gates score the model on the behaviours the recipe trained
+    # for: cite the chunk, refuse appropriately, stay faithful to
+    # the context, hold output format. Legacy F1 is still gated
+    # (informational) so a regression on the QA-shape EM/F1 side
+    # surfaces in the same pack.
+    {
+        "pack_id": "evalpack.rag_protocol.discipline",
+        "display_name": "RAG Protocol — Discipline Gates",
+        "description": (
+            "Protocol-specific quality gates for projects on the "
+            "rag-protocol recipe: citation rate, appropriate refusal "
+            "rate, hallucination rate, and format consistency. "
+            "Backs the Arc R-1 recipe so the goal ledger's "
+            "eval_pass_rate row scores the discipline-shape signals "
+            "instead of bare F1."
+        ),
+        "version": "1.0.0",
+        "owner": "platform",
+        "tags": ["rag", "rag-protocol", "discipline", "groundedness", "citation"],
+        "contract_version": EVALUATION_PACK_CONTRACT_VERSION,
+        "default_task_profile": "rag_qa",
+        "task_specs": [
+            _build_task_spec(
+                task_profile="rag_qa",
+                display_name="RAG Protocol — Discipline",
+                required_metric_ids=[
+                    "f1",
+                    "citation_rate",
+                    "hallucination_rate",
+                    "appropriate_refusal_rate",
+                ],
+                gates=[
+                    # F1 stays REQUIRED so a regression on the QA-shape
+                    # side still trips the gate. The threshold matches
+                    # the default rag_qa spec.
+                    _gate("min_f1", "f1", 0.55, required=True),
+                    # Citation discipline: ≥75% of predictions must be
+                    # token-grounded in the retrieved context. The
+                    # rag-protocol training drills imprint exactly this
+                    # behaviour via the [#N] citation signal.
+                    _gate("min_citation_rate", "citation_rate", 0.75, required=True),
+                    # Hallucination cap: ≤15% mean unsupported-token
+                    # rate across rows. Uses lte against the
+                    # unsupported_token_rate_mean alias.
+                    _gate(
+                        "max_hallucination_rate",
+                        "hallucination_rate",
+                        0.15,
+                        operator="lte",
+                        required=True,
+                    ),
+                    # Refusal-match discipline: model's refusal behaviour
+                    # matches the gold at ≥80% of rows. Rewards
+                    # following the gold signal, not blanket-refusal.
+                    _gate(
+                        "min_appropriate_refusal_rate",
+                        "appropriate_refusal_rate",
+                        0.80,
+                        required=True,
+                    ),
+                    # Format consistency lands in Slice 2 — gate is
+                    # optional so the pack remains usable while the
+                    # metric is being implemented.
+                    _gate(
+                        "min_format_consistency",
+                        "format_consistency",
+                        0.75,
+                        required=False,
+                    ),
+                    # Safety stays optional — same convention as the
+                    # default rag_qa spec.
+                    _gate("min_safety_pass_rate", "safety_pass_rate", 0.90, required=False),
+                ],
+            ),
+        ],
     },
 ]
 

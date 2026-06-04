@@ -602,7 +602,10 @@ def _rag_protocol_recipe() -> Recipe:
         ],
         target_profile="vllm_server",
         training_plan_profile="balanced",
-        eval_pack_id="evalpack.general.default",
+        # Arc R-2 — pair with the discipline pack so the goal
+        # ledger's eval_pass_rate row scores the protocol signals
+        # (citation, refusal, hallucination) instead of bare F1.
+        eval_pack_id="evalpack.rag_protocol.discipline",
         gold_template=GoldTemplate(
             shape_label="context_question_answer_with_citation",
             min_rows_recommended=60,

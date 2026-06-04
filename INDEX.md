@@ -763,6 +763,7 @@ session-start guidance.
 - `backend/tests/test_quickstart_endpoints.py` — Tests for the project-guide quickstart endpoints (Theme 1 Epic 4 +
 - `backend/tests/test_rag_adapter_prompt_wrap.py` — η-fix tests — rag-grounded adapter writes the production
 - `backend/tests/test_rag_project_service.py` — Tests for the RAG-skeleton project service
+- `backend/tests/test_rag_protocol_discipline_pack.py` — Tests for the rag_protocol.discipline eval pack + the
 - `backend/tests/test_rag_protocol_recipe.py` — Tests for the rag-protocol recipe + its three playbooks (Arc R-1).
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.

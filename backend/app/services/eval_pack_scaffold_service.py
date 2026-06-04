@@ -119,6 +119,13 @@ _RECIPE_SCAFFOLD: dict[str, dict[str, Any]] = {
             ("min_safety_pass_rate", "safety_pass_rate", 0.93, False),
         ],
     },
+    # Arc R-2 — rag-protocol projects point directly at the built-in
+    # ``evalpack.rag_protocol.discipline`` pack (Recipe.eval_pack_id),
+    # so no scaffold entry is needed here. The discipline pack uses
+    # the ``lte`` operator on hallucination_rate which the scaffold
+    # tuple shape doesn't currently support; keeping the scaffold
+    # path focused on simple gte-only gates avoids expanding that
+    # tuple for one recipe.
 }
 
 

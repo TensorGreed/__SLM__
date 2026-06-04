@@ -1442,6 +1442,23 @@ class RAGHandler:
     # that legitimate paraphrasing isn't penalized.
     FAITHFULNESS_THRESHOLD: float = 0.7
 
+    # Arc R-2 — substring fragments that mark an answer as a refusal.
+    # Lower-case, matched case-insensitively. Kept tight on purpose:
+    # the rag-protocol recipe trains the model on one canonical
+    # refusal shape ("I don't have enough context to answer that")
+    # and a few close variants — anything else is a hallucination
+    # wearing a refusal costume, not a genuine refusal. Keep this
+    # list in sync with REFUSAL_PHRASE_VARIANTS in the playbook
+    # registry (synth_playbooks/rag_protocol_refusals.py) so synth
+    # rows and eval rows recognise the same canonical shape.
+    REFUSAL_PHRASE_VARIANTS: tuple[str, ...] = (
+        "don't have enough context",
+        "not enough context",
+        "context doesn't cover",
+        "cannot answer that based on the provided context",
+        "i can't answer that with the available context",
+    )
+
     # Generation cap. Grounded answers should be short — multi-paragraph
     # answers usually mean the model lost the question.
     MAX_NEW_TOKENS_FLOOR: int = 64
@@ -1592,6 +1609,9 @@ class RAGHandler:
                 "faithfulness_score_mean": 0.0,
                 "context_recall_mean": 0.0,
                 "unsupported_token_rate_mean": 0.0,
+                "appropriate_refusal_rate": 0.0,
+                "refusal_match_rows": 0,
+                "expected_refusal_rows": 0,
                 "grounded_rows": 0,
                 "rows_with_context": 0,
                 "total": 0,
@@ -1605,6 +1625,15 @@ class RAGHandler:
         unsupported_rates: list[float] = []
         rows_with_context = 0
         faithful_rows = 0
+        # Arc R-2 — refusal-discipline counters. The "appropriate"
+        # qualifier comes from comparing the reference and the
+        # prediction: a row counts as a refusal-match when the gold
+        # answer is a refusal AND the prediction is also a refusal
+        # (or both are non-refusals). The metric rewards the model
+        # for following the gold's refusal signal, not for
+        # blanket-refusing every question.
+        refusal_match_rows = 0
+        expected_refusal_rows = 0
 
         for prediction in predictions:
             pred_text = str(prediction.get("prediction") or "")
@@ -1641,10 +1670,24 @@ class RAGHandler:
                 if row_faithfulness >= self.FAITHFULNESS_THRESHOLD:
                     faithful_rows += 1
 
+            # Arc R-2 — refusal-discipline accounting. Compare the
+            # canonical-refusal flag on prediction vs. reference.
+            # "Appropriate" = the model followed the gold's signal:
+            # refused when gold refused, answered when gold answered.
+            pred_is_refusal = self._is_refusal_text(pred_text)
+            ref_is_refusal = self._is_refusal_text(ref_text)
+            if ref_is_refusal:
+                expected_refusal_rows += 1
+            if pred_is_refusal == ref_is_refusal:
+                refusal_match_rows += 1
+
             # In-place enrichment for predictions_preview → UI.
             prediction["row_exact_match"] = row_em
             prediction["row_f1"] = row_f1
             prediction["rag_has_context"] = has_context
+            prediction["rag_pred_is_refusal"] = pred_is_refusal
+            prediction["rag_ref_is_refusal"] = ref_is_refusal
+            prediction["rag_refusal_appropriate"] = (pred_is_refusal == ref_is_refusal)
             if row_faithfulness is not None:
                 prediction["rag_faithfulness"] = round(row_faithfulness, 4)
                 prediction["rag_context_recall"] = round(row_context_recall, 4)
@@ -1680,6 +1723,10 @@ class RAGHandler:
             else 0.0
         )
 
+        appropriate_refusal_rate = (
+            round(refusal_match_rows / total, 4) if total > 0 else 0.0
+        )
+
         return {
             # Legacy gate aliases — preserve QA-style EM/F1 so eval-pack
             # gates keyed on those metric IDs keep working.
@@ -1690,11 +1737,28 @@ class RAGHandler:
             "faithfulness_score_mean": faithfulness_mean,
             "context_recall_mean": context_recall_mean,
             "unsupported_token_rate_mean": unsupported_mean,
+            # Arc R-2 — refusal-discipline signal. Rewards the model
+            # for following the gold's refusal signal: refuse when the
+            # gold refuses, answer when the gold answers. NOT a
+            # blanket-refusal incentive.
+            "appropriate_refusal_rate": appropriate_refusal_rate,
+            "refusal_match_rows": refusal_match_rows,
+            "expected_refusal_rows": expected_refusal_rows,
             "grounded_rows": faithful_rows,
             "rows_with_context": rows_with_context,
             "total": total,
             "correct": int(sum(em_scores)),
         }
+
+    @classmethod
+    def _is_refusal_text(cls, text: str) -> bool:
+        """Return True when ``text`` contains one of the canonical
+        refusal phrases the rag-protocol training drills imprint on
+        the model. Case-insensitive substring match."""
+        if not text:
+            return False
+        lower = text.lower()
+        return any(variant in lower for variant in cls.REFUSAL_PHRASE_VARIANTS)
 
     def wraps_own_prompt(self) -> bool:
         """``build_prompts`` produces the full grounded prompt
