@@ -71,3 +71,36 @@ export async function savePackScaffold(
     );
     return resp.data as SaveScaffoldResponse;
 }
+
+
+/** Gap-#5 slice 1/2 — gate-options catalog the scaffold editor reads
+ *  to populate its metric + operator dropdowns. Recipe-aware: the
+ *  catalog's ``recommended`` flag mirrors the scaffolder's
+ *  required_metric_ids for the project's selected recipe. */
+export interface GateOperatorOption {
+    value: string;
+    label: string;
+}
+
+
+export interface GateMetricOption {
+    metric_id: string;
+    label: string;
+    description: string;
+    expected_range: [number, number] | number[];
+    default_operator: string;
+    recommended: boolean;
+}
+
+
+export interface GateOptionsResponse {
+    operators: GateOperatorOption[];
+    metrics: GateMetricOption[];
+    recipe_id: string | null;
+}
+
+
+export async function fetchGateOptions(projectId: number): Promise<GateOptionsResponse> {
+    const resp = await api.get(`/projects/${projectId}/evaluation/gate-options`);
+    return resp.data as GateOptionsResponse;
+}

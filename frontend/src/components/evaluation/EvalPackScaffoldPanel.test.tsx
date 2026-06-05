@@ -187,10 +187,171 @@ describe('EvalPackScaffoldPanel', () => {
         await waitFor(() => {
             expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
         });
+        // Save is disabled when nothing is dirty (slice 2). Make a
+        // tiny edit so the button is enabled, then click.
+        const input = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-threshold');
+        await userEvent.clear(input);
+        await userEvent.type(input, '0.66');
         await userEvent.click(screen.getByTestId('eval-pack-scaffold-save'));
         await waitFor(() => {
             expect(toastMock.error).toHaveBeenCalled();
         });
         expect(toastMock.error.mock.calls[0][0]).toMatch(/draft_pack_missing_task_specs/);
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Gap-#5 slice 2: full row editor coverage
+    // ─────────────────────────────────────────────────────────────────
+
+    function makeGateOptionsResponse() {
+        return {
+            recipe_id: 'classification',
+            operators: [
+                { value: 'gte', label: '≥ (at least)' },
+                { value: 'lte', label: '≤ (at most)' },
+            ],
+            metrics: [
+                { metric_id: 'macro_f1', label: 'Macro F1', description: '', expected_range: [0, 1], default_operator: 'gte', recommended: true },
+                { metric_id: 'accuracy', label: 'Accuracy', description: '', expected_range: [0, 1], default_operator: 'gte', recommended: true },
+                { metric_id: 'safety_pass_rate', label: 'Safety Pass Rate', description: '', expected_range: [0, 1], default_operator: 'gte', recommended: true },
+                { metric_id: 'f1', label: 'F1', description: '', expected_range: [0, 1], default_operator: 'gte', recommended: false },
+                { metric_id: 'hallucination_rate', label: 'Hallucination Rate', description: '', expected_range: [0, 1], default_operator: 'lte', recommended: false },
+            ],
+        };
+    }
+
+    function mockBothEndpoints(scaffold = makeScaffoldResponse()) {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url.endsWith('/evaluation/gate-options')) {
+                return Promise.resolve({ data: makeGateOptionsResponse() });
+            }
+            return Promise.resolve({ data: scaffold });
+        });
+    }
+
+    it('save + discard are disabled until the draft becomes dirty', async () => {
+        mockBothEndpoints();
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+        const save = screen.getByTestId('eval-pack-scaffold-save') as HTMLButtonElement;
+        const discard = screen.getByTestId('eval-pack-scaffold-discard') as HTMLButtonElement;
+        expect(save.disabled).toBe(true);
+        expect(discard.disabled).toBe(true);
+
+        // After a single edit, both enable.
+        const input = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-threshold');
+        await userEvent.clear(input);
+        await userEvent.type(input, '0.55');
+        await waitFor(() => {
+            expect((screen.getByTestId('eval-pack-scaffold-save') as HTMLButtonElement).disabled).toBe(false);
+        });
+        expect((screen.getByTestId('eval-pack-scaffold-discard') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('add gate appends a row using a recipe-recommended metric', async () => {
+        mockBothEndpoints();
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+        // Wait for gate-options to load + populate dropdowns.
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric')).toBeInTheDocument();
+        });
+
+        // safety_pass_rate is the only recommended metric not already
+        // used by the fixture's three existing gates, so the picker
+        // should land on it for the new row.
+        await userEvent.click(screen.getByTestId('eval-pack-scaffold-task-classification-add-gate'));
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold-gate-min_safety_pass_rate')).toBeInTheDocument();
+        });
+        const select = screen.getByTestId('eval-pack-scaffold-gate-min_safety_pass_rate-metric') as HTMLSelectElement;
+        expect(select.value).toBe('safety_pass_rate');
+    });
+
+    it('remove gate drops the row + reduces the POST body gates length', async () => {
+        mockBothEndpoints();
+        apiMock.post.mockResolvedValue({
+            data: {
+                project_id: 5,
+                preferred_pack_id: 'evalpack.project.scaffolded',
+                scaffolded_pack: makeScaffoldResponse().draft_pack,
+            },
+        });
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+
+        await userEvent.click(screen.getByTestId('eval-pack-scaffold-gate-min_accuracy-remove'));
+        // Row is gone from the DOM.
+        expect(screen.queryByTestId('eval-pack-scaffold-gate-min_accuracy')).toBeNull();
+
+        // Save persists the trimmed list.
+        await userEvent.click(screen.getByTestId('eval-pack-scaffold-save'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalled();
+        });
+        const body = apiMock.post.mock.calls[0][1];
+        const gateIds = body.draft_pack.task_specs[0].gates.map((g: any) => g.gate_id);
+        expect(gateIds).not.toContain('min_accuracy');
+        expect(gateIds).toContain('min_macro_f1');
+    });
+
+    it('changing the metric dropdown updates the gate metric_id in the POST body', async () => {
+        mockBothEndpoints();
+        apiMock.post.mockResolvedValue({
+            data: {
+                project_id: 5,
+                preferred_pack_id: 'evalpack.project.scaffolded',
+                scaffolded_pack: makeScaffoldResponse().draft_pack,
+            },
+        });
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric')).toBeInTheDocument();
+        });
+
+        await userEvent.selectOptions(
+            screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric'),
+            'f1',
+        );
+        await userEvent.click(screen.getByTestId('eval-pack-scaffold-save'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalled();
+        });
+        const body = apiMock.post.mock.calls[0][1];
+        const changed = body.draft_pack.task_specs[0].gates.find(
+            (g: any) => g.gate_id === 'min_macro_f1',
+        );
+        expect(changed.metric_id).toBe('f1');
+    });
+
+    it('400 with a gate_id-tagged code surfaces inline + highlights the bad row', async () => {
+        mockBothEndpoints();
+        apiMock.post.mockRejectedValue({
+            response: { status: 400, data: { detail: 'threshold_out_of_range:min_macro_f1' } },
+        });
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+        // Dirty the draft so save is enabled.
+        const input = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-threshold');
+        await userEvent.clear(input);
+        await userEvent.type(input, '0.66');
+        await userEvent.click(screen.getByTestId('eval-pack-scaffold-save'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold-inline-error')).toBeInTheDocument();
+        });
+        expect(screen.getByTestId('eval-pack-scaffold-inline-error').textContent)
+            .toMatch(/threshold_out_of_range:min_macro_f1/);
+        // The errored row carries the highlight class.
+        const erroredRow = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1');
+        expect(erroredRow.className).toMatch(/errored/);
     });
 });

@@ -105,3 +105,27 @@
     justify-content: flex-end;
     gap: var(--space-sm);
 }
+
+/* Gap-#5 slice 2 — full row editor controls */
+.eval-pack-scaffold__gate-id { width: 12rem; }
+.eval-pack-scaffold__remove {
+    padding: 2px 8px;
+    font-size: 12px;
+}
+.eval-pack-scaffold__add-row {
+    margin-top: var(--space-xs);
+    display: flex;
+    justify-content: flex-start;
+}
+.eval-pack-scaffold__error {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.08);
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin: 0 0 var(--space-sm);
+    font-size: 0.85rem;
+}
+.eval-pack-scaffold__row--errored {
+    background: rgba(255, 107, 107, 0.08);
+}
