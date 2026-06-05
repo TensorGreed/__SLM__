@@ -821,8 +821,25 @@ async def split_dataset(
     adapter_config: dict[str, Any] | None = None,
     field_mapping: dict[str, str] | None = None,
     task_profile: str | None = None,
+    stratify_by: str | None = None,
 ) -> dict:
-    """Split combined data into train/val/test and save as JSONL."""
+    """Split combined data into train/val/test and save as JSONL.
+
+    When ``stratify_by`` is set to a top-level field name (e.g.
+    ``label`` for classification, ``answer`` for QA), entries are
+    grouped by the value of that field and each group is split at
+    the same ratios independently. The combined splits preserve the
+    per-class proportion across train/val/test — essential when one
+    class is rare and a uniform random split would put zero examples
+    of it in val or test. Groups with fewer than 3 entries (can't
+    sensibly be split into all three buckets) go entirely to train
+    and are listed in the stratification report so the caller can
+    see what happened.
+
+    When ``stratify_by`` is None: behaviour is unchanged (uniform
+    random shuffle + slice). The ``stratification_report`` field
+    on the returned manifest is None in that case.
+    """
     if train_ratio <= 0 or val_ratio < 0 or test_ratio < 0:
         raise ValueError("Invalid split ratios. train must be > 0 and val/test must be >= 0.")
     if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-6:
@@ -851,18 +868,28 @@ async def split_dataset(
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
 
-    random.seed(seed)
-    random.shuffle(entries)
+    stratification_report: dict | None = None
+    if stratify_by and str(stratify_by).strip():
+        splits, stratification_report = _stratified_split_entries(
+            entries,
+            stratify_field=str(stratify_by).strip(),
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            seed=seed,
+        )
+    else:
+        random.seed(seed)
+        random.shuffle(entries)
 
-    total = len(entries)
-    train_end = int(total * train_ratio)
-    val_end = train_end + int(total * val_ratio)
+        total = len(entries)
+        train_end = int(total * train_ratio)
+        val_end = train_end + int(total * val_ratio)
 
-    splits = {
-        "train": entries[:train_end],
-        "val": entries[train_end:val_end],
-        "test": entries[val_end:],
-    }
+        splits = {
+            "train": entries[:train_end],
+            "val": entries[train_end:val_end],
+            "test": entries[val_end:],
+        }
 
     prep_dir = _prep_dir(project_id)
     file_paths: dict[str, str] = {}
@@ -943,12 +970,130 @@ async def split_dataset(
         "adapter_config": dict(adapter_config or {}),
         "field_mapping": dict(field_mapping or {}),
         "task_profile": _normalize_task_profile_value(task_profile),
+        "stratify_by": str(stratify_by).strip() if stratify_by else None,
+        "stratification_report": stratification_report,
     }
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
     return manifest
+
+
+def _stratified_split_entries(
+    entries: list[dict[str, Any]],
+    *,
+    stratify_field: str,
+    train_ratio: float,
+    val_ratio: float,
+    seed: int,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Group entries by ``stratify_field`` value and split each group
+    independently at the requested ratios. Returns the
+    ``{"train": [...], "val": [...], "test": [...]}`` mapping AND a
+    structured report the caller surfaces in the manifest so a user
+    can verify rare classes landed in every split.
+
+    Group → split policy:
+      - **3+ rows**: standard ratio split. Empty val/test buckets
+        absorb their leftover into train (sklearn-style behaviour
+        when ``int(n * ratio)`` rounds to 0).
+      - **2 rows**: 1 → train, 1 → val, 0 → test. Test gets nothing
+        for this group; the report flags it.
+      - **1 row**: entire row to train. Report flags it.
+
+    Missing / non-string stratify-field values bucket into
+    ``"__missing__"`` so the split still produces all three files
+    rather than crashing — the report surfaces the missing-count so
+    the caller can decide whether to clean their data and re-prep.
+    """
+    from collections import defaultdict
+
+    rng = random.Random(seed)
+
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in entries:
+        raw = entry.get(stratify_field) if isinstance(entry, dict) else None
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            key = "__missing__"
+        else:
+            key = str(raw)
+        groups[key].append(entry)
+
+    splits: dict[str, list[dict[str, Any]]] = {"train": [], "val": [], "test": []}
+    per_group: list[dict[str, Any]] = []
+    small_groups: list[str] = []
+    test_ratio = max(0.0, 1.0 - train_ratio - val_ratio)
+
+    for key in sorted(groups.keys()):
+        group_entries = list(groups[key])
+        rng.shuffle(group_entries)
+        n = len(group_entries)
+
+        if n >= 3:
+            n_train = max(1, int(n * train_ratio))
+            n_val = int(n * val_ratio)
+            n_test = n - n_train - n_val
+            # Stratified guarantee: when a group has ≥ 3 rows AND
+            # the caller asked for a val + test bucket, each split
+            # gets at least one row of this group. Otherwise rare
+            # classes with int(n * ratio) rounding down to 0 vanish
+            # from val/test, which is the exact failure mode this
+            # whole feature exists to prevent.
+            if n_val == 0 and val_ratio > 0:
+                if n_train > 1:
+                    n_train -= 1
+                    n_val = 1
+                elif n_test > 1:
+                    n_test -= 1
+                    n_val = 1
+                n_test = n - n_train - n_val
+            if n_test == 0 and test_ratio > 0:
+                if n_train > 1:
+                    n_train -= 1
+                    n_test = 1
+                elif n_val > 1:
+                    n_val -= 1
+                    n_test = 1
+            train_part = group_entries[:n_train]
+            val_part = group_entries[n_train : n_train + n_val]
+            test_part = group_entries[n_train + n_val :]
+        elif n == 2:
+            train_part = group_entries[:1]
+            val_part = group_entries[1:]
+            test_part = []
+            small_groups.append(key)
+        else:
+            train_part = group_entries
+            val_part = []
+            test_part = []
+            small_groups.append(key)
+
+        splits["train"].extend(train_part)
+        splits["val"].extend(val_part)
+        splits["test"].extend(test_part)
+        per_group.append({
+            "value": key,
+            "total": n,
+            "train": len(train_part),
+            "val": len(val_part),
+            "test": len(test_part),
+        })
+
+    # Final shuffle within each split so groups don't appear in
+    # contiguous blocks — important for SGD-style training that
+    # benefits from interleaved mini-batches.
+    for name in splits:
+        rng.shuffle(splits[name])
+
+    report: dict[str, Any] = {
+        "stratify_field": stratify_field,
+        "group_count": len(groups),
+        "per_group": per_group,
+        "missing_count": len(groups.get("__missing__", [])),
+        "small_groups_train_only": small_groups,
+    }
+    return splits, report
 
 
 async def _sample_records_for_dataset(

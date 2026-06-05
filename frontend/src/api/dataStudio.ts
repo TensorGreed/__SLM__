@@ -1441,12 +1441,40 @@ export async function getDataStudioPrepareDataset(
  * this client does not re-validate; if the backend refuses (400/422),
  * the caller surfaces the error inline.
  */
+/** Gap-#4 fix — per-group breakdown the backend returns when
+ *  ``stratify_by`` was set on the split request. Surfaces in the
+ *  Data Studio so a user can verify rare classes landed in every
+ *  split + see which groups (if any) were too small to stratify.
+ *  Null when the split ran in uniform-random mode. */
+export interface StratificationReport {
+    stratify_field: string;
+    group_count: number;
+    per_group: Array<{
+        value: string;
+        total: number;
+        train: number;
+        val: number;
+        test: number;
+    }>;
+    missing_count: number;
+    /** Group values whose row count was so low (1 or 2) that the
+     *  rows were forced entirely into train. Surface these so the
+     *  user can decide whether to combine rare classes or add data. */
+    small_groups_train_only: string[];
+}
+
 export interface RunPrepareDatasetResult {
     manifest_path?: string | null;
     train_count?: number | null;
     val_count?: number | null;
     test_count?: number | null;
     resolved_split_config?: Record<string, unknown> | null;
+    /** The stratification key the user requested (or null when the
+     *  split ran in uniform-random mode). */
+    stratify_by?: string | null;
+    /** Per-group split breakdown — present when stratify_by was
+     *  set. Null otherwise. */
+    stratification_report?: StratificationReport | null;
     [key: string]: unknown;
 }
 

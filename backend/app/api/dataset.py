@@ -45,6 +45,13 @@ class SplitRequest(BaseModel):
     adapter_config: dict[str, Any] | None = None
     field_mapping: dict[str, str] | None = None
     task_profile: str | None = None
+    # Gap-#4 fix — stratified split. When set to a top-level field on
+    # the adapted training record (e.g. ``label`` for classification),
+    # entries are grouped by the value of that field and each group
+    # is split independently at the requested ratios. Preserves per-
+    # class proportion across train/val/test so rare classes don't
+    # vanish from val/test under a uniform random split.
+    stratify_by: str | None = None
 
     @model_validator(mode="after")
     def validate_ratios(self):
@@ -265,6 +272,7 @@ async def split(
             adapter_config=adapter_config,
             field_mapping=field_mapping,
             task_profile=task_profile,
+            stratify_by=req.stratify_by,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")
