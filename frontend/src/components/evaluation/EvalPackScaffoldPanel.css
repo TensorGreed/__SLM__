@@ -129,3 +129,15 @@
 .eval-pack-scaffold__row--errored {
     background: rgba(255, 107, 107, 0.08);
 }
+
+/* Gap-#6 slice 2 — per-class hint when classification recipe has no
+   per-class metrics discovered yet. */
+.eval-pack-scaffold__per-class-hint {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.75);
+    background: rgba(76, 175, 80, 0.08);
+    border-left: 2px solid rgba(76, 175, 80, 0.5);
+    border-radius: 3px;
+}

@@ -20,6 +20,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
     GateMetricOption,
     GateOptionsResponse,
+    PerClassMetricOption,
+    PerClassMetricOptionsResponse,
     ScaffoldDraftPack,
     ScaffoldGate,
     ScaffoldResponse,
@@ -27,6 +29,7 @@ import type {
 import {
     fetchGateOptions,
     fetchPackScaffold,
+    fetchPerClassMetricOptions,
     savePackScaffold,
 } from '../../api/evalPackScaffold';
 import { toast } from '../../stores/toastStore';
@@ -98,6 +101,7 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
     const [response, setResponse] = useState<ScaffoldResponse | null>(null);
     const [draft, setDraft] = useState<ScaffoldDraftPack | null>(null);
     const [gateOptions, setGateOptions] = useState<GateOptionsResponse | null>(null);
+    const [perClassOptions, setPerClassOptions] = useState<PerClassMetricOptionsResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -128,6 +132,20 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
             } catch {
                 // Swallow — the editor falls back to a free-text input
                 // for metric/operator when the catalog is missing.
+            }
+            // Gap-#6 slice 2 — per-class metric IDs are discovered
+            // from the project's latest classification eval result. The
+            // payload is independent of the static catalog: empty when
+            // the project hasn't run an eval yet, populated otherwise.
+            // Fetch is non-blocking just like the catalog one above.
+            try {
+                const perClass = await fetchPerClassMetricOptions(projectId);
+                if (Array.isArray(perClass?.classes)) {
+                    setPerClassOptions(perClass);
+                }
+            } catch {
+                // Swallow — the per-class optgroup is suppressed when
+                // discovery fails (or hasn't been wired yet).
             }
         } catch (err: any) {
             const detail = err?.response?.data?.detail;
@@ -281,6 +299,24 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
         return copy;
     }, [gateOptions]);
 
+    /** Gap-#6 slice 2 — group per-class options by class name so the
+     *  dropdown renders an <optgroup> per class. HTML <optgroup>s
+     *  can't nest, so we use one group per class with the 3 metrics
+     *  (precision / recall / f1) inside. Stable order: classes are
+     *  already sorted by the backend; we preserve the per-class
+     *  metric order returned (precision, recall, f1). */
+    const perClassMetricsByClass = useMemo(() => {
+        const grouped = new Map<string, PerClassMetricOption[]>();
+        for (const metric of perClassOptions?.metrics || []) {
+            const className = metric.class_name;
+            if (!grouped.has(className)) grouped.set(className, []);
+            grouped.get(className)!.push(metric);
+        }
+        return grouped;
+    }, [perClassOptions]);
+
+    const hasPerClassMetrics = perClassMetricsByClass.size > 0;
+
     const erroredGateId = useMemo(() => {
         if (!inlineError || !inlineError.includes(':')) return null;
         const tail = inlineError.split(':')[1] || '';
@@ -342,6 +378,21 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                             task_profile: {spec.task_profile}
                         </span>
                     </header>
+                    {/* Gap-#6 slice 2 — empty-state hint when the project's
+                        recipe expects per-class metrics (classification-shaped
+                        task profile) but no classes have been discovered yet.
+                        Once an eval runs, the per-class optgroups populate
+                        the metric dropdown above. */}
+                    {!hasPerClassMetrics
+                        && /^(classification|structured_extraction)$/.test(spec.task_profile) && (
+                        <p
+                            className="eval-pack-scaffold__per-class-hint"
+                            data-testid={`eval-pack-scaffold-task-${spec.task_profile}-per-class-hint`}
+                        >
+                            💡 Run a classification eval to discover per-class metrics
+                            (precision/recall/f1 per class) and gate them individually.
+                        </p>
+                    )}
                     <table className="eval-pack-scaffold__gates">
                         <thead>
                             <tr>
@@ -391,15 +442,41 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                                             >
                                                 {/* Show the current metric_id even if it's not
                                                     in the catalog — keeps user-typed metrics
-                                                    selectable rather than silently coercing. */}
+                                                    selectable rather than silently coercing.
+                                                    Look in BOTH catalogs (standard + per-class)
+                                                    before stamping "(custom)". */}
                                                 {sortedMetricOptions.find((m) => m.metric_id === gate.metric_id)
+                                                    || (perClassOptions?.metrics || []).find((m) => m.metric_id === gate.metric_id)
                                                     ? null
                                                     : <option value={gate.metric_id}>{gate.metric_id} (custom)</option>}
-                                                {sortedMetricOptions.map((m) => (
-                                                    <option key={m.metric_id} value={m.metric_id}>
-                                                        {m.recommended ? '★ ' : ''}{m.label} ({m.metric_id})
-                                                    </option>
-                                                ))}
+                                                <optgroup label="Standard metrics">
+                                                    {sortedMetricOptions.map((m) => (
+                                                        <option key={m.metric_id} value={m.metric_id}>
+                                                            {m.recommended ? '★ ' : ''}{m.label} ({m.metric_id})
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
+                                                {/* Gap-#6 slice 2 — one <optgroup> per discovered
+                                                    class. HTML <optgroup>s can't nest, so this
+                                                    is the cleanest way to surface "per-class
+                                                    precision/recall/f1 for class X" without
+                                                    drowning the user in a flat list of
+                                                    precision_<class>/recall_<class>/f1_<class>
+                                                    triples. */}
+                                                {Array.from(perClassMetricsByClass.entries()).map(
+                                                    ([className, metrics]) => (
+                                                        <optgroup
+                                                            key={`per-class-${className}`}
+                                                            label={`Per-class · ${className}`}
+                                                        >
+                                                            {metrics.map((m) => (
+                                                                <option key={m.metric_id} value={m.metric_id}>
+                                                                    {m.label} ({m.metric_id})
+                                                                </option>
+                                                            ))}
+                                                        </optgroup>
+                                                    ),
+                                                )}
                                             </select>
                                         ) : (
                                             <input

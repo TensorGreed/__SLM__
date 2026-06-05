@@ -104,3 +104,36 @@ export async function fetchGateOptions(projectId: number): Promise<GateOptionsRe
     const resp = await api.get(`/projects/${projectId}/evaluation/gate-options`);
     return resp.data as GateOptionsResponse;
 }
+
+
+/** Gap-#6 slice 1/2 — per-class metric IDs discovered from the
+ *  project's latest classification-shaped eval result. Class names
+ *  are project-specific (and can shift between eval runs), so this
+ *  is dynamic per project — not part of the static gate catalog. */
+export interface PerClassMetricOption {
+    metric_id: string;
+    label: string;
+    description: string;
+    default_operator: string;
+    expected_range: [number, number] | number[];
+    class_name: string;
+    metric_kind: string; // "precision" | "recall" | "f1" | "support"
+    recommended: boolean;
+}
+
+
+export interface PerClassMetricOptionsResponse {
+    classes: string[];
+    metrics: PerClassMetricOption[];
+    source_eval_result_id: number | null;
+}
+
+
+export async function fetchPerClassMetricOptions(
+    projectId: number,
+): Promise<PerClassMetricOptionsResponse> {
+    const resp = await api.get(
+        `/projects/${projectId}/evaluation/per-class-metric-options`,
+    );
+    return resp.data as PerClassMetricOptionsResponse;
+}

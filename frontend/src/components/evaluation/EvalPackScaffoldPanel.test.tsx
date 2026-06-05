@@ -220,10 +220,42 @@ describe('EvalPackScaffoldPanel', () => {
         };
     }
 
-    function mockBothEndpoints(scaffold = makeScaffoldResponse()) {
+    function makeEmptyPerClassResponse() {
+        return { classes: [], metrics: [], source_eval_result_id: null };
+    }
+
+    function makePerClassResponse(
+        classes: string[] = ['benign', 'attack'],
+        sourceEvalResultId = 1001,
+    ) {
+        return {
+            classes,
+            source_eval_result_id: sourceEvalResultId,
+            metrics: classes.flatMap((c) => (
+                ['precision', 'recall', 'f1'].map((kind) => ({
+                    metric_id: `${kind}_${c}`,
+                    label: `${kind[0].toUpperCase()}${kind.slice(1)} · ${c}`,
+                    description: `Per-class ${kind} for class '${c}'.`,
+                    default_operator: 'gte',
+                    expected_range: [0, 1],
+                    class_name: c,
+                    metric_kind: kind,
+                    recommended: false,
+                }))
+            )),
+        };
+    }
+
+    function mockBothEndpoints(
+        scaffold = makeScaffoldResponse(),
+        perClass = makeEmptyPerClassResponse(),
+    ) {
         apiMock.get.mockImplementation((url: string) => {
             if (url.endsWith('/evaluation/gate-options')) {
                 return Promise.resolve({ data: makeGateOptionsResponse() });
+            }
+            if (url.endsWith('/evaluation/per-class-metric-options')) {
+                return Promise.resolve({ data: perClass });
             }
             return Promise.resolve({ data: scaffold });
         });
@@ -353,5 +385,102 @@ describe('EvalPackScaffoldPanel', () => {
         // The errored row carries the highlight class.
         const erroredRow = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1');
         expect(erroredRow.className).toMatch(/errored/);
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Gap-#6 slice 2: per-class metric optgroup + empty-state hint
+    // ─────────────────────────────────────────────────────────────────
+
+    it('renders a Per-class optgroup per discovered class with precision/recall/f1 options', async () => {
+        mockBothEndpoints(makeScaffoldResponse(), makePerClassResponse(['benign', 'attack']));
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+        // Wait for per-class fetch to complete + populate dropdowns.
+        await waitFor(() => {
+            const select = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric') as HTMLSelectElement;
+            const optgroupLabels = Array.from(select.querySelectorAll('optgroup'))
+                .map((g) => g.getAttribute('label'));
+            expect(optgroupLabels).toContain('Per-class · benign');
+        });
+
+        const select = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric') as HTMLSelectElement;
+        // Standard metrics + 2 classes (benign, attack) → 3 optgroups.
+        const optgroupLabels = Array.from(select.querySelectorAll('optgroup'))
+            .map((g) => g.getAttribute('label'));
+        expect(optgroupLabels).toEqual(['Standard metrics', 'Per-class · benign', 'Per-class · attack']);
+
+        // The benign optgroup carries precision/recall/f1 IDs.
+        const benignGroup = Array.from(select.querySelectorAll('optgroup'))
+            .find((g) => g.getAttribute('label') === 'Per-class · benign')!;
+        const benignIds = Array.from(benignGroup.querySelectorAll('option'))
+            .map((o) => (o as HTMLOptionElement).value);
+        expect(benignIds).toEqual(['precision_benign', 'recall_benign', 'f1_benign']);
+    });
+
+    it('selecting a per-class metric writes the short-form id into the gate', async () => {
+        mockBothEndpoints(makeScaffoldResponse(), makePerClassResponse(['benign', 'attack']));
+        apiMock.post.mockResolvedValue({
+            data: {
+                project_id: 5,
+                preferred_pack_id: 'evalpack.project.scaffolded',
+                scaffolded_pack: makeScaffoldResponse().draft_pack,
+            },
+        });
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric')).toBeInTheDocument();
+        });
+        // Wait for per-class options to populate.
+        await waitFor(() => {
+            const select = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric') as HTMLSelectElement;
+            expect(select.querySelectorAll('optgroup').length).toBeGreaterThan(1);
+        });
+
+        await userEvent.selectOptions(
+            screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric'),
+            'precision_benign',
+        );
+        await userEvent.click(screen.getByTestId('eval-pack-scaffold-save'));
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalled();
+        });
+        const body = apiMock.post.mock.calls[0][1];
+        const changed = body.draft_pack.task_specs[0].gates.find(
+            (g: any) => g.gate_id === 'min_macro_f1',
+        );
+        // The slice-1 backend flattener emits this exact id; the FE
+        // writes it verbatim — no synthesis, no munging.
+        expect(changed.metric_id).toBe('precision_benign');
+    });
+
+    it('shows the per-class empty-state hint when classification has no discovered classes', async () => {
+        // Default: makeEmptyPerClassResponse() — project hasn't run an
+        // eval yet, so the per-class optgroups are empty. Fixture uses
+        // task_profile=classification → hint should surface.
+        mockBothEndpoints();
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+        const hint = screen.getByTestId('eval-pack-scaffold-task-classification-per-class-hint');
+        expect(hint.textContent).toMatch(/Run a classification eval/i);
+    });
+
+    it('suppresses the per-class hint once classes are discovered', async () => {
+        mockBothEndpoints(makeScaffoldResponse(), makePerClassResponse(['benign']));
+        render(<EvalPackScaffoldPanel projectId={5} />);
+        await waitFor(() => {
+            expect(screen.getByTestId('eval-pack-scaffold')).toBeInTheDocument();
+        });
+        // Wait for per-class options to load.
+        await waitFor(() => {
+            const select = screen.getByTestId('eval-pack-scaffold-gate-min_macro_f1-metric') as HTMLSelectElement;
+            expect(select.querySelectorAll('optgroup').length).toBeGreaterThan(1);
+        });
+        expect(
+            screen.queryByTestId('eval-pack-scaffold-task-classification-per-class-hint'),
+        ).toBeNull();
     });
 });
