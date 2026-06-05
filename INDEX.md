@@ -623,6 +623,7 @@ session-start guidance.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
+- `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
 - `backend/tests/test_evaluation_gate_catalog.py` — Unit tests for the eval-pack gate-options catalog + validator
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).

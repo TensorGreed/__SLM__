@@ -385,6 +385,59 @@ async def save_pack_scaffold(
         raise HTTPException(400, code)
 
 
+class _AdoptGateFromClusterRequest(BaseModel):
+    cluster_id: int = Field(..., gt=0)
+    # Optional overrides — if the FE wants to override the catalog's
+    # default starter values before the gate is persisted. Mirrors the
+    # ScaffoldGate fields. ``metric_id`` is the load-bearing one; the
+    # rest fall back to the suggestion derived from the cluster's
+    # reason_code.
+    metric_id: str | None = None
+    operator: str | None = None
+    threshold: float | None = None
+    required: bool | None = None
+    gate_id: str | None = None
+
+
+@router.post("/adopt-gate-from-cluster", status_code=201)
+async def adopt_gate_from_cluster_endpoint(
+    project_id: int,
+    payload: _AdoptGateFromClusterRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Gap-#5 slice 3 — one-click "Adopt this gate" CTA on failure
+    clusters. Derives a starter gate from the cluster's reason_code,
+    appends it to the project's scaffolded eval pack (or scaffolds a
+    fresh one if none is persisted), and returns the updated pack +
+    the new gate's full shape so the FE can deep-link to the editor.
+
+    Errors:
+      * 404 — project / cluster missing.
+      * 400 — reason_code has no catalog suggestion AND no metric_id
+        override was supplied, OR the resulting pack fails the
+        slice-1 validator (e.g. ``duplicate_gate_id:<id>``).
+    """
+    from app.services.eval_pack_scaffold_service import adopt_gate_from_cluster
+
+    overrides: dict[str, Any] = {}
+    for field in ("metric_id", "operator", "threshold", "required", "gate_id"):
+        value = getattr(payload, field)
+        if value is not None:
+            overrides[field] = value
+    try:
+        return await adopt_gate_from_cluster(
+            db,
+            project_id=project_id,
+            cluster_id=payload.cluster_id,
+            overrides=overrides,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        if code in {"project_not_found", "cluster_not_found"}:
+            raise HTTPException(404, code)
+        raise HTTPException(400, code)
+
+
 @router.get("/gate-options")
 async def get_gate_options(
     project_id: int,

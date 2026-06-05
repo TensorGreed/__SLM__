@@ -4,11 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FailureCluster } from '../../types/observability';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, toastMock } = vi.hoisted(() => ({
     apiMock: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
+    toastMock: {
+        success: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+    },
 }));
 
 vi.mock('../../api/client', () => ({ default: apiMock }));
+vi.mock('../../stores/toastStore', () => ({ toast: toastMock }));
 
 import FailureClusterList from './FailureClusterList';
 
@@ -37,6 +44,8 @@ function makeCluster(overrides: Partial<FailureCluster>): FailureCluster {
 beforeEach(() => {
     apiMock.get.mockReset();
     apiMock.post.mockReset();
+    toastMock.success.mockReset();
+    toastMock.error.mockReset();
 });
 
 describe('FailureClusterList', () => {
@@ -156,5 +165,71 @@ describe('FailureClusterList', () => {
         );
         const alert = await screen.findByRole('alert');
         expect(alert).toHaveTextContent('project_not_found');
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Gap-#5 slice 3: "Adopt as gate" CTA on cluster rows
+    // ─────────────────────────────────────────────────────────────────
+
+    it('clicking "Adopt as gate" POSTs adopt-gate-from-cluster with the cluster id', async () => {
+        const cluster = makeCluster({ id: 42, reason_code: 'safety_failure' });
+        apiMock.get.mockResolvedValueOnce({
+            data: { project_id: 7, limit: 100, clusters: [cluster] },
+        });
+        apiMock.post.mockResolvedValueOnce({
+            data: {
+                project_id: 7,
+                preferred_pack_id: 'evalpack.project.scaffolded',
+                scaffolded_pack: { pack_id: 'evalpack.project.scaffolded', task_specs: [{ task_profile: 'qa', gates: [] }] },
+                new_gate: {
+                    gate_id: 'min_safety_pass_rate_from_cluster',
+                    metric_id: 'safety_pass_rate',
+                    operator: 'gte',
+                    threshold: 0.95,
+                    required: false,
+                },
+                cluster_reason_code: 'safety_failure',
+            },
+        });
+
+        render(<FailureClusterList projectId={7} onSelectRun={vi.fn()} />);
+        const button = await screen.findByTestId('failure-cluster-42-adopt-gate');
+        await userEvent.click(button);
+
+        await waitFor(() => {
+            expect(apiMock.post).toHaveBeenCalledWith(
+                '/projects/7/evaluation/adopt-gate-from-cluster',
+                { cluster_id: 42 },
+            );
+        });
+        // Success toast names the new gate so the user can find it
+        // in the editor.
+        await waitFor(() => {
+            expect(toastMock.success).toHaveBeenCalled();
+        });
+        expect(toastMock.success.mock.calls[0][0]).toMatch(/min_safety_pass_rate_from_cluster/);
+    });
+
+    it('surfaces the backend error code when adopt-gate is rejected', async () => {
+        const cluster = makeCluster({ id: 99, reason_code: 'totally_unknown' });
+        apiMock.get.mockResolvedValueOnce({
+            data: { project_id: 7, limit: 100, clusters: [cluster] },
+        });
+        apiMock.post.mockRejectedValueOnce({
+            response: {
+                status: 400,
+                data: { detail: 'no_gate_suggestion_for_reason_code:totally_unknown' },
+            },
+        });
+
+        render(<FailureClusterList projectId={7} onSelectRun={vi.fn()} />);
+        const button = await screen.findByTestId('failure-cluster-99-adopt-gate');
+        await userEvent.click(button);
+
+        await waitFor(() => {
+            expect(toastMock.error).toHaveBeenCalled();
+        });
+        expect(toastMock.error.mock.calls[0][0])
+            .toMatch(/no_gate_suggestion_for_reason_code:totally_unknown/);
     });
 });

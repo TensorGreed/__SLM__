@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import api from '../../api/client';
+import { toast } from '../../stores/toastStore';
 import type {
     FailureCluster,
     FailureClusterListResponse,
@@ -34,6 +35,28 @@ interface Props {
      */
     onSelectRun: (runId: string) => void;
     refreshKey?: number;
+}
+
+
+/** Gap-#5 slice 3 — POST adopt-gate-from-cluster response. The
+ *  endpoint returns the updated scaffolded pack + the new gate's
+ *  full shape so the FE can deep-link a "review in editor" toast
+ *  action. */
+interface AdoptGateResponse {
+    project_id: number;
+    preferred_pack_id: string;
+    scaffolded_pack: {
+        pack_id: string;
+        task_specs: Array<{ task_profile: string; gates: Array<Record<string, unknown>> }>;
+    };
+    new_gate: {
+        gate_id: string;
+        metric_id: string;
+        operator: string;
+        threshold: number;
+        required: boolean;
+    };
+    cluster_reason_code: string;
 }
 
 interface ApiErrorShape {
@@ -61,14 +84,43 @@ function formatTs(value: string | null): string {
 
 interface ClusterRowProps {
     cluster: FailureCluster;
+    projectId: number;
     onSelectRun: (runId: string) => void;
 }
 
-function ClusterRow({ cluster, onSelectRun }: ClusterRowProps) {
+function ClusterRow({ cluster, projectId, onSelectRun }: ClusterRowProps) {
     const [open, setOpen] = useState(false);
+    const [adopting, setAdopting] = useState(false);
     const exemplars = cluster.exemplar_event_ids || [];
     const summaries = cluster.exemplar_summaries || [];
     const runIds = cluster.exemplar_run_ids || [];
+
+    /** Gap-#5 slice 3 — POST adopt-gate-from-cluster. Adds a starter
+     *  gate to the project's scaffolded eval pack targeting this
+     *  cluster's failure mode, then toasts the new gate_id with a
+     *  hint to fine-tune it in the editor. */
+    const handleAdoptGate = useCallback(async () => {
+        setAdopting(true);
+        try {
+            const resp = await api.post<AdoptGateResponse>(
+                `/projects/${projectId}/evaluation/adopt-gate-from-cluster`,
+                { cluster_id: cluster.id },
+            );
+            const gate = resp.data.new_gate;
+            toast.success(
+                `Added gate "${gate.gate_id}" (${gate.metric_id} ${gate.operator} ${gate.threshold}) to the scaffolded pack — tighten it in the eval pack editor when ready.`,
+            );
+        } catch (err) {
+            const msg = extractErrorMessage(err, 'Failed to adopt gate.');
+            // The slice-1 validator returns codes like
+            // ``no_gate_suggestion_for_reason_code:<code>`` — surface
+            // the raw code so the user knows whether to retry with
+            // overrides or add a gate manually.
+            toast.error(`Could not adopt gate: ${msg}`);
+        } finally {
+            setAdopting(false);
+        }
+    }, [cluster.id, projectId]);
 
     return (
         <li className="failure-cluster-row">
@@ -96,6 +148,16 @@ function ClusterRow({ cluster, onSelectRun }: ClusterRowProps) {
                     {open
                         ? `Hide exemplars (${exemplars.length})`
                         : `Show exemplars (${exemplars.length})`}
+                </button>
+                <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => void handleAdoptGate()}
+                    disabled={adopting}
+                    data-testid={`failure-cluster-${cluster.id}-adopt-gate`}
+                    aria-label={`Adopt a gate targeting ${cluster.reason_code}`}
+                >
+                    {adopting ? 'Adopting…' : 'Adopt as gate'}
                 </button>
             </div>
             {open && (
@@ -238,6 +300,7 @@ export default function FailureClusterList({
                         <ClusterRow
                             key={cluster.id}
                             cluster={cluster}
+                            projectId={projectId}
                             onSelectRun={onSelectRun}
                         />
                     ))}

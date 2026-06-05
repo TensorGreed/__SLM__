@@ -42,6 +42,105 @@ VALID_GATE_OPERATORS: set[str] = {op["value"] for op in GATE_OPERATORS}
 LTE_DEFAULT_METRIC_IDS: set[str] = {"hallucination_rate"}
 
 
+# Gap-#5 slice 3 — reason_code → ordered list of candidate (metric_id,
+# operator, default_threshold) tuples. The adopt-gate-from-cluster
+# action walks this list and picks the first candidate whose
+# metric_id is in the recipe's recommended set (or the catalog at
+# all); the threshold is a sensible starter the user can tighten in
+# the editor. Reason-code vocabulary mirrors
+# ``evaluation_remediation_service`` (safety_failure / hallucination /
+# coverage_gap / formatting_mismatch).
+REASON_CODE_GATE_SUGGESTIONS: dict[str, list[tuple[str, str, float]]] = {
+    "safety_failure": [
+        # The canonical lever for safety regressions — bump the gate so
+        # any future drop below the chosen bar blocks ship.
+        ("safety_pass_rate", "gte", 0.95),
+    ],
+    "hallucination": [
+        # rag-protocol recipes track hallucination_rate directly (lower
+        # is better); other recipes fall back to groundedness or judge.
+        ("hallucination_rate", "lte", 0.05),
+        ("groundedness", "gte", 0.85),
+        ("citation_rate", "gte", 0.80),
+        ("llm_judge_pass_rate", "gte", 0.75),
+    ],
+    "coverage_gap": [
+        # Coverage gaps usually surface as F1/recall drops. Start with
+        # the recipe's headline metric — the editor's "recommended"
+        # list narrows this down per recipe.
+        ("f1", "gte", 0.60),
+        ("macro_f1", "gte", 0.65),
+        ("span_set_recall", "gte", 0.60),
+        ("llm_judge_pass_rate", "gte", 0.70),
+    ],
+    "formatting_mismatch": [
+        # Format drift — the rag-protocol recipe has a dedicated metric
+        # (slice-2 implementation); other recipes use exact_match as a
+        # proxy for stable formatting.
+        ("format_consistency", "gte", 0.90),
+        ("exact_match", "gte", 0.55),
+    ],
+}
+
+
+def suggest_gate_for_reason_code(
+    reason_code: str,
+    *,
+    recipe_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Pick a starter gate for a failure cluster's reason_code.
+
+    Walks ``REASON_CODE_GATE_SUGGESTIONS[reason_code]`` and returns the
+    first candidate whose metric_id is in the recipe's recommended
+    metric set; falls back to the first candidate whose metric_id is
+    in ``known_metric_ids()`` at all. Returns ``None`` if reason_code
+    is unknown and no fallback candidate matches — the caller surfaces
+    that as "no obvious gate for this cluster — add one manually".
+
+    The returned dict matches the scaffolder's gate shape (gate_id,
+    metric_id, operator, threshold, required) so callers can append
+    it to a task_spec's gate list verbatim. ``required=False`` so the
+    new gate doesn't break a passing eval the moment it's added —
+    the user can promote it after watching it for a run or two.
+    """
+    candidates = REASON_CODE_GATE_SUGGESTIONS.get(
+        (reason_code or "").strip().lower(), [],
+    )
+    if not candidates:
+        return None
+
+    recommended = set(
+        _RECOMMENDED_METRIC_IDS_PER_RECIPE.get(
+            (recipe_id or "").strip().lower(), [],
+        )
+    )
+    known = known_metric_ids()
+
+    pick: tuple[str, str, float] | None = None
+    # Prefer a candidate the recipe recommends.
+    for entry in candidates:
+        if entry[0] in recommended:
+            pick = entry
+            break
+    if pick is None:
+        for entry in candidates:
+            if entry[0] in known:
+                pick = entry
+                break
+    if pick is None:
+        return None
+
+    metric_id, operator, threshold = pick
+    prefix = "max" if operator == "lte" else "min"
+    return {
+        "gate_id": f"{prefix}_{metric_id}_from_cluster",
+        "metric_id": metric_id,
+        "operator": operator,
+        "threshold": float(threshold),
+        "required": False,
+    }
+
+
 # Recipe → list of recommended metric_ids. Mirrors the
 # ``required_metric_ids`` in ``_RECIPE_SCAFFOLD`` so the editor's
 # "recommended" badges match what the scaffolder pre-populates.

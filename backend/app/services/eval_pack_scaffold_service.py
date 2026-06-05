@@ -313,6 +313,131 @@ async def save_scaffolded_pack(
     }
 
 
+async def adopt_gate_from_cluster(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    cluster_id: int,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Gap-#5 slice 3 — one-click "Adopt this gate" action that turns a
+    failure cluster into a starter gate on the project's scaffolded
+    eval pack. Loads the active scaffold (or scaffolds a fresh one
+    when none is persisted), derives a gate from the cluster's
+    ``reason_code`` via the catalog's mapping, appends it to the
+    first task_spec's gates, and persists via ``save_scaffolded_pack``.
+
+    The optional ``overrides`` dict lets the FE override any of
+    ``{metric_id, operator, threshold, required, gate_id}`` — useful
+    if the user wants to tighten the starter threshold before saving
+    rather than after.
+
+    Raises:
+      * ``project_not_found`` — project missing.
+      * ``cluster_not_found`` — cluster row missing or belongs to
+        another project (defensive — we don't trust the client to
+        scope its own request).
+      * ``no_gate_suggestion_for_reason_code:<code>`` — the cluster's
+        reason_code has no mapping in the catalog AND no overrides
+        were supplied. The user can still add the gate by hand in
+        the editor.
+      * Any validator error from ``validate_draft_pack_gates`` (e.g.
+        ``duplicate_gate_id:<id>``) when the resulting pack is malformed
+        — surfaces back through the slice-1 contract.
+    """
+    from app.models.failure_cluster import FailureCluster
+    from app.services.evaluation_gate_catalog import suggest_gate_for_reason_code
+
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise ValueError("project_not_found")
+
+    cluster = await db.get(FailureCluster, int(cluster_id))
+    if cluster is None or int(cluster.project_id) != int(project_id):
+        raise ValueError("cluster_not_found")
+
+    # Recipe drives the metric pick (the catalog prefers recommended
+    # metrics for the project's recipe).
+    selected = project.selected_recipe or {}
+    recipe_id = str(selected.get("recipe_id") or "").strip().lower() or None
+    overrides = dict(overrides or {})
+
+    suggestion = suggest_gate_for_reason_code(
+        str(cluster.reason_code or ""),
+        recipe_id=recipe_id,
+    )
+    # Apply any client overrides on top of the suggestion. When no
+    # suggestion exists, the overrides MUST cover the full gate shape
+    # — otherwise we have no metric_id to attach to.
+    if suggestion is None and "metric_id" not in overrides:
+        raise ValueError(f"no_gate_suggestion_for_reason_code:{cluster.reason_code}")
+    base = suggestion or {}
+    new_gate = {
+        "gate_id": str(overrides.get("gate_id") or base.get("gate_id") or "").strip(),
+        "metric_id": str(overrides.get("metric_id") or base.get("metric_id") or "").strip(),
+        "operator": str(overrides.get("operator") or base.get("operator") or "gte").strip(),
+        "threshold": float(overrides.get("threshold")) if "threshold" in overrides else float(base.get("threshold") or 0.5),
+        "required": bool(overrides.get("required", base.get("required", False))),
+    }
+    if not new_gate["gate_id"]:
+        prefix = "max" if new_gate["operator"] == "lte" else "min"
+        new_gate["gate_id"] = f"{prefix}_{new_gate['metric_id']}_from_cluster"
+
+    # Pull the current scaffolded pack if one's persisted; otherwise
+    # build a fresh one off the project's recipe. Either way we end up
+    # with a draft we can append to.
+    existing = get_scaffolded_pack(project)
+    if existing is not None:
+        draft = dict(existing)
+        draft["task_specs"] = [dict(ts) for ts in (draft.get("task_specs") or [])]
+        for ts in draft["task_specs"]:
+            ts["gates"] = list(ts.get("gates") or [])
+        if "gates" in draft:
+            draft["gates"] = list(draft["gates"])
+    else:
+        # No persisted scaffold yet — build one from the recipe.
+        summary = await _summarise_gold_set(db, project_id)
+        if not recipe_id:
+            # No recipe → fall back to generic-sft so the user still
+            # gets a valid pack instead of an error.
+            recipe_id = "generic-sft"
+        draft = scaffold_pack(
+            recipe_id,
+            project_id=project_id,
+            gold_set_summary=summary,
+        )
+
+    if not draft.get("task_specs"):
+        raise ValueError("draft_pack_missing_task_specs")
+
+    # If a gate with the same gate_id is already in the first
+    # task_spec, suffix it so we don't collide. Mirrors the FE's
+    # collision-handling in the editor.
+    first_spec = draft["task_specs"][0]
+    existing_ids = {str(g.get("gate_id") or "") for g in (first_spec.get("gates") or [])}
+    if new_gate["gate_id"] in existing_ids:
+        for i in range(2, 1000):
+            candidate = f"{new_gate['gate_id']}_{i}"
+            if candidate not in existing_ids:
+                new_gate["gate_id"] = candidate
+                break
+
+    first_spec.setdefault("gates", []).append(new_gate)
+    # Keep top-level gates synced with the default task spec (the
+    # eval-pack contract reads this as a fallback for the legacy
+    # gate-list shape).
+    draft["gates"] = list(first_spec["gates"])
+
+    result = await save_scaffolded_pack(
+        db,
+        project_id=project_id,
+        draft_pack=draft,
+    )
+    result["new_gate"] = new_gate
+    result["cluster_reason_code"] = str(cluster.reason_code or "")
+    return result
+
+
 def get_scaffolded_pack(project: Project) -> dict[str, Any] | None:
     """Read the saved scaffold from the project, or None when absent.
     Used by ``resolve_project_evaluation_pack`` to surface the
