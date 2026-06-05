@@ -369,6 +369,154 @@ async def _async_none() -> None:
     return None
 
 
+class CoachServiceMissingPerClassGatesNudgeTests(unittest.IsolatedAsyncioTestCase):
+    """Gap-#6 slice 3 — nudge classification projects whose active
+    eval pack has zero per-class gates. Tests drive the pure-function
+    nudge generator with stubbed dependencies so each branch is
+    exercised without standing up an EvalResult + pack in the DB."""
+
+    async def _run_nudge(
+        self,
+        *,
+        recipe_id: str | None,
+        classes: list[str] | None,
+        gate_metric_ids: list[str] | None,
+        resolver_raises: bool = False,
+        per_class_raises: bool = False,
+    ) -> dict | None:
+        from unittest.mock import patch
+
+        from app.services.coach_service import _missing_per_class_gates_nudge
+
+        async def _async_per_class(*_a, **_k):
+            if per_class_raises:
+                raise RuntimeError("pretend per-class lookup errored")
+            return {
+                "classes": list(classes or []),
+                "metrics": [],
+                "source_eval_result_id": 1 if classes else None,
+            }
+
+        async def _async_resolve(*_a, **_k):
+            if resolver_raises:
+                raise RuntimeError("pretend pack resolver errored")
+            return {
+                "active_pack_id": "evalpack.project.scaffolded",
+                "pack": {
+                    "task_specs": [
+                        {
+                            "task_profile": "classification",
+                            "gates": [
+                                {"gate_id": f"gate_{i}", "metric_id": mid}
+                                for i, mid in enumerate(gate_metric_ids or [])
+                            ],
+                        }
+                    ],
+                },
+            }
+
+        with (
+            patch(
+                "app.services.evaluation_gate_catalog.build_per_class_metric_options",
+                side_effect=_async_per_class,
+            ),
+            patch(
+                "app.services.evaluation_pack_service.resolve_project_evaluation_pack",
+                side_effect=_async_resolve,
+            ),
+        ):
+            return await _missing_per_class_gates_nudge(
+                db=None,  # type: ignore[arg-type]
+                project_id=42,
+                recipe_id=recipe_id,
+            )
+
+    async def test_classification_with_no_per_class_gates_emits_nudge(self):
+        nudge = await self._run_nudge(
+            recipe_id="classification",
+            classes=["benign", "attack"],
+            gate_metric_ids=["macro_f1", "accuracy"],
+        )
+        self.assertIsNotNone(nudge)
+        assert nudge is not None
+        self.assertEqual(nudge["id"], "eval:no-per-class-gates")
+        self.assertEqual(nudge["severity"], "info")
+        # Action threads through the slice-3 navigate target the FE
+        # registers (`eval-pack-editor`).
+        self.assertEqual(nudge["action"]["kind"], "navigate")
+        self.assertEqual(nudge["action"]["params"]["target"], "eval-pack-editor")
+        # Context surfaces both classes so the trace view can render
+        # "discovered: benign, attack" inline.
+        self.assertEqual(nudge["context"]["discovered_classes"], ["benign", "attack"])
+
+    async def test_non_classification_recipe_emits_no_nudge(self):
+        # qa-sft / summarization / generic-sft don't have a "class"
+        # concept — the nudge silently skips for them.
+        for recipe in ("qa-sft", "summarization", "generic-sft", None):
+            with self.subTest(recipe=recipe):
+                nudge = await self._run_nudge(
+                    recipe_id=recipe,
+                    classes=["benign"],
+                    gate_metric_ids=[],
+                )
+                self.assertIsNone(nudge)
+
+    async def test_classification_with_existing_per_class_gate_emits_no_nudge(self):
+        # User already configured at least one per-class gate
+        # (precision_benign). The Coach must NOT keep nagging.
+        nudge = await self._run_nudge(
+            recipe_id="classification",
+            classes=["benign", "attack"],
+            gate_metric_ids=["macro_f1", "precision_benign"],
+        )
+        self.assertIsNone(nudge)
+
+    async def test_classification_with_dot_path_per_class_gate_emits_no_nudge(self):
+        # Power users may have written the dot-path form
+        # (per_class.benign.precision). The nudge has to recognise that
+        # shape too — same is_per_class_metric_id helper as the
+        # validator uses.
+        nudge = await self._run_nudge(
+            recipe_id="classification",
+            classes=["benign", "attack"],
+            gate_metric_ids=["per_class.benign.recall"],
+        )
+        self.assertIsNone(nudge)
+
+    async def test_no_eval_results_yet_emits_no_nudge(self):
+        # No classes discovered (project hasn't run an eval). The
+        # EvalPackScaffoldPanel hint already covers this case — the
+        # Coach shouldn't also nag.
+        nudge = await self._run_nudge(
+            recipe_id="classification",
+            classes=[],
+            gate_metric_ids=[],
+        )
+        self.assertIsNone(nudge)
+
+    async def test_per_class_lookup_failure_does_not_emit_nudge_or_raise(self):
+        # If build_per_class_metric_options errors, the nudge must
+        # silently skip rather than break the eval-tab Coach.
+        nudge = await self._run_nudge(
+            recipe_id="classification",
+            classes=None,  # ignored because per_class_raises=True
+            gate_metric_ids=[],
+            per_class_raises=True,
+        )
+        self.assertIsNone(nudge)
+
+    async def test_pack_resolver_failure_does_not_emit_nudge_or_raise(self):
+        # Same defensive contract for the pack resolver — a stale pack
+        # reference must not break the rest of the eval-tab Coach.
+        nudge = await self._run_nudge(
+            recipe_id="classification",
+            classes=["benign"],
+            gate_metric_ids=[],
+            resolver_raises=True,
+        )
+        self.assertIsNone(nudge)
+
+
 class CoachServiceCleaningStageTests(unittest.IsolatedAsyncioTestCase):
     """Phase 2: ``_cleaning_stage_suggestions`` direct calls with
     patched data loaders. Mirrors the patched-loader pattern from the

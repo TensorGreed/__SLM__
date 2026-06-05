@@ -199,6 +199,12 @@ const NAVIGATE_TARGET_URLS: Record<
     // badges safe-cleanup-normalizer with a ★ so the swap is one click.
     'domain-pack-manager': (projectId) =>
         `/project/${projectId}/domain/packs`,
+    // Gap-#6 slice 3 — Coach's per-class-gates-missing nudge points
+    // at the Evaluation Pack section on the Eval tab. The
+    // EvalPackScaffoldPanel + the per-class optgroups (slice 2) live
+    // under that anchor.
+    'eval-pack-editor': (projectId) =>
+        `/project/${projectId}/pipeline/eval#eval-pack-editor`,
     // Sweep-inconclusive nudge — sends the user to the observability
     // page's FailureClusterList (the section was given the
     // `failure-clusters` anchor for this deep-link). When the sweep

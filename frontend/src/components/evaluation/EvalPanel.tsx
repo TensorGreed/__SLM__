@@ -1072,7 +1072,7 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
             )}
 
             {selectedExp && (
-                <div className="card eval-pack-card">
+                <div className="card eval-pack-card" id="eval-pack-editor">
                     <div className="eval-pack-header">
                         <div>
                             <h3 style={{ fontSize: 'var(--font-size-md)', fontWeight: 600, marginBottom: 4 }}>

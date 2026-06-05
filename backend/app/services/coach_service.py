@@ -1433,6 +1433,118 @@ def _auto_rag_eval_nudge(
     }
 
 
+# Recipe IDs where per-class gates are meaningful. Classification +
+# span-extraction both emit per-class metrics through the handler;
+# other recipes don't have a "class" concept at the eval-row level.
+_PER_CLASS_RECIPE_IDS: frozenset[str] = frozenset({
+    "classification",
+    "span-extraction",
+})
+
+
+async def _missing_per_class_gates_nudge(
+    db: AsyncSession, project_id: int, recipe_id: str | None
+) -> dict[str, Any] | None:
+    """Gap-#6 slice 3 — nudge classification projects whose active
+    eval pack has zero per-class gates configured.
+
+    Three conditions must all hold:
+      1. Recipe is classification-shaped (per-class metrics make sense).
+      2. The latest eval has emitted ``per_class`` data — i.e. classes
+         have been discovered. Without that we'd just be nagging users
+         to add gates against metric IDs the editor can't help pick.
+      3. No existing gate in the active pack already references a
+         per-class metric ID.
+
+    Severity is ``info`` — running a classification eval without
+    per-class gates isn't broken, it's just leaving signal on the
+    floor (macro F1 can stay healthy while a rare class collapses).
+
+    Returns None on any lookup failure — the eval-tab Coach must not
+    break when a pack reference goes stale or a plugin import errors.
+    """
+    if (recipe_id or "").strip().lower() not in _PER_CLASS_RECIPE_IDS:
+        return None
+
+    # Lazy imports — these modules pull in the eval engine and
+    # SQLAlchemy plumbing the coach module doesn't otherwise need.
+    from app.services.evaluation_gate_catalog import (
+        build_per_class_metric_options,
+        is_per_class_metric_id,
+    )
+    from app.services.evaluation_pack_service import (
+        resolve_project_evaluation_pack,
+    )
+
+    # Condition 2 — classes discovered. If the project has no eval
+    # results yet, the editor's hint covers the case; no need for the
+    # Coach to also nag.
+    try:
+        per_class = await build_per_class_metric_options(
+            db, project_id=project_id,
+        )
+    except Exception:  # noqa: BLE001 — never break the eval-tab Coach
+        return None
+    classes = per_class.get("classes") or []
+    if not classes:
+        return None
+
+    # Condition 3 — walk the active pack's gates, abort if any
+    # already references a per-class metric ID.
+    try:
+        resolved = await resolve_project_evaluation_pack(db, project_id)
+    except Exception:  # noqa: BLE001
+        return None
+    pack = resolved.get("pack") if isinstance(resolved, dict) else None
+    if not isinstance(pack, dict):
+        return None
+
+    task_specs = pack.get("task_specs") if isinstance(pack.get("task_specs"), list) else []
+    for spec in task_specs:
+        if not isinstance(spec, dict):
+            continue
+        for gate in spec.get("gates") or []:
+            if not isinstance(gate, dict):
+                continue
+            metric_id = str(gate.get("metric_id") or "").strip().lower()
+            if metric_id and is_per_class_metric_id(metric_id):
+                # At least one per-class gate already configured — no
+                # need to nudge.
+                return None
+
+    # All three conditions met → emit the nudge. Truncate the class
+    # list in the body so projects with 20+ classes don't get a wall
+    # of text.
+    sample = ", ".join(f"`{c}`" for c in classes[:3])
+    more = f" and {len(classes) - 3} more" if len(classes) > 3 else ""
+    return {
+        "id": "eval:no-per-class-gates",
+        "title": (
+            f"Your eval pack doesn't gate per-class metrics — "
+            f"{len(classes)} class(es) discovered"
+        ),
+        "body": (
+            f"Macro F1 alone can hide a rare class collapsing — a 90/10 "
+            f"split can hit 0.9 accuracy with `f1_minority` near zero. "
+            f"Your latest eval surfaced classes {sample}{more}. Adding "
+            f"a `precision_<class>` or `recall_<class>` gate in the eval "
+            f"pack editor catches the regression the moment it shows up."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open eval pack editor",
+            "params": {"target": "eval-pack-editor"},
+        },
+        "rule_id": "per-class-gates.absent",
+        "context": {
+            "discovered_classes": list(classes),
+            "active_pack_id": resolved.get("active_pack_id"),
+            "source_eval_result_id": per_class.get("source_eval_result_id"),
+        },
+    }
+
+
 async def _eval_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -1528,6 +1640,18 @@ async def _eval_stage_suggestions(
     )
     if reroute_nudge:
         suggestions.append(reroute_nudge)
+
+    # Gap-#6 slice 3 — nudge classification projects whose eval pack
+    # has zero per-class gates to add one. Fires independently of the
+    # pass-rate check above so it surfaces even on healthy projects
+    # whose macro F1 is hiding a class-imbalance problem. Best-effort:
+    # if any of the lookups error, the nudge silently skips rather
+    # than breaking the eval-tab Coach.
+    per_class_nudge = await _missing_per_class_gates_nudge(
+        db, project.id, recipe_id,
+    )
+    if per_class_nudge:
+        suggestions.append(per_class_nudge)
 
     if pass_rate is None or pass_rate >= EVAL_PASS_RATE_HEALTHY:
         return suggestions
