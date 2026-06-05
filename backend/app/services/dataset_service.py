@@ -822,6 +822,7 @@ async def split_dataset(
     field_mapping: dict[str, str] | None = None,
     task_profile: str | None = None,
     stratify_by: str | None = None,
+    disjoint_by: str | None = None,
 ) -> dict:
     """Split combined data into train/val/test and save as JSONL.
 
@@ -836,14 +837,37 @@ async def split_dataset(
     and are listed in the stratification report so the caller can
     see what happened.
 
-    When ``stratify_by`` is None: behaviour is unchanged (uniform
-    random shuffle + slice). The ``stratification_report`` field
-    on the returned manifest is None in that case.
+    When ``disjoint_by`` is set to a top-level field name (e.g.
+    ``author``, ``template_id``, ``document_id``, ``customer_id``),
+    entries are grouped by that field and each group is assigned
+    **whole** to one split. This is the canonical guard against
+    same-key leakage — a writer's prose appearing in both train and
+    test, the same invoice template generating both train and held-out
+    rows, etc. Groups with a missing key bucket as ``__missing__`` and
+    go entirely to train so the disjoint guarantee holds as a hard
+    contract on non-missing keys.
+
+    ``stratify_by`` and ``disjoint_by`` are mutually exclusive — the
+    stratify guarantee requires splitting a group, the disjoint
+    guarantee forbids it.
+
+    When both are None: behaviour is unchanged (uniform random
+    shuffle + slice). The ``stratification_report`` and
+    ``disjoint_report`` fields on the returned manifest are None.
     """
     if train_ratio <= 0 or val_ratio < 0 or test_ratio < 0:
         raise ValueError("Invalid split ratios. train must be > 0 and val/test must be >= 0.")
     if abs((train_ratio + val_ratio + test_ratio) - 1.0) > 1e-6:
         raise ValueError("Split ratios must sum to 1.0")
+    if (
+        stratify_by and str(stratify_by).strip()
+        and disjoint_by and str(disjoint_by).strip()
+    ):
+        raise ValueError(
+            "stratify_by and disjoint_by are mutually exclusive — "
+            "the stratify guarantee requires splitting groups, the "
+            "disjoint guarantee forbids it. Pick one."
+        )
 
     # Resolve include_types via the auto-exclusion rule so the prep
     # step doesn't dump 70k+ text-only CLEANED rows on top of 2k
@@ -868,7 +892,9 @@ async def split_dataset(
     if not entries:
         raise ValueError("No data available to split. Ingest and process documents first.")
 
+    total = len(entries)
     stratification_report: dict | None = None
+    disjoint_report: dict | None = None
     if stratify_by and str(stratify_by).strip():
         splits, stratification_report = _stratified_split_entries(
             entries,
@@ -877,11 +903,18 @@ async def split_dataset(
             val_ratio=val_ratio,
             seed=seed,
         )
+    elif disjoint_by and str(disjoint_by).strip():
+        splits, disjoint_report = _disjoint_split_entries(
+            entries,
+            disjoint_field=str(disjoint_by).strip(),
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            seed=seed,
+        )
     else:
         random.seed(seed)
         random.shuffle(entries)
 
-        total = len(entries)
         train_end = int(total * train_ratio)
         val_end = train_end + int(total * val_ratio)
 
@@ -972,6 +1005,8 @@ async def split_dataset(
         "task_profile": _normalize_task_profile_value(task_profile),
         "stratify_by": str(stratify_by).strip() if stratify_by else None,
         "stratification_report": stratification_report,
+        "disjoint_by": str(disjoint_by).strip() if disjoint_by else None,
+        "disjoint_report": disjoint_report,
     }
     manifest_path = prep_dir / "manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -1092,6 +1127,126 @@ def _stratified_split_entries(
         "per_group": per_group,
         "missing_count": len(groups.get("__missing__", [])),
         "small_groups_train_only": small_groups,
+    }
+    return splits, report
+
+
+def _disjoint_split_entries(
+    entries: list[dict[str, Any]],
+    *,
+    disjoint_field: str,
+    train_ratio: float,
+    val_ratio: float,
+    seed: int,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Group entries by ``disjoint_field`` value and assign each group
+    **whole** to one split — never split a group across train/val/test.
+
+    This is the canonical guard against same-key leakage that inflates
+    eval numbers: think split-by-author (a writer's prose patterns
+    appearing in both train and test), split-by-template (the same
+    invoice template generating both train and held-out rows), or
+    split-by-document (chunks of the same document landing in both).
+
+    Algorithm: shuffle the groups deterministically under ``seed``,
+    then greedily assign each group to whichever split is furthest
+    below its target row count. Greedy bin-packing on shuffled keys
+    keeps actual split sizes close to the requested ratios without
+    ever splitting a group.
+
+    Missing / null / empty key values bucket as ``"__missing__"`` and
+    the whole bucket goes to train (so the disjoint guarantee holds
+    as a hard contract for non-missing keys). The report surfaces the
+    missing count so the caller can clean their data and re-prep.
+    """
+    from collections import defaultdict
+
+    rng = random.Random(seed)
+    test_ratio = max(0.0, 1.0 - train_ratio - val_ratio)
+
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in entries:
+        raw = entry.get(disjoint_field) if isinstance(entry, dict) else None
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            key = "__missing__"
+        else:
+            key = str(raw)
+        groups[key].append(entry)
+
+    splits: dict[str, list[dict[str, Any]]] = {"train": [], "val": [], "test": []}
+    split_groups: dict[str, list[str]] = {"train": [], "val": [], "test": []}
+    total_rows = len(entries)
+    targets = {
+        "train": train_ratio * total_rows,
+        "val": val_ratio * total_rows,
+        "test": test_ratio * total_rows,
+    }
+    running = {"train": 0, "val": 0, "test": 0}
+
+    # Hard contract: missing-key rows always go to train so the
+    # disjoint guarantee is unconditional on non-missing rows.
+    missing_rows = groups.pop("__missing__", [])
+    if missing_rows:
+        splits["train"].extend(missing_rows)
+        split_groups["train"].append("__missing__")
+        running["train"] += len(missing_rows)
+
+    # Stable-sort keys then shuffle so behaviour is deterministic and
+    # independent of dict insertion order.
+    ordered_keys = sorted(groups.keys())
+    rng.shuffle(ordered_keys)
+
+    # Assign large groups first — greedy bin-packing converges closer
+    # to the target ratios when biggest items are placed earliest.
+    ordered_keys.sort(key=lambda k: len(groups[k]), reverse=True)
+
+    for key in ordered_keys:
+        group_entries = groups[key]
+        # Pick the split with the largest deficit (target − current).
+        # If val_ratio is 0 the target is 0 and the deficit can't beat
+        # train/test, so we never put rows in an empty bucket.
+        deficits = {
+            name: targets[name] - running[name]
+            for name in ("train", "val", "test")
+            if targets[name] > 0
+        }
+        # Fallback: if all targets are 0 (degenerate), default to train.
+        if not deficits:
+            best = "train"
+        else:
+            best = max(deficits, key=lambda n: deficits[n])
+        splits[best].extend(group_entries)
+        split_groups[best].append(key)
+        running[best] += len(group_entries)
+
+    # Final intra-split shuffle so groups don't appear as contiguous
+    # blocks within a split (matters for SGD-style training).
+    for name in splits:
+        rng.shuffle(splits[name])
+
+    per_split = {
+        name: {
+            "group_count": len(split_groups[name]),
+            "row_count": len(splits[name]),
+            "groups": split_groups[name],
+        }
+        for name in ("train", "val", "test")
+    }
+    ratio_drift = {
+        name: round(
+            abs((len(splits[name]) / total_rows) - {
+                "train": train_ratio, "val": val_ratio, "test": test_ratio,
+            }[name]),
+            4,
+        ) if total_rows else 0.0
+        for name in ("train", "val", "test")
+    }
+    report: dict[str, Any] = {
+        "disjoint_field": disjoint_field,
+        "group_count": len(groups) + (1 if missing_rows else 0),
+        "missing_count": len(missing_rows),
+        "per_split": per_split,
+        "ratio_drift": ratio_drift,
     }
     return splits, report
 

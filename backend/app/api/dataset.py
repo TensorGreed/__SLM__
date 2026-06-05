@@ -52,11 +52,26 @@ class SplitRequest(BaseModel):
     # class proportion across train/val/test so rare classes don't
     # vanish from val/test under a uniform random split.
     stratify_by: str | None = None
+    # Gap-#4 slice 3 — disjoint-by-key split. When set to a top-level
+    # field (e.g. ``author``, ``template_id``, ``document_id``,
+    # ``customer_id``), entries are grouped by that field and each
+    # group is assigned WHOLE to one split. Guards against same-key
+    # leakage that inflates eval numbers. Mutually exclusive with
+    # ``stratify_by`` — they encode opposing guarantees.
+    disjoint_by: str | None = None
 
     @model_validator(mode="after")
     def validate_ratios(self):
         if abs((self.train_ratio + self.val_ratio + self.test_ratio) - 1.0) > 1e-6:
             raise ValueError("train_ratio + val_ratio + test_ratio must equal 1.0")
+        if (
+            self.stratify_by and self.stratify_by.strip()
+            and self.disjoint_by and self.disjoint_by.strip()
+        ):
+            raise ValueError(
+                "stratify_by and disjoint_by are mutually exclusive — "
+                "stratify requires splitting groups, disjoint forbids it. Pick one."
+            )
         return self
 
 
@@ -273,6 +288,7 @@ async def split(
             field_mapping=field_mapping,
             task_profile=task_profile,
             stratify_by=req.stratify_by,
+            disjoint_by=req.disjoint_by,
         )
         manifest["domain_pack_applied"] = runtime.get("domain_pack_applied")
         manifest["domain_pack_source"] = runtime.get("domain_pack_source")

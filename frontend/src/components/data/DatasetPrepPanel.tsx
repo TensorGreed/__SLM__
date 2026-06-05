@@ -50,6 +50,18 @@ interface StratificationReport {
     small_groups_train_only: string[];
 }
 
+interface DisjointReport {
+    disjoint_field: string;
+    group_count: number;
+    missing_count: number;
+    per_split: {
+        train: { group_count: number; row_count: number; groups: string[] };
+        val: { group_count: number; row_count: number; groups: string[] };
+        test: { group_count: number; row_count: number; groups: string[] };
+    };
+    ratio_drift: { train: number; val: number; test: number };
+}
+
 interface SplitManifest {
     project_id: number;
     total_entries: number;
@@ -73,6 +85,8 @@ interface SplitManifest {
     profile_defaults_applied?: string[];
     stratify_by?: string | null;
     stratification_report?: StratificationReport | null;
+    disjoint_by?: string | null;
+    disjoint_report?: DisjointReport | null;
 }
 
 interface SplitEffectiveConfig {
@@ -347,6 +361,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [splitAdapterConfigText, setSplitAdapterConfigText] = useState('');
     const [splitFieldMappingText, setSplitFieldMappingText] = useState('');
     const [stratifyBy, setStratifyBy] = useState('');
+    const [disjointBy, setDisjointBy] = useState('');
     const [useProfileDefaults, setUseProfileDefaults] = useState(true);
     const [splitTouched, setSplitTouched] = useState({
         train_ratio: false,
@@ -391,6 +406,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         const trimmedStratify = stratifyBy.trim();
         if (trimmedStratify) {
             payload.stratify_by = trimmedStratify;
+        }
+        const trimmedDisjoint = disjointBy.trim();
+        if (trimmedDisjoint) {
+            payload.disjoint_by = trimmedDisjoint;
         }
         return payload;
     };
@@ -1684,9 +1703,23 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                             value={stratifyBy}
                             onChange={(e) => setStratifyBy(e.target.value)}
                             placeholder="e.g. label, intent, category — blank = uniform random"
+                            disabled={!!disjointBy.trim()}
                         />
                         <p className="dp-strat-help">
                             Groups rows by this field's value and splits each group at the same ratios — preserves per-class proportions so rare classes don't vanish from val/test.
+                        </p>
+                    </div>
+                    <div className="dp-split-field dp-strat-field">
+                        <label>Disjoint By Field (optional)</label>
+                        <input
+                            type="text"
+                            value={disjointBy}
+                            onChange={(e) => setDisjointBy(e.target.value)}
+                            placeholder="e.g. author, template_id, document_id, customer_id"
+                            disabled={!!stratifyBy.trim()}
+                        />
+                        <p className="dp-strat-help">
+                            Groups rows by this key and assigns each group whole to one split — guards against same-key leakage (same author / template / document appearing in both train and test). Mutually exclusive with Stratify By.
                         </p>
                     </div>
                 </div>
@@ -1802,6 +1835,41 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 </div>
                             ))}
                         </div>
+                        {splitManifest.disjoint_report && (
+                            <div className="dp-resolved-panel dp-strat-panel">
+                                <div className="dp-resolved-title">
+                                    Disjoint by <code>{splitManifest.disjoint_report.disjoint_field}</code> — {splitManifest.disjoint_report.group_count} group(s)
+                                </div>
+                                {splitManifest.disjoint_report.missing_count > 0 && (
+                                    <p className="dp-strat-warning">
+                                        ⚠️ {splitManifest.disjoint_report.missing_count} row(s) had a missing/null/empty <code>{splitManifest.disjoint_report.disjoint_field}</code> and were sent entirely to train (the disjoint guarantee on non-missing keys is unconditional).
+                                    </p>
+                                )}
+                                <table className="dp-strat-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Split</th>
+                                            <th className="dp-strat-num">Groups</th>
+                                            <th className="dp-strat-num">Rows</th>
+                                            <th className="dp-strat-num">Ratio Drift</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(['train', 'val', 'test'] as const).map((s) => (
+                                            <tr key={s}>
+                                                <td><code>{s}</code></td>
+                                                <td className="dp-strat-num">{splitManifest.disjoint_report!.per_split[s].group_count}</td>
+                                                <td className="dp-strat-num">{splitManifest.disjoint_report!.per_split[s].row_count}</td>
+                                                <td className="dp-strat-num">{splitManifest.disjoint_report!.ratio_drift[s].toFixed(4)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                <p className="dp-strat-help">
+                                    Ratio drift = |actual − target| for each split. Greedy bin-packing on shuffled groups; closer to 0 = closer to the requested ratios.
+                                </p>
+                            </div>
+                        )}
                         {splitManifest.stratification_report && (
                             <div className="dp-resolved-panel dp-strat-panel">
                                 <div className="dp-resolved-title">

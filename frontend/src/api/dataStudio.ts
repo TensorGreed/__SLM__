@@ -1463,6 +1463,23 @@ export interface StratificationReport {
     small_groups_train_only: string[];
 }
 
+/** Gap-#4 slice 3 — disjoint-by-key report. Surfaces when
+ *  ``disjoint_by`` was set: each group lands whole in exactly one
+ *  split. ``ratio_drift`` is |actual − target| per split so a user
+ *  can see how close the greedy bin-packing landed to the requested
+ *  ratios. */
+export interface DisjointReport {
+    disjoint_field: string;
+    group_count: number;
+    missing_count: number;
+    per_split: {
+        train: { group_count: number; row_count: number; groups: string[] };
+        val: { group_count: number; row_count: number; groups: string[] };
+        test: { group_count: number; row_count: number; groups: string[] };
+    };
+    ratio_drift: { train: number; val: number; test: number };
+}
+
 export interface RunPrepareDatasetResult {
     manifest_path?: string | null;
     train_count?: number | null;
@@ -1475,6 +1492,11 @@ export interface RunPrepareDatasetResult {
     /** Per-group split breakdown — present when stratify_by was
      *  set. Null otherwise. */
     stratification_report?: StratificationReport | null;
+    /** Disjoint-by-key field the user requested (or null). */
+    disjoint_by?: string | null;
+    /** Per-split disjoint-group breakdown — present when disjoint_by
+     *  was set. Null otherwise. */
+    disjoint_report?: DisjointReport | null;
     [key: string]: unknown;
 }
 
