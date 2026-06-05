@@ -36,6 +36,20 @@ interface ProfileResult {
     validator_report?: Record<string, unknown>;
 }
 
+interface StratificationReport {
+    stratify_field: string;
+    group_count: number;
+    per_group: Array<{
+        value: string;
+        total: number;
+        train: number;
+        val: number;
+        test: number;
+    }>;
+    missing_count: number;
+    small_groups_train_only: string[];
+}
+
 interface SplitManifest {
     project_id: number;
     total_entries: number;
@@ -57,6 +71,8 @@ interface SplitManifest {
         chat_template?: string;
     } | null;
     profile_defaults_applied?: string[];
+    stratify_by?: string | null;
+    stratification_report?: StratificationReport | null;
 }
 
 interface SplitEffectiveConfig {
@@ -330,6 +346,7 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
     const [splitTaskProfile, setSplitTaskProfile] = useState('auto');
     const [splitAdapterConfigText, setSplitAdapterConfigText] = useState('');
     const [splitFieldMappingText, setSplitFieldMappingText] = useState('');
+    const [stratifyBy, setStratifyBy] = useState('');
     const [useProfileDefaults, setUseProfileDefaults] = useState(true);
     const [splitTouched, setSplitTouched] = useState({
         train_ratio: false,
@@ -370,6 +387,10 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
         }
         if (Object.keys(parsedFieldMapping.value).length > 0) {
             payload.field_mapping = parsedFieldMapping.value;
+        }
+        const trimmedStratify = stratifyBy.trim();
+        if (trimmedStratify) {
+            payload.stratify_by = trimmedStratify;
         }
         return payload;
     };
@@ -1655,6 +1676,20 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                         ⚠️ Ratios sum to {ratioSum} — must equal 1.0
                     </p>
                 )}
+                <div className="dp-split-row">
+                    <div className="dp-split-field dp-strat-field">
+                        <label>Stratify By Field (optional)</label>
+                        <input
+                            type="text"
+                            value={stratifyBy}
+                            onChange={(e) => setStratifyBy(e.target.value)}
+                            placeholder="e.g. label, intent, category — blank = uniform random"
+                        />
+                        <p className="dp-strat-help">
+                            Groups rows by this field's value and splits each group at the same ratios — preserves per-class proportions so rare classes don't vanish from val/test.
+                        </p>
+                    </div>
+                </div>
                 <div className="dp-actions">
                     <button className="btn-primary" onClick={previewEffectiveSplitConfig} disabled={effectiveSplitLoading}>
                         {effectiveSplitLoading ? '⏳ Resolving...' : '🧭 Preview Effective Config'}
@@ -1767,6 +1802,45 @@ export default function DatasetPrepPanel({ projectId, onNextStep }: DatasetPrepP
                                 </div>
                             ))}
                         </div>
+                        {splitManifest.stratification_report && (
+                            <div className="dp-resolved-panel dp-strat-panel">
+                                <div className="dp-resolved-title">
+                                    Stratified by <code>{splitManifest.stratification_report.stratify_field}</code> — {splitManifest.stratification_report.group_count} group(s)
+                                </div>
+                                {splitManifest.stratification_report.missing_count > 0 && (
+                                    <p className="dp-strat-warning">
+                                        ⚠️ {splitManifest.stratification_report.missing_count} row(s) had a missing/null/empty <code>{splitManifest.stratification_report.stratify_field}</code> and were bucketed as <code>__missing__</code>.
+                                    </p>
+                                )}
+                                {splitManifest.stratification_report.small_groups_train_only.length > 0 && (
+                                    <p className="dp-strat-warning">
+                                        ⚠️ Small group(s) with &lt; 2 rows were sent entirely to train (no val/test coverage): {splitManifest.stratification_report.small_groups_train_only.map((g) => <code key={g}>{g}</code>)}
+                                    </p>
+                                )}
+                                <table className="dp-strat-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Value</th>
+                                            <th className="dp-strat-num">Total</th>
+                                            <th className="dp-strat-num">Train</th>
+                                            <th className="dp-strat-num">Val</th>
+                                            <th className="dp-strat-num">Test</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {splitManifest.stratification_report.per_group.map((g) => (
+                                            <tr key={g.value}>
+                                                <td><code>{g.value}</code></td>
+                                                <td className="dp-strat-num">{g.total}</td>
+                                                <td className="dp-strat-num">{g.train}</td>
+                                                <td className="dp-strat-num">{g.val}</td>
+                                                <td className="dp-strat-num">{g.test}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                         <pre>{JSON.stringify(splitManifest, null, 2)}</pre>
                     </div>
                 )}

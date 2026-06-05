@@ -551,3 +551,35 @@
     background: var(--bg-tertiary);
     border-color: var(--gray-100);
 }
+
+/* Stratification report (Gap #4) */
+.dp-strat-panel { margin-top: 0.75rem; }
+.dp-strat-warning {
+    color: #f9c74f;
+    font-size: 0.82rem;
+    margin: 0 0 0.5rem;
+}
+.dp-strat-warning code { margin-right: 0.4rem; }
+.dp-strat-table {
+    width: 100%;
+    font-size: 0.82rem;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+}
+.dp-strat-table thead tr {
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+.dp-strat-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.dp-strat-table th,
+.dp-strat-table td { padding: 0.3rem 0.5rem; }
+.dp-strat-table th.dp-strat-num,
+.dp-strat-table td.dp-strat-num { text-align: right; }
+.dp-strat-help {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.55);
+    margin: 0.25rem 0 0;
+}
+.dp-strat-field { flex: 1; min-width: 14rem; }
