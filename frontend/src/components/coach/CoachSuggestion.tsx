@@ -194,6 +194,11 @@ const NAVIGATE_TARGET_URLS: Record<
     // mounted by the time the user lands.
     'reroute-recommendation-panel': (projectId) =>
         `/project/${projectId}/pipeline/eval#reroute-recommendation-panel`,
+    // Gap-#1/#2 slice 3 — Coach's no-op normalizer nudge points here.
+    // The page mounts DomainPackManager, where the slice-2 picker
+    // badges safe-cleanup-normalizer with a ★ so the swap is one click.
+    'domain-pack-manager': (projectId) =>
+        `/project/${projectId}/domain/packs`,
     // Sweep-inconclusive nudge — sends the user to the observability
     // page's FailureClusterList (the section was given the
     // `failure-clusters` anchor for this deep-link). When the sweep

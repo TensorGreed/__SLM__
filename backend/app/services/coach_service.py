@@ -373,7 +373,70 @@ async def _data_stage_suggestions(
     if archetype_nudge:
         suggestions.append(archetype_nudge)
 
+    # Gap-#1/#2 slice 3 — nudge users running the no-op default
+    # normalizer to swap in safe-cleanup-normalizer. Slice 1 shipped
+    # the real builtins; slice 2 made them pickable; this slice
+    # closes the loop by surfacing the choice when the user hasn't
+    # made it. Best-effort: if the hook resolver errors (missing
+    # pack / migration race), skip silently rather than break the
+    # data-tab Coach.
+    noop_nudge = await _noop_normalizer_nudge(db, project.id)
+    if noop_nudge:
+        suggestions.append(noop_nudge)
+
     return suggestions
+
+
+async def _noop_normalizer_nudge(
+    db: AsyncSession, project_id: int
+) -> dict[str, Any] | None:
+    """Fire when the project's effective normalizer is the no-op
+    ``default-normalizer``. Returns None when a non-default normalizer
+    is already configured OR when the hook resolver errors.
+
+    Severity is ``info`` (not warning/critical) — running the no-op
+    normalizer isn't broken behaviour, it's just not making use of a
+    feature the user has. Nudge, don't alarm.
+    """
+    from app.services.domain_hook_service import resolve_project_domain_hooks
+
+    try:
+        hooks = await resolve_project_domain_hooks(db, project_id)
+    except Exception:
+        return None
+
+    normalizer = hooks.get("normalizer") if isinstance(hooks, dict) else None
+    if not isinstance(normalizer, dict):
+        return None
+    active_id = str(normalizer.get("id") or "").strip().lower()
+    if active_id != "default-normalizer":
+        return None
+
+    return {
+        "id": "data:noop-normalizer",
+        "title": "Your domain pack is running the no-op normalizer",
+        "body": (
+            "`default-normalizer` is pass-through — it leaves the canonical "
+            "record exactly as-is. The `safe-cleanup-normalizer` builtin is "
+            "the recommended swap-in: it decodes HTML entities (`&amp;` → "
+            "`&`, `&nbsp;` → space) and collapses runs of whitespace, which "
+            "catches the most common ingestion-stage cleanup issues without "
+            "any domain-specific assumptions. Swap it in via the Domain Pack "
+            "Manager — the picker badges it with a ★."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open Domain Pack Manager",
+            "params": {"target": "domain-pack-manager"},
+        },
+        "rule_id": "noop-normalizer.default-active",
+        "context": {
+            "active_normalizer_id": active_id,
+            "recommended_normalizer_id": "safe-cleanup-normalizer",
+            "domain_pack_applied": hooks.get("domain_pack_applied"),
+        },
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────

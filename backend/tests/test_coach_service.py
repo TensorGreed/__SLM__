@@ -258,6 +258,117 @@ class CoachServiceDirectCallTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s["action"]["params"]["target"], "recipe-picker")
 
 
+class CoachServiceNoopNormalizerNudgeTests(unittest.IsolatedAsyncioTestCase):
+    """Gap-#1/#2 slice 3 — the no-op normalizer nudge. Directly drives
+    ``_data_stage_suggestions`` with a stub project + patched hook
+    resolver so each branch (default / non-default / resolver-errors)
+    can be exercised without standing up a domain pack in the DB."""
+
+    async def _suggestions_with_normalizer_id(
+        self,
+        normalizer_id: str | None,
+        *,
+        resolver_raises: bool = False,
+    ) -> list[dict]:
+        from unittest.mock import patch
+
+        class _StubProject:
+            id = 99
+            selected_recipe = {"recipe_id": "classification"}
+
+        async def _async_row_count(*_a, **_k):
+            # Past the comfortable threshold so the gold-row-count
+            # nudge stays out of the way — we only want the no-op
+            # nudge in scope for these tests.
+            return GOLD_ROW_COMFORTABLE_MIN + 50
+
+        async def _async_resolve(*_a, **_k):
+            if resolver_raises:
+                raise RuntimeError("pretend the resolver errored")
+            return {
+                "domain_pack_applied": "general-pack-v1",
+                "normalizer": (
+                    {"id": normalizer_id, "config": {}}
+                    if normalizer_id is not None
+                    else None
+                ),
+                "validator": {"id": "default-validator", "config": {}},
+                "evaluator": {"id": "default-evaluator", "config": {}},
+            }
+
+        with (
+            patch(
+                "app.services.coach_service._read_gold_row_count",
+                side_effect=_async_row_count,
+            ),
+            # The nudge does a lazy import — patch the resolver in its
+            # canonical module so the patched function is what gets
+            # picked up.
+            patch(
+                "app.services.domain_hook_service.resolve_project_domain_hooks",
+                side_effect=_async_resolve,
+            ),
+            # Archetype comparison is best-effort; stub it so the test
+            # doesn't depend on the archetype service being available.
+            patch(
+                "app.services.coach_service._load_archetype_comparison_safe",
+                side_effect=lambda *_a, **_k: _async_none(),
+            ),
+        ):
+            return await _data_stage_suggestions(
+                db=None, project=_StubProject()  # type: ignore[arg-type]
+            )
+
+    async def test_default_normalizer_emits_noop_nudge_with_navigate_action(self):
+        suggestions = await self._suggestions_with_normalizer_id("default-normalizer")
+        nudges = [s for s in suggestions if s["id"] == "data:noop-normalizer"]
+        self.assertEqual(len(nudges), 1)
+        nudge = nudges[0]
+        # Info severity — running the no-op isn't broken, it's just
+        # not making use of a feature. Nudge, don't alarm.
+        self.assertEqual(nudge["severity"], "info")
+        # Action points the user at the DomainPackManager via the
+        # slice-3 navigate target the FE registered.
+        self.assertEqual(nudge["action"]["kind"], "navigate")
+        self.assertEqual(nudge["action"]["params"]["target"], "domain-pack-manager")
+        # Context tells the trace which normalizer is active +
+        # which one we're recommending — both are useful for the
+        # observability "why did this fire" view.
+        ctx = nudge["context"]
+        self.assertEqual(ctx["active_normalizer_id"], "default-normalizer")
+        self.assertEqual(ctx["recommended_normalizer_id"], "safe-cleanup-normalizer")
+        # rule_id is stable + machine-greppable.
+        self.assertEqual(nudge["rule_id"], "noop-normalizer.default-active")
+
+    async def test_safe_cleanup_normalizer_emits_no_nudge(self):
+        # User already swapped to the recommended normalizer — the
+        # coach must NOT keep pestering them about it.
+        suggestions = await self._suggestions_with_normalizer_id("safe-cleanup-normalizer")
+        nudge_ids = {s["id"] for s in suggestions}
+        self.assertNotIn("data:noop-normalizer", nudge_ids)
+
+    async def test_custom_plugin_normalizer_emits_no_nudge(self):
+        # Any non-default id (custom plugin, scaffolder pick, …) means
+        # the user has made a deliberate choice. Don't second-guess it.
+        suggestions = await self._suggestions_with_normalizer_id("my-custom-redact-normalizer")
+        nudge_ids = {s["id"] for s in suggestions}
+        self.assertNotIn("data:noop-normalizer", nudge_ids)
+
+    async def test_resolver_failure_does_not_break_data_stage(self):
+        # If the hook resolver errors (missing pack, migration race,
+        # plugin import failure), the nudge must skip silently rather
+        # than blow up the whole data-tab Coach.
+        suggestions = await self._suggestions_with_normalizer_id(
+            None, resolver_raises=True,
+        )
+        nudge_ids = {s["id"] for s in suggestions}
+        self.assertNotIn("data:noop-normalizer", nudge_ids)
+
+
+async def _async_none() -> None:
+    return None
+
+
 class CoachServiceCleaningStageTests(unittest.IsolatedAsyncioTestCase):
     """Phase 2: ``_cleaning_stage_suggestions`` direct calls with
     patched data loaders. Mirrors the patched-loader pattern from the
