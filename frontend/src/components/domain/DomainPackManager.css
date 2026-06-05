@@ -341,3 +341,38 @@
     align-items: flex-start;
   }
 }
+
+/* Gap-#1/#2 slice 2 — hook picker rows in the editor modal */
+.domain-pack-hook-picker-row {
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    padding: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.domain-pack-hook-description {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.domain-pack-hook-description.is-noop {
+    color: #f9c74f;
+    font-style: italic;
+}
+
+.domain-pack-hook-config-label {
+    margin-top: var(--space-xs);
+    font-size: 0.72rem;
+    opacity: 0.8;
+}
+
+.domain-pack-hook-config {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.78rem;
+    min-height: 4rem;
+    resize: vertical;
+}

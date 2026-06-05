@@ -67,6 +67,25 @@ const DEFAULT_HOOK_SELECTION: Record<ContractHookKey, string> = {
   evaluator: 'default-evaluator',
 };
 
+// Gap-#1/#2 slice 2 — hook IDs the picker should mark with a ★ so a
+// user staring at "default-normalizer (no-op)" knows what to swap in.
+// Source of truth: slice-1 catalog descriptions; if you ship more
+// recommended builtins, add the IDs here so they badge consistently.
+const RECOMMENDED_HOOK_IDS: Record<ContractHookKey, ReadonlySet<string>> = {
+  normalizer: new Set(['safe-cleanup-normalizer']),
+  validator: new Set([]),
+  evaluator: new Set(['metric-coverage-evaluator']),
+};
+
+// The default hooks ship as no-ops — we tag them so the dropdown
+// label communicates "you're running pass-through" rather than
+// hiding it under a generic "default" name.
+const NOOP_HOOK_IDS: Record<ContractHookKey, ReadonlySet<string>> = {
+  normalizer: new Set(['default-normalizer']),
+  validator: new Set([]),
+  evaluator: new Set(['default-evaluator']),
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -93,6 +112,83 @@ function extractHookSelectionFromContract(contract: Record<string, unknown>): Re
     }
   });
   return selection;
+}
+
+// Gap-#1/#2 slice 2 — pull each hook's config dict from the contract
+// JSON so the picker can render a config textarea pre-populated with
+// the current value. Missing / non-dict configs fall back to "{}" so
+// the user always sees a valid JSON skeleton to start editing.
+function extractHookConfigTextFromContract(
+  contract: Record<string, unknown>,
+): Record<ContractHookKey, string> {
+  const hooks = isRecord(contract.hooks) ? contract.hooks : {};
+  const out: Record<ContractHookKey, string> = {
+    normalizer: '{}',
+    validator: '{}',
+    evaluator: '{}',
+  };
+  (Object.keys(out) as ContractHookKey[]).forEach((key) => {
+    const spec = hooks[key];
+    if (!isRecord(spec)) return;
+    const cfg = spec.config;
+    if (isRecord(cfg)) {
+      out[key] = JSON.stringify(cfg, null, 2);
+    }
+  });
+  return out;
+}
+
+// Auto-apply path: take the current picker state (ids + configs) and
+// inject it into the contract JSON. Returns the new JSON string + a
+// flag set when any of the config strings failed to parse (the caller
+// surfaces an inline warning rather than silently dropping the edit).
+function writeHookSelectionIntoJson(
+  currentJson: string,
+  selection: Record<ContractHookKey, string>,
+  configText: Record<ContractHookKey, string>,
+): { json: string; configError: ContractHookKey | null } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(currentJson || '{}');
+  } catch {
+    // Can't auto-apply on top of malformed JSON; leave it untouched
+    // and let the user fix the textarea first.
+    return { json: currentJson, configError: null };
+  }
+  const contract: Record<string, unknown> = isRecord(parsed) ? { ...parsed } : {};
+  const hooks: Record<string, unknown> = isRecord(contract.hooks) ? { ...contract.hooks } : {};
+  let configError: ContractHookKey | null = null;
+
+  (Object.keys(selection) as ContractHookKey[]).forEach((key) => {
+    const existing = hooks[key];
+    const nextSpec: Record<string, unknown> = isRecord(existing) ? { ...existing } : {};
+    nextSpec.id = normalizeHookId(selection[key]) || DEFAULT_HOOK_SELECTION[key];
+    // Parse the user-edited config JSON; if it's malformed, keep the
+    // previous config and remember which hook failed so the UI can
+    // call it out.
+    const rawConfigText = (configText[key] ?? '').trim();
+    if (!rawConfigText) {
+      nextSpec.config = {};
+    } else {
+      try {
+        const cfg = JSON.parse(rawConfigText);
+        if (!isRecord(cfg)) {
+          throw new Error('config must be an object');
+        }
+        nextSpec.config = cfg;
+      } catch {
+        configError = configError || key;
+        // Preserve whatever was previously persisted so a transient
+        // typo doesn't blow away a working config.
+        if (!isRecord(nextSpec.config)) {
+          nextSpec.config = {};
+        }
+      }
+    }
+    hooks[key] = nextSpec;
+  });
+  contract.hooks = hooks;
+  return { json: JSON.stringify(contract, null, 2), configError };
 }
 
 function buildPackTemplate(): Record<string, unknown> {
@@ -167,6 +263,11 @@ export default function DomainPackManager({
   const [isSaving, setIsSaving] = useState(false);
   const [editorHookSelection, setEditorHookSelection] = useState<Record<ContractHookKey, string>>({
     ...DEFAULT_HOOK_SELECTION,
+  });
+  const [editorHookConfigText, setEditorHookConfigText] = useState<Record<ContractHookKey, string>>({
+    normalizer: '{}',
+    validator: '{}',
+    evaluator: '{}',
   });
   const [editorHookStatus, setEditorHookStatus] = useState('');
   const [editorHookError, setEditorHookError] = useState('');
@@ -272,6 +373,7 @@ export default function DomainPackManager({
     setEditorTargetPackId(null);
     setEditorJson(JSON.stringify(template, null, 2));
     setEditorHookSelection(extractHookSelectionFromContract(template));
+    setEditorHookConfigText(extractHookConfigTextFromContract(template));
     setEditorHookStatus('');
     setEditorHookError('');
     setEditorOpen(true);
@@ -291,6 +393,7 @@ export default function DomainPackManager({
       setEditorTargetPackId(selectedPackId);
       setEditorJson(JSON.stringify(contractPayload, null, 2));
       setEditorHookSelection(extractHookSelectionFromContract(contractPayload));
+      setEditorHookConfigText(extractHookConfigTextFromContract(contractPayload));
       setEditorHookStatus('');
       setEditorHookError('');
       setEditorOpen(true);
@@ -316,6 +419,7 @@ export default function DomainPackManager({
       setEditorTargetPackId(duplicated.pack_id);
       setEditorJson(JSON.stringify(duplicatedContract, null, 2));
       setEditorHookSelection(extractHookSelectionFromContract(duplicatedContract));
+      setEditorHookConfigText(extractHookConfigTextFromContract(duplicatedContract));
       setEditorHookStatus('');
       setEditorHookError('');
       setEditorOpen(true);
@@ -395,40 +499,48 @@ export default function DomainPackManager({
     }
   };
 
-  const handleLoadHookSelectionFromJson = () => {
+  // Resync the picker state from the user's hand-edited JSON textarea.
+  // Useful when they've pasted in a contract and want the picker +
+  // config boxes to match. Auto-sync goes the OTHER direction by
+  // default (picker → JSON) — this button is the rescue path.
+  const handleResyncPickerFromJson = () => {
     const parsed = parseEditorJsonForHookHelper();
     if (!parsed) {
       return;
     }
     setEditorHookSelection(extractHookSelectionFromContract(parsed));
+    setEditorHookConfigText(extractHookConfigTextFromContract(parsed));
     setEditorHookError('');
-    setEditorHookStatus('Loaded hook IDs from current JSON.');
+    setEditorHookStatus('Resynced picker + config boxes from contract JSON.');
   };
 
-  const handleApplyHookSelectionToJson = () => {
-    const parsed = parseEditorJsonForHookHelper();
-    if (!parsed) {
-      return;
-    }
-    const nextContract: Record<string, unknown> = { ...parsed };
-    const hooks = isRecord(nextContract.hooks) ? { ...nextContract.hooks } : {};
-
-    (Object.keys(editorHookSelection) as ContractHookKey[]).forEach((key) => {
-      const selected = normalizeHookId(editorHookSelection[key]) || DEFAULT_HOOK_SELECTION[key];
-      const existing = hooks[key];
-      const nextSpec = isRecord(existing) ? { ...existing } : {};
-      nextSpec.id = selected;
-      if (!isRecord(nextSpec.config)) {
-        nextSpec.config = {};
+  // Gap-#1/#2 slice 2 — central auto-apply path called whenever the
+  // user picks a different hook ID OR edits a hook's config JSON. The
+  // contract JSON updates immediately so save uses the latest picker
+  // state without requiring an explicit "Apply" click.
+  const autoApplyHookSelection = useCallback(
+    (
+      nextSelection: Record<ContractHookKey, string>,
+      nextConfigText: Record<ContractHookKey, string>,
+    ) => {
+      const { json, configError } = writeHookSelectionIntoJson(
+        editorJson,
+        nextSelection,
+        nextConfigText,
+      );
+      setEditorJson(json);
+      if (configError) {
+        setEditorHookError(
+          `${CONTRACT_HOOK_LABELS[configError]} config JSON is invalid — fix it before saving.`,
+        );
+        setEditorHookStatus('');
+      } else {
+        setEditorHookError('');
+        setEditorHookStatus('');
       }
-      hooks[key] = nextSpec;
-    });
-
-    nextContract.hooks = hooks;
-    setEditorJson(JSON.stringify(nextContract, null, 2));
-    setEditorHookError('');
-    setEditorHookStatus('Applied selected hooks into contract JSON.');
-  };
+    },
+    [editorJson],
+  );
 
   const handleReloadHooks = async () => {
     setIsHookReloading(true);
@@ -682,8 +794,10 @@ export default function DomainPackManager({
             <div className="modal-body">
               <div className="domain-pack-hook-editor">
                 <div className="domain-pack-hook-editor-header">
-                  <span className="form-label">Hook Helper</span>
-                  <span className="domain-pack-hook-editor-note">Apply IDs directly into contract JSON</span>
+                  <span className="form-label">Hook Picker</span>
+                  <span className="domain-pack-hook-editor-note">
+                    Changes auto-apply to the JSON below — ★ marks recommended starter hooks.
+                  </span>
                 </div>
                 <div className="domain-pack-hook-editor-grid">
                   {(Object.keys(CONTRACT_HOOK_LABELS) as ContractHookKey[]).map((key) => {
@@ -691,34 +805,66 @@ export default function DomainPackManager({
                     const entries = hookOptionsByKind[kind];
                     const selected = editorHookSelection[key];
                     const hasSelected = entries.some(([hookId]) => hookId === selected);
+                    const description = hookCatalog?.[kind]?.[selected] || '';
+                    const isNoop = NOOP_HOOK_IDS[key].has(selected);
                     return (
-                      <div key={key} className="form-group">
+                      <div key={key} className="form-group domain-pack-hook-picker-row">
                         <label className="form-label">{CONTRACT_HOOK_LABELS[key]}</label>
                         <select
                           className="input"
+                          aria-label={CONTRACT_HOOK_LABELS[key]}
                           value={selected}
                           onChange={(e) => {
                             const nextId = normalizeHookId(e.target.value) || DEFAULT_HOOK_SELECTION[key];
-                            setEditorHookSelection((prev) => ({ ...prev, [key]: nextId }));
+                            const nextSelection = { ...editorHookSelection, [key]: nextId };
+                            setEditorHookSelection(nextSelection);
+                            autoApplyHookSelection(nextSelection, editorHookConfigText);
                           }}
+                          data-testid={`domain-pack-hook-${key}-select`}
                         >
                           {!hasSelected && selected && <option value={selected}>{selected} (custom)</option>}
-                          {entries.map(([hookId, description]) => (
+                          {entries.map(([hookId]) => (
                             <option key={`${key}-${hookId}`} value={hookId}>
-                              {hookId} - {description}
+                              {RECOMMENDED_HOOK_IDS[key].has(hookId) ? '★ ' : ''}{hookId}
+                              {NOOP_HOOK_IDS[key].has(hookId) ? ' (no-op)' : ''}
                             </option>
                           ))}
                         </select>
+                        {description && (
+                          <p
+                            className={`domain-pack-hook-description${isNoop ? ' is-noop' : ''}`}
+                            data-testid={`domain-pack-hook-${key}-description`}
+                          >
+                            {description}
+                          </p>
+                        )}
+                        <label className="form-label domain-pack-hook-config-label">
+                          Config JSON
+                        </label>
+                        <textarea
+                          className="input domain-pack-hook-config"
+                          aria-label={`${CONTRACT_HOOK_LABELS[key]} config JSON`}
+                          placeholder="{}"
+                          value={editorHookConfigText[key]}
+                          spellCheck={false}
+                          onChange={(e) => {
+                            const nextText = { ...editorHookConfigText, [key]: e.target.value };
+                            setEditorHookConfigText(nextText);
+                            autoApplyHookSelection(editorHookSelection, nextText);
+                          }}
+                          data-testid={`domain-pack-hook-${key}-config`}
+                        />
                       </div>
                     );
                   })}
                 </div>
                 <div className="domain-pack-hook-editor-actions">
-                  <button className="btn btn-secondary btn-sm" onClick={handleLoadHookSelectionFromJson}>
-                    Load From JSON
-                  </button>
-                  <button className="btn btn-secondary btn-sm" onClick={handleApplyHookSelectionToJson}>
-                    Apply To JSON
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleResyncPickerFromJson}
+                  >
+                    Resync picker from JSON
                   </button>
                 </div>
                 {editorHookStatus && <div className="domain-pack-hook-editor-status">{editorHookStatus}</div>}
@@ -728,6 +874,7 @@ export default function DomainPackManager({
                 <label className="form-label">Contract JSON</label>
                 <textarea
                   className="domain-pack-json"
+                  aria-label="Contract JSON"
                   value={editorJson}
                   onChange={(e) => setEditorJson(e.target.value)}
                   spellCheck={false}
