@@ -626,6 +626,7 @@ session-start guidance.
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
 - `backend/tests/test_evaluation_gate_catalog.py` — Unit tests for the eval-pack gate-options catalog + validator
+- `backend/tests/test_evaluation_per_class_gates.py` — Tests for the per-class metric flattener + endpoint (Gap #6 slice 1).
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.

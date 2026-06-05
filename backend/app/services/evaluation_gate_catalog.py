@@ -218,6 +218,37 @@ def build_gate_options(recipe_id: str | None = None) -> dict[str, Any]:
     }
 
 
+import re as _re
+
+
+# Gap #6 slice 1 — per-class metric ID patterns the validator should
+# accept even though the class names are project-specific and can't
+# be enumerated up-front. The classification handler emits per-class
+# precision/recall/f1/support flattened by ``_flatten_per_class_metrics``
+# into both ``precision_<label>`` short keys and ``per_class.<label>.<m>``
+# dot-paths; the editor + the validator both have to know about these
+# shapes so users picking ``precision_benign`` from the per-class
+# dropdown don't trip ``unknown_metric_id``.
+_PER_CLASS_METRIC_PREFIXES: tuple[str, ...] = ("precision_", "recall_", "f1_", "support_")
+_PER_CLASS_DOT_PATTERN = _re.compile(r"^per_class\.[a-z0-9_]+\.(precision|recall|f1|support)$")
+
+
+def is_per_class_metric_id(metric_id: str) -> bool:
+    """True when ``metric_id`` matches a per-class shape — either the
+    short form (``precision_<label>``) or the dot-path form
+    (``per_class.<label>.precision``). Both are emitted by the
+    flattener so the validator accepts both.
+    """
+    if not metric_id:
+        return False
+    token = metric_id.strip().lower()
+    if any(token.startswith(p) and len(token) > len(p) for p in _PER_CLASS_METRIC_PREFIXES):
+        return True
+    if _PER_CLASS_DOT_PATTERN.match(token):
+        return True
+    return False
+
+
 def known_metric_ids() -> set[str]:
     """Set of metric_ids the gate validator accepts.
 
@@ -249,6 +280,100 @@ def known_metric_ids() -> set[str]:
                 if isinstance(metric_id, str) and metric_id.strip():
                     out.add(metric_id.strip().lower())
     return out
+
+
+async def build_per_class_metric_options(
+    db: Any,
+    *,
+    project_id: int,
+) -> dict[str, Any]:
+    """Gap #6 slice 1 — discover the per-class metric IDs the project's
+    classification handler is currently emitting, so the editor's gate
+    dropdown can group them under a "Per-class" section.
+
+    Reads the latest classification-style eval result for the project
+    and pulls ``metrics["per_class"]`` keys (class labels). For each
+    label, returns the three short-form metric IDs the flattener emits
+    (``precision_<label>``, ``recall_<label>``, ``f1_<label>``) so the
+    editor doesn't have to know about the dot-path form unless the
+    user types it manually.
+
+    Returns:
+      {
+        "classes": [str, ...],            # discovered class labels
+        "metrics": [
+          {"metric_id": "precision_benign", "label": "Precision · benign",
+           "default_operator": "gte", "class_name": "benign",
+           "metric_kind": "precision"},
+          ...
+        ],
+        "source_eval_result_id": int | None,
+      }
+
+    When the project has no eval results yet, returns an empty
+    ``classes`` + ``metrics`` list with ``source_eval_result_id=None``;
+    the FE renders that as "Run an eval first to discover classes".
+    """
+    from sqlalchemy import select
+    from app.models.experiment import EvalResult, Experiment
+
+    # Latest eval result for the project, in any classification-shaped
+    # eval_type. We don't filter by eval_type because the per_class
+    # dict is what we key on — any handler that emits it is fair game.
+    rows = await db.execute(
+        select(EvalResult)
+        .join(Experiment, Experiment.id == EvalResult.experiment_id)
+        .where(Experiment.project_id == project_id)
+        .order_by(EvalResult.created_at.desc(), EvalResult.id.desc())
+        .limit(50)
+    )
+
+    class_labels: list[str] = []
+    source_eval_result_id: int | None = None
+    for row in rows.scalars().all():
+        metrics_dict = row.metrics if isinstance(row.metrics, dict) else {}
+        per_class = metrics_dict.get("per_class")
+        if not isinstance(per_class, dict) or not per_class:
+            continue
+        # Stable order: alphabetical class names so the dropdown
+        # doesn't reshuffle between renders.
+        class_labels = sorted(
+            str(label).strip()
+            for label in per_class.keys()
+            if str(label).strip()
+        )
+        source_eval_result_id = int(row.id)
+        break
+
+    metrics_out: list[dict[str, Any]] = []
+    for label in class_labels:
+        normalized_label = label.lower().replace(" ", "_").replace("-", "_")
+        for kind, default_op in (
+            ("precision", "gte"),
+            ("recall", "gte"),
+            ("f1", "gte"),
+        ):
+            metric_id = f"{kind}_{normalized_label}"
+            metrics_out.append({
+                "metric_id": metric_id,
+                "label": f"{kind.title()} · {label}",
+                "description": (
+                    f"Per-class {kind} for class '{label}' "
+                    f"(flattened from per_class.{label}.{kind} on the "
+                    f"latest classification eval result)."
+                ),
+                "default_operator": default_op,
+                "expected_range": [0.0, 1.0],
+                "class_name": label,
+                "metric_kind": kind,
+                "recommended": False,
+            })
+
+    return {
+        "classes": class_labels,
+        "metrics": metrics_out,
+        "source_eval_result_id": source_eval_result_id,
+    }
 
 
 def validate_draft_pack_gates(draft_pack: dict[str, Any]) -> None:
@@ -306,7 +431,11 @@ def validate_draft_pack_gates(draft_pack: dict[str, Any]) -> None:
             metric_id = str(gate.get("metric_id") or "").strip().lower()
             if not metric_id:
                 raise ValueError(f"missing_metric_id:{gate_id}")
-            if metric_id not in known:
+            # Per-class metric IDs (precision_benign, per_class.attack.f1,
+            # …) are accepted without needing a base-schema entry — the
+            # class names are project-specific and surface via the
+            # /per-class-metric-options endpoint, not the static catalog.
+            if metric_id not in known and not is_per_class_metric_id(metric_id):
                 raise ValueError(f"unknown_metric_id:{metric_id}")
 
             operator = str(gate.get("operator") or "gte").strip().lower()

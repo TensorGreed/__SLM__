@@ -29,6 +29,7 @@ from app.services.evaluation_gate_catalog import (
     LTE_DEFAULT_METRIC_IDS,
     VALID_GATE_OPERATORS,
     build_gate_options,
+    is_per_class_metric_id,
     known_metric_ids,
     validate_draft_pack_gates,
 )
@@ -206,6 +207,76 @@ class ValidateDraftPackGatesTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             validate_draft_pack_gates(pack)
         self.assertEqual(str(ctx.exception), "invalid_gate_shape")
+
+    # ─────────────────────────────────────────────────────────────
+    # Gap #6 slice 1 — per-class metric IDs accepted by the validator
+    # ─────────────────────────────────────────────────────────────
+
+    def test_per_class_short_form_metric_ids_pass_validation(self):
+        # ``precision_<class>``, ``recall_<class>``, ``f1_<class>`` get
+        # emitted by the flattener for each class the eval result has.
+        # The validator must accept them even though the class label
+        # is project-specific and not in the static catalog.
+        pack = scaffold_pack("classification")
+        pack["task_specs"][0]["gates"] = [
+            {"gate_id": "min_precision_benign", "metric_id": "precision_benign",
+             "operator": "gte", "threshold": 0.95, "required": True},
+            {"gate_id": "min_recall_attack", "metric_id": "recall_attack",
+             "operator": "gte", "threshold": 0.80, "required": True},
+            {"gate_id": "min_f1_other", "metric_id": "f1_other_class",
+             "operator": "gte", "threshold": 0.60, "required": False},
+        ]
+        # Should not raise.
+        validate_draft_pack_gates(pack)
+
+    def test_per_class_dot_path_metric_ids_pass_validation(self):
+        # Power users may write ``per_class.benign.precision`` directly
+        # (the dot-path form the resolver's suffix-matcher also handles).
+        # The validator must accept that shape too.
+        pack = scaffold_pack("classification")
+        pack["task_specs"][0]["gates"] = [
+            {"gate_id": "min_per_class_benign_precision",
+             "metric_id": "per_class.benign.precision",
+             "operator": "gte", "threshold": 0.95, "required": True},
+        ]
+        validate_draft_pack_gates(pack)
+
+    def test_short_form_with_only_prefix_is_still_rejected_as_unknown(self):
+        # ``precision_`` alone (no class label) isn't a per-class
+        # metric — it's a typo. Must still fail validation.
+        pack = scaffold_pack("classification")
+        pack["task_specs"][0]["gates"][0]["metric_id"] = "precision_"
+        with self.assertRaises(ValueError) as ctx:
+            validate_draft_pack_gates(pack)
+        self.assertTrue(str(ctx.exception).startswith("unknown_metric_id:"))
+
+
+class IsPerClassMetricIdTests(unittest.TestCase):
+
+    def test_recognises_short_form_with_class_label(self):
+        self.assertTrue(is_per_class_metric_id("precision_benign"))
+        self.assertTrue(is_per_class_metric_id("recall_attack_vector"))
+        self.assertTrue(is_per_class_metric_id("f1_other_class"))
+        self.assertTrue(is_per_class_metric_id("support_benign"))
+
+    def test_recognises_dot_path_form(self):
+        self.assertTrue(is_per_class_metric_id("per_class.benign.precision"))
+        self.assertTrue(is_per_class_metric_id("per_class.attack.recall"))
+        self.assertTrue(is_per_class_metric_id("per_class.other_class.f1"))
+
+    def test_rejects_non_per_class_metric_ids(self):
+        # Base-schema metrics + short prefixes without labels both
+        # fall through to "not per-class" so the validator can apply
+        # its normal known-metric check to them.
+        self.assertFalse(is_per_class_metric_id("f1"))
+        self.assertFalse(is_per_class_metric_id("macro_f1"))
+        self.assertFalse(is_per_class_metric_id("precision_"))
+        self.assertFalse(is_per_class_metric_id(""))
+        self.assertFalse(is_per_class_metric_id("per_class.benign"))  # missing kind
+        self.assertFalse(is_per_class_metric_id("per_class.benign.bogus"))
+
+
+class ValidateDraftPackGatesEdgeTests(unittest.TestCase):
 
     def test_no_op_when_pack_has_no_task_specs(self):
         # Pack-level shape (missing task_specs) is the caller's

@@ -1165,6 +1165,18 @@ def _build_metric_snapshot(
         for raw_key, raw_value in payload.items():
             value = _to_float(raw_value)
             if value is None:
+                # Gap #6 slice 1 — classification handler emits
+                # ``per_class: {label: {precision, recall, f1, support}}``
+                # which is a nested dict and gets dropped by the
+                # _to_float check above. Flatten the nested shape into
+                # gateable top-level keys so the eval pack editor can
+                # surface per-class gates (``min_precision_benign``,
+                # ``min_recall_attack``, etc.) instead of the macro F1
+                # being the only classification lever.
+                _flatten_per_class_metrics(
+                    values, sources, payload_key=str(raw_key), payload_value=raw_value,
+                    row=row, eval_type=eval_type,
+                )
                 continue
             normalized_metric = _normalize_token(str(raw_key))
             if not normalized_metric:
@@ -1189,6 +1201,63 @@ def _build_metric_snapshot(
             )
 
     return values, sources
+
+
+# Per-class metric sub-keys we know how to gate on. Support is the
+# row count for the class — useful as a presence check (gate on
+# ``support_<class> >= 10`` to fail when a class disappears).
+_PER_CLASS_METRIC_KEYS: tuple[str, ...] = ("precision", "recall", "f1", "support")
+
+
+def _flatten_per_class_metrics(
+    values: dict[str, float],
+    sources: dict[str, dict[str, Any]],
+    *,
+    payload_key: str,
+    payload_value: Any,
+    row: EvalResult,
+    eval_type: str,
+) -> None:
+    """Flatten ``per_class: {label: {precision, recall, f1, support}}``
+    into top-level gateable keys.
+
+    Skips silently when the payload doesn't match the expected shape
+    (it might be the confusion_matrix dict, or some future plugin's
+    nested payload that shouldn't be flattened).
+
+    Emits three id-shapes per class so users can write the gate the
+    way that feels natural to them:
+      * ``precision_<label>`` — short pattern (matches scaffolder
+        ``min_per_class_f1`` convention).
+      * ``per_class.<label>.precision`` — dot-path the resolver's
+        existing suffix-matching can also resolve.
+      * ``<eval_type>.per_class.<label>.precision`` — eval-type-scoped
+        dot-path, mirrors what other metrics get above.
+    """
+    if str(payload_key).strip().lower() != "per_class":
+        return
+    if not isinstance(payload_value, dict):
+        return
+    for raw_label, raw_class_metrics in payload_value.items():
+        if not isinstance(raw_class_metrics, dict):
+            continue
+        label = _normalize_token(str(raw_label))
+        if not label:
+            continue
+        for metric_name in _PER_CLASS_METRIC_KEYS:
+            metric_value = _to_float(raw_class_metrics.get(metric_name))
+            if metric_value is None:
+                continue
+            short_key = f"{metric_name}_{label}"
+            dot_key = f"per_class.{label}.{metric_name}"
+            scoped_key = f"{eval_type}.{dot_key}"
+            metric_key_label = f"per_class.{raw_label}.{metric_name}"
+            for key in (short_key, dot_key, scoped_key):
+                _set_metric_value(
+                    values, sources,
+                    key=key, value=metric_value, row=row,
+                    metric_key=metric_key_label, overwrite=False,
+                )
 
 
 def _metric_alias_candidates(metric_id: str, metric_schema: dict[str, Any] | None = None) -> list[str]:

@@ -438,6 +438,33 @@ async def adopt_gate_from_cluster_endpoint(
         raise HTTPException(400, code)
 
 
+@router.get("/per-class-metric-options")
+async def get_per_class_metric_options(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Gap #6 slice 1 — return the per-class metric IDs the project's
+    latest classification eval is currently emitting.
+
+    The static gate-options catalog can't enumerate per-class metrics
+    because class names are project-specific (and even shift between
+    eval runs). This endpoint discovers them dynamically from the
+    project's latest classification-shaped eval result so the eval
+    pack editor's gate dropdown can group ``precision_<class>`` /
+    ``recall_<class>`` / ``f1_<class>`` under a "Per-class" section.
+
+    Errors:
+      * 404 — project not found.
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project_not_found")
+
+    from app.services.evaluation_gate_catalog import build_per_class_metric_options
+
+    return await build_per_class_metric_options(db, project_id=project_id)
+
+
 @router.get("/gate-options")
 async def get_gate_options(
     project_id: int,
