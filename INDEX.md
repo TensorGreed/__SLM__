@@ -147,6 +147,7 @@ session-start guidance.
 - `backend/app/services/eval_jobs_service.py` — Job-runner wrappers for long-running evaluation endpoints.
 - `backend/app/services/eval_pack_scaffold_service.py` — Recipe-aware evaluation-pack scaffolder (E5).
 - `backend/app/services/eval_task_handler_service.py` — Task-aware evaluation dispatcher (Phase 5.3.0).
+- `backend/app/services/evaluation_gate_catalog.py` — Gate-options catalog for the eval-pack scaffold editor (Gap #5 slice 1).
 - `backend/app/services/evaluation_pack_service.py` — Evaluation pack catalog + task-aware auto-gate evaluation helpers.
 - `backend/app/services/evaluation_remediation_service.py` — Closed-loop remediation planning for evaluation failures.
 - `backend/app/services/evaluation_service.py` — Evaluation framework service — metrics, safety, regression comparison.
@@ -622,6 +623,7 @@ session-start guidance.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
+- `backend/tests/test_evaluation_gate_catalog.py` — Unit tests for the eval-pack gate-options catalog + validator
 - `backend/tests/test_experiment_clone.py` — Tests for the experiment-clone endpoint
 - `backend/tests/test_experiment_comparison.py` — Tests for the eval-aware experiment comparison service + API (E3).
 - `backend/tests/test_failure_cluster_handler_drilldown.py` — Arc 2 — failure-cluster drill-down backend pass-through.

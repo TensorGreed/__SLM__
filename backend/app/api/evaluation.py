@@ -366,7 +366,9 @@ async def save_pack_scaffold(
 
     Errors:
       * 404 — project not found.
-      * 400 — draft is missing required keys (e.g. no task_specs).
+      * 400 — draft is missing required keys (e.g. no task_specs) or
+        a gate has an invalid operator / unknown metric / duplicate
+        gate_id / out-of-range threshold (Gap-#5 slice 1).
     """
     from app.services.eval_pack_scaffold_service import save_scaffolded_pack
 
@@ -381,6 +383,33 @@ async def save_pack_scaffold(
         if code == "project_not_found":
             raise HTTPException(404, code)
         raise HTTPException(400, code)
+
+
+@router.get("/gate-options")
+async def get_gate_options(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Recipe-aware gate editor catalog (Gap-#5 slice 1).
+
+    Returns the operators the eval engine implements and the metrics
+    a user can pick when adding/editing a custom gate, with the
+    ``recommended`` flag set for the metrics that match the project's
+    selected recipe. The frontend gate editor uses this as the single
+    source of truth for its dropdowns + 'recommended' badges.
+
+    Errors:
+      * 404 — project not found.
+    """
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project_not_found")
+
+    from app.services.evaluation_gate_catalog import build_gate_options
+
+    selected = project.selected_recipe or {}
+    recipe_id = str(selected.get("recipe_id") or "").strip().lower() or None
+    return build_gate_options(recipe_id)
 
 
 @router.get("/pack-preference")

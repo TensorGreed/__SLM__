@@ -289,6 +289,12 @@ async def save_scaffolded_pack(
     if not isinstance(task_specs, list) or not task_specs:
         raise ValueError("draft_pack_missing_task_specs")
 
+    # Gap-#5 slice 1: validate gates against the operator whitelist +
+    # metric catalog so the FE editor can surface a precise error
+    # instead of the eval engine silently coercing bad input.
+    from app.services.evaluation_gate_catalog import validate_draft_pack_gates
+    validate_draft_pack_gates(draft_pack)
+
     # Normalise: force the scaffolded pack id even if the client
     # mutated it — the resolver keys on this id, and renaming would
     # silently disconnect the saved pack from the active-pack path.
