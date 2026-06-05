@@ -122,6 +122,144 @@ def _normalizer_strip_markdown(
     return cleaned
 
 
+# Gap-#1/#2 slice 1 — concrete normalizers that turn the "configure a
+# normalizer" promise into a no-plugin-needed knob. Default pack still
+# ships ``default-normalizer`` (no-op) so existing projects round-trip
+# unchanged; the catalog endpoint surfaces these for opt-in.
+
+_NORMALIZER_TEXT_FIELDS_DEFAULT = ("text", "question", "answer", "instruction", "response")
+
+
+def _normalizer_target_fields(config: dict[str, Any]) -> tuple[str, ...]:
+    """Resolve which string fields a normalizer should rewrite. Defaults
+    to the canonical text-bearing fields the platform recognises; users
+    can scope to a narrower set via ``config.target_fields``."""
+    raw = config.get("target_fields")
+    if isinstance(raw, list) and raw:
+        out = tuple(str(f).strip() for f in raw if isinstance(f, str) and f.strip())
+        if out:
+            return out
+    return _NORMALIZER_TEXT_FIELDS_DEFAULT
+
+
+def _normalizer_whitespace_collapse(
+    _raw_record: dict[str, Any],
+    canonical_record: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Collapse runs of whitespace + trim leading/trailing whitespace
+    on string fields. Mirrors what most users would write by hand as
+    the first line of a custom plugin — saves them the trip."""
+    if not isinstance(canonical_record, dict):
+        return None
+    cleaned = dict(canonical_record)
+    for key in _normalizer_target_fields(config):
+        value = cleaned.get(key)
+        if isinstance(value, str):
+            cleaned[key] = re.sub(r"\s+", " ", value).strip()
+    return cleaned
+
+
+def _normalizer_html_entity_decode(
+    _raw_record: dict[str, Any],
+    canonical_record: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Decode HTML entities (``&amp;`` → ``&``, ``&nbsp;`` → space,
+    numeric entities, etc.) on string fields. Scraped corpora and
+    HTML-form exports almost always need this — making it built-in
+    closes a common 'why is my training data full of &amp;quot;'
+    confusion loop."""
+    import html as _html
+
+    if not isinstance(canonical_record, dict):
+        return None
+    cleaned = dict(canonical_record)
+    for key in _normalizer_target_fields(config):
+        value = cleaned.get(key)
+        if isinstance(value, str):
+            cleaned[key] = _html.unescape(value)
+    return cleaned
+
+
+def _normalizer_lowercase_text(
+    _raw_record: dict[str, Any],
+    canonical_record: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Lowercase string fields. Useful for case-insensitive
+    classification labels, intent matching, or canonicalising scraped
+    fields that mix casing. Opt-in (per-field via ``target_fields``)
+    so we don't case-fold prose by default."""
+    if not isinstance(canonical_record, dict):
+        return None
+    cleaned = dict(canonical_record)
+    for key in _normalizer_target_fields(config):
+        value = cleaned.get(key)
+        if isinstance(value, str):
+            cleaned[key] = value.lower()
+    return cleaned
+
+
+# ISO 4217 three-letter currency codes the canonicaliser recognises.
+# Tiny by design — a real currency normalizer would pull from a
+# library, but for the platform's "tutorial-credible" use case this
+# covers the common ones the user might hit in an invoice/receipt
+# corpus. Add more via a plugin if you need them.
+_CURRENCY_SYMBOL_TO_CODE: dict[str, str] = {
+    "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR",
+    "₩": "KRW", "¢": "USD",
+}
+_CURRENCY_CODE_PATTERN = re.compile(r"\b([A-Za-z]{3})\b")
+
+
+def _normalizer_currency_canonical(
+    _raw_record: dict[str, Any],
+    canonical_record: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Canonicalise currency mentions in string fields:
+      * Bare 3-letter codes get uppercased (``usd`` → ``USD``).
+      * Single-character currency symbols are mapped to their ISO 4217
+        code when ``config.symbol_to_code=True`` (default: True).
+
+    Built for invoice / receipt / pricing-record cleaning. Doesn't
+    parse amounts — just normalises the currency *label*."""
+    if not isinstance(canonical_record, dict):
+        return None
+    symbol_to_code = _to_bool(config.get("symbol_to_code"), True)
+    cleaned = dict(canonical_record)
+    for key in _normalizer_target_fields(config):
+        value = cleaned.get(key)
+        if not isinstance(value, str):
+            continue
+        text = _CURRENCY_CODE_PATTERN.sub(lambda m: m.group(1).upper(), value)
+        if symbol_to_code:
+            for symbol, code in _CURRENCY_SYMBOL_TO_CODE.items():
+                text = text.replace(symbol, code)
+        cleaned[key] = text
+    return cleaned
+
+
+def _normalizer_safe_cleanup(
+    raw_record: dict[str, Any],
+    canonical_record: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """The opinionated default a user would write first: HTML-entity
+    decode + whitespace collapse, in that order. Composes the smaller
+    primitives instead of duplicating their logic — same semantics as
+    chaining them via a future composite-normalizer feature.
+
+    Intended as the recommended "swap me in for default-normalizer"
+    starter — visible effects on most real corpora without any
+    domain-specific assumptions."""
+    decoded = _normalizer_html_entity_decode(raw_record, canonical_record, config)
+    if decoded is None:
+        return None
+    return _normalizer_whitespace_collapse(raw_record, decoded, config)
+
+
 def _validator_default(
     records: list[dict[str, Any]],
     profile: dict[str, Any],
@@ -260,11 +398,96 @@ def _evaluator_weighted_score(
     return enriched
 
 
+def _evaluator_metric_coverage(
+    _eval_type: str,
+    metrics: dict[str, Any],
+    config: dict[str, Any],
+    _context: dict[str, Any],
+) -> dict[str, Any]:
+    """Tag which expected metrics actually showed up in the eval result.
+
+    Config: ``expected_metric_ids: [...]``. Adds:
+      * ``expected_metric_count``: how many expected metrics
+      * ``present_metric_count``: how many had a numeric value
+      * ``missing_metric_ids``: list of expected ids that were absent
+      * ``metric_coverage``: present / expected ratio
+
+    Catches silent regressions where a metric drops out of the eval
+    pipeline (handler change, plugin error) without anyone noticing —
+    the gate just stops gating because its metric isn't there."""
+    enriched = dict(metrics)
+    expected_raw = config.get("expected_metric_ids")
+    if not isinstance(expected_raw, list) or not expected_raw:
+        return enriched
+    expected = [str(m).strip() for m in expected_raw if isinstance(m, str) and str(m).strip()]
+    if not expected:
+        return enriched
+
+    missing: list[str] = []
+    present: list[str] = []
+    for metric_id in expected:
+        value = metrics.get(metric_id)
+        if isinstance(value, (int, float)):
+            present.append(metric_id)
+        else:
+            missing.append(metric_id)
+    enriched["expected_metric_count"] = len(expected)
+    enriched["present_metric_count"] = len(present)
+    enriched["missing_metric_ids"] = missing
+    enriched["metric_coverage"] = round(len(present) / len(expected), 6) if expected else 0.0
+    return enriched
+
+
+def _evaluator_threshold_counts(
+    _eval_type: str,
+    metrics: dict[str, Any],
+    config: dict[str, Any],
+    _context: dict[str, Any],
+) -> dict[str, Any]:
+    """Count how many numeric metrics land above / below a config
+    threshold. Config: ``threshold`` (default 0.5),
+    ``metric_ids`` (default: all numeric metrics in the dict).
+
+    Useful as a coarse "how is this eval doing overall" signal — a
+    one-number summary the goal ledger or coach can render before
+    drilling into individual gates."""
+    enriched = dict(metrics)
+    threshold = _to_float(config.get("threshold"), 0.5)
+    raw_ids = config.get("metric_ids")
+    if isinstance(raw_ids, list) and raw_ids:
+        candidates = [str(m).strip() for m in raw_ids if isinstance(m, str) and str(m).strip()]
+    else:
+        candidates = [
+            k for k, v in metrics.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        ]
+    above = 0
+    below = 0
+    for metric_id in candidates:
+        value = metrics.get(metric_id)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        if float(value) >= threshold:
+            above += 1
+        else:
+            below += 1
+    enriched["threshold"] = float(threshold)
+    enriched["metrics_above_threshold"] = above
+    enriched["metrics_below_threshold"] = below
+    return enriched
+
+
 BUILTIN_NORMALIZER_HOOKS: dict[str, NormalizerHook] = {
     "default-normalizer": _normalizer_default,
     "qa-required-normalizer": _normalizer_qa_required,
     "min-text-length-normalizer": _normalizer_min_text_length,
     "strip-markdown-normalizer": _normalizer_strip_markdown,
+    # Gap-#1/#2 slice 1 additions.
+    "whitespace-collapse-normalizer": _normalizer_whitespace_collapse,
+    "html-entity-decode-normalizer": _normalizer_html_entity_decode,
+    "lowercase-text-normalizer": _normalizer_lowercase_text,
+    "currency-canonical-normalizer": _normalizer_currency_canonical,
+    "safe-cleanup-normalizer": _normalizer_safe_cleanup,
 }
 
 BUILTIN_VALIDATOR_HOOKS: dict[str, ValidatorHook] = {
@@ -277,6 +500,9 @@ BUILTIN_EVALUATOR_HOOKS: dict[str, EvaluatorHook] = {
     "default-evaluator": _evaluator_default,
     "pass-rate-band-evaluator": _evaluator_pass_rate_band,
     "weighted-score-evaluator": _evaluator_weighted_score,
+    # Gap-#1/#2 slice 1 additions.
+    "metric-coverage-evaluator": _evaluator_metric_coverage,
+    "threshold-counts-evaluator": _evaluator_threshold_counts,
 }
 
 BUILTIN_HOOK_CATALOG = {
@@ -285,6 +511,11 @@ BUILTIN_HOOK_CATALOG = {
         "qa-required-normalizer": "Drops records missing question/answer (config: require_question, require_answer).",
         "min-text-length-normalizer": "Drops records with text shorter than min_chars.",
         "strip-markdown-normalizer": "Removes basic markdown tokens from text/question/answer.",
+        "whitespace-collapse-normalizer": "Collapses runs of whitespace + trims string fields (config: target_fields).",
+        "html-entity-decode-normalizer": "Decodes HTML entities (&amp; → &, &nbsp; → space, numeric entities) on string fields (config: target_fields).",
+        "lowercase-text-normalizer": "Lowercases string fields — useful for classification labels / intent matching (config: target_fields).",
+        "currency-canonical-normalizer": "Uppercases ISO currency codes + maps single-character symbols ($, €, £, …) to their codes (config: target_fields, symbol_to_code).",
+        "safe-cleanup-normalizer": "Opinionated bundle: HTML-entity decode then whitespace collapse. Recommended starter swap-in for default-normalizer.",
     },
     "validators": {
         "default-validator": "No-op validator with pass-through summary.",
@@ -295,6 +526,8 @@ BUILTIN_HOOK_CATALOG = {
         "default-evaluator": "No-op evaluator; metrics unchanged.",
         "pass-rate-band-evaluator": "Adds quality_band from pass_rate/exact_match/f1.",
         "weighted-score-evaluator": "Adds weighted_score using config.weights.",
+        "metric-coverage-evaluator": "Tags missing_metric_ids + metric_coverage from config.expected_metric_ids — catches silent metric drop-outs.",
+        "threshold-counts-evaluator": "Counts metrics_above_threshold + metrics_below_threshold using config.threshold (default 0.5) — coarse one-number health signal.",
     },
 }
 

@@ -621,6 +621,7 @@ session-start guidance.
 - `backend/tests/test_distillation_kd_offline.py` — Offline-KD data prep + readiness gate + recipes — Track 1, Epic A, slice 2.
 - `backend/tests/test_distillation_teacher_capture.py` — Teacher logit capture — Track 1, Epic A, slice 1.
 - `backend/tests/test_document_sample_endpoint.py` — Document row-sampling endpoint (Data tab accordion preview).
+- `backend/tests/test_domain_hook_builtins.py` — Unit tests for the Gap-#1/#2 slice 1 built-in domain hooks.
 - `backend/tests/test_drift_trap_refresh.py` — Tests for the drift-triggered trap-refresh runner + API (E4).
 - `backend/tests/test_eval_pack_scaffold.py` — Tests for the recipe-aware eval-pack scaffolder + save endpoint (E5).
 - `backend/tests/test_evaluation_adopt_gate.py` — Tests for the adopt-gate-from-cluster action (Gap #5 slice 3).
