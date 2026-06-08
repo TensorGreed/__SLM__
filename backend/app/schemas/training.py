@@ -176,8 +176,41 @@ class TrainingConfig(BaseModel):
     save_steps: int = Field(100, ge=1)
     eval_steps: int = Field(100, ge=1)
     early_stopping_patience: int = Field(3, ge=1)
-    
+
     seed: int = 42
+
+    # Multi-seed variance reporting (Quality-Lift phase 1).
+    # ``num_seeds=1`` (default) preserves single-seed behavior — no fan-out, no
+    # aggregate row. When ``num_seeds>1`` or ``seeds`` is set explicitly,
+    # ``training_service.start_training`` creates N child Experiments sharing a
+    # ``seed_group_id`` and rolls their EvalResults into a single aggregate row
+    # carrying ``{mean, std, min, max, n}`` per metric so gates can be judged
+    # honestly (lower-bound = mean−std, per the no-vanity-metrics rule).
+    seeds: list[int] | None = Field(
+        None,
+        description=(
+            "Explicit seed list. When set, runs len(seeds) independent "
+            "trainings with these exact values. Wins over num_seeds."
+        ),
+    )
+    num_seeds: int = Field(
+        1,
+        ge=1,
+        le=8,
+        description=(
+            "Number of independent training runs for variance reporting. "
+            "Ignored when seeds is set explicitly. When >1, seeds are derived "
+            "deterministically from the base seed: [seed, seed+1, seed+2, ...]."
+        ),
+    )
+    parallel_seeds: bool = Field(
+        False,
+        description=(
+            "Run multi-seed children in parallel (concurrent GPU contention) "
+            "vs. sequentially. Default False — on single-GPU boxes parallel "
+            "buys nothing and can OOM. Flip on only for multi-GPU runtimes."
+        ),
+    )
 
 
 class ExperimentCreate(BaseModel):

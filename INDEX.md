@@ -366,6 +366,7 @@ session-start guidance.
 - `backend/alembic/versions/20260530_0043_sweeps_first_class.py` — First-class ``sweeps`` table + ``experiments.sweep_id`` FK + backfill.
 - `backend/alembic/versions/20260601_0044_label_row_reviews.py` — Label-row multi-reviewer capture (Epic F Phase 2).
 - `backend/alembic/versions/20260603_0045_project_goal.py` — Arc H — Project end-goal contract.
+- `backend/alembic/versions/20260608_0046_multi_seed_experiments.py` — Quality-Lift phase 1 — multi-seed variance reporting columns.
 
 ## Frontend · API clients
 
@@ -640,6 +641,7 @@ session-start guidance.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
+- `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).
 - `backend/tests/test_phase100_handler_stop_sequences.py` — Phase 100 — handler stop sequences.

@@ -71,6 +71,20 @@ class Experiment(Base):
     sweep_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("sweeps.id"), nullable=True, index=True, default=None
     )
+    # Multi-seed variance reporting (Quality-Lift phase 1).
+    # ``seed_value`` records the exact PRNG seed this child run used so the UI
+    # can drill down from an aggregate ``mean ± std`` to the per-seed runs.
+    # ``seed_group_id`` is a UUID4 string shared by all N children fanned out
+    # from one ``start_training`` call with ``num_seeds>1`` or explicit
+    # ``seeds``; the parent (leader) row carries the same id so aggregation
+    # can locate its members. Distinct from ``sweep_id`` — a sweep varies
+    # hyperparameters, a seed group varies only the seed.
+    seed_value: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
+    )
+    seed_group_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, default=None
+    )
 
     # Relationships
     project = relationship("Project", back_populates="experiments")
@@ -118,6 +132,19 @@ class EvalResult(Base):
     risk_severity: Mapped[str | None] = mapped_column(String(32), default=None)
     details: Mapped[dict | None] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Multi-seed variance reporting (Quality-Lift phase 1).
+    # When ``is_aggregate=True`` this row was synthesized by the seed-group
+    # aggregator and ``metrics[<id>]`` values are dicts of the shape
+    # ``{"mean": float, "std": float, "min": float, "max": float, "n": int}``
+    # rather than scalars. Per-seed rows (one per child Experiment) remain
+    # ``is_aggregate=False`` with scalar metrics so drill-down keeps the
+    # picked-data-provenance rule honest.
+    is_aggregate: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    seed_group_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, default=None
+    )
 
     experiment = relationship("Experiment", back_populates="eval_results")
 
