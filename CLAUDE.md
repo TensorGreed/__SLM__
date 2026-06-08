@@ -95,6 +95,13 @@ drop. Never all-or-nothing.
 - `ALLOW_SQLITE_AUTOCREATE=true` triggers `Base.metadata.create_all`
   for any new models. Existing tables are NOT migrated — you still
   need an alembic migration for column adds.
+- **After committing a new migration, run `cd backend && alembic upgrade head`
+  against `data/slm_platform.db` before exercising the dev server**, even
+  if all tests pass. Tests run against a fresh per-PID scratch DB via
+  `ALLOW_SQLITE_AUTOCREATE`, so a green test suite does not mean the
+  dev DB has the new column — the dev server will 500 on
+  `no such column: <table>.<column>` until the migration is applied.
+  This bit on 2026-06-08 with the slice_definitions column.
 - **SQLite quirk**: `ALTER TABLE ... ADD CONSTRAINT` is unsupported
   (`NotImplementedError: No support for ALTER of constraints`). For
   FKs added later, leave the constraint OUT of the migration and keep
