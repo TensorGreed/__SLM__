@@ -249,6 +249,19 @@ interface GateCheck {
     actual: number | null;
     passed: boolean;
     reason: string;
+    // Multi-seed variance (Quality-Lift phase 1, slice 3). Present only
+    // when the gate's metric was sourced from an aggregate EvalResult
+    // (seed-group rollup). The dedicated drill-down lives in
+    // ScorecardPanel; here we just want the inline ``mean ± std (n=N)``
+    // surfacing so the eval-pack table doesn't silently underreport
+    // spread.
+    actual_std?: number;
+    actual_min?: number;
+    actual_max?: number;
+    actual_n?: number;
+    gate_value?: number;
+    variance_policy?: 'lower_bound' | 'mean' | 'scalar';
+    seed_group_id?: string | null;
 }
 
 interface GateReport {
@@ -1202,10 +1215,31 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                                                         ? '—'
                                                         : `${check.operator === 'lte' ? '≤' : '≥'} ${check.threshold}`}
                                                 </td>
-                                                <td>{check.actual == null ? '—' : check.actual}</td>
+                                                <td>
+                                                    {check.actual == null
+                                                        ? '—'
+                                                        : typeof check.actual_std === 'number' && (check.actual_n ?? 1) > 1
+                                                        ? (
+                                                            <span
+                                                                title={
+                                                                    check.variance_policy === 'lower_bound'
+                                                                        ? `lower-bound gate value = mean ${check.operator === 'gte' ? '−' : '+'} std`
+                                                                        : undefined
+                                                                }
+                                                            >
+                                                                {check.actual.toFixed(3)} ± {check.actual_std.toFixed(3)}
+                                                                {' '}<span className="eval-gate-metric-n">(n={check.actual_n})</span>
+                                                            </span>
+                                                        )
+                                                        : check.actual}
+                                                </td>
                                                 <td>
                                                     <span className={`badge ${check.passed ? 'badge-success' : 'badge-error'}`}>
-                                                        {check.passed ? 'pass' : check.reason}
+                                                        {check.passed
+                                                            ? 'pass'
+                                                            : check.reason === 'variance_below_threshold' || check.reason === 'variance_above_threshold'
+                                                            ? 'fail (variance)'
+                                                            : check.reason}
                                                     </span>
                                                 </td>
                                             </tr>

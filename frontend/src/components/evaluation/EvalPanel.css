@@ -641,3 +641,10 @@
         grid-template-columns: 1fr 1fr;
     }
 }
+
+/* Multi-seed variance display in the gate table (Quality-Lift phase 1, slice 3). */
+.eval-gate-metric-n {
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.9em;
+}

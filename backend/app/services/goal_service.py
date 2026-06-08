@@ -325,9 +325,12 @@ def _compute_gate_breakdown(
 
     # Build the metric-value lookup from this single EvalResult.
     # _build_metric_snapshot expects a {eval_type → EvalResult} dict;
-    # passing one entry is fine.
+    # passing one entry is fine. The third return value (variance) is
+    # only populated for aggregate EvalResults from multi-seed groups;
+    # we pass it through so a goal evaluated against an aggregate
+    # picks up the lower-bound policy honestly.
     latest_by_type = {latest_eval.eval_type: latest_eval}
-    metric_values, metric_sources = _build_metric_snapshot(latest_by_type)
+    metric_values, metric_sources, metric_variance = _build_metric_snapshot(latest_by_type)
     metric_schema = dict(task_spec.get("metric_schema") or {})
 
     breakdown: list[dict[str, Any]] = []
@@ -335,6 +338,7 @@ def _compute_gate_breakdown(
         check = _evaluate_gate(
             gate,
             values=metric_values,
+            variance=metric_variance,
             sources=metric_sources,
             metric_schema=metric_schema,
         )

@@ -113,3 +113,84 @@
   color: var(--text-tertiary);
   text-align: center;
 }
+
+/* Multi-seed variance display (Quality-Lift phase 1, slice 3). */
+
+.scorecard-metric-block {
+  font-variant-numeric: tabular-nums;
+}
+
+.scorecard-metric-mean {
+  font-weight: 600;
+}
+
+.scorecard-metric-std {
+  color: var(--text-tertiary);
+  font-size: 0.9em;
+}
+
+.scorecard-metric-n {
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+}
+
+.scorecard-metric-gate-value {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.scorecard-row--expandable {
+  cursor: pointer;
+}
+
+.scorecard-row--expandable:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.scorecard-expand-caret {
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+}
+
+.scorecard-drilldown-row {
+  background-color: var(--bg-secondary);
+}
+
+.scorecard-drilldown {
+  padding: var(--space-md);
+}
+
+.scorecard-drilldown-header {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-sm);
+}
+
+.scorecard-drilldown-stat {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.scorecard-drilldown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.scorecard-drilldown-table th,
+.scorecard-drilldown-table td {
+  padding: 6px 12px;
+  text-align: left;
+  border-bottom: 1px dashed var(--border-color);
+  font-variant-numeric: tabular-nums;
+}
+
+.scorecard-drilldown-note {
+  margin-top: var(--space-md);
+  padding: var(--space-sm);
+  background-color: var(--color-warning-bg);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--border-radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}

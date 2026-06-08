@@ -1093,6 +1093,8 @@ def _set_metric_value(
     row: EvalResult,
     metric_key: str,
     overwrite: bool = False,
+    variance: dict[str, dict[str, Any]] | None = None,
+    variance_block: dict[str, Any] | None = None,
 ) -> None:
     normalized = key.strip().lower()
     if not normalized or value is None:
@@ -1106,13 +1108,97 @@ def _set_metric_value(
         "eval_result_id": int(row.id),
         "metric_key": metric_key,
     }
+    # Multi-seed (Quality-Lift phase 1, slice 3): when this value came
+    # from an aggregate EvalResult, the source already extracted ``mean``
+    # for the scalar ``value`` above; ``variance_block`` carries the
+    # full {mean, std, min, max, n} dict plus per_seed provenance so
+    # the gate evaluator can apply the lower-bound variance policy and
+    # the UI can render mean ± std (n=N) + drill-down.
+    if variance is not None and variance_block is not None:
+        variance[normalized] = variance_block
+
+
+def _is_variance_block(raw_value: Any) -> bool:
+    """A metric value emitted by the seed-group aggregator is a dict
+    of the shape ``{"mean": float, "std": float, "min": float,
+    "max": float, "n": int}``. Single-seed flows emit plain scalars.
+    Use ``mean`` presence as the discriminator — the other keys are
+    nice-to-have but ``mean`` is load-bearing for gate evaluation.
+    """
+    return (
+        isinstance(raw_value, dict)
+        and "mean" in raw_value
+        and isinstance(raw_value.get("mean"), (int, float))
+        and not isinstance(raw_value.get("mean"), bool)
+    )
+
+
+def _variance_block_with_provenance(
+    raw_value: dict[str, Any],
+    *,
+    row: EvalResult,
+    metric_key: str,
+) -> dict[str, Any]:
+    """Materialize the variance block we plumb through to the gate
+    evaluator + UI. We carry per_seed provenance from the EvalResult's
+    ``details`` so a single click on a gate row can drill down to the
+    individual seed runs that produced the aggregate — per
+    [feedback_picked_data_provenance].
+    """
+    per_seed: list[dict[str, Any]] = []
+    details = row.details if isinstance(row.details, dict) else {}
+    raw_per_seed = details.get("per_seed")
+    if isinstance(raw_per_seed, list):
+        for entry in raw_per_seed:
+            if isinstance(entry, dict):
+                per_seed.append({
+                    "experiment_id": entry.get("experiment_id"),
+                    "seed_value": entry.get("seed_value"),
+                    "eval_result_id": entry.get("eval_result_id"),
+                    "pass_rate": entry.get("pass_rate"),
+                })
+    return {
+        "mean": float(raw_value["mean"]),
+        "std": float(raw_value.get("std", 0.0)),
+        "min": float(raw_value.get("min", raw_value["mean"])),
+        "max": float(raw_value.get("max", raw_value["mean"])),
+        "n": int(raw_value.get("n", 1)),
+        "metric_key": metric_key,
+        "per_seed": per_seed,
+        "is_aggregate": bool(row.is_aggregate),
+        "seed_group_id": row.seed_group_id,
+    }
+
+
+def _coerce_metric_to_float_and_variance(
+    raw_value: Any,
+    *,
+    row: EvalResult,
+    metric_key: str,
+) -> tuple[float | None, dict[str, Any] | None]:
+    """Return ``(scalar, variance_block_or_None)``. Aggregate rows pass
+    a variance block; single-seed rows return ``(value, None)``."""
+    if _is_variance_block(raw_value):
+        block = _variance_block_with_provenance(
+            raw_value, row=row, metric_key=metric_key
+        )
+        return block["mean"], block
+    return _to_float(raw_value), None
 
 
 def _build_metric_snapshot(
     latest_by_eval_type: dict[str, EvalResult],
-) -> tuple[dict[str, float], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, float], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Returns ``(values, sources, variance)`` — ``values`` holds the
+    point estimate that gates compare against (mean for aggregate rows,
+    the raw scalar for single-seed rows). ``variance`` is keyed by the
+    same normalized metric ids and carries the ``{mean,std,min,max,n,
+    per_seed,...}`` block only when the source row was an aggregate.
+    Gates whose ``metric_id`` is not in ``variance`` evaluate as today.
+    """
     values: dict[str, float] = {}
     sources: dict[str, dict[str, Any]] = {}
+    variance: dict[str, dict[str, Any]] = {}
 
     canonical_map = [
         ("exact_match", "exact_match", "exact_match"),
@@ -1125,8 +1211,14 @@ def _build_metric_snapshot(
         if row is None:
             continue
         payload = row.metrics if isinstance(row.metrics, dict) else {}
-        value = _to_float(payload.get(metric_key))
+        value, var_block = _coerce_metric_to_float_and_variance(
+            payload.get(metric_key), row=row, metric_key=metric_key,
+        )
         if value is None and metric_key == "pass_rate":
+            # Aggregate rows store pass_rate as a scalar (the aggregator
+            # wrote the mean directly to the Float column); fall through
+            # to row.pass_rate even when the metrics dict had it as a
+            # variance block already handled above.
             value = _to_float(row.pass_rate)
         _set_metric_value(
             values,
@@ -1136,11 +1228,16 @@ def _build_metric_snapshot(
             row=row,
             metric_key=metric_key,
             overwrite=True,
+            variance=variance,
+            variance_block=var_block,
         )
 
     for eval_type, row in latest_by_eval_type.items():
         payload = row.metrics if isinstance(row.metrics, dict) else {}
-        pass_rate = _to_float(payload.get("pass_rate"))
+        pass_rate_raw = payload.get("pass_rate")
+        pass_rate, pass_rate_var = _coerce_metric_to_float_and_variance(
+            pass_rate_raw, row=row, metric_key="pass_rate",
+        )
         if pass_rate is None:
             pass_rate = _to_float(row.pass_rate)
         _set_metric_value(
@@ -1151,6 +1248,8 @@ def _build_metric_snapshot(
             row=row,
             metric_key="pass_rate",
             overwrite=False,
+            variance=variance,
+            variance_block=pass_rate_var,
         )
         _set_metric_value(
             values,
@@ -1160,10 +1259,14 @@ def _build_metric_snapshot(
             row=row,
             metric_key="pass_rate",
             overwrite=True,
+            variance=variance,
+            variance_block=pass_rate_var,
         )
 
         for raw_key, raw_value in payload.items():
-            value = _to_float(raw_value)
+            value, var_block = _coerce_metric_to_float_and_variance(
+                raw_value, row=row, metric_key=str(raw_key),
+            )
             if value is None:
                 # Gap #6 slice 1 — classification handler emits
                 # ``per_class: {label: {precision, recall, f1, support}}``
@@ -1176,6 +1279,7 @@ def _build_metric_snapshot(
                 _flatten_per_class_metrics(
                     values, sources, payload_key=str(raw_key), payload_value=raw_value,
                     row=row, eval_type=eval_type,
+                    variance=variance,
                 )
                 continue
             normalized_metric = _normalize_token(str(raw_key))
@@ -1189,6 +1293,8 @@ def _build_metric_snapshot(
                 row=row,
                 metric_key=str(raw_key),
                 overwrite=False,
+                variance=variance,
+                variance_block=var_block,
             )
             _set_metric_value(
                 values,
@@ -1198,9 +1304,11 @@ def _build_metric_snapshot(
                 row=row,
                 metric_key=str(raw_key),
                 overwrite=True,
+                variance=variance,
+                variance_block=var_block,
             )
 
-    return values, sources
+    return values, sources, variance
 
 
 # Per-class metric sub-keys we know how to gate on. Support is the
@@ -1217,6 +1325,7 @@ def _flatten_per_class_metrics(
     payload_value: Any,
     row: EvalResult,
     eval_type: str,
+    variance: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Flatten ``per_class: {label: {precision, recall, f1, support}}``
     into top-level gateable keys.
@@ -1245,7 +1354,15 @@ def _flatten_per_class_metrics(
         if not label:
             continue
         for metric_name in _PER_CLASS_METRIC_KEYS:
-            metric_value = _to_float(raw_class_metrics.get(metric_name))
+            raw_class_value = raw_class_metrics.get(metric_name)
+            # Per-class variance handling (slice 3): aggregate rows
+            # store per_class[label][metric] as a {mean,std,...} block
+            # rather than a scalar. Coerce both shapes uniformly.
+            metric_value, class_var_block = _coerce_metric_to_float_and_variance(
+                raw_class_value,
+                row=row,
+                metric_key=f"per_class.{raw_label}.{metric_name}",
+            )
             if metric_value is None:
                 continue
             short_key = f"{metric_name}_{label}"
@@ -1257,6 +1374,8 @@ def _flatten_per_class_metrics(
                     values, sources,
                     key=key, value=metric_value, row=row,
                     metric_key=metric_key_label, overwrite=False,
+                    variance=variance,
+                    variance_block=class_var_block,
                 )
 
 
@@ -1303,12 +1422,16 @@ def _resolve_metric_value(
     return None, None, None
 
 
+_DEFAULT_VARIANCE_POLICY = "lower_bound"
+
+
 def _evaluate_gate(
     gate: dict[str, Any],
     *,
     values: dict[str, float],
     sources: dict[str, dict[str, Any]],
     metric_schema: dict[str, Any] | None = None,
+    variance: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     gate_id = str(gate.get("gate_id") or "").strip() or "gate"
     metric_id = str(gate.get("metric_id") or "").strip()
@@ -1317,6 +1440,14 @@ def _evaluate_gate(
         operator = "gte"
     threshold = _to_float(gate.get("threshold"))
     required = bool(gate.get("required", True))
+    # Variance policy: ``lower_bound`` (default) treats mean − std as the
+    # gate value for gte / mean + std for lte — the honest reading per
+    # [feedback_honest_metrics_no_vanity]. ``mean`` falls back to the
+    # point estimate (legacy / opt-in optimistic). Gates can override
+    # via ``variance_policy`` in the pack contract.
+    variance_policy = str(gate.get("variance_policy") or _DEFAULT_VARIANCE_POLICY).strip().lower()
+    if variance_policy not in {"lower_bound", "mean"}:
+        variance_policy = _DEFAULT_VARIANCE_POLICY
 
     actual, source, resolved_metric_key = _resolve_metric_value(
         metric_id,
@@ -1324,20 +1455,57 @@ def _evaluate_gate(
         sources,
         metric_schema=metric_schema,
     )
+
+    # Multi-seed variance — only present when the resolved metric came
+    # from an aggregate EvalResult row.
+    variance_block = None
+    if variance is not None and resolved_metric_key is not None:
+        variance_block = variance.get(resolved_metric_key)
+
+    gate_value = actual
+    variance_policy_applied = "scalar"
+    if actual is not None and variance_block is not None:
+        std = float(variance_block.get("std") or 0.0)
+        if variance_policy == "lower_bound":
+            # gte uses mean − std (must clear the threshold even on the
+            # bad-luck side of the spread); lte uses mean + std for the
+            # symmetric reason.
+            gate_value = actual - std if operator == "gte" else actual + std
+            variance_policy_applied = "lower_bound"
+        else:
+            gate_value = actual
+            variance_policy_applied = "mean"
+
     if threshold is None:
         passed = True
         reason = "not_enforced"
-    elif actual is None:
+    elif gate_value is None:
         passed = not required
         reason = "missing_metric_required" if required else "missing_metric_optional"
     elif operator == "lte":
-        passed = actual <= threshold
+        passed = gate_value <= threshold
         reason = "ok" if passed else "above_threshold"
     else:
-        passed = actual >= threshold
+        passed = gate_value >= threshold
         reason = "ok" if passed else "below_threshold"
+    # When the lower-bound policy is what flipped the gate from pass to
+    # fail (mean would've cleared but mean−std doesn't), surface a more
+    # specific reason so the UI can render a helpful warning rather than
+    # a generic below_threshold.
+    if (
+        variance_block is not None
+        and variance_policy_applied == "lower_bound"
+        and actual is not None
+        and gate_value is not None
+        and not passed
+        and reason in {"below_threshold", "above_threshold"}
+    ):
+        if operator == "gte" and actual >= threshold and gate_value < threshold:
+            reason = "variance_below_threshold"
+        elif operator == "lte" and actual <= threshold and gate_value > threshold:
+            reason = "variance_above_threshold"
 
-    return {
+    result: dict[str, Any] = {
         "gate_id": gate_id,
         "metric_id": _normalize_token(metric_id),
         "resolved_metric_key": resolved_metric_key,
@@ -1349,6 +1517,16 @@ def _evaluate_gate(
         "reason": reason,
         "source": source or {},
     }
+    if variance_block is not None:
+        result["actual_std"] = round(float(variance_block.get("std") or 0.0), 6)
+        result["actual_min"] = round(float(variance_block.get("min") or 0.0), 6)
+        result["actual_max"] = round(float(variance_block.get("max") or 0.0), 6)
+        result["actual_n"] = int(variance_block.get("n") or 1)
+        result["gate_value"] = round(float(gate_value), 6) if gate_value is not None else None
+        result["variance_policy"] = variance_policy_applied
+        result["per_seed"] = list(variance_block.get("per_seed") or [])
+        result["seed_group_id"] = variance_block.get("seed_group_id")
+    return result
 
 
 def _task_profile_from_training_task_type(task_type: str | None) -> str:
@@ -1496,13 +1674,14 @@ async def evaluate_experiment_auto_gates(
     metric_schema = dict(task_spec.get("metric_schema") or {})
 
     latest_by_type = await _latest_eval_by_type(db, experiment_id)
-    metric_values, metric_sources = _build_metric_snapshot(latest_by_type)
+    metric_values, metric_sources, metric_variance = _build_metric_snapshot(latest_by_type)
     checks = [
         _evaluate_gate(
             gate,
             values=metric_values,
             sources=metric_sources,
             metric_schema=metric_schema,
+            variance=metric_variance,
         )
         for gate in gates
     ]

@@ -162,7 +162,7 @@ class BuildMetricSnapshotIntegrationTests(unittest.TestCase):
         }
         row.pass_rate = 0.90
 
-        values, _sources = _build_metric_snapshot({"classification": row})  # type: ignore[arg-type]
+        values, _sources, _variance = _build_metric_snapshot({"classification": row})  # type: ignore[arg-type]
 
         # The canonical aliases still resolve.
         self.assertAlmostEqual(values["macro_f1"], 0.85, places=4)
