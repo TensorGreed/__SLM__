@@ -32,6 +32,13 @@ from app.services.evaluation_pack_service import _BASE_METRIC_SCHEMA
 GATE_OPERATORS: list[dict[str, str]] = [
     {"value": "gte", "label": "≥ (at least)"},
     {"value": "lte", "label": "≤ (at most)"},
+    # Quality-Lift phase 2 slice 3 — Worst-slice aggregate operators.
+    # The editor renders these for any metric_id when the project has
+    # ``slice_definitions`` configured; the engine scans every
+    # ``per_slice.*.<metric_id>`` flattened key, filters by
+    # ``min_slice_support`` (default 5), and gates the worst slice.
+    {"value": "worst_slice_gte", "label": "worst slice ≥ (every slice clears)"},
+    {"value": "worst_slice_lte", "label": "worst slice ≤ (every slice stays under)"},
 ]
 VALID_GATE_OPERATORS: set[str] = {op["value"] for op in GATE_OPERATORS}
 
@@ -249,6 +256,43 @@ def is_per_class_metric_id(metric_id: str) -> bool:
     return False
 
 
+# Quality-Lift phase 2 slice 3 — Per-slice gate metric_id patterns.
+# The snapshot flattener emits three shapes per (slice_id, metric):
+#   * ``<metric>_slice_<slice_id>``     — short form, ``_slice_`` infix
+#                                          disambiguates from per_class
+#   * ``per_slice.<slice_id>.<metric>``  — canonical dot-path; matches
+#                                          the slice_definitions
+#                                          slice_id grammar
+#   * ``<eval_type>.per_slice.<slice_id>.<metric>``
+#                                       — eval-type-scoped variant.
+# Any of these is a valid gate metric_id when slices are configured.
+_PER_SLICE_DOT_PATTERN = _re.compile(r"^per_slice\.[a-z][a-z0-9_]*\.[a-z0-9_]+$")
+_PER_SLICE_SHORT_PATTERN = _re.compile(r"^[a-z][a-z0-9_]*_slice_[a-z][a-z0-9_]*$")
+_PER_SLICE_SCOPED_PATTERN = _re.compile(
+    r"^[a-z][a-z0-9_]*\.per_slice\.[a-z][a-z0-9_]*\.[a-z0-9_]+$"
+)
+
+
+def is_per_slice_metric_id(metric_id: str) -> bool:
+    """True when ``metric_id`` references a per-slice metric.
+
+    Accepts the three id-shapes emitted by ``_flatten_per_slice_metrics``
+    (canonical dot-path, short form with ``_slice_`` infix, eval-type
+    scoped). The validator falls back to this when the metric_id isn't
+    in the base schema and isn't a per_class shape — without it the
+    editor's per-slice gate suggestions would round-trip as
+    ``unknown_metric_id`` errors.
+    """
+    if not metric_id:
+        return False
+    token = metric_id.strip().lower()
+    return bool(
+        _PER_SLICE_DOT_PATTERN.match(token)
+        or _PER_SLICE_SHORT_PATTERN.match(token)
+        or _PER_SLICE_SCOPED_PATTERN.match(token)
+    )
+
+
 def known_metric_ids() -> set[str]:
     """Set of metric_ids the gate validator accepts.
 
@@ -435,7 +479,21 @@ def validate_draft_pack_gates(draft_pack: dict[str, Any]) -> None:
             # …) are accepted without needing a base-schema entry — the
             # class names are project-specific and surface via the
             # /per-class-metric-options endpoint, not the static catalog.
-            if metric_id not in known and not is_per_class_metric_id(metric_id):
+            # Per-slice metric IDs (slice 3) get the same treatment —
+            # slice_ids come from the project's slice_definitions, not
+            # a fixed catalog. Worst-slice gates may also use a plain
+            # base-schema metric_id (e.g. ``f1``) with operator
+            # ``worst_slice_gte`` — the gate evaluator does the
+            # per-slice fan-out from the operator side. Allow either.
+            operator_preview = str(gate.get("operator") or "gte").strip().lower()
+            is_worst_slice = operator_preview in {"worst_slice_gte", "worst_slice_lte"}
+            metric_id_recognised = (
+                metric_id in known
+                or is_per_class_metric_id(metric_id)
+                or is_per_slice_metric_id(metric_id)
+                or is_worst_slice  # worst-slice ops take a base metric_id
+            )
+            if not metric_id_recognised:
                 raise ValueError(f"unknown_metric_id:{metric_id}")
 
             operator = str(gate.get("operator") or "gte").strip().lower()

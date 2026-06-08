@@ -194,3 +194,30 @@
   font-size: 0.85rem;
   color: var(--text-primary);
 }
+
+/* Quality-Lift phase 2 slice 3 — Worst-slice gate drill-down. */
+.scorecard-drilldown-row--worst {
+  background-color: var(--color-error-bg);
+}
+
+.scorecard-drilldown-row--worst td {
+  font-weight: 600;
+}
+
+.scorecard-worst-tag {
+  color: var(--color-error);
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.scorecard-drilldown-policy-hint {
+  margin-top: var(--space-sm);
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.scorecard-drilldown-policy-hint code {
+  font-style: normal;
+  font-weight: 600;
+}

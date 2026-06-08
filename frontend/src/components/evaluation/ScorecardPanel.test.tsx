@@ -172,6 +172,113 @@ describe('ScorecardPanel', () => {
     expect(screen.getByText('▸')).toBeInTheDocument();
   });
 
+  // ────────────────────────────────────────────────────────────────────
+  // Quality-Lift phase 2 slice 3 — Per-slice gates
+  // ────────────────────────────────────────────────────────────────────
+
+  it('labels a single-slice gate with "metric on slice"', async () => {
+    const scorecard = {
+      experiment_id: 11,
+      is_ship: true,
+      decision: 'SHIP',
+      reasons: [],
+      failed_gates: [],
+      missing_metrics: [],
+      gate_report: {
+        passed: true,
+        failed_gate_ids: [],
+        missing_required_metrics: [],
+        checks: [
+          {
+            gate_id: 'min_f1_long_input',
+            metric_id: 'f1',
+            slice_name: 'long_input',
+            operator: 'gte',
+            threshold: 0.6,
+            required: true,
+            actual: 0.71,
+            passed: true,
+            reason: 'ok',
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    render(<ScorecardPanel projectId={1} experimentId={11} />);
+    await waitFor(() => expect(screen.getByText('SHIP')).toBeInTheDocument());
+    // The metric column reads "f1 on long_input" instead of bare "f1"
+    // so the user can see which slice the gate targets.
+    expect(screen.getByText('f1 on long_input')).toBeInTheDocument();
+  });
+
+  it('renders worst-slice gate with worst slice id and drill-down', async () => {
+    const scorecard = {
+      experiment_id: 13,
+      is_ship: false,
+      decision: 'NO-SHIP',
+      reasons: ['Failed 1 mandatory gates.'],
+      failed_gates: ['no_slice_below_60'],
+      missing_metrics: [],
+      gate_report: {
+        passed: false,
+        failed_gate_ids: ['no_slice_below_60'],
+        missing_required_metrics: [],
+        checks: [
+          {
+            gate_id: 'no_slice_below_60',
+            metric_id: 'f1',
+            operator: 'worst_slice_gte',
+            threshold: 0.6,
+            required: true,
+            actual: 0.52,
+            passed: false,
+            reason: 'worst_slice_below_threshold',
+            worst_slice_id: 'long_input',
+            worst_slice_support: 40,
+            min_slice_support: 5,
+            per_slice_values: [
+              { slice_id: 'long_input', value: 0.52, gate_value: 0.52, support: 40, passes: false, below_min_support: false },
+              { slice_id: 'short_input', value: 0.85, gate_value: 0.85, support: 200, passes: true, below_min_support: false },
+              { slice_id: 'tiny_slice', value: 0.30, gate_value: 0.30, support: 2, passes: false, below_min_support: true },
+            ],
+            variance_policy: 'scalar',
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    const user = userEvent.setup();
+    render(<ScorecardPanel projectId={1} experimentId={13} />);
+
+    await waitFor(() => expect(screen.getByText('NO-SHIP')).toBeInTheDocument());
+
+    // The metric column reads "worst-slice f1" for the aggregate gate
+    // and the status label names the worst slice directly.
+    expect(screen.getByText('worst-slice f1')).toBeInTheDocument();
+    expect(screen.getByText(/Worst slice fails \(long_input\)/)).toBeInTheDocument();
+
+    // Drill-down not visible until click.
+    expect(screen.queryByText(/Per-slice breakdown/)).toBeNull();
+
+    const row = screen.getByText('no_slice_below_60').closest('tr')!;
+    await user.click(row);
+
+    // Drill-down lists every slice (including the support-floor-filtered one),
+    // marks the worst slice, and renders the directional explainer note.
+    // ``long_input`` appears in the status label too, so we assert at least
+    // one occurrence rather than uniqueness.
+    expect(screen.getByText(/Per-slice breakdown/)).toBeInTheDocument();
+    expect(screen.getAllByText(/long_input/).length).toBeGreaterThan(0);
+    expect(screen.getByText('short_input')).toBeInTheDocument();
+    expect(screen.getByText('tiny_slice')).toBeInTheDocument();
+    // Worst-slice tag on the long_input row.
+    expect(screen.getByText(/\(worst\)/)).toBeInTheDocument();
+    // Below-min-support flag on tiny_slice.
+    expect(screen.getByText(/below min support \(n=2\)/)).toBeInTheDocument();
+    // Honest-metrics explainer.
+    expect(screen.getByText(/dragged the worst-slice metric/i)).toBeInTheDocument();
+  });
+
   it('skips the explainer note when the mean itself failed (not variance)', async () => {
     const scorecard = {
       ...SCORECARD_AGGREGATE_FAILING_VARIANCE,

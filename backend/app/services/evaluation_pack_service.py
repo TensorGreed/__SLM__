@@ -1281,6 +1281,19 @@ def _build_metric_snapshot(
                     row=row, eval_type=eval_type,
                     variance=variance,
                 )
+                # Quality-Lift phase 2 slice 3 — Same shape, parallel
+                # implementation for the slice handler's per_slice
+                # nested dict. The handler emits
+                # ``per_slice: {slice_id: {<handler metrics>}}``; this
+                # flattens those into gate-resolvable keys (canonical
+                # dot-path + short-form ``<metric>_slice_<slice_id>``)
+                # so single-slice gates AND the worst_slice_* aggregate
+                # gates work uniformly across all handler types.
+                _flatten_per_slice_metrics(
+                    values, sources, payload_key=str(raw_key), payload_value=raw_value,
+                    row=row, eval_type=eval_type,
+                    variance=variance,
+                )
                 continue
             normalized_metric = _normalize_token(str(raw_key))
             if not normalized_metric:
@@ -1379,6 +1392,84 @@ def _flatten_per_class_metrics(
                 )
 
 
+def _flatten_per_slice_metrics(
+    values: dict[str, float],
+    sources: dict[str, dict[str, Any]],
+    *,
+    payload_key: str,
+    payload_value: Any,
+    row: EvalResult,
+    eval_type: str,
+    variance: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Quality-Lift phase 2 slice 3 — Flatten ``per_slice:
+    {slice_id: {<handler metrics>}}`` into gate-resolvable keys.
+
+    Unlike per_class (which has a fixed ``{precision, recall, f1,
+    support}`` shape), per_slice carries whatever metrics the handler
+    emitted — accuracy, exact_match, f1, total, correct, pass_rate,
+    even nested per_class. We walk every numeric leaf and emit three
+    id-shapes per (slice_id, metric):
+
+      * ``<metric>_slice_<slice_id>`` — short form. The ``_slice_``
+        infix disambiguates from per_class's ``<metric>_<label>``
+        when a slice_id happens to match a class label.
+      * ``per_slice.<slice_id>.<metric>`` — canonical dot-path. This
+        is the form the worst-slice gate evaluator scans for so it
+        can enumerate every slice's value for a given metric.
+      * ``<eval_type>.per_slice.<slice_id>.<metric>`` — eval-type
+        scoped, mirrors the per_class scoped form.
+
+    ``support`` is the row count for the slice — emitted explicitly
+    by ``score_with_slices`` and load-bearing here for the worst-slice
+    gate's ``min_slice_support`` floor (tiny slices have too much
+    noise to gate on; the floor filters them out before picking the
+    worst).
+
+    Non-numeric leaves are skipped silently — booleans, strings, and
+    nested dicts (e.g. per_class within per_slice) are pass-through
+    rather than gate-eligible at this slice. A future enhancement
+    could recurse into nested per_class for cross-cut "per-slice
+    per-class" gates if the workflow demands it.
+    """
+    if str(payload_key).strip().lower() != "per_slice":
+        return
+    if not isinstance(payload_value, dict):
+        return
+    for raw_slice_id, slice_metrics in payload_value.items():
+        if not isinstance(slice_metrics, dict):
+            continue
+        slice_id = _normalize_token(str(raw_slice_id))
+        if not slice_id:
+            continue
+        for raw_metric_name, raw_metric_value in slice_metrics.items():
+            metric_name = _normalize_token(str(raw_metric_name))
+            if not metric_name:
+                continue
+            metric_value, slice_var_block = _coerce_metric_to_float_and_variance(
+                raw_metric_value,
+                row=row,
+                metric_key=f"per_slice.{raw_slice_id}.{raw_metric_name}",
+            )
+            if metric_value is None:
+                # Nested per_class within per_slice, or non-numeric
+                # leaves — skip rather than recurse. The worst-slice
+                # gate only ever needs numeric leaves.
+                continue
+            metric_key_label = f"per_slice.{raw_slice_id}.{raw_metric_name}"
+            short_key = f"{metric_name}_slice_{slice_id}"
+            dot_key = f"per_slice.{slice_id}.{metric_name}"
+            scoped_key = f"{eval_type}.{dot_key}"
+            for key in (short_key, dot_key, scoped_key):
+                _set_metric_value(
+                    values, sources,
+                    key=key, value=metric_value, row=row,
+                    metric_key=metric_key_label, overwrite=False,
+                    variance=variance,
+                    variance_block=slice_var_block,
+                )
+
+
 def _metric_alias_candidates(metric_id: str, metric_schema: dict[str, Any] | None = None) -> list[str]:
     token = _normalize_token(metric_id)
     if not token:
@@ -1423,6 +1514,223 @@ def _resolve_metric_value(
 
 
 _DEFAULT_VARIANCE_POLICY = "lower_bound"
+# Quality-Lift phase 2 slice 3 — Operator set + defaults.
+WORST_SLICE_OPERATORS = frozenset({"worst_slice_gte", "worst_slice_lte"})
+SUPPORTED_OPERATORS = frozenset({"gte", "lte", *WORST_SLICE_OPERATORS})
+# Default support floor for worst-slice gates. Tiny slices have too
+# much noise to gate on reliably; the user can override per-gate.
+DEFAULT_MIN_SLICE_SUPPORT = 5
+
+
+def _apply_variance_policy(
+    actual: float | None,
+    variance_block: dict[str, Any] | None,
+    operator: str,
+    variance_policy: str,
+) -> tuple[float | None, str]:
+    """Return ``(gate_value, applied_policy)``. Lifted out of
+    _evaluate_gate so the worst-slice evaluator can apply the same
+    honest-metrics policy per-slice when computing the worst value."""
+    if actual is None or variance_block is None:
+        return actual, "scalar"
+    std = float(variance_block.get("std") or 0.0)
+    if variance_policy == "lower_bound":
+        op_for_bound = "gte" if operator in ("gte", "worst_slice_gte") else "lte"
+        return (
+            (actual - std if op_for_bound == "gte" else actual + std),
+            "lower_bound",
+        )
+    return actual, "mean"
+
+
+def _enumerate_slice_values(
+    metric_id: str,
+    *,
+    values: dict[str, float],
+    sources: dict[str, dict[str, Any]],
+    variance: dict[str, dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Scan flattened per_slice keys and return per-slice records.
+
+    Worst-slice gate's data structure. Each record:
+      ``{"slice_id", "value", "support", "variance", "key"}``
+
+    ``variance`` is the per-slice {mean, std, ...} block when the
+    source row was a multi-seed aggregate; None for single-seed
+    runs. Slices with no support entry are still included with
+    support=0 so the caller can decide whether the min-support
+    floor excludes them.
+    """
+    metric_token = _normalize_token(metric_id)
+    if not metric_token:
+        return []
+    prefix = "per_slice."
+    suffix = f".{metric_token}"
+    records: list[dict[str, Any]] = []
+    for key in values:
+        if not (key.startswith(prefix) and key.endswith(suffix)):
+            continue
+        # Eval-type-scoped variants (``classification.per_slice.<id>.<metric>``)
+        # arrive on the same loop but the slice_id extraction would be
+        # wrong. Skip them — they duplicate the canonical key.
+        if "." in key[: -len(suffix)].removeprefix(prefix):
+            continue
+        slice_id = key[len(prefix): -len(suffix)]
+        if not slice_id:
+            continue
+        support_key = f"per_slice.{slice_id}.support"
+        support_value = values.get(support_key)
+        records.append({
+            "slice_id": slice_id,
+            "value": values[key],
+            "support": int(support_value) if isinstance(support_value, (int, float)) else 0,
+            "variance": variance.get(key) if variance else None,
+            "key": key,
+        })
+    records.sort(key=lambda r: r["slice_id"])
+    return records
+
+
+def _evaluate_worst_slice_gate(
+    *,
+    gate: dict[str, Any],
+    values: dict[str, float],
+    sources: dict[str, dict[str, Any]],
+    variance: dict[str, dict[str, Any]] | None,
+    metric_id: str,
+    operator: str,
+    threshold: float | None,
+    required: bool,
+    variance_policy: str,
+    gate_id: str,
+    min_slice_support: int,
+) -> dict[str, Any]:
+    """Aggregate gate: gate the worst-performing slice for ``metric_id``.
+
+    Walks every ``per_slice.<slice_id>.<metric_id>`` in the snapshot,
+    filters by ``min_slice_support`` (tiny slices are too noisy to
+    gate on honestly), applies the variance policy to each slice's
+    value (mean − std for gte, mean + std for lte), then picks the
+    extreme:
+      * ``worst_slice_gte`` → minimum gate_value (every slice must clear)
+      * ``worst_slice_lte`` → maximum gate_value (every slice must stay under)
+
+    Compares the extreme to ``threshold``. The response carries the
+    worst slice's id + support + value so the UI can render
+    "your worst slice is hindi_long at 0.52 (n=12)" and the drill-down
+    lists every slice's individual gate verdict so the user can see
+    the spread.
+    """
+    records = _enumerate_slice_values(
+        metric_id, values=values, sources=sources, variance=variance,
+    )
+    # Apply variance policy per slice + compute the per-slice gate verdict.
+    # We collect ALL records (including filtered-out) for the drill-down,
+    # then pick the worst from the eligible subset only.
+    direction_gte = operator == "worst_slice_gte"
+    per_slice_values: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
+    for rec in records:
+        gate_value, policy_applied = _apply_variance_policy(
+            rec["value"], rec["variance"], operator, variance_policy,
+        )
+        passes_threshold = (
+            threshold is None
+            or gate_value is None
+            or (gate_value >= threshold if direction_gte else gate_value <= threshold)
+        )
+        entry = {
+            "slice_id": rec["slice_id"],
+            "value": round(float(rec["value"]), 6),
+            "gate_value": round(float(gate_value), 6) if gate_value is not None else None,
+            "support": rec["support"],
+            "passes": bool(passes_threshold),
+            "below_min_support": rec["support"] < min_slice_support,
+        }
+        if rec["variance"] is not None:
+            entry["std"] = round(float(rec["variance"].get("std") or 0.0), 6)
+            entry["n"] = int(rec["variance"].get("n") or 1)
+        per_slice_values.append(entry)
+        if rec["support"] >= min_slice_support:
+            eligible.append(rec)
+
+    # No eligible slices → gate can't be evaluated. Treat as missing
+    # metric so optional gates pass and required ones surface a
+    # specific reason.
+    if not eligible:
+        reason = "no_eligible_slices_required" if required else "no_eligible_slices_optional"
+        return {
+            "gate_id": gate_id,
+            "metric_id": _normalize_token(metric_id),
+            "resolved_metric_key": None,
+            "operator": operator,
+            "threshold": threshold,
+            "required": required,
+            "actual": None,
+            "passed": not required,
+            "reason": reason,
+            "source": {},
+            "worst_slice_id": None,
+            "worst_slice_support": None,
+            "per_slice_values": per_slice_values,
+            "min_slice_support": min_slice_support,
+            "variance_policy": "scalar",
+        }
+
+    # Pick the worst eligible slice. Worst = minimum gate_value for gte
+    # gates, maximum for lte gates.
+    def _worst_key(rec):
+        gv, _ = _apply_variance_policy(
+            rec["value"], rec["variance"], operator, variance_policy,
+        )
+        if gv is None:
+            # None values can't be ranked; push them to the safe end
+            # so eligible values dominate.
+            return float("inf") if direction_gte else float("-inf")
+        return gv if direction_gte else -gv
+
+    worst = min(eligible, key=_worst_key)
+    worst_gate_value, policy_applied = _apply_variance_policy(
+        worst["value"], worst["variance"], operator, variance_policy,
+    )
+
+    if threshold is None:
+        passed = True
+        reason = "not_enforced"
+    elif worst_gate_value is None:
+        passed = not required
+        reason = "missing_metric_required" if required else "missing_metric_optional"
+    elif direction_gte:
+        passed = worst_gate_value >= threshold
+        reason = "ok" if passed else "worst_slice_below_threshold"
+    else:
+        passed = worst_gate_value <= threshold
+        reason = "ok" if passed else "worst_slice_above_threshold"
+
+    result = {
+        "gate_id": gate_id,
+        "metric_id": _normalize_token(metric_id),
+        "resolved_metric_key": worst["key"],
+        "operator": operator,
+        "threshold": threshold,
+        "required": required,
+        "actual": round(float(worst["value"]), 6),
+        "passed": passed,
+        "reason": reason,
+        "source": sources.get(worst["key"], {}),
+        "worst_slice_id": worst["slice_id"],
+        "worst_slice_support": worst["support"],
+        "per_slice_values": per_slice_values,
+        "min_slice_support": min_slice_support,
+        "variance_policy": policy_applied,
+    }
+    if worst["variance"] is not None:
+        result["gate_value"] = round(float(worst_gate_value), 6) if worst_gate_value is not None else None
+        result["actual_std"] = round(float(worst["variance"].get("std") or 0.0), 6)
+        result["actual_n"] = int(worst["variance"].get("n") or 1)
+        result["per_seed"] = list(worst["variance"].get("per_seed") or [])
+        result["seed_group_id"] = worst["variance"].get("seed_group_id")
+    return result
 
 
 def _evaluate_gate(
@@ -1436,7 +1744,7 @@ def _evaluate_gate(
     gate_id = str(gate.get("gate_id") or "").strip() or "gate"
     metric_id = str(gate.get("metric_id") or "").strip()
     operator = str(gate.get("operator") or "gte").strip().lower()
-    if operator not in {"gte", "lte"}:
+    if operator not in SUPPORTED_OPERATORS:
         operator = "gte"
     threshold = _to_float(gate.get("threshold"))
     required = bool(gate.get("required", True))
@@ -1449,8 +1757,44 @@ def _evaluate_gate(
     if variance_policy not in {"lower_bound", "mean"}:
         variance_policy = _DEFAULT_VARIANCE_POLICY
 
+    # Quality-Lift phase 2 slice 3 — Worst-slice aggregate operator
+    # diverts to a separate evaluator that scans every per_slice.*.<metric>
+    # key, applies the variance policy per slice, and picks the worst.
+    if operator in WORST_SLICE_OPERATORS:
+        raw_min_support = gate.get("min_slice_support")
+        try:
+            min_slice_support = int(raw_min_support) if raw_min_support is not None else DEFAULT_MIN_SLICE_SUPPORT
+        except (TypeError, ValueError):
+            min_slice_support = DEFAULT_MIN_SLICE_SUPPORT
+        return _evaluate_worst_slice_gate(
+            gate=gate,
+            values=values,
+            sources=sources,
+            variance=variance,
+            metric_id=metric_id,
+            operator=operator,
+            threshold=threshold,
+            required=required,
+            variance_policy=variance_policy,
+            gate_id=gate_id,
+            min_slice_support=max(0, min_slice_support),
+        )
+
+    # Quality-Lift phase 2 slice 3 — Single-slice gate. The user names
+    # a specific slice; we rewrite the metric resolution to point at
+    # ``per_slice.<slice_name>.<metric_id>`` and the rest of the
+    # gate-evaluation path (variance policy, drill-down, etc.) is
+    # unchanged from the point-estimate path.
+    slice_name = str(gate.get("slice_name") or "").strip().lower()
+    resolved_metric_id = metric_id
+    if slice_name:
+        # If the metric_id is already in flattened form, leave it; the
+        # editor sometimes writes the canonical dot-path directly.
+        if not metric_id.startswith("per_slice."):
+            resolved_metric_id = f"per_slice.{slice_name}.{_normalize_token(metric_id)}"
+
     actual, source, resolved_metric_key = _resolve_metric_value(
-        metric_id,
+        resolved_metric_id,
         values,
         sources,
         metric_schema=metric_schema,
@@ -1517,6 +1861,10 @@ def _evaluate_gate(
         "reason": reason,
         "source": source or {},
     }
+    # Slice 3 — single-slice gates surface ``slice_name`` so the UI can
+    # render "f1 on long_input ≥ 0.65" instead of an ambiguous metric_id.
+    if slice_name:
+        result["slice_name"] = slice_name
     if variance_block is not None:
         result["actual_std"] = round(float(variance_block.get("std") or 0.0), 6)
         result["actual_min"] = round(float(variance_block.get("min") or 0.0), 6)
