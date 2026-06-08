@@ -151,6 +151,7 @@ session-start guidance.
 - `backend/app/services/evaluation_pack_service.py` — Evaluation pack catalog + task-aware auto-gate evaluation helpers.
 - `backend/app/services/evaluation_remediation_service.py` — Closed-loop remediation planning for evaluation failures.
 - `backend/app/services/evaluation_service.py` — Evaluation framework service — metrics, safety, regression comparison.
+- `backend/app/services/experiment_aggregation_service.py` — Quality-Lift phase 1, slice 2 — seed-group EvalResult aggregation.
 - `backend/app/services/experiment_comparison_service.py` — Eval-aware experiment comparison service (E3).
 - `backend/app/services/experiment_recovery_service.py` — Experiment lifecycle recovery actions (Story 1.7).
 - `backend/app/services/export_service.py` — Export & runtime packaging service.
@@ -641,6 +642,7 @@ session-start guidance.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
+- `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.
 - `backend/tests/test_nl2pipeline.py` — Tests for natural language to pipeline recipe creation.
 - `backend/tests/test_pareto_frontier.py` — Unit tests for the model-sweep Pareto frontier annotation (Epic C).

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import random
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -84,6 +85,30 @@ async def _get_experiment_for_project(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def _fire_seed_group_aggregation(experiment_id: int) -> None:
+    """Best-effort hook called after a runner flips an experiment to a
+    terminal status (COMPLETED / FAILED / CANCELLED). Asks the
+    aggregator whether this experiment is a seed-group child whose
+    siblings are all done; if so, the aggregator rolls per-seed
+    EvalResults into an aggregate row on the leader. No-op for
+    single-seed runs and seed-group children whose siblings are still
+    running. Never raises — aggregation failure must not flip the
+    just-finished child back into an inconsistent state.
+    """
+    try:
+        from app.services.experiment_aggregation_service import (
+            maybe_aggregate_seed_group,
+        )
+
+        async with async_session_factory() as agg_db:
+            await maybe_aggregate_seed_group(agg_db, experiment_id)
+    except Exception as agg_exc:
+        print(
+            f"[seed_group_aggregation] failed experiment_id={experiment_id}: {agg_exc}",
+            flush=True,
+        )
 
 
 def _experiment_dir(project_id: int, experiment_id: int) -> Path:
@@ -689,6 +714,9 @@ async def _monitor_external_training(
                     final_status = "failed"
                 exp.completed_at = finished
             await db.commit()
+        # Multi-seed: tell the seed-group aggregator that this child is done.
+        # No-op for single-seed runs.
+        await _fire_seed_group_aggregation(experiment_id)
         await broadcast_event(
             experiment_id,
             {
@@ -718,6 +746,7 @@ async def _monitor_external_training(
                     exp.completed_at = datetime.now(timezone.utc)
                 exp.config = config
                 await db.commit()
+        await _fire_seed_group_aggregation(experiment_id)
         await broadcast_event(
             experiment_id,
             {
@@ -1011,6 +1040,10 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                     f"experiment_id={experiment_id}: {event_exc}",
                     flush=True,
                 )
+        # Multi-seed (Quality-Lift phase 1): trigger seed-group aggregation
+        # after the simulate runner flips status to COMPLETED. No-op for
+        # single-seed runs.
+        await _fire_seed_group_aggregation(experiment_id)
     except Exception as e:
         async with async_session_factory() as db:
             result = await db.execute(select(Experiment).where(Experiment.id == experiment_id))
@@ -1060,6 +1093,164 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                     f"experiment_id={experiment_id}: {event_exc}",
                     flush=True,
                 )
+        # Multi-seed: trigger aggregation on the FAILED path too so a
+        # group with all children failed surfaces the leader's terminal
+        # status rather than hanging in RUNNING forever.
+        await _fire_seed_group_aggregation(experiment_id)
+
+
+def _resolve_seeds(config: dict) -> list[int]:
+    """Map a TrainingConfig payload to the concrete seed list.
+
+    Resolution order (locked design from slice 1):
+      1. Explicit ``seeds: [..]`` wins outright.
+      2. Otherwise, ``num_seeds > 1`` → derive ``[seed, seed+1, ..]``
+         deterministically from the base seed. Determinism matters
+         because a re-launch after a partial failure must rebuild the
+         same seed list to attach to the right seed group.
+      3. Otherwise, ``[seed]`` (single-seed, no fan-out).
+    """
+    explicit = config.get("seeds")
+    if isinstance(explicit, list) and explicit:
+        return [int(s) for s in explicit if isinstance(s, (int, float))]
+    base_seed = int(config.get("seed", 42))
+    num = int(config.get("num_seeds") or 1)
+    if num <= 1:
+        return [base_seed]
+    return [base_seed + i for i in range(num)]
+
+
+async def _start_seed_group(
+    db: AsyncSession,
+    project_id: int,
+    leader: Experiment,
+    seeds: list[int],
+) -> dict:
+    """Fan ``leader`` out into N child experiments — one per seed — and
+    dispatch each child through the normal single-seed ``start_training``
+    path.
+
+    The leader experiment is NOT itself trained; it becomes a group
+    marker that carries the ``seed_group_id`` so the aggregator can
+    locate its children and write the rolled-up EvalResult. Its status
+    flips to RUNNING here and back to COMPLETED/FAILED when the
+    aggregator runs (after the last child finishes).
+
+    ``parallel_seeds`` controls whether children dispatch concurrently
+    (asyncio.gather) or one-at-a-time. Default is sequential per the
+    "single-GPU box, parallel buys nothing and can OOM" rule.
+    """
+    group_id = uuid.uuid4().hex
+    leader.seed_group_id = group_id
+    leader.status = ExperimentStatus.RUNNING
+    leader.started_at = datetime.now(timezone.utc)
+    leader.completed_at = None
+
+    # Mark the leader's config so the UI can render the seed-group chip
+    # even before the first child finishes.
+    leader_cfg = dict(leader.config or {})
+    leader_cfg["_seed_group"] = {
+        "group_id": group_id,
+        "role": "leader",
+        "planned_seeds": list(seeds),
+        "n_total": len(seeds),
+        "n_succeeded": 0,
+        "n_failed": 0,
+        "started_at": leader.started_at.isoformat(),
+    }
+    leader.config = leader_cfg
+    await db.flush()
+
+    # Build child configs. Strip multi-seed knobs so each child takes
+    # the normal single-seed dispatch path; otherwise the recursive
+    # call would fan out again forever. ``_seed_group`` on the child
+    # tags it for the UI without changing dispatch semantics.
+    children: list[Experiment] = []
+    for seed in seeds:
+        child_cfg = {k: v for k, v in (leader.config or {}).items() if k != "_seed_group"}
+        child_cfg["seed"] = int(seed)
+        child_cfg["seeds"] = None
+        child_cfg["num_seeds"] = 1
+        child_cfg["_seed_group"] = {
+            "group_id": group_id,
+            "role": "child",
+            "leader_experiment_id": int(leader.id),
+            "seed_value": int(seed),
+        }
+        child = await create_experiment(
+            db,
+            project_id=project_id,
+            name=f"{leader.name} (seed={seed})",
+            base_model=leader.base_model,
+            config=child_cfg,
+            description=(
+                f"Child run of seed group {group_id[:8]} "
+                f"(leader experiment id={leader.id})"
+            ),
+            training_mode=leader.training_mode,
+        )
+        # create_experiment doesn't accept the seed columns yet — set them
+        # directly so the aggregator can locate this row by seed_group_id
+        # and identify it as a child (seed_value is not None).
+        child.seed_value = int(seed)
+        child.seed_group_id = group_id
+        children.append(child)
+    await db.flush()
+
+    # Dispatch. Each child goes through the full single-seed path
+    # (preflight, data gate, runtime launch). A per-child dispatch
+    # failure flips that child to FAILED inside start_training's
+    # except handler and fires the aggregation hook; we MUST NOT
+    # propagate the exception here or the remaining seeds in the
+    # group never launch and the user sees a half-fanned-out group
+    # stuck in PENDING. The aggregator handles partial groups
+    # natively (succeeded children aggregate, failed children
+    # contribute to the warning badge).
+    parallel = bool((leader.config or {}).get("parallel_seeds"))
+    child_results: list[dict | None] = []
+    dispatch_errors: list[dict] = []
+    if parallel:
+        raw_results = await asyncio.gather(
+            *[start_training(db, project_id, c.id) for c in children],
+            return_exceptions=True,
+        )
+        for child, result in zip(children, raw_results):
+            if isinstance(result, Exception):
+                dispatch_errors.append({
+                    "child_experiment_id": int(child.id),
+                    "seed_value": int(child.seed_value) if child.seed_value is not None else None,
+                    "error": str(result),
+                })
+                child_results.append(None)
+            else:
+                child_results.append(result)
+    else:
+        for c in children:
+            try:
+                child_results.append(await start_training(db, project_id, c.id))
+            except Exception as dispatch_exc:
+                dispatch_errors.append({
+                    "child_experiment_id": int(c.id),
+                    "seed_value": int(c.seed_value) if c.seed_value is not None else None,
+                    "error": str(dispatch_exc),
+                })
+                child_results.append(None)
+
+    return {
+        "experiment_id": int(leader.id),
+        "status": leader.status.value,
+        "message": (
+            f"Launched seed group with {len(seeds) - len(dispatch_errors)}/"
+            f"{len(seeds)} children ({'parallel' if parallel else 'sequential'})."
+        ),
+        "seed_group_id": group_id,
+        "children": [
+            {"experiment_id": int(c.id), "seed_value": int(c.seed_value)}
+            for c in children
+        ],
+        "dispatch_errors": dispatch_errors,
+        "config": leader.config,
+    }
 
 
 async def start_training(
@@ -1075,6 +1266,14 @@ async def start_training(
         raise ValueError(f"Experiment {experiment_id} is already running")
     if exp.status == ExperimentStatus.COMPLETED:
         raise ValueError(f"Experiment {experiment_id} is already completed")
+
+    # Multi-seed fan-out (Quality-Lift phase 1, slice 2). Only fires when
+    # the user actually asked for multiple seeds AND this isn't already a
+    # child run (children have ``seed_value`` set; they get the normal
+    # single-seed dispatch even though they share a group_id with siblings).
+    seed_list = _resolve_seeds(dict(exp.config or {}))
+    if len(seed_list) > 1 and exp.seed_value is None:
+        return await _start_seed_group(db, project_id, exp, seed_list)
 
     resolved_config = dict(exp.config or {})
     resolved_config.setdefault("base_model", exp.base_model)
@@ -1402,6 +1601,11 @@ async def start_training(
                 f"[run_event] training_failed_emit_failed experiment_id={exp.id}: {event_exc}",
                 flush=True,
             )
+        # Multi-seed: a dispatch failure on a seed-group child is a
+        # terminal FAILED transition for that child. Fire aggregation so
+        # the leader resolves correctly once the other siblings finish
+        # (or right now if this was the last sibling).
+        await _fire_seed_group_aggregation(int(exp.id))
         raise ValueError(f"Failed to dispatch training runtime '{runtime_id}': {e}")
 
     return {
