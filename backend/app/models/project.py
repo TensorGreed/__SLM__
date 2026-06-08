@@ -174,6 +174,36 @@ class Project(Base):
         default=None,
         nullable=True,
     )
+    # Quality-Lift phase 2 — Arbitrary slice evaluation. Users define
+    # named subsets of eval rows via JSON predicates; every handler
+    # then emits ``per_slice.<slice_id>.<metric>`` alongside the
+    # overall metric. Slice-3 gates can target a specific slice
+    # (``slice_name: "long_input"``) or the worst slice
+    # (``operator: "worst_slice_gte"``). Phase 1 variance composes
+    # automatically — the aggregator already recurses through nested
+    # dicts so per-slice variance reporting is free.
+    #
+    # Canonical shape:
+    #   {
+    #     "slices": [
+    #       {
+    #         "slice_id": "long_input",            # ^[a-z][a-z0-9_]{0,63}$
+    #         "display_name": "Long inputs (>100 chars)",
+    #         "where": [
+    #           {"field": "input_length", "op": "gte", "value": 100}
+    #         ]
+    #       },
+    #       ...
+    #     ]
+    #   }
+    # Nullable so existing projects round-trip unchanged (no slices →
+    # handler emits only the overall metric, gate evaluator skips the
+    # per_slice resolver path).
+    slice_definitions: Mapped[dict | None] = mapped_column(
+        JSON,
+        default=None,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

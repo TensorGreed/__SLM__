@@ -47,6 +47,34 @@ class ProjectRecipeApplyRequest(BaseModel):
     recipe_id: str = Field(..., min_length=1, max_length=128)
 
 
+# Quality-Lift phase 2, slice 1 — Slice definitions PUT request.
+# Schemas are intentionally thin: the heavy validation (op closed set,
+# slice_id grammar, per-project cap, regex compilability) lives in
+# slice_definitions_service so the same code-path runs whether the
+# payload arrives via the API endpoint or via a future bulk-import
+# CLI / data-studio nudge. The endpoint just passes ``payload.model_dump()``
+# through to the service.
+class SliceClauseSchema(BaseModel):
+    field: str = Field(..., description="dot-path on the eval row dict")
+    op: str = Field(..., description="closed-set op; see slice_definitions_service.SLICE_OPERATORS")
+    value: Any = None
+
+
+class SliceDefinitionSchema(BaseModel):
+    slice_id: str = Field(..., description="lowercase ASCII id, ^[a-z][a-z0-9_]{0,63}$")
+    display_name: str = ""
+    where: list[SliceClauseSchema] = Field(default_factory=list)
+
+
+class SliceDefinitionsPayload(BaseModel):
+    slices: list[SliceDefinitionSchema] = Field(default_factory=list)
+
+
+class SliceDefinitionsResponse(BaseModel):
+    project_id: int
+    slice_definitions: dict
+
+
 class ProjectDomainPackAssignRequest(BaseModel):
     pack_id: str = Field(..., min_length=3, max_length=128)
     adopt_pack_default_profile: bool = True
@@ -82,6 +110,9 @@ class ProjectResponse(BaseModel):
     # mirrored `auto_rag.enabled` value. Frontend hides the Train
     # button + shows a "RAG-first" badge when rag_first is true.
     runtime_config: dict | None = None
+    # Quality-Lift phase 2 — Named eval-row subsets defined as JSON
+    # predicates; nullable for projects with no slices configured.
+    slice_definitions: dict | None = None
     created_at: datetime
     updated_at: datetime
 

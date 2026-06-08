@@ -203,6 +203,7 @@ session-start guidance.
 - `backend/app/services/serve_service.py` — Local serving plan generation for export and registry artifacts.
 - `backend/app/services/served_model_telemetry_service.py` — Post-deploy telemetry service (priority.md P26).
 - `backend/app/services/sft_lift_summary_service.py` — Did SFT help? — baseline vs trained eval lift summary (Theme 8 Epic 4).
+- `backend/app/services/slice_definitions_service.py` — Quality-Lift phase 2, slice 1 — Project slice-definitions validator.
 - `backend/app/services/starter_pack_service.py` — Dynamic starter-pack registry for domain-specific onboarding defaults.
 - `backend/app/services/student_teacher_comparison_service.py` — Student-vs-teacher distillation comparison (Track 1, Epic A, slice 3).
 - `backend/app/services/support_bundle_service.py` — Support-bundle service with redaction (priority.md P34, Wave G).
@@ -368,6 +369,7 @@ session-start guidance.
 - `backend/alembic/versions/20260601_0044_label_row_reviews.py` — Label-row multi-reviewer capture (Epic F Phase 2).
 - `backend/alembic/versions/20260603_0045_project_goal.py` — Arc H — Project end-goal contract.
 - `backend/alembic/versions/20260608_0046_multi_seed_experiments.py` — Quality-Lift phase 1 — multi-seed variance reporting columns.
+- `backend/alembic/versions/20260608_0047_project_slice_definitions.py` — Quality-Lift phase 2 slice 1 — Project.slice_definitions column.
 
 ## Frontend · API clients
 
@@ -781,6 +783,7 @@ session-start guidance.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
+- `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
 - `backend/tests/test_sprint1.py` — _(no docstring)_
 - `backend/tests/test_sprint2.py` — _(no docstring)_
 - `backend/tests/test_stratified_split.py` — Unit tests for ``_stratified_split_entries`` (Gap #4 fix).

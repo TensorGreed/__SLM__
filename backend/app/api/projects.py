@@ -26,6 +26,8 @@ from app.schemas.project import (
     ProjectResponse,
     ProjectStatsResponse,
     ProjectUpdate,
+    SliceDefinitionsPayload,
+    SliceDefinitionsResponse,
 )
 from app.schemas.domain_blueprint import DomainBlueprintAnalyzeRequest, DomainBlueprintContract
 from pydantic import BaseModel
@@ -964,3 +966,95 @@ async def clear_project_goal(
         raise HTTPException(404, str(exc))
     await db.commit()
     return {"project_id": project_id, "cleared": True}
+
+
+# ── Quality-Lift phase 2, slice 1 — Slice definitions CRUD ─────────────
+#
+# Three endpoints:
+#   GET    .../slice-definitions  — read; returns ``{"slices": []}`` when
+#                                   nothing has been configured so the
+#                                   editor never has to special-case null.
+#   PUT    .../slice-definitions  — replace (idempotent); body goes
+#                                   through the service validator before
+#                                   landing on the column.
+#   DELETE .../slice-definitions  — drop; equivalent to PUT with empty
+#                                   slices but more explicit when the
+#                                   user wants to nuke slicing entirely.
+
+
+@router.get(
+    "/{project_id}/slice-definitions",
+    response_model=SliceDefinitionsResponse,
+)
+async def get_project_slice_definitions(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read this project's slice definitions. Returns ``{"slices": []}``
+    when none configured so the editor has a stable shape to render.
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    payload = project.slice_definitions or {"slices": []}
+    return {"project_id": project_id, "slice_definitions": payload}
+
+
+@router.put(
+    "/{project_id}/slice-definitions",
+    response_model=SliceDefinitionsResponse,
+)
+async def set_project_slice_definitions(
+    project_id: int,
+    payload: SliceDefinitionsPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace this project's slice definitions in one shot.
+
+    The Pydantic schemas are intentionally thin — closed-set op
+    validation, slice_id regex, per-project caps, and regex
+    compilability all live in
+    ``slice_definitions_service.validate_slice_definitions`` so the same
+    code-path runs whether the payload arrives here or via a future
+    bulk-import flow. A ``SliceValidationError`` surfaces verbatim
+    to the editor so the user sees a precise inline error
+    ("slice ``long_input``: regex ``[`` is invalid").
+    """
+    from app.services.slice_definitions_service import (
+        validate_slice_definitions,
+        SliceValidationError,
+    )
+
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    try:
+        cleaned = validate_slice_definitions(payload.model_dump())
+    except SliceValidationError as exc:
+        raise HTTPException(400, str(exc))
+
+    project.slice_definitions = cleaned
+    await db.commit()
+    return {"project_id": project_id, "slice_definitions": cleaned}
+
+
+@router.delete(
+    "/{project_id}/slice-definitions",
+    response_model=SliceDefinitionsResponse,
+)
+async def clear_project_slice_definitions(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Drop all slice definitions. Idempotent — clearing an already-empty
+    column is a 200 with the empty payload, not a 404."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    project.slice_definitions = None
+    await db.commit()
+    return {"project_id": project_id, "slice_definitions": {"slices": []}}
