@@ -288,22 +288,26 @@ export default function ProjectPipelinePage() {
                 <div className="project-tabs-container">
                     <div className="tabs">
                         {PIPELINE_TABS.map((tab) => {
-                            const unlocked = isTabUnlocked(tab.key);
+                            // Pipeline-progress hint, not a navigation gate.
+                            // ``upcoming`` (formerly ``locked``) means the
+                            // stage hasn't been reached by the pipeline
+                            // tracker yet — useful as visual feedback, but
+                            // a hard-lock was wrong: the user must be free
+                            // to peek at panels (and many panels are
+                            // independently usable regardless of order).
+                            const upcoming = !isTabUnlocked(tab.key);
                             const active = resolvedTab === tab.key;
                             return (
                                 <button
                                     key={tab.key}
-                                    className={`tab ${active ? 'active' : ''} ${!unlocked ? 'tab--locked' : ''}`}
+                                    className={`tab ${active ? 'active' : ''} ${upcoming ? 'tab--upcoming' : ''}`}
                                     onClick={() => {
-                                        if (!unlocked) {
-                                            return;
-                                        }
                                         setActiveTab(tab.key);
                                         navigate(`/project/${projectId}/pipeline/${tab.key}`);
                                     }}
-                                    title={!unlocked ? 'Complete earlier steps first' : tab.label}
+                                    title={upcoming ? `${tab.label} — stage not started yet (click to preview)` : tab.label}
                                 >
-                                    <span>{unlocked ? tab.icon : '🔒'}</span> {tab.label}
+                                    <span>{tab.icon}</span> {tab.label}
                                 </button>
                             );
                         })}

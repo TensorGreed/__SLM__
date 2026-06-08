@@ -42,11 +42,17 @@
     animation: fadeIn 0.4s ease-out;
 }
 
-.tab.tab--locked {
-    opacity: 0.35;
-    cursor: not-allowed !important;
-    pointer-events: none;
-    filter: grayscale(0.6);
+/* Visual hint that a stage hasn't been reached by the pipeline tracker
+   yet. Critically NOT a navigation block — the tab stays fully
+   clickable so the user can preview any panel out of order. */
+.tab.tab--upcoming {
+    opacity: 0.55;
+    filter: grayscale(0.4);
+}
+
+.tab.tab--upcoming:hover {
+    opacity: 0.85;
+    filter: grayscale(0);
 }
 
 .pipeline-training-config-card {
