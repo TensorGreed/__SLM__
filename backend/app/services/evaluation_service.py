@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.dataset import Dataset, DatasetType
 from app.models.experiment import EvalResult, Experiment
+from app.models.project import Project
 from app.services.domain_hook_service import apply_evaluator_hook, resolve_project_domain_hooks
+from app.services.slice_evaluator_service import score_with_slices
 from app.services.eval_task_handler_service import (
     EvalContext,
     GenericHandler,
@@ -375,7 +377,29 @@ async def run_evaluation(
         dataset_name=dataset_name,
         experiment_task_type=experiment_task_type,
     )
-    metrics = dict(task_handler.score(predictions, eval_ctx))
+    # Quality-Lift phase 2 slice 2 — load project.slice_definitions and
+    # route scoring through score_with_slices. Projects with no slices
+    # configured see byte-identical metric output (score_with_slices
+    # fast-paths the empty/None slice list back to the handler's plain
+    # ``score`` return). When slices ARE configured, the handler's
+    # score runs once per slice subset to emit
+    # ``metrics["per_slice"][<slice_id>][<handler metrics>]`` alongside
+    # the overall metrics. The phase 1 aggregator already recurses
+    # through nested dicts so multi-seed runs get per-slice
+    # ``{mean, std, ...}`` for free.
+    project_row = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_row.scalar_one_or_none()
+    slice_defs = None
+    if project is not None and isinstance(project.slice_definitions, dict):
+        raw_slices = project.slice_definitions.get("slices")
+        if isinstance(raw_slices, list) and raw_slices:
+            slice_defs = raw_slices
+    metrics = dict(score_with_slices(
+        task_handler,
+        predictions,
+        eval_ctx,
+        slice_definitions=slice_defs,
+    ))
 
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(
