@@ -250,6 +250,7 @@ session-start guidance.
 - `backend/app/services/training_runtime_service.py` — Training runtime plugin SDK and registry.
 - `backend/app/services/training_service.py` — Training pipeline service — SFT, LoRA, checkpoint management.
 - `backend/app/services/training_telemetry_service.py` — Training wizard telemetry persistence helpers.
+- `backend/app/services/unlabeled_pool_scoring_service.py` — Quality-Lift phase 3, slice 1 — Unlabeled-pool uncertainty scoring.
 - `backend/app/services/vibe_check_service.py` — Vibe-check timeline service for qualitative prompt snapshots during training.
 - `backend/app/services/workflow_graph_service.py` — Workflow graph and contract-runtime helpers for pipeline execution.
 - `backend/app/services/workflow_runner_service.py` — Workflow DAG runner service with persistent run/node tracking.
@@ -804,6 +805,7 @@ session-start guidance.
 - `backend/tests/test_tokenization_analyze_splits.py` — V3 of the ML-native visualisations arc — POST /tokenization/analyze-splits.
 - `backend/tests/test_trainability_forecast_service.py` — Tests for the trainability forecast service (USER-SUCCESS Epic 1).
 - `backend/tests/test_training_data_gate.py` — Pre-training data-shape gate (training_data_gate).
+- `backend/tests/test_unlabeled_pool_scoring_slice1.py` — Quality-Lift phase 3 slice 1 — Unlabeled-pool scoring service.
 - `backend/tests/test_vision_language_adapter_prompt_wrap.py` — ι-fix tests — vision-language-pair adapter writes the
 - `backend/tests/test_warmstart_checkpoint.py` — Unit tests for the warm-start checkpoint trainer's non-GPU logic.
 

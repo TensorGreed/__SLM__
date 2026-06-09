@@ -172,6 +172,59 @@ async def _safe_build_auto_rag_index(
         }
 
 
+async def _safe_score_unlabeled_pool(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    experiment_id: int,
+) -> dict:
+    """Quality-Lift phase 3 slice 1 — fire-and-forget active-learning
+    scoring hook called from the training-completion paths.
+
+    Wraps ``unlabeled_pool_scoring_service.score_unlabeled_pool_for_experiment``
+    in the same catch-all shape as ``_safe_build_auto_rag_index`` so
+    scoring errors (no labeled pool, missing checkpoint, model load
+    failure) never block the COMPLETED status transition. The
+    returned snapshot is stamped onto
+    ``runtime_config["active_learning"]``; slice 2's Coach nudge and
+    slice 3's Data Studio card both read it from there.
+
+    Skip when ``experiment_id`` is a seed-group child — multi-seed
+    runs fire the hook once from the leader's terminal transition
+    inside the aggregator (so the user gets one snapshot per training
+    run, not N redundant ones). The child-side caller is the runner's
+    own COMPLETED branch; the leader-side caller is the aggregation
+    service.
+    """
+    try:
+        # Skip children of a seed group — leader fires the hook.
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == experiment_id)
+        )
+        exp = result.scalar_one_or_none()
+        if exp is not None and exp.seed_group_id and exp.seed_value is not None:
+            return {
+                "scored": False,
+                "skipped_reason": "seed_group_child_defers_to_leader",
+                "seed_group_id": exp.seed_group_id,
+            }
+
+        from app.services.unlabeled_pool_scoring_service import (
+            score_unlabeled_pool_for_experiment,
+        )
+
+        return await score_unlabeled_pool_for_experiment(
+            db,
+            project_id=project_id,
+            experiment_id=experiment_id,
+        )
+    except Exception as e:  # noqa: BLE001 — never block training completion
+        return {
+            "scored": False,
+            "skipped_reason": f"unexpected_error:{type(e).__name__}:{e}",
+        }
+
+
 # Phase 6d — curriculum-learning default-on heuristic threshold.
 # The Phase 6c A/B (2026-05-25, 5 seeds, GB10 GPU) cleared the gate
 # with classification templates at exactly 144 training rows; the
@@ -708,6 +761,16 @@ async def _monitor_external_training(
                     runtime["auto_rag_build"] = await _safe_build_auto_rag_index(
                         db, project_id=int(exp.project_id)
                     )
+                    # Quality-Lift phase 3 slice 1 — score the unlabeled
+                    # pool by model uncertainty so slice 2's Coach nudge
+                    # + slice 3's Data Studio card can surface top-K
+                    # "label these next" rows. Defers to the seed-group
+                    # leader when this is a multi-seed child.
+                    runtime["active_learning"] = await _safe_score_unlabeled_pool(
+                        db,
+                        project_id=int(exp.project_id),
+                        experiment_id=int(exp.id),
+                    )
                     exp.config = {**config, "_runtime": runtime}
                 else:
                     exp.status = ExperimentStatus.FAILED
@@ -1003,6 +1066,14 @@ async def _simulate_training_loop(experiment_id: int, config: dict):
                 runtime = dict(cfg.get("_runtime") or {})
                 runtime["auto_rag_build"] = await _safe_build_auto_rag_index(
                     db, project_id=int(exp.project_id)
+                )
+                # Quality-Lift phase 3 slice 1 — same active-learning
+                # scoring hook as the external runtime. Defers to the
+                # seed-group leader when this is a multi-seed child.
+                runtime["active_learning"] = await _safe_score_unlabeled_pool(
+                    db,
+                    project_id=int(exp.project_id),
+                    experiment_id=int(exp.id),
                 )
                 cfg["_runtime"] = runtime
                 exp.config = cfg

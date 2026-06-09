@@ -294,6 +294,20 @@ async def maybe_aggregate_seed_group(
         leader.status = ExperimentStatus.FAILED
     leader.completed_at = datetime.now(timezone.utc)
 
+    # Quality-Lift phase 3 slice 1 — Active-learning scoring for
+    # multi-seed runs fires once from here, using the first succeeded
+    # child's checkpoint. The child-side runner hook skips when it
+    # sees ``seed_value is not None``, so this is the single source of
+    # truth for seed-group active-learning snapshots and the user
+    # never sees N redundant ones. Borrow the leader's output_dir
+    # from the first-succeeded child since the leader itself never
+    # ran training; the unlabeled_pool scoring service reads
+    # ``exp.output_dir`` to locate the checkpoint.
+    if succeeded:
+        first_child = sorted(succeeded, key=lambda s: int(s.id))[0]
+        if first_child.output_dir and not leader.output_dir:
+            leader.output_dir = first_child.output_dir
+
     # Stamp the seed-group summary onto the leader's config so the UI
     # / API don't need to re-query siblings to render the warning badge.
     leader_cfg = dict(leader.config or {})
@@ -314,6 +328,41 @@ async def maybe_aggregate_seed_group(
     leader.config = leader_cfg
 
     await db.commit()
+
+    # Active-learning scoring on the leader once status is COMPLETED.
+    # Fire AFTER the commit so the leader's output_dir + COMPLETED
+    # state are visible to the scoring service in its own transaction.
+    # Best-effort — failures land on the snapshot as a skipped_reason
+    # rather than rolling back the aggregation.
+    if succeeded:
+        try:
+            from app.services.unlabeled_pool_scoring_service import (
+                score_unlabeled_pool_for_experiment,
+            )
+
+            snapshot = await score_unlabeled_pool_for_experiment(
+                db,
+                project_id=int(leader.project_id),
+                experiment_id=int(leader.id),
+            )
+            # Stamp onto _runtime["active_learning"] the same way the
+            # runner-side hooks do, so slice 2 + 3 read a uniform path.
+            leader_refresh = await db.execute(
+                select(Experiment).where(Experiment.id == leader.id)
+            )
+            leader_row = leader_refresh.scalar_one_or_none()
+            if leader_row is not None:
+                cfg = dict(leader_row.config or {})
+                runtime = dict(cfg.get("_runtime") or {})
+                runtime["active_learning"] = snapshot
+                cfg["_runtime"] = runtime
+                leader_row.config = cfg
+                await db.commit()
+        except Exception as al_exc:
+            print(
+                f"[active_learning] seed_group_scoring_failed leader_id={leader.id}: {al_exc}",
+                flush=True,
+            )
 
     return {
         "seed_group_id": group_id,
