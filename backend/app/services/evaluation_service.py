@@ -348,6 +348,114 @@ def evaluate_safety_response(response: str, test_type: str) -> dict:
 
 # ── Evaluation Runner ──────────────────────────────────────────────────
 
+
+async def _safe_run_behavioral_tests(
+    db: AsyncSession,
+    *,
+    project_id: int,
+    experiment: Experiment,
+    task_profile: str | None,
+) -> dict[str, Any]:
+    """Quality-Lift phase 5 slice 2 — fire-and-forget behavioral runner
+    called from ``run_evaluation`` right after the per-handler scoring.
+
+    Returns the raw ``{test_id: {pass_rate, ...}}`` dict ready to
+    stash on ``metrics["behavioral"]``. Empty dict on every failure
+    path:
+      * No pack / no behavioral_tests defined for this task profile.
+      * No COMPLETED classification checkpoint reachable (the runner
+        needs a model to predict against).
+      * predict_fn build raises (torch missing, weights corrupt).
+      * Behavioral runner raises mid-way through scoring.
+
+    Empty-dict-on-failure is the right shape: a behavioral gate
+    referencing a missing key flows through the existing
+    ``missing_metric_required`` / ``_optional`` reason — same shape
+    as an eval pack with a gate the project's eval hasn't produced.
+    """
+    try:
+        # Slice 1 only ships behavioral tests for classification packs;
+        # other handlers would need their own predict adapter (deferred).
+        if (task_profile or "").strip().lower() != "classification":
+            return {}
+
+        from app.services.behavioral_test_runner import (
+            build_classifier_predict_fn,
+            run_behavioral_tests,
+        )
+        from app.services.evaluation_pack_service import (
+            _select_task_spec,
+            resolve_project_evaluation_pack,
+        )
+
+        pack_resolution = await resolve_project_evaluation_pack(db, project_id)
+        pack = dict(pack_resolution.get("pack") or {})
+        if not pack:
+            return {}
+        task_spec, _selected, _fallback = _select_task_spec(pack, task_profile)
+        behavioral_tests = task_spec.get("behavioral_tests")
+        if not behavioral_tests:
+            return {}
+
+        # Resolve checkpoint + label space. The runner needs both to
+        # build the classifier-head predict_fn. We borrow phase 3's
+        # convention: experiment.output_dir is the checkpoint path.
+        from pathlib import Path
+
+        ckpt_path = (experiment.output_dir or "").strip()
+        if not ckpt_path or not Path(ckpt_path).exists():
+            return {}
+
+        # Pull the label space from the task spec's metric schema
+        # (slice 1's classification pack convention).
+        # When unavailable, fall back to label_space declared on the
+        # task_spec for behavioral tests directly.
+        label_space = (
+            task_spec.get("label_space")
+            or task_spec.get("required_label_space")
+            or []
+        )
+        if not isinstance(label_space, list) or not label_space:
+            # Try the first MFT's labels as a last resort — at least
+            # we cover the canonical examples.
+            seen: list[str] = []
+            for t in behavioral_tests:
+                if t.get("kind") == "MFT":
+                    for ex in (t.get("examples") or []):
+                        lab = ex.get("expected_label")
+                        if isinstance(lab, str) and lab and lab not in seen:
+                            seen.append(lab)
+                if t.get("kind") == "DIR":
+                    exp_b = t.get("expectation") or {}
+                    if exp_b.get("kind") == "must_change_to":
+                        lab = exp_b.get("target_label")
+                        if isinstance(lab, str) and lab and lab not in seen:
+                            seen.append(lab)
+                    if exp_b.get("kind") == "must_change_to_one_of":
+                        for lab in (exp_b.get("target_labels") or []):
+                            if isinstance(lab, str) and lab and lab not in seen:
+                                seen.append(lab)
+            label_space = seen
+        if not label_space:
+            return {}
+
+        predict_fn = build_classifier_predict_fn(
+            model_path=ckpt_path,
+            label_space=list(label_space),
+        )
+        return run_behavioral_tests(
+            list(behavioral_tests),
+            predict_fn=predict_fn,
+        )
+    except Exception as exc:  # noqa: BLE001 — never block eval completion
+        print(
+            f"[behavioral_tests] run_failed project_id={project_id} "
+            f"experiment_id={experiment.id}: {exc}",
+            flush=True,
+        )
+        return {}
+
+
 async def run_evaluation(
     db: AsyncSession,
     project_id: int,
@@ -400,6 +508,24 @@ async def run_evaluation(
         eval_ctx,
         slice_definitions=slice_defs,
     ))
+
+    # Quality-Lift phase 5 slice 2 — Run behavioral tests against the
+    # trained checkpoint. Emits ``metrics["behavioral"][test_id]`` so
+    # _build_metric_snapshot's slice 2 flattener can turn it into
+    # canonical ``behavioral.<test_id>.pass_rate`` keys the gate
+    # evaluator already reads. Best-effort: any failure (no pack, no
+    # behavioral_tests defined, classifier-head loading error) leaves
+    # ``metrics["behavioral"]`` absent so the gate evaluator resolves
+    # behavioral gates as ``missing_metric_*`` — the same shape an
+    # un-run eval gives today.
+    behavioral_metrics = await _safe_run_behavioral_tests(
+        db,
+        project_id=project_id,
+        experiment=exp,
+        task_profile=eval_ctx.task_profile,
+    )
+    if behavioral_metrics:
+        metrics["behavioral"] = behavioral_metrics
 
     hook_state = await resolve_project_domain_hooks(db, project_id)
     metrics = apply_evaluator_hook(

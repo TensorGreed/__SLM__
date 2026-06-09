@@ -1294,6 +1294,18 @@ def _build_metric_snapshot(
                     row=row, eval_type=eval_type,
                     variance=variance,
                 )
+                # Quality-Lift phase 5 slice 2 — Behavioral test results
+                # also live as a nested dict under ``metrics["behavioral"]``;
+                # parallel implementation flattens them into the same
+                # canonical / short / scoped id-shapes the catalog matcher
+                # accepts. Gates referencing
+                # ``behavioral.<test_id>.pass_rate`` resolve through the
+                # existing _evaluate_gate path with ZERO new gate code.
+                _flatten_behavioral_test_metrics(
+                    values, sources, payload_key=str(raw_key), payload_value=raw_value,
+                    row=row, eval_type=eval_type,
+                    variance=variance,
+                )
                 continue
             normalized_metric = _normalize_token(str(raw_key))
             if not normalized_metric:
@@ -1467,6 +1479,77 @@ def _flatten_per_slice_metrics(
                     metric_key=metric_key_label, overwrite=False,
                     variance=variance,
                     variance_block=slice_var_block,
+                )
+
+
+# Quality-Lift phase 5 slice 2 — Behavioral test metrics to flatten.
+# The runner emits ``metrics["behavioral"][test_id] = {pass_rate,
+# passed, total, ...}``; only the numeric leaves are gateable. Other
+# keys (kind, failed_examples, capped_at_budget) ride through as
+# context the UI uses but the gate evaluator ignores.
+_BEHAVIORAL_METRIC_KEYS: tuple[str, ...] = ("pass_rate", "passed", "total")
+
+
+def _flatten_behavioral_test_metrics(
+    values: dict[str, float],
+    sources: dict[str, dict[str, Any]],
+    *,
+    payload_key: str,
+    payload_value: Any,
+    row: EvalResult,
+    eval_type: str,
+    variance: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Quality-Lift phase 5 slice 2 — Flatten ``behavioral: {test_id:
+    {pass_rate, passed, total, ...}}`` into gate-resolvable keys.
+
+    Parallel to ``_flatten_per_slice_metrics`` — emits the three
+    id-shapes the slice-1 catalog matcher already accepts:
+
+      * ``behavioral.<test_id>.<metric>``           — canonical
+      * ``<metric>_behavioral_<test_id>``           — short form
+      * ``<eval_type>.behavioral.<test_id>.<metric>`` — scoped
+
+    Only the closed numeric leaves (``pass_rate`` / ``passed`` /
+    ``total``) flatten — non-numeric keys (``kind``,
+    ``failed_examples``, ``capped_at_budget``) ride through on the
+    snapshot for slice 3's UI but don't gate.
+
+    Aggregate-row variance (phase 1) plumbs transparently — when an
+    aggregate's ``behavioral.<test_id>.pass_rate`` is a
+    ``{mean, std, ...}`` block, the existing variance plumbing
+    surfaces it the same way per_slice variance does.
+    """
+    if str(payload_key).strip().lower() != "behavioral":
+        return
+    if not isinstance(payload_value, dict):
+        return
+    for raw_test_id, test_metrics in payload_value.items():
+        if not isinstance(test_metrics, dict):
+            continue
+        test_id = _normalize_token(str(raw_test_id))
+        if not test_id:
+            continue
+        for metric_name in _BEHAVIORAL_METRIC_KEYS:
+            raw_metric_value = test_metrics.get(metric_name)
+            metric_value, behavioral_var_block = _coerce_metric_to_float_and_variance(
+                raw_metric_value,
+                row=row,
+                metric_key=f"behavioral.{raw_test_id}.{metric_name}",
+            )
+            if metric_value is None:
+                continue
+            short_key = f"{metric_name}_behavioral_{test_id}"
+            dot_key = f"behavioral.{test_id}.{metric_name}"
+            scoped_key = f"{eval_type}.{dot_key}"
+            metric_key_label = f"behavioral.{raw_test_id}.{metric_name}"
+            for key in (short_key, dot_key, scoped_key):
+                _set_metric_value(
+                    values, sources,
+                    key=key, value=metric_value, row=row,
+                    metric_key=metric_key_label, overwrite=False,
+                    variance=variance,
+                    variance_block=behavioral_var_block,
                 )
 
 
