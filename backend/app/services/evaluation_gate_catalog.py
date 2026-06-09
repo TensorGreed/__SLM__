@@ -315,15 +315,37 @@ _BEHAVIORAL_SCOPED_PATTERN = _re.compile(
     r"^[a-z][a-z0-9_]*\.behavioral\.[a-z][a-z0-9_]{0,63}\.(pass_rate|passed|total)$"
 )
 
+# Quality-Lift phase 6 slice 2 — Per-slice behavioral test metric_ids.
+# The phase 6 slice 1 runner emits per_slice nested dicts; the phase 6
+# slice 2 flattener walks them into three id-shapes mirroring the
+# top-level behavioral patterns:
+#   * canonical dot-path: ``behavioral.<test_id>.per_slice.<slice_id>.<metric>``
+#   * short form:         ``<metric>_behavioral_<test_id>_slice_<slice_id>``
+#   * eval-type scoped:   ``<eval_type>.behavioral.<test_id>.per_slice.<slice_id>.<metric>``
+_BEHAVIORAL_PER_SLICE_DOT_PATTERN = _re.compile(
+    r"^behavioral\.[a-z][a-z0-9_]{0,63}\.per_slice\.[a-z][a-z0-9_]{0,63}\."
+    r"(pass_rate|passed|total)$"
+)
+_BEHAVIORAL_PER_SLICE_SHORT_PATTERN = _re.compile(
+    r"^(pass_rate|passed|total)_behavioral_[a-z][a-z0-9_]{0,63}_slice_"
+    r"[a-z][a-z0-9_]{0,63}$"
+)
+_BEHAVIORAL_PER_SLICE_SCOPED_PATTERN = _re.compile(
+    r"^[a-z][a-z0-9_]*\.behavioral\.[a-z][a-z0-9_]{0,63}\.per_slice\."
+    r"[a-z][a-z0-9_]{0,63}\.(pass_rate|passed|total)$"
+)
+
 
 def is_behavioral_metric_id(metric_id: str) -> bool:
     """True when ``metric_id`` references a behavioral-test metric.
 
-    Accepts the three id-shapes the slice 2 flattener emits. Same
-    fallback role as ``is_per_class_metric_id`` /
-    ``is_per_slice_metric_id`` — the validator allows behavioral
-    gates without needing a static catalog entry per test (test ids
-    are pack-defined and grow with the user's robustness coverage).
+    Accepts six id-shapes total — the three top-level (phase 5 slice 2)
+    plus the three per-slice (phase 6 slice 2). Same fallback role as
+    ``is_per_class_metric_id`` / ``is_per_slice_metric_id`` — the
+    validator allows behavioral gates without needing a static
+    catalog entry per test (test ids are pack-defined and grow with
+    the user's robustness coverage; slice ids are project-defined
+    via Project.slice_definitions).
     """
     if not metric_id:
         return False
@@ -332,6 +354,9 @@ def is_behavioral_metric_id(metric_id: str) -> bool:
         _BEHAVIORAL_DOT_PATTERN.match(token)
         or _BEHAVIORAL_SHORT_PATTERN.match(token)
         or _BEHAVIORAL_SCOPED_PATTERN.match(token)
+        or _BEHAVIORAL_PER_SLICE_DOT_PATTERN.match(token)
+        or _BEHAVIORAL_PER_SLICE_SHORT_PATTERN.match(token)
+        or _BEHAVIORAL_PER_SLICE_SCOPED_PATTERN.match(token)
     )
 
 

@@ -1553,6 +1553,62 @@ def _flatten_behavioral_test_metrics(
                     variance_block=behavioral_var_block,
                 )
 
+        # Quality-Lift phase 6 slice 2 — Recurse into per_slice block.
+        # The slice 1 runner emits ``test_metrics["per_slice"][slice_id] =
+        # {pass_rate, passed, total, failed_examples}`` when the project
+        # has slice_definitions configured. Flatten those into gateable
+        # keys so a user can write a gate like
+        # ``behavioral.<test_id>.per_slice.<slice_id>.pass_rate >= 0.85``
+        # to fail ship when a specific slice regresses, even if the
+        # test's overall pass_rate stays healthy.
+        per_slice = test_metrics.get("per_slice")
+        if isinstance(per_slice, dict):
+            for raw_slice_id, slice_metrics in per_slice.items():
+                if not isinstance(slice_metrics, dict):
+                    continue
+                slice_id = _normalize_token(str(raw_slice_id))
+                if not slice_id:
+                    continue
+                for metric_name in _BEHAVIORAL_METRIC_KEYS:
+                    raw_per_slice_metric = slice_metrics.get(metric_name)
+                    pm_value, pm_var_block = _coerce_metric_to_float_and_variance(
+                        raw_per_slice_metric,
+                        row=row,
+                        metric_key=(
+                            f"behavioral.{raw_test_id}.per_slice."
+                            f"{raw_slice_id}.{metric_name}"
+                        ),
+                    )
+                    if pm_value is None:
+                        continue
+                    # Three id-shapes mirror the slice 2 contract:
+                    #   * short form with ``_slice_`` infix so the editor
+                    #     can autocomplete distinctly from a top-level
+                    #     ``pass_rate_behavioral_<test_id>``.
+                    #   * canonical dot-path is the form
+                    #     validate_draft_pack_gates will see most.
+                    #   * eval-type scoped variant matches the rest of
+                    #     the flattener output.
+                    short_key = (
+                        f"{metric_name}_behavioral_{test_id}_slice_{slice_id}"
+                    )
+                    dot_key = (
+                        f"behavioral.{test_id}.per_slice.{slice_id}.{metric_name}"
+                    )
+                    scoped_key = f"{eval_type}.{dot_key}"
+                    metric_key_label = (
+                        f"behavioral.{raw_test_id}.per_slice."
+                        f"{raw_slice_id}.{metric_name}"
+                    )
+                    for key in (short_key, dot_key, scoped_key):
+                        _set_metric_value(
+                            values, sources,
+                            key=key, value=pm_value, row=row,
+                            metric_key=metric_key_label, overwrite=False,
+                            variance=variance,
+                            variance_block=pm_var_block,
+                        )
+
 
 def _build_behavioral_index_for_checks(
     latest_by_eval_type: dict[str, EvalResult],
@@ -1582,6 +1638,30 @@ def _build_behavioral_index_for_checks(
                 continue
             # First-wins so the most-recent eval (which arrives first
             # via the descending iteration) is authoritative.
+            # Phase 6 slice 2 — Carry the per_slice block forward so
+            # _attach_behavioral_details can resolve per-slice gates'
+            # failed_examples without re-loading the EvalResult row.
+            # Each per_slice entry has the same shape as the top-level
+            # one (kind / passed / total / pass_rate / failed_examples),
+            # so the attach helper can read from either source uniformly.
+            raw_per_slice = test_metrics.get("per_slice")
+            per_slice_clean: dict[str, dict[str, Any]] = {}
+            if isinstance(raw_per_slice, dict):
+                for raw_slice_id, slice_block in raw_per_slice.items():
+                    if not isinstance(slice_block, dict):
+                        continue
+                    cleaned_slice_id = _normalize_token(str(raw_slice_id))
+                    if not cleaned_slice_id:
+                        continue
+                    per_slice_clean[cleaned_slice_id] = {
+                        "kind": slice_block.get("kind"),
+                        "pass_rate": slice_block.get("pass_rate"),
+                        "passed": slice_block.get("passed"),
+                        "total": slice_block.get("total"),
+                        "failed_examples": list(
+                            slice_block.get("failed_examples") or []
+                        ),
+                    }
             out.setdefault(test_id, {
                 "kind": test_metrics.get("kind"),
                 "pass_rate": test_metrics.get("pass_rate"),
@@ -1589,6 +1669,7 @@ def _build_behavioral_index_for_checks(
                 "total": test_metrics.get("total"),
                 "failed_examples": list(test_metrics.get("failed_examples") or []),
                 "capped_at_budget": test_metrics.get("capped_at_budget"),
+                "per_slice": per_slice_clean,
                 "source_eval_result_id": int(row.id),
                 "source_eval_type": str(row.eval_type),
                 "source_dataset_name": str(row.dataset_name),
@@ -1596,6 +1677,14 @@ def _build_behavioral_index_for_checks(
     return out
 
 
+# Phase 6 slice 2 — Per-slice behavioral test gate parser. Matches the
+# canonical ``behavioral.<test_id>.per_slice.<slice_id>.`` prefix; the
+# eval-type scoped variant gets the leading scope stripped before
+# matching (same pattern _attach_behavioral_details already uses for
+# the top-level case).
+_BEHAVIORAL_PER_SLICE_FROM_METRIC = _re.compile(
+    r"^behavioral\.([a-z][a-z0-9_]{0,63})\.per_slice\.([a-z][a-z0-9_]{0,63})\."
+)
 _BEHAVIORAL_TEST_ID_FROM_METRIC = _re.compile(
     r"^behavioral\.([a-z][a-z0-9_]{0,63})\."
 )
@@ -1605,24 +1694,70 @@ def _attach_behavioral_details(
     check: dict[str, Any],
     behavioral_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """Extract the test_id from the gate's metric_id (matches both the
-    canonical ``behavioral.<id>.<metric>`` shape and the eval-type
-    scoped variant). When the gate is behavioral, merge the detail
-    block into the check response so the frontend can render
-    failed_examples + the kind badge.
+    """Extract the test_id (and optional slice_id) from the gate's
+    metric_id and merge the corresponding diagnostic block into the
+    check response so the frontend can render failed_examples + the
+    kind badge.
+
+    Recognises both top-level shapes
+    (``behavioral.<test_id>.<metric>`` or the eval-type scoped
+    variant) and per-slice shapes
+    (``behavioral.<test_id>.per_slice.<slice_id>.<metric>``).
+    Per-slice gates pull failed_examples from the slice's bucket
+    rather than the top-level test — drill-down shows ONLY the
+    examples in that specific slice, which is the whole point of
+    gating per-slice in the first place.
     """
     metric_id = str(check.get("metric_id") or "")
     if not metric_id:
         return check
     # Both ``behavioral.<id>.<metric>`` and
-    # ``<eval_type>.behavioral.<id>.<metric>`` should resolve to the
-    # same test_id. Strip a leading scope segment if present.
+    # ``<eval_type>.behavioral.<id>.<metric>`` (top-level or
+    # per-slice) should resolve to the same test_id / slice_id. Strip a
+    # leading scope segment if present.
     scoped_strip = metric_id.split(".behavioral.")
     candidate = (
         f"behavioral.{scoped_strip[1]}"
         if len(scoped_strip) == 2
         else metric_id
     )
+
+    # Try per-slice first so a gate like
+    # ``behavioral.<test_id>.per_slice.<slice_id>.pass_rate`` resolves
+    # to the slice block (not the top-level one — the test_id pattern
+    # below would otherwise match the same prefix and lose the slice).
+    slice_match = _BEHAVIORAL_PER_SLICE_FROM_METRIC.match(candidate)
+    if slice_match:
+        test_id = slice_match.group(1)
+        slice_id = slice_match.group(2)
+        details = behavioral_index.get(test_id) or {}
+        slice_details = (details.get("per_slice") or {}).get(slice_id)
+        if not slice_details:
+            # Test/slice combination has no recorded data — leave the
+            # check unchanged so it still resolves via the
+            # missing_metric_* path on the gate evaluator.
+            return check
+        enriched = dict(check)
+        enriched["behavioral_test_id"] = test_id
+        enriched["behavioral_slice_id"] = slice_id
+        # ``behavioral_kind`` is the test's kind (INV/DIR/MFT) — same
+        # across slices, so read from the top-level bucket. The slice
+        # block carries its own kind field too as a convenience copy.
+        enriched["behavioral_kind"] = (
+            slice_details.get("kind") or details.get("kind")
+        )
+        enriched["behavioral_failed_examples"] = (
+            slice_details.get("failed_examples") or []
+        )
+        enriched["behavioral_passed"] = slice_details.get("passed")
+        enriched["behavioral_total"] = slice_details.get("total")
+        # ``capped_at_budget`` is a top-level concern (the budget caps
+        # the whole test's trial set, not per slice) — carry it
+        # through so the UI can still flag it.
+        if details.get("capped_at_budget") is not None:
+            enriched["behavioral_capped_at_budget"] = details["capped_at_budget"]
+        return enriched
+
     m = _BEHAVIORAL_TEST_ID_FROM_METRIC.match(candidate)
     if not m:
         return check
