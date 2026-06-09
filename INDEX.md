@@ -53,6 +53,7 @@ session-start guidance.
 - `backend/app/api/hardware.py` — Hardware Recommender API routes.
 - `backend/app/api/ingestion.py` — Data Ingestion API routes — file upload and document management.
 - `backend/app/api/jobs.py` — Jobs API routes (Hardening Phase H1).
+- `backend/app/api/label_noise.py` — Quality-Lift phase 4 slice 1 — Label-noise scan API.
 - `backend/app/api/manifest.py` — Pipeline-as-code manifest API (priority.md P21 + P22).
 - `backend/app/api/models.py` — Universal base-model registry + compatibility API routes.
 - `backend/app/api/pipeline.py` — Pipeline status API routes.
@@ -170,6 +171,7 @@ session-start guidance.
 - `backend/app/services/ingestion_service.py` — Data Ingestion service — handles file uploads, parsing, and storage.
 - `backend/app/services/job_service.py` — Shared Celery job helpers for status and cancellation.
 - `backend/app/services/jobs_service.py` — Generic background-job framework (Hardening Phase H1).
+- `backend/app/services/label_noise_scoring_service.py` — Quality-Lift phase 4 slice 1 — Label-noise scoring (Confident-Learning-lite).
 - `backend/app/services/manifest_apply_service.py` — Manifest validate / diff / apply services (priority.md P22).
 - `backend/app/services/model_benchmark_service.py` — Real sampled benchmark sweep for model-selection onboarding.
 - `backend/app/services/model_introspection_service.py` — Model introspection helpers for Hugging Face compatible model IDs.
@@ -282,6 +284,7 @@ session-start guidance.
 - `backend/app/models/gold_set_annotation.py` — Gold-set annotation workbench tables — versions, rows, and reviewer queue.
 - `backend/app/models/job.py` — Generic background job record (Hardening Phase H1).
 - `backend/app/models/label_job.py` — Annotation foundation (Story 1.1) — label jobs + per-row work units.
+- `backend/app/models/label_noise_scan.py` — Quality-Lift phase 4 slice 1 — Label-noise scan row.
 - `backend/app/models/playground.py` — Project-scoped chat playground session model.
 - `backend/app/models/project.py` — Project ORM model — top-level entity for the SLM pipeline.
 - `backend/app/models/reason_codes.py` — Canonical reason-code taxonomy (priority.md P33, Wave G).
@@ -373,6 +376,7 @@ session-start guidance.
 - `backend/alembic/versions/20260603_0045_project_goal.py` — Arc H — Project end-goal contract.
 - `backend/alembic/versions/20260608_0046_multi_seed_experiments.py` — Quality-Lift phase 1 — multi-seed variance reporting columns.
 - `backend/alembic/versions/20260608_0047_project_slice_definitions.py` — Quality-Lift phase 2 slice 1 — Project.slice_definitions column.
+- `backend/alembic/versions/20260609_0048_label_noise_scans.py` — Quality-Lift phase 4 slice 1 — label_noise_scans table.
 
 ## Frontend · API clients
 
@@ -648,6 +652,7 @@ session-start guidance.
 - `backend/tests/test_hardware_recommender.py` — Tests for the Hardware Recommender Service.
 - `backend/tests/test_hyperparameter_sweep.py` — Hyperparameter grid bake-off sweep (Track 1, Epic C).
 - `backend/tests/test_jobs_service.py` — Tests for the Jobs framework (Hardening Phase H1).
+- `backend/tests/test_label_noise_slice1.py` — Quality-Lift phase 4 slice 1 — Label-noise scan service + endpoints.
 - `backend/tests/test_multi_seed_aggregation.py` — Tests for Quality-Lift phase 1, slice 2 — multi-seed dispatch + aggregation.
 - `backend/tests/test_multi_seed_gate_variance.py` — Tests for Quality-Lift phase 1, slice 3 — variance-aware gate evaluator.
 - `backend/tests/test_multi_seed_schema.py` — Tests for Quality-Lift phase 1, slice 1 — multi-seed schema foundation.

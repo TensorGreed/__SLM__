@@ -53,6 +53,7 @@ from app.models.gold_drift_review_queue import (
     GoldDriftReviewQueueRow,
 )
 from app.models.sweep import Sweep
+from app.models.label_noise_scan import LabelNoiseScan, LabelNoiseScanStatus
 
 __all__ = [
     "Project",
