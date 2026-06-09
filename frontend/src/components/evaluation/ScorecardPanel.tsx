@@ -92,6 +92,13 @@ interface GateCheck {
   behavioral_passed?: number;
   behavioral_total?: number;
   behavioral_capped_at_budget?: number;
+  // Phase 6 slice 3 — Per-slice behavioral gate enrichment. Set when
+  // the gate targets ``behavioral.<test_id>.per_slice.<slice_id>.<metric>``;
+  // failed_examples already filtered to the slice bucket by the
+  // backend (slice 2 work). The frontend just needs to render the
+  // slice id alongside the test id and visually nest the row under
+  // its parent test.
+  behavioral_slice_id?: string;
 }
 
 interface GateReport {
@@ -458,8 +465,26 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                 </tr>
               </thead>
               <tbody>
-                {gate_report.checks.filter(isBehavioralGate).map((gate) => {
+                {gate_report.checks
+                  .filter(isBehavioralGate)
+                  // Phase 6 slice 3 — Group by behavioral_test_id and put
+                  // top-level rows (no behavioral_slice_id) above their
+                  // per-slice descendants. Within a group the per-slice
+                  // rows sort alphabetically by slice_id so the rendering
+                  // is stable across renders + matches the order the
+                  // user sees in the pack editor.
+                  .sort((a, b) => {
+                    const aTest = a.behavioral_test_id ?? '';
+                    const bTest = b.behavioral_test_id ?? '';
+                    if (aTest !== bTest) return aTest < bTest ? -1 : 1;
+                    const aSlice = a.behavioral_slice_id ?? '';
+                    const bSlice = b.behavioral_slice_id ?? '';
+                    return aSlice < bSlice ? -1 : aSlice > bSlice ? 1 : 0;
+                  })
+                  .map((gate) => {
                   const notMeasured = gate.actual === null;
+                  const isPerSlice = typeof gate.behavioral_slice_id === 'string'
+                    && gate.behavioral_slice_id.length > 0;
                   const rowClass = notMeasured
                     ? (gate.required ? 'failed' : 'warn')
                     : (gate.passed ? 'passed' : gate.required ? 'failed' : 'warn');
@@ -471,7 +496,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                   return (
                     <React.Fragment key={gate.gate_id}>
                       <tr
-                        className={`${rowClass}${canExpand ? ' scorecard-row--expandable' : ''}`}
+                        className={`${rowClass}${canExpand ? ' scorecard-row--expandable' : ''}${isPerSlice ? ' scorecard-behavioral-row--per-slice' : ''}`}
                         onClick={canExpand ? () => setExpandedGate(isExpanded ? null : gate.gate_id) : undefined}
                       >
                         <td>
@@ -486,13 +511,31 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                         </td>
                         <td>{gate.gate_id}</td>
                         <td>
+                          {/* Phase 6 slice 3 — per-slice gates render
+                              with an indent + the slice id chip so
+                              the visual nesting under the parent test
+                              is unambiguous. */}
+                          {isPerSlice && (
+                            <span className="scorecard-behavioral-nesting-indent" aria-hidden="true">↳ </span>
+                          )}
                           <code>{gate.behavioral_test_id}</code>
+                          {isPerSlice && (
+                            <>
+                              {' '}
+                              <span
+                                className="scorecard-behavioral-slice-badge"
+                                title={`Slice: ${gate.behavioral_slice_id}`}
+                              >
+                                slice: {gate.behavioral_slice_id}
+                              </span>
+                            </>
+                          )}
                           {typeof gate.behavioral_passed === 'number' && typeof gate.behavioral_total === 'number' && (
                             <span className="scorecard-behavioral-counts">
                               {' '}({gate.behavioral_passed}/{gate.behavioral_total})
                             </span>
                           )}
-                          {typeof gate.behavioral_capped_at_budget === 'number' && (
+                          {typeof gate.behavioral_capped_at_budget === 'number' && !isPerSlice && (
                             <span
                               className="scorecard-behavioral-capped"
                               title={`Capped at ${gate.behavioral_capped_at_budget} trials per budget`}
@@ -519,7 +562,14 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
                           <td colSpan={6}>
                             <div className="scorecard-behavioral-drilldown">
                               <div className="scorecard-drilldown-header">
-                                Failed examples
+                                {/* Phase 6 slice 3 — Header surfaces the
+                                    slice id so the user knows the
+                                    failed_examples below are filtered
+                                    to that slice's bucket (not the
+                                    test-wide overall list). */}
+                                {isPerSlice
+                                  ? `Failed examples in slice "${gate.behavioral_slice_id}"`
+                                  : 'Failed examples'}
                                 {kindCopy && (
                                   <span className="scorecard-behavioral-explainer">
                                     {' · '}{kindCopy.explainer}

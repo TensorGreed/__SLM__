@@ -484,6 +484,158 @@ describe('ScorecardPanel', () => {
     expect(screen.getByText(/capped/)).toBeInTheDocument();
   });
 
+  // ────────────────────────────────────────────────────────────────────
+  // Quality-Lift phase 6 slice 3 — Per-slice behavioral gates
+  // ────────────────────────────────────────────────────────────────────
+
+  it('renders per-slice behavioral gates nested under their parent test with slice id surfaced', async () => {
+    const scorecard = {
+      experiment_id: 31,
+      is_ship: false,
+      decision: 'NO-SHIP',
+      reasons: ['Failed 1 mandatory gates.'],
+      failed_gates: ['typo_long_input'],
+      missing_metrics: [],
+      gate_report: {
+        passed: false,
+        failed_gate_ids: ['typo_long_input'],
+        missing_required_metrics: [],
+        checks: [
+          // Two behavioral gates on the same test: top-level + per-slice.
+          // The phase 6 slice 3 grouping should put the top-level row
+          // first and the per-slice row underneath.
+          {
+            gate_id: 'typo_overall',
+            metric_id: 'behavioral.typo_invariance.pass_rate',
+            operator: 'gte',
+            threshold: 0.85,
+            required: true,
+            actual: 0.91,
+            passed: true,
+            reason: 'ok',
+            behavioral_test_id: 'typo_invariance',
+            behavioral_kind: 'INV',
+            behavioral_passed: 50,
+            behavioral_total: 55,
+            behavioral_failed_examples: [
+              {
+                original_input: 'overall_failure_row',
+                perturbed_input: 'overall_failure_row_p',
+                perturbation_name: 'typo',
+                original_label: 'positive',
+                perturbed_label: 'negative',
+              },
+            ],
+          },
+          {
+            gate_id: 'typo_long_input',
+            metric_id: 'behavioral.typo_invariance.per_slice.long_input.pass_rate',
+            operator: 'gte',
+            threshold: 0.85,
+            required: true,
+            actual: 0.55,
+            passed: false,
+            reason: 'below_threshold',
+            behavioral_test_id: 'typo_invariance',
+            behavioral_slice_id: 'long_input',
+            behavioral_kind: 'INV',
+            behavioral_passed: 11,
+            behavioral_total: 20,
+            behavioral_failed_examples: [
+              {
+                original_input: 'long_specific_failure',
+                perturbed_input: 'lnog_specific_failure',
+                perturbation_name: 'typo',
+                original_label: 'positive',
+                perturbed_label: 'negative',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    const user = userEvent.setup();
+    render(<ScorecardPanel projectId={1} experimentId={31} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+    });
+    // The per-slice gate surfaces the slice id explicitly in the Test column.
+    expect(screen.getByText(/slice: long_input/)).toBeInTheDocument();
+    // Both gates render their counts; the per-slice row uses the
+    // slice-specific 11/20, NOT the test-wide 50/55.
+    expect(screen.getByText(/\(50\/55\)/)).toBeInTheDocument();
+    expect(screen.getByText(/\(11\/20\)/)).toBeInTheDocument();
+
+    // Group ordering: the top-level row's gate_id appears before the
+    // per-slice gate_id in the DOM.
+    const topLevelRow = screen.getByText('typo_overall').closest('tr')!;
+    const perSliceRow = screen.getByText('typo_long_input').closest('tr')!;
+    expect(topLevelRow.compareDocumentPosition(perSliceRow)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Click the per-slice gate → drill-down shows ONLY the slice's
+    // failed_examples, NOT the test-wide overall failures.
+    await user.click(perSliceRow);
+    expect(screen.getByText(/Failed examples in slice "long_input"/)).toBeInTheDocument();
+    expect(screen.getByText('long_specific_failure')).toBeInTheDocument();
+    // The top-level test's failure row is NOT in the per-slice drill-down.
+    expect(screen.queryByText('overall_failure_row')).toBeNull();
+  });
+
+  it('per-slice gate without a top-level sibling still renders with slice nesting', async () => {
+    // Pin the case where a user gates only the per-slice metric (e.g.
+    // they care about robustness on a specific slice but not overall).
+    const scorecard = {
+      experiment_id: 32,
+      is_ship: false,
+      decision: 'NO-SHIP',
+      reasons: [],
+      failed_gates: [],
+      missing_metrics: [],
+      gate_report: {
+        passed: false,
+        failed_gate_ids: [],
+        missing_required_metrics: [],
+        checks: [
+          {
+            gate_id: 'typo_hindi_only',
+            metric_id: 'behavioral.typo_invariance.per_slice.hindi.pass_rate',
+            operator: 'gte',
+            threshold: 0.85,
+            required: true,
+            actual: 0.62,
+            passed: false,
+            reason: 'below_threshold',
+            behavioral_test_id: 'typo_invariance',
+            behavioral_slice_id: 'hindi',
+            behavioral_kind: 'INV',
+            behavioral_passed: 13,
+            behavioral_total: 21,
+            behavioral_failed_examples: [
+              {
+                original_input: 'hindi_specific_failure',
+                perturbed_input: 'hindi_specific_failure_p',
+                perturbation_name: 'typo',
+                original_label: 'positive',
+                perturbed_label: 'negative',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    render(<ScorecardPanel projectId={1} experimentId={32} />);
+    await waitFor(() => {
+      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+    });
+    // Slice badge surfaces even without a parent top-level row.
+    expect(screen.getByText(/slice: hindi/)).toBeInTheDocument();
+    expect(screen.getByText('typo_invariance')).toBeInTheDocument();
+  });
+
   it('skips the explainer note when the mean itself failed (not variance)', async () => {
     const scorecard = {
       ...SCORECARD_AGGREGATE_FAILING_VARIANCE,

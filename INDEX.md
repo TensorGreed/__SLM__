@@ -611,6 +611,7 @@ session-start guidance.
 - `backend/tests/test_behavioral_by_slice_phase6_slice1.py` — Quality-Lift phase 6 slice 1 — Per-slice behavioral test scoring.
 - `backend/tests/test_behavioral_by_slice_phase6_slice2.py` — Quality-Lift phase 6 slice 2 — Per-slice behavioral test gate plumbing.
 - `backend/tests/test_behavioral_coach_nudge_slice3.py` — Quality-Lift phase 5 slice 3 — Coach nudge:
+- `backend/tests/test_behavioral_per_slice_coach_nudge_slice3.py` — Quality-Lift phase 6 slice 3 — Coach nudge:
 - `backend/tests/test_behavioral_test_runner_slice2.py` — Quality-Lift phase 5 slice 2 — Behavioral test runner + flattener.
 - `backend/tests/test_behavioral_test_schema_slice1.py` — Quality-Lift phase 5 slice 1 — Behavioral test pack schema validator.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend

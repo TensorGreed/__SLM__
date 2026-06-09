@@ -1915,6 +1915,129 @@ async def _missing_per_class_gates_nudge(
     }
 
 
+async def _behavioral_tests_without_per_slice_gates_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Quality-Lift phase 6 slice 3 — Sibling of the
+    ``eval:behavioral-tests-without-gates`` nudge for the per-slice
+    case. Fires when:
+
+      * The project has ``slice_definitions`` configured (phase 2).
+      * The active pack has ``task_specs[].behavioral_tests`` defined
+        (phase 5).
+      * AND no gate references the per-slice metric_id shape
+        (``behavioral.<test>.per_slice.<slice>.<metric>``).
+
+    The user has all the pieces — slices, behavioral tests, the runner
+    is emitting per-slice scores — but the ship decision still ignores
+    them. An INV test might pass at 0.92 overall but fail at 0.55 on
+    ``long_input``; without a per-slice gate that regression won't
+    block ship.
+
+    Severity info — same shape as the existing un-gated-tests nudge.
+    Returns None on any lookup failure (eval-tab Coach never breaks).
+    """
+    from app.services.evaluation_gate_catalog import is_behavioral_metric_id
+    from app.services.evaluation_pack_service import (
+        resolve_project_evaluation_pack,
+    )
+    from app.models.project import Project
+
+    # Condition 1 — project has slice definitions.
+    project_row = await db.execute(
+        select(Project).where(Project.id == project_id)
+    )
+    project = project_row.scalar_one_or_none()
+    if project is None:
+        return None
+    slices_raw = (project.slice_definitions or {}).get("slices") \
+        if isinstance(project.slice_definitions, dict) else None
+    if not isinstance(slices_raw, list) or not slices_raw:
+        return None
+    slice_ids = [
+        str(s.get("slice_id") or "").strip()
+        for s in slices_raw
+        if isinstance(s, dict)
+    ]
+    slice_ids = [sid for sid in slice_ids if sid]
+    if not slice_ids:
+        return None
+
+    # Conditions 2 + 3 — walk the active pack.
+    try:
+        resolved = await resolve_project_evaluation_pack(db, project_id)
+    except Exception:  # noqa: BLE001
+        return None
+    pack = resolved.get("pack") if isinstance(resolved, dict) else None
+    if not isinstance(pack, dict):
+        return None
+
+    task_specs = pack.get("task_specs") if isinstance(pack.get("task_specs"), list) else []
+    test_ids: list[str] = []
+    has_per_slice_gate = False
+    for spec in task_specs:
+        if not isinstance(spec, dict):
+            continue
+        for entry in spec.get("behavioral_tests") or []:
+            if isinstance(entry, dict):
+                test_id = str(entry.get("test_id") or "").strip()
+                if test_id:
+                    test_ids.append(test_id)
+        for gate in spec.get("gates") or []:
+            if not isinstance(gate, dict):
+                continue
+            metric_id = str(gate.get("metric_id") or "").strip().lower()
+            if not metric_id or not is_behavioral_metric_id(metric_id):
+                continue
+            # Per-slice metric_id has ``.per_slice.`` in the path.
+            # Top-level behavioral gates don't trigger this nudge —
+            # the sibling ``eval:behavioral-tests-without-gates`` nudge
+            # handles the "no behavioral gates at all" case.
+            if ".per_slice." in metric_id:
+                has_per_slice_gate = True
+
+    if not test_ids:
+        return None
+    if has_per_slice_gate:
+        return None
+
+    # Suggest the first (test_id × slice_id) cross-product as a
+    # concrete example in the body — saves the user from staring at
+    # the editor wondering "where do I start?".
+    sample_test = test_ids[0]
+    sample_slice = slice_ids[0]
+    suggested_metric_id = f"behavioral.{sample_test}.per_slice.{sample_slice}.pass_rate"
+
+    return {
+        "id": "eval:behavioral-tests-without-per-slice-gates",
+        "title": (
+            f"You have {len(test_ids)} behavioral test{'s' if len(test_ids) != 1 else ''} "
+            f"and {len(slice_ids)} slice{'s' if len(slice_ids) != 1 else ''} but no "
+            "per-slice gates"
+        ),
+        "body": (
+            "Your behavioral tests run per-slice now (an INV test might pass at "
+            "0.92 overall but fail at 0.55 on a specific slice). Without a "
+            "per-slice gate, that regression won't block ship. Add a gate like "
+            f"``{suggested_metric_id} >= 0.85`` in the eval pack editor to "
+            "enforce robustness per slice."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open eval pack editor",
+            "params": {"target": "eval-pack-editor"},
+        },
+        "rule_id": "behavioral-tests.per-slice-ungated",
+        "context": {
+            "behavioral_test_ids": list(test_ids),
+            "slice_ids": list(slice_ids),
+            "suggested_metric_id": suggested_metric_id,
+            "active_pack_id": resolved.get("active_pack_id"),
+        },
+    }
+
+
 async def _behavioral_tests_without_gates_nudge(
     db: AsyncSession, project_id: int,
 ) -> dict[str, Any] | None:
@@ -2116,6 +2239,19 @@ async def _eval_stage_suggestions(
     )
     if behavioral_nudge:
         suggestions.append(behavioral_nudge)
+
+    # Quality-Lift phase 6 slice 3 — Per-slice gates nudge. Separate
+    # from the un-gated-tests nudge above because the user might have
+    # top-level behavioral gates wired up (satisfying that nudge) but
+    # still leave per-slice regressions unenforced. Fires only when
+    # the user has both slice_definitions AND behavioral_tests
+    # configured but no per-slice behavioral gate references the
+    # cross-product.
+    per_slice_nudge = await _behavioral_tests_without_per_slice_gates_nudge(
+        db, project.id,
+    )
+    if per_slice_nudge:
+        suggestions.append(per_slice_nudge)
 
     if pass_rate is None or pass_rate >= EVAL_PASS_RATE_HEALTHY:
         return suggestions

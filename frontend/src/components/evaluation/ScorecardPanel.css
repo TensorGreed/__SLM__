@@ -288,3 +288,31 @@
   font-family: var(--font-mono);
   font-size: 0.85em;
 }
+
+/* Quality-Lift phase 6 slice 3 — Per-slice behavioral gate rendering.
+   Per-slice rows visually nest under their parent test row via a
+   left-border + left-padding combo; the ``↳`` glyph in the Test
+   column reinforces the hierarchy at-a-glance. */
+.scorecard-behavioral-row--per-slice td:nth-child(3) {
+  /* Indent only the Test column so the Kind / Gate ID columns line
+     up with the parent row's. Keeps the table grid stable. */
+  padding-left: 24px;
+}
+
+.scorecard-behavioral-nesting-indent {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  margin-right: 2px;
+}
+
+.scorecard-behavioral-slice-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-left: 4px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.75em;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
