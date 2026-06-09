@@ -293,6 +293,48 @@ def is_per_slice_metric_id(metric_id: str) -> bool:
     )
 
 
+# Quality-Lift phase 5 slice 1 — Behavioral test metric_id patterns.
+# Slice 2's runner emits ``metrics["behavioral"][<test_id>]`` with
+# {pass_rate, passed, total, failed_examples}. The snapshot flattener
+# (also slice 2) will emit the same three id-shapes per (test, metric)
+# as per_slice does:
+#   * canonical dot-path: ``behavioral.<test_id>.<metric>``
+#   * short form:         ``<metric>_behavioral_<test_id>``
+#   * eval-type scoped:   ``<eval_type>.behavioral.<test_id>.<metric>``
+# Slice 1 just needs the matcher so the validator accepts gates
+# referencing the canonical dot-path — the editor will pre-populate
+# that form when the user clicks "Add gate" on a behavioral test row.
+_BEHAVIORAL_METRIC_SUFFIXES = frozenset({"pass_rate", "passed", "total"})
+_BEHAVIORAL_DOT_PATTERN = _re.compile(
+    r"^behavioral\.[a-z][a-z0-9_]{0,63}\.(pass_rate|passed|total)$"
+)
+_BEHAVIORAL_SHORT_PATTERN = _re.compile(
+    r"^(pass_rate|passed|total)_behavioral_[a-z][a-z0-9_]{0,63}$"
+)
+_BEHAVIORAL_SCOPED_PATTERN = _re.compile(
+    r"^[a-z][a-z0-9_]*\.behavioral\.[a-z][a-z0-9_]{0,63}\.(pass_rate|passed|total)$"
+)
+
+
+def is_behavioral_metric_id(metric_id: str) -> bool:
+    """True when ``metric_id`` references a behavioral-test metric.
+
+    Accepts the three id-shapes the slice 2 flattener emits. Same
+    fallback role as ``is_per_class_metric_id`` /
+    ``is_per_slice_metric_id`` — the validator allows behavioral
+    gates without needing a static catalog entry per test (test ids
+    are pack-defined and grow with the user's robustness coverage).
+    """
+    if not metric_id:
+        return False
+    token = metric_id.strip().lower()
+    return bool(
+        _BEHAVIORAL_DOT_PATTERN.match(token)
+        or _BEHAVIORAL_SHORT_PATTERN.match(token)
+        or _BEHAVIORAL_SCOPED_PATTERN.match(token)
+    )
+
+
 def known_metric_ids() -> set[str]:
     """Set of metric_ids the gate validator accepts.
 
@@ -456,6 +498,32 @@ def validate_draft_pack_gates(draft_pack: dict[str, Any]) -> None:
     for task_spec in task_specs:
         if not isinstance(task_spec, dict):
             continue
+
+        # Quality-Lift phase 5 slice 1 — Validate the behavioral_tests
+        # block before the gates so the user sees the test-shape error
+        # first (gate references to a behavioral test won't make
+        # sense if the test schema itself is malformed). Empty / None
+        # is a valid "no behavioral tests" state; the validator
+        # returns []. Errors raise a stable colon-delimited code that
+        # the API layer maps to 400 messages (same shape as the gate
+        # codes below).
+        behavioral_raw = task_spec.get("behavioral_tests")
+        if behavioral_raw is not None:
+            from app.services.behavioral_test_schema import (
+                BehavioralTestValidationError,
+                validate_behavioral_tests,
+            )
+
+            try:
+                validate_behavioral_tests(behavioral_raw)
+            except BehavioralTestValidationError as exc:
+                # Re-raise as ValueError so the existing
+                # validate_draft_pack_gates contract (raises ValueError
+                # with a stable code prefix) is preserved. The colon-
+                # delimited code from BehavioralTestValidationError
+                # already follows the same shape conventions.
+                raise ValueError(f"behavioral_test_invalid:{exc}") from exc
+
         gates = task_spec.get("gates")
         if not isinstance(gates, list):
             continue
@@ -491,6 +559,7 @@ def validate_draft_pack_gates(draft_pack: dict[str, Any]) -> None:
                 metric_id in known
                 or is_per_class_metric_id(metric_id)
                 or is_per_slice_metric_id(metric_id)
+                or is_behavioral_metric_id(metric_id)
                 or is_worst_slice  # worst-slice ops take a base metric_id
             )
             if not metric_id_recognised:

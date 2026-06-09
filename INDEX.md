@@ -91,6 +91,7 @@ session-start guidance.
 - `backend/app/services/autopilot_repair_preview_service.py` — Autopilot repair-preview + apply separation.
 - `backend/app/services/autopilot_snapshot_service.py` — Autopilot snapshot capture and rollback execution.
 - `backend/app/services/base_model_registry_service.py` — Universal base model registry normalization + compatibility engine.
+- `backend/app/services/behavioral_test_schema.py` — Quality-Lift phase 5 slice 1 — Behavioral test schema validator.
 - `backend/app/services/brewslm_manifest_service.py` — Pipeline-as-code manifest serializer + deserializer (priority.md P21).
 - `backend/app/services/capability_contract_service.py` — Shared training capability contract helpers.
 - `backend/app/services/checkpoint_registry_service.py` — Local pre-fine-tuned warm-start checkpoint registry (Track 1, Epic B).
@@ -606,6 +607,7 @@ session-start guidance.
 - `backend/tests/test_auto_rag_phase9b.py` — Tests for the Phase 9b inference + training-completion wiring.
 - `backend/tests/test_auto_rag_phase9d.py` — Tests for Phase 9d — auto-RAG default-on heuristic + target
 - `backend/tests/test_auto_rag_service.py` — Tests for the auto-RAG BM25 service (USER-SUCCESS Epic 9 Phase 9a).
+- `backend/tests/test_behavioral_test_schema_slice1.py` — Quality-Lift phase 5 slice 1 — Behavioral test pack schema validator.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
