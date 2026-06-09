@@ -505,6 +505,247 @@ async def _read_doc_status_breakdown(
     return counts
 
 
+# Quality-Lift phase 4 slice 2 — label-noise nudge thresholds.
+# Below this floor the model isn't trained well enough for the dual-
+# condition signal to be reliable; we don't even suggest scanning.
+LABEL_NOISE_MIN_LABELED: int = 50
+# Re-fire ratio. If the LATEST scan ran on fewer than this fraction
+# of the current labeled count, the user has added a meaningful new
+# batch since the last scan and we should suggest re-scanning to
+# pick up the noise in the new labels.
+LABEL_NOISE_RESCAN_RATIO: float = 0.80
+
+
+async def _count_labeled_label_rows(
+    db: AsyncSession, project_id: int,
+) -> int:
+    """Count all labeled (``labeled_at IS NOT NULL``) LabelRows across
+    the project's classification label_jobs. Mirrors the convention
+    ``label_noise_scoring_service._labeled_rows_for_project`` uses so
+    the Coach nudge and the scoring service can't drift on what
+    counts as a "labeled row."
+    """
+    from app.models.label_job import LabelJob, LabelRow
+    from sqlalchemy import func
+
+    job_ids_q = await db.execute(
+        select(LabelJob.id).where(
+            LabelJob.project_id == project_id,
+            LabelJob.label_type == "classification",
+        )
+    )
+    job_ids = [int(jid) for jid in job_ids_q.scalars().all()]
+    if not job_ids:
+        return 0
+    count_q = await db.execute(
+        select(func.count(LabelRow.id)).where(
+            LabelRow.job_id.in_(job_ids),
+            LabelRow.labeled_at.is_not(None),
+        )
+    )
+    return int(count_q.scalar() or 0)
+
+
+async def _latest_succeeded_label_noise_scan(db: AsyncSession, project_id: int):
+    """Return the most recent SUCCEEDED LabelNoiseScan for the project,
+    or None. Read once + reused by both the scan-ready and the
+    results-pending nudges so we don't double-query the same row."""
+    from app.models.label_noise_scan import LabelNoiseScan, LabelNoiseScanStatus
+
+    rows = await db.execute(
+        select(LabelNoiseScan)
+        .where(
+            LabelNoiseScan.project_id == project_id,
+            LabelNoiseScan.status == LabelNoiseScanStatus.SUCCEEDED,
+        )
+        .order_by(
+            LabelNoiseScan.completed_at.desc(),
+            LabelNoiseScan.id.desc(),
+        )
+    )
+    return rows.scalars().first()
+
+
+async def _has_classifier_checkpoint(db: AsyncSession, project_id: int) -> bool:
+    """True when at least one COMPLETED classification Experiment with
+    an existing output_dir exists. The scoring service can't run
+    without one; the Coach nudge stays silent until the user trains
+    once."""
+    from pathlib import Path
+
+    from app.models.experiment import Experiment, ExperimentStatus
+
+    rows = await db.execute(
+        select(Experiment)
+        .where(
+            Experiment.project_id == project_id,
+            Experiment.status == ExperimentStatus.COMPLETED,
+        )
+        .order_by(Experiment.completed_at.desc(), Experiment.id.desc())
+    )
+    for exp in rows.scalars().all():
+        cfg = exp.config if isinstance(exp.config, dict) else {}
+        task_type = str(cfg.get("task_type") or "").strip().lower()
+        if task_type != "classification":
+            continue
+        raw_dir = (exp.output_dir or "").strip()
+        if raw_dir and Path(raw_dir).exists():
+            return True
+    return False
+
+
+async def _label_noise_scan_ready_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Quality-Lift phase 4 slice 2 — Cleaning-stage nudge:
+    "Scan your labels for noise before the next train."
+
+    Fires when:
+      - ``labeled_count >= 50`` (minimum for self-confidence to be
+        informative against an overfit-prone small set; below this
+        the model isn't trained well enough to gripe meaningfully).
+      - AND a classification checkpoint exists (else there's nothing
+        to score against).
+      - AND no LabelNoiseScan exists yet, OR the latest one ran on
+        fewer than 80% of the current labeled rows (user added a
+        meaningful new batch).
+
+    Silences when a scan is currently RUNNING / QUEUED (nudging the
+    user to start another scan while one's in flight is annoying) —
+    but only when that in-flight scan is the latest one (we don't
+    care about old QUEUED rows from earlier).
+    """
+    from app.models.label_noise_scan import LabelNoiseScan, LabelNoiseScanStatus
+
+    labeled_count = await _count_labeled_label_rows(db, project_id)
+    if labeled_count < LABEL_NOISE_MIN_LABELED:
+        return None
+    if not await _has_classifier_checkpoint(db, project_id):
+        return None
+
+    # Don't nudge during an in-flight scan — check the very latest
+    # row regardless of status.
+    latest_any_q = await db.execute(
+        select(LabelNoiseScan)
+        .where(LabelNoiseScan.project_id == project_id)
+        .order_by(LabelNoiseScan.created_at.desc(), LabelNoiseScan.id.desc())
+        .limit(1)
+    )
+    latest_any = latest_any_q.scalars().first()
+    if latest_any is not None and latest_any.status in (
+        LabelNoiseScanStatus.QUEUED,
+        LabelNoiseScanStatus.RUNNING,
+    ):
+        return None
+
+    latest = await _latest_succeeded_label_noise_scan(db, project_id)
+    if latest is not None:
+        label_count_at_scan = int(latest.label_count_at_scan or 0)
+        if label_count_at_scan > 0:
+            # If we've scanned >= 80% of the current labels already,
+            # don't pester the user; they can re-scan manually.
+            if label_count_at_scan >= LABEL_NOISE_RESCAN_RATIO * labeled_count:
+                return None
+
+    new_labels_since = (
+        labeled_count - int(latest.label_count_at_scan or 0)
+        if latest is not None
+        else labeled_count
+    )
+
+    return {
+        "id": "cleaning:label-noise-scan-ready",
+        "title": (
+            f"Scan your {labeled_count} labels for noise before the next train"
+            if latest is None
+            else f"Re-scan: {new_labels_since} new labels since last scan"
+        ),
+        "body": (
+            "Label-noise scanning catches rows where your trained model "
+            "confidently disagrees with the given label — fixing those "
+            "lifts F1 more reliably than adding new labels."
+            if latest is None
+            else (
+                f"You've added {new_labels_since} labels since the last scan. "
+                "Re-running picks up noise in the new batch and updates the "
+                "suspected-mislabels queue."
+            )
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open label-noise review",
+            "params": {
+                "target": "label-noise-review",
+                "auto_start_scan": True,
+            },
+        },
+        "rule_id": (
+            "label-noise-scan-ready.first-scan"
+            if latest is None
+            else "label-noise-scan-ready.rescan-ready"
+        ),
+        "context": {
+            "labeled_count": labeled_count,
+            "label_count_at_last_scan": (
+                int(latest.label_count_at_scan or 0) if latest is not None else 0
+            ),
+            "new_labels_since_last_scan": new_labels_since,
+            "latest_scan_id": int(latest.id) if latest is not None else None,
+        },
+    }
+
+
+async def _label_noise_results_pending_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Cleaning-stage nudge: "Review N suspected mislabels."
+
+    Fires when the latest SUCCEEDED scan has ``suspected_count > 0``.
+    Silences when the user has no scan yet (the scan-ready nudge
+    handles that), or when the latest scan came back clean.
+
+    This is independent of the scan-ready nudge: a user can re-train
+    and find new suspects even when their previous scan was clean,
+    so we always show this when there ARE suspects to review.
+    """
+    latest = await _latest_succeeded_label_noise_scan(db, project_id)
+    if latest is None:
+        return None
+    suspected = int(latest.suspected_count or 0)
+    if suspected <= 0:
+        return None
+
+    return {
+        "id": "cleaning:label-noise-results-pending",
+        "title": f"Review {suspected} suspected mislabel{'s' if suspected != 1 else ''}",
+        "body": (
+            "Your trained model confidently disagrees with these labels — "
+            "review and decide whether to relabel, keep as-is, or drop "
+            "the row entirely (which puts it back in the unlabeled pool)."
+        ),
+        # Warning rather than info: this is data quality that's
+        # actively dragging F1, not a gentle suggestion to scan.
+        "severity": "warning",
+        "action": {
+            "kind": "navigate",
+            "label": "Review suspected mislabels",
+            "params": {
+                "target": "label-noise-review",
+                "scan_id": int(latest.id),
+            },
+        },
+        "rule_id": "label-noise-results-pending.suspects-found",
+        "context": {
+            "scan_id": int(latest.id),
+            "suspected_count": suspected,
+            "label_count_at_scan": int(latest.label_count_at_scan or 0),
+            "confidence_threshold": latest.confidence_threshold,
+            "given_label_floor": latest.given_label_floor,
+        },
+    }
+
+
 async def _cleaning_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -513,6 +754,8 @@ async def _cleaning_stage_suggestions(
     Phase 2 signals:
     1. PII findings — count > 0 → "review N redactions across K docs".
     2. Doc error rate — ERROR/total > 5% (with absolute floor) → "review failures".
+    3. Quality-Lift phase 4 slice 2 — label-noise scan-ready and
+       results-pending nudges.
     """
     suggestions: list[dict[str, Any]] = []
 
@@ -591,6 +834,20 @@ async def _cleaning_stage_suggestions(
                     "warn_threshold": DOC_ERROR_RATE_WARN,
                 },
             })
+
+    # Quality-Lift phase 4 slice 2 — Label-noise nudges. The
+    # results-pending nudge takes precedence in the visual order
+    # because the user already has suspected rows to review — that's
+    # actionable now, vs the scan-ready nudge which is "do this
+    # next." Both can fire on the same poll (user labels +50 rows
+    # after a scan with suspects, hasn't reviewed them yet, and the
+    # new batch is large enough to warrant a re-scan).
+    results_nudge = await _label_noise_results_pending_nudge(db, project.id)
+    if results_nudge:
+        suggestions.append(results_nudge)
+    scan_ready_nudge = await _label_noise_scan_ready_nudge(db, project.id)
+    if scan_ready_nudge:
+        suggestions.append(scan_ready_nudge)
 
     return suggestions
 

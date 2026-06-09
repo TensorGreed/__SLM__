@@ -234,6 +234,27 @@ const NAVIGATE_TARGET_URLS: Record<
         }
         return `/project/${projectId}/annotate`;
     },
+    // Quality-Lift phase 4 slice 2 — label-noise nudges (scan-ready
+    // + results-pending) target a dedicated review surface that
+    // lands in slice 3. For slice 2 the URL fragment is enough that
+    // the click-through doesn't 404; slice 3 mounts the panel at
+    // /project/{id}/pipeline/cleaning#label-noise-review and reads
+    // the slice 1 endpoint. Params forwarded as query string so
+    // ``scan_id`` (results-pending) and ``auto_start_scan`` (scan-
+    // ready) survive the navigation.
+    'label-noise-review': (projectId, params) => {
+        const qs = new URLSearchParams();
+        const scanId = params['scan_id'];
+        if (typeof scanId === 'number' && Number.isFinite(scanId)) {
+            qs.set('scan_id', String(scanId));
+        }
+        const auto = params['auto_start_scan'];
+        if (auto === true) {
+            qs.set('auto_start_scan', '1');
+        }
+        const query = qs.toString() ? `?${qs.toString()}` : '';
+        return `/project/${projectId}/pipeline/cleaning${query}#label-noise-review`;
+    },
 };
 
 export default function CoachSuggestionCard({

@@ -541,5 +541,221 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(cross.status_code, 404)
 
 
+
+# ────────────────────────────────────────────────────────────────────────
+# Slice 2 — Cleaning-stage Coach nudges
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _seed_labeled_rows_bulk(
+    project_id: int,
+    *,
+    n: int,
+    label: str = "A",
+    allowed_labels: list[str] | None = None,
+) -> tuple[int, list[int]]:
+    """Seed N rows already labeled. Mirrors slice 1's helper but with
+    a cleaner signature for slice 2's tests where we only care about
+    the count."""
+    rows = [(f"row-{i}", label) for i in range(n)]
+    return _seed_classification_label_job_and_rows(
+        project_id,
+        allowed_labels=allowed_labels or ["A", "B"],
+        rows=rows,
+    )
+
+
+def _seed_succeeded_scan(
+    project_id: int,
+    *,
+    label_count_at_scan: int,
+    suspected_count: int,
+    confidence_threshold: float = 0.85,
+    given_label_floor: float = 0.15,
+    completed_at: datetime | None = None,
+) -> int:
+    """Insert a SUCCEEDED LabelNoiseScan row directly (bypass the
+    runner) so the Coach nudge tests don't have to wait for async
+    scoring."""
+    async def _go() -> int:
+        async with async_session_factory() as session:
+            scan = LabelNoiseScan(
+                project_id=project_id,
+                status=LabelNoiseScanStatus.SUCCEEDED,
+                label_count_at_scan=label_count_at_scan,
+                suspected_count=suspected_count,
+                confidence_threshold=confidence_threshold,
+                given_label_floor=given_label_floor,
+                result_payload={
+                    "scored_at": (completed_at or datetime.now(timezone.utc)).isoformat(),
+                    "base_experiment_id": None,
+                    "label_count_total": label_count_at_scan,
+                    "label_count_scored": label_count_at_scan,
+                    "suspected_count": suspected_count,
+                    "confidence_threshold": confidence_threshold,
+                    "given_label_floor": given_label_floor,
+                    "top_k": [],
+                    "skipped_reason": None,
+                },
+                completed_at=completed_at or datetime.now(timezone.utc),
+            )
+            session.add(scan)
+            await session.commit()
+            return int(scan.id)
+
+    return asyncio.run(_go())
+
+
+def _seed_inflight_scan(project_id: int, *, status: LabelNoiseScanStatus) -> int:
+    async def _go() -> int:
+        async with async_session_factory() as session:
+            scan = LabelNoiseScan(
+                project_id=project_id,
+                status=status,
+            )
+            session.add(scan)
+            await session.commit()
+            return int(scan.id)
+
+    return asyncio.run(_go())
+
+
+def _get_scan_ready_nudge(project_id: int):
+    from app.services.coach_service import _label_noise_scan_ready_nudge
+
+    async def _go():
+        async with async_session_factory() as session:
+            return await _label_noise_scan_ready_nudge(session, project_id)
+
+    return asyncio.run(_go())
+
+
+def _get_results_pending_nudge(project_id: int):
+    from app.services.coach_service import _label_noise_results_pending_nudge
+
+    async def _go():
+        async with async_session_factory() as session:
+            return await _label_noise_results_pending_nudge(session, project_id)
+
+    return asyncio.run(_go())
+
+
+class ScanReadyNudgeTests(unittest.TestCase):
+
+    def test_silent_below_min_labeled(self):
+        # Floor of 50. Below that, the model isn't trained well enough
+        # for self-confidence disagreement to be meaningful.
+        pid = _create_project()
+        _seed_experiment(pid, output_dir=str(_make_checkpoint_dir()))
+        _seed_labeled_rows_bulk(pid, n=49)
+        self.assertIsNone(_get_scan_ready_nudge(pid))
+
+    def test_silent_without_classifier_checkpoint(self):
+        # 50 labels but no completed classification experiment → nothing
+        # to score against. Nudge silences cleanly rather than firing
+        # a "scan!" suggestion that would just skip.
+        pid = _create_project()
+        _seed_labeled_rows_bulk(pid, n=60)
+        self.assertIsNone(_get_scan_ready_nudge(pid))
+
+    def test_fires_on_first_scan_when_threshold_crossed(self):
+        # 50+ labels, classifier checkpoint exists, no prior scan →
+        # first-scan nudge fires.
+        pid = _create_project()
+        _seed_experiment(pid, output_dir=str(_make_checkpoint_dir()))
+        _seed_labeled_rows_bulk(pid, n=60)
+
+        nudge = _get_scan_ready_nudge(pid)
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge["id"], "cleaning:label-noise-scan-ready")
+        self.assertEqual(nudge["rule_id"], "label-noise-scan-ready.first-scan")
+        # Title surfaces the label count so the user sees scale.
+        self.assertIn("60", nudge["title"])
+        # Action carries the navigate target + auto_start_scan flag.
+        self.assertEqual(nudge["action"]["params"]["target"], "label-noise-review")
+        self.assertEqual(nudge["action"]["params"]["auto_start_scan"], True)
+        self.assertEqual(nudge["context"]["labeled_count"], 60)
+        self.assertEqual(nudge["context"]["new_labels_since_last_scan"], 60)
+
+    def test_silent_when_latest_scan_covers_eighty_percent(self):
+        # Latest scan ran on 80% of current labels → user hasn't added
+        # a meaningful new batch; don't pester. 80 of 100 = 0.80 hits
+        # the threshold exactly.
+        pid = _create_project()
+        _seed_experiment(pid, output_dir=str(_make_checkpoint_dir()))
+        _seed_labeled_rows_bulk(pid, n=100)
+        _seed_succeeded_scan(
+            pid, label_count_at_scan=80, suspected_count=0,
+        )
+        self.assertIsNone(_get_scan_ready_nudge(pid))
+
+    def test_fires_when_new_batch_meaningfully_grew_pool(self):
+        # Latest scan ran on 70 of 100 current labels (just under 80%).
+        # Re-scan nudge fires; title uses the "new labels since last
+        # scan" framing.
+        pid = _create_project()
+        _seed_experiment(pid, output_dir=str(_make_checkpoint_dir()))
+        _seed_labeled_rows_bulk(pid, n=100)
+        _seed_succeeded_scan(
+            pid, label_count_at_scan=70, suspected_count=0,
+        )
+
+        nudge = _get_scan_ready_nudge(pid)
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge["rule_id"], "label-noise-scan-ready.rescan-ready")
+        self.assertEqual(nudge["context"]["new_labels_since_last_scan"], 30)
+
+    def test_silent_when_scan_is_queued_or_running(self):
+        # In-flight scan — nudging to start another would be annoying.
+        # Test both QUEUED and RUNNING states.
+        for status in (LabelNoiseScanStatus.QUEUED, LabelNoiseScanStatus.RUNNING):
+            with self.subTest(status=status):
+                pid = _create_project()
+                _seed_experiment(pid, output_dir=str(_make_checkpoint_dir()))
+                _seed_labeled_rows_bulk(pid, n=60)
+                _seed_inflight_scan(pid, status=status)
+                self.assertIsNone(_get_scan_ready_nudge(pid))
+
+
+class ResultsPendingNudgeTests(unittest.TestCase):
+
+    def test_silent_when_no_succeeded_scan(self):
+        pid = _create_project()
+        self.assertIsNone(_get_results_pending_nudge(pid))
+
+    def test_silent_when_latest_scan_clean(self):
+        # Scan ran but found zero suspects — labels are clean. Silence
+        # rather than show "Review 0 mislabels."
+        pid = _create_project()
+        _seed_succeeded_scan(pid, label_count_at_scan=100, suspected_count=0)
+        self.assertIsNone(_get_results_pending_nudge(pid))
+
+    def test_fires_when_scan_has_suspects(self):
+        pid = _create_project()
+        scan_id = _seed_succeeded_scan(
+            pid, label_count_at_scan=100, suspected_count=7,
+        )
+        nudge = _get_results_pending_nudge(pid)
+        self.assertIsNotNone(nudge)
+        self.assertEqual(nudge["id"], "cleaning:label-noise-results-pending")
+        self.assertEqual(nudge["severity"], "warning")
+        self.assertIn("7", nudge["title"])
+        # Action deep-links to the slice 3 review surface with scan_id.
+        self.assertEqual(
+            nudge["action"]["params"]["target"], "label-noise-review",
+        )
+        self.assertEqual(nudge["action"]["params"]["scan_id"], scan_id)
+        self.assertEqual(nudge["context"]["suspected_count"], 7)
+
+    def test_title_handles_singular_correctly(self):
+        # 1 suspect → "Review 1 suspected mislabel" (singular).
+        pid = _create_project()
+        _seed_succeeded_scan(pid, label_count_at_scan=100, suspected_count=1)
+        nudge = _get_results_pending_nudge(pid)
+        self.assertIsNotNone(nudge)
+        self.assertIn("1 suspected mislabel", nudge["title"])
+        self.assertNotIn("mislabels", nudge["title"])
+
+
 if __name__ == "__main__":
     unittest.main()

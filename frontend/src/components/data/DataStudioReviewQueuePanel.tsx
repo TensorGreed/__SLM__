@@ -44,6 +44,54 @@ interface ActiveLearningTopKEntry {
     labeled: boolean;
 }
 
+// Quality-Lift phase 4 slice 2 — Label-noise scan snapshot shape.
+// Mirrors /api/projects/{id}/label-noise/latest; same locality reason
+// as the active-learning interfaces above.
+interface LabelNoiseSuspectEntry {
+    label_row_id: number;
+    label_job_id: number;
+    given_label: string;
+    predicted_label: string;
+    predicted_prob: number;
+    given_label_prob: number;
+    mislabel_score: number;
+    text_preview: string | null;
+}
+
+interface LabelNoiseScanPayload {
+    scored_at: string;
+    base_experiment_id: number | null;
+    label_count_total: number;
+    label_count_scored: number;
+    suspected_count: number;
+    confidence_threshold: number;
+    given_label_floor: number;
+    top_k: LabelNoiseSuspectEntry[];
+    skipped_reason: string | null;
+}
+
+interface LabelNoiseScanRecord {
+    id: number;
+    project_id: number;
+    base_experiment_id: number | null;
+    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+    label_count_at_scan: number | null;
+    suspected_count: number | null;
+    confidence_threshold: number;
+    given_label_floor: number;
+    result_payload: LabelNoiseScanPayload | null;
+    error: string | null;
+    job_id: number | null;
+    created_at: string | null;
+    completed_at: string | null;
+}
+
+interface LabelNoiseLatestResponse {
+    project_id: number;
+    scan: LabelNoiseScanRecord | null;
+    no_scan_reason: string | null;
+}
+
 interface ActiveLearningSnapshot {
     scored_at: string;
     model_experiment_id: number;
@@ -285,6 +333,162 @@ function ActiveLearningCard({
     );
 }
 
+// Quality-Lift phase 4 slice 2 — Label-noise card.
+function formatLabelNoiseSkipReason(reason: string | null | undefined): string {
+    // Slice 1 stamps these onto an empty result_payload so the card
+    // stays informative rather than disappearing. Mapping to user-facing
+    // copy here keeps the backend terse + the panel self-contained.
+    switch (reason) {
+        case 'no_classifier_checkpoint':
+            return 'No completed classification training run to score against.';
+        case 'empty_labeled_pool':
+            return 'No labeled rows yet — scanning will activate once you label some.';
+        case 'no_label_space_configured':
+            return 'The classification label_job has no allowed_labels set.';
+        case 'scoring_failed':
+            return 'Scoring failed during the last scan; check the scan record for details.';
+        default:
+            return reason ? `Scan skipped: ${labelForToken(reason)}.` : '';
+    }
+}
+
+function LabelNoiseCard({
+    response,
+    onOpenReview,
+}: {
+    response: LabelNoiseLatestResponse;
+    onOpenReview: (scanId: number | null) => void;
+}) {
+    const scan = response.scan;
+
+    // No scan run yet — quiet placeholder. The Coach nudge in the
+    // cleaning stage will surface the "scan ready" suggestion when
+    // labeled_count crosses 50; this card just confirms the surface
+    // exists.
+    if (scan === null) {
+        return (
+            <article className="data-studio-review__noise-card data-studio-review__noise-card--empty">
+                <div className="data-studio-review__noise-head">
+                    <div>
+                        <AlertTriangle size={16} aria-hidden="true" />
+                        <strong>Suspected mislabels</strong>
+                    </div>
+                </div>
+                <p className="data-studio-review__noise-empty">
+                    No label-noise scan has run yet. Train a classifier and
+                    label some rows; the Cleaning Coach will nudge when it's
+                    worth scanning.
+                </p>
+            </article>
+        );
+    }
+
+    const payload = scan.result_payload;
+    const suspectedCount = scan.suspected_count ?? 0;
+
+    // Scan succeeded but produced no suspects — either the user's
+    // labels are clean (the win condition) OR the scan was skipped
+    // for a structural reason (no checkpoint, empty pool). The
+    // payload's skipped_reason discriminates; we surface either case.
+    if (suspectedCount === 0) {
+        const skipReason = payload?.skipped_reason;
+        const message = skipReason
+            ? formatLabelNoiseSkipReason(skipReason)
+            : 'No suspected mislabels in the latest scan — your labels look clean.';
+        return (
+            <article className="data-studio-review__noise-card data-studio-review__noise-card--clean">
+                <div className="data-studio-review__noise-head">
+                    <div>
+                        <CheckCircle2 size={16} aria-hidden="true" />
+                        <strong>Suspected mislabels</strong>
+                        <small>scan #{scan.id}</small>
+                    </div>
+                </div>
+                <p className="data-studio-review__noise-empty">{message}</p>
+            </article>
+        );
+    }
+
+    // Happy path — render top-5 suspects with given→predicted badges.
+    const top5 = (payload?.top_k ?? []).slice(0, 5);
+    const labelCount = scan.label_count_at_scan ?? 0;
+    const confPct = Math.round((scan.confidence_threshold ?? 0.85) * 100);
+    const floorPct = Math.round((scan.given_label_floor ?? 0.15) * 100);
+
+    return (
+        <article className="data-studio-review__noise-card">
+            <div className="data-studio-review__noise-head">
+                <div>
+                    <AlertTriangle size={16} aria-hidden="true" />
+                    <strong>Suspected mislabels</strong>
+                    <small>
+                        scan #{scan.id}
+                        {scan.base_experiment_id ? ` · exp #${scan.base_experiment_id}` : ''}
+                    </small>
+                </div>
+                <span className="data-studio-review__noise-count">
+                    {suspectedCount} <small>/ {labelCount} labels</small>
+                </span>
+            </div>
+            <p className="data-studio-review__noise-meta">
+                confidence ≥ {confPct}% · given label ≤ {floorPct}%
+            </p>
+            <table className="data-studio-review__noise-table">
+                <thead>
+                    <tr>
+                        <th>Row</th>
+                        <th>Given → Predicted</th>
+                        <th>Confidence</th>
+                        <th>Preview</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {top5.map((entry) => (
+                        <tr key={entry.label_row_id}>
+                            <td><code>#{entry.label_row_id}</code></td>
+                            <td>
+                                <span className="data-studio-review__noise-given-badge">
+                                    {entry.given_label}
+                                </span>
+                                {' → '}
+                                <span className="data-studio-review__noise-pred-badge">
+                                    {entry.predicted_label}
+                                </span>
+                            </td>
+                            <td>
+                                <strong>{(entry.predicted_prob * 100).toFixed(0)}%</strong>
+                                {' '}
+                                <span className="data-studio-review__noise-meta-inline">
+                                    (Δ {(entry.mislabel_score * 100).toFixed(0)}%)
+                                </span>
+                            </td>
+                            <td>
+                                {entry.text_preview ? (
+                                    <span className="data-studio-review__noise-preview">
+                                        {entry.text_preview}
+                                    </span>
+                                ) : (
+                                    <em className="data-studio-review__noise-preview--missing">
+                                        (no text)
+                                    </em>
+                                )}
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+            <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onOpenReview(scan.id)}
+            >
+                <ExternalLink size={15} aria-hidden="true" />
+                Review suspected mislabels
+            </button>
+        </article>
+    );
+}
+
 export default function DataStudioReviewQueuePanel({
     projectId,
     onOpenTarget,
@@ -296,6 +500,9 @@ export default function DataStudioReviewQueuePanel({
     // the main review queue so an AL endpoint failure (network blip,
     // first-time project) doesn't pull down the rest of the panel.
     const [alSnapshot, setAlSnapshot] = useState<ActiveLearningLatestResponse | null>(null);
+    // Quality-Lift phase 4 slice 2 — Label-noise card state. Same
+    // separation rationale as active-learning above.
+    const [labelNoise, setLabelNoise] = useState<LabelNoiseLatestResponse | null>(null);
 
     const loadQueue = async () => {
         setLoading(true);
@@ -325,9 +532,22 @@ export default function DataStudioReviewQueuePanel({
         }
     };
 
+    const loadLabelNoise = async () => {
+        try {
+            const resp = await api.get<LabelNoiseLatestResponse>(
+                `/projects/${projectId}/label-noise/latest`,
+            );
+            setLabelNoise(resp.data);
+        } catch {
+            // Same best-effort rationale as the AL fetch.
+            setLabelNoise(null);
+        }
+    };
+
     useEffect(() => {
         void loadQueue();
         void loadActiveLearning();
+        void loadLabelNoise();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
 
@@ -344,6 +564,21 @@ export default function DataStudioReviewQueuePanel({
             ? `/project/${projectId}/annotate/${jobId}`
             : `/project/${projectId}/annotate`;
         window.location.assign(url);
+    };
+
+    const handleOpenLabelNoiseReview = (scanId: number | null) => {
+        // Mirror CoachSuggestion's ``label-noise-review`` target — slice
+        // 3 mounts the review surface at /pipeline/cleaning#label-noise-review.
+        // Forward scan_id as a query param so the surface can deep-link
+        // to a specific scan (the user may have multiple in history).
+        const qs = new URLSearchParams();
+        if (scanId != null) {
+            qs.set('scan_id', String(scanId));
+        }
+        const query = qs.toString() ? `?${qs.toString()}` : '';
+        window.location.assign(
+            `/project/${projectId}/pipeline/cleaning${query}#label-noise-review`,
+        );
     };
 
     const topIssues = useMemo(
@@ -526,6 +761,13 @@ export default function DataStudioReviewQueuePanel({
                 <ActiveLearningCard
                     snapshot={alSnapshot}
                     onOpenLabelQueue={handleOpenLabelQueue}
+                />
+            ) : null}
+
+            {labelNoise ? (
+                <LabelNoiseCard
+                    response={labelNoise}
+                    onOpenReview={handleOpenLabelNoiseReview}
                 />
             ) : null}
 

@@ -395,4 +395,123 @@ describe('DataStudioReviewQueuePanel', () => {
             screen.getByText(/consider re-training to score a fresh batch/i),
         ).toBeInTheDocument();
     });
+
+    // ────────────────────────────────────────────────────────────────────
+    // Quality-Lift phase 4 slice 2 — Suspected-mislabels card
+    // ────────────────────────────────────────────────────────────────────
+
+    const buildNoiseScan = (overrides: Record<string, unknown> = {}) => ({
+        id: 9,
+        project_id: 1,
+        base_experiment_id: 42,
+        status: 'succeeded' as const,
+        label_count_at_scan: 387,
+        suspected_count: 12,
+        confidence_threshold: 0.85,
+        given_label_floor: 0.15,
+        result_payload: {
+            scored_at: '2026-06-09T12:00:00Z',
+            base_experiment_id: 42,
+            label_count_total: 387,
+            label_count_scored: 387,
+            suspected_count: 12,
+            confidence_threshold: 0.85,
+            given_label_floor: 0.15,
+            skipped_reason: null,
+            top_k: [
+                { label_row_id: 1234, label_job_id: 7, given_label: 'benign', predicted_label: 'attack', predicted_prob: 0.92, given_label_prob: 0.06, mislabel_score: 0.86, text_preview: 'this looks like an obvious attack to me' },
+                { label_row_id: 5678, label_job_id: 7, given_label: 'A', predicted_label: 'B', predicted_prob: 0.88, given_label_prob: 0.08, mislabel_score: 0.80, text_preview: 'classify the following …' },
+                { label_row_id: 9012, label_job_id: 7, given_label: 'A', predicted_label: 'B', predicted_prob: 0.86, given_label_prob: 0.10, mislabel_score: 0.76, text_preview: null },
+            ],
+        },
+        error: null,
+        job_id: 11,
+        created_at: '2026-06-09T11:00:00Z',
+        completed_at: '2026-06-09T12:00:00Z',
+        ...overrides,
+    });
+
+    const noScanReviewQueue = () =>
+        apiMock.get
+            .mockResolvedValueOnce({ data: reviewQueuePayload })  // /review-queue
+            .mockResolvedValueOnce({                              // /active-learning/latest
+                data: buildAlSnapshot({ snapshot: null, top_k_size: 0 }),
+            });
+
+    it('renders the suspected-mislabels card with given/predicted badges + open-review button', async () => {
+        noScanReviewQueue();
+        apiMock.get.mockResolvedValueOnce({  // /label-noise/latest
+            data: { project_id: 1, scan: buildNoiseScan(), no_scan_reason: null },
+        });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Suspected mislabels/)).toBeInTheDocument();
+        });
+        // Provenance — scan id + base experiment id surface.
+        expect(screen.getByText(/scan #9/)).toBeInTheDocument();
+        expect(screen.getByText(/exp #42/)).toBeInTheDocument();
+        // Meta line — threshold + floor as percentages.
+        expect(screen.getByText(/confidence ≥ 85%/)).toBeInTheDocument();
+        expect(screen.getByText(/given label ≤ 15%/)).toBeInTheDocument();
+        // First row's given/predicted badges + text preview.
+        expect(screen.getByText('benign')).toBeInTheDocument();
+        expect(screen.getAllByText('attack').length).toBeGreaterThan(0);
+        expect(screen.getByText(/this looks like an obvious attack/)).toBeInTheDocument();
+        // Missing-text row → "(no text)".
+        expect(screen.getByText(/no text/i)).toBeInTheDocument();
+        // Open-review button is present.
+        expect(
+            screen.getByRole('button', { name: /Review suspected mislabels/i }),
+        ).toBeInTheDocument();
+        // Three label-noise endpoint reads confirmed.
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/1/label-noise/latest');
+    });
+
+    it('renders the clean state when a scan ran but found no suspects', async () => {
+        noScanReviewQueue();
+        apiMock.get.mockResolvedValueOnce({
+            data: {
+                project_id: 1,
+                scan: buildNoiseScan({
+                    suspected_count: 0,
+                    result_payload: {
+                        ...buildNoiseScan().result_payload,
+                        suspected_count: 0,
+                        top_k: [],
+                    },
+                }),
+                no_scan_reason: null,
+            },
+        });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByText(/Suspected mislabels/)).toBeInTheDocument();
+        });
+        // Win-condition copy — no review button rendered.
+        expect(
+            screen.getByText(/your labels look clean/i),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByRole('button', { name: /Review suspected mislabels/i }),
+        ).toBeNull();
+    });
+
+    it('renders the empty state when no scan has ever run', async () => {
+        noScanReviewQueue();
+        apiMock.get.mockResolvedValueOnce({
+            data: { project_id: 1, scan: null, no_scan_reason: 'no_succeeded_scan_yet' },
+        });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+        await waitFor(() => {
+            expect(screen.getByText(/Suspected mislabels/)).toBeInTheDocument();
+        });
+        expect(
+            screen.getByText(/Cleaning Coach will nudge when it's worth scanning/i),
+        ).toBeInTheDocument();
+        // No review button on the empty state either.
+        expect(
+            screen.queryByRole('button', { name: /Review suspected mislabels/i }),
+        ).toBeNull();
+    });
 });
