@@ -486,6 +486,7 @@ session-start guidance.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.tsx` — GoldSetDiagnosticsPanel — V4 of the ML-native visualisations arc.
 - `frontend/src/components/data/GoldSetPanel.tsx` — Panel for adding and managing trusted evaluation examples in gold dev and test datasets.
 - `frontend/src/components/data/IngestionPanel.tsx` — Panel for ingesting data from files, Hugging Face, Kaggle, and URLs with validation and EDA.
+- `frontend/src/components/data/LabelNoiseReviewPanel.tsx` — Quality-Lift phase 4 slice 3 — Label-noise review surface.
 - `frontend/src/components/data/LlmGoldGeneratePanel.tsx` — LlmGoldGeneratePanel — generate gold-set Q&A pairs using a flagship
 - `frontend/src/components/data/PlaybookPickerPanel.tsx` — PlaybookPickerPanel — USER-SUCCESS Epic 2.
 - `frontend/src/components/data/RecipePicker.tsx` — Recipe Picker — Theme 2 Epic 3 + 4.
@@ -851,6 +852,7 @@ session-start guidance.
 - `frontend/src/components/data/GoalLedgerCard.test.tsx` — Arc H — GoalLedgerCard tests.
 - `frontend/src/components/data/GoldSetDiagnosticsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/GoldSetPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/data/LabelNoiseReviewPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/LlmGoldGeneratePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/PlaybookPickerPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/data/RecipePicker.test.tsx` — _(no docstring)_

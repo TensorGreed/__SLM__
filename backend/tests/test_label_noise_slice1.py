@@ -757,5 +757,312 @@ class ResultsPendingNudgeTests(unittest.TestCase):
         self.assertNotIn("mislabels", nudge["title"])
 
 
+
+# ────────────────────────────────────────────────────────────────────────
+# Slice 3 — Apply endpoint (relabel / keep / drop)
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _seed_succeeded_scan_with_top_k(
+    project_id: int,
+    *,
+    top_k_rows: list[tuple[int, int, str, str]],
+) -> int:
+    """Create a SUCCEEDED scan with a top_k built from
+    ``(label_row_id, label_job_id, given_label, predicted_label)``
+    tuples. Probabilities are filled with plausible defaults so the
+    payload looks scan-1-shaped to the apply endpoint."""
+    async def _go() -> int:
+        async with async_session_factory() as session:
+            top_k = []
+            for rid, jid, given, pred in top_k_rows:
+                top_k.append({
+                    "label_row_id": rid,
+                    "label_job_id": jid,
+                    "given_label": given,
+                    "predicted_label": pred,
+                    "predicted_prob": 0.92,
+                    "given_label_prob": 0.05,
+                    "mislabel_score": 0.87,
+                    "text_preview": f"row {rid}",
+                })
+            scan = LabelNoiseScan(
+                project_id=project_id,
+                status=LabelNoiseScanStatus.SUCCEEDED,
+                label_count_at_scan=len(top_k_rows),
+                suspected_count=len(top_k_rows),
+                confidence_threshold=0.85,
+                given_label_floor=0.15,
+                result_payload={
+                    "scored_at": datetime.now(timezone.utc).isoformat(),
+                    "base_experiment_id": None,
+                    "label_count_total": len(top_k_rows),
+                    "label_count_scored": len(top_k_rows),
+                    "suspected_count": len(top_k_rows),
+                    "confidence_threshold": 0.85,
+                    "given_label_floor": 0.15,
+                    "top_k": top_k,
+                    "skipped_reason": None,
+                },
+                completed_at=datetime.now(timezone.utc),
+            )
+            session.add(scan)
+            await session.commit()
+            return int(scan.id)
+
+    return asyncio.run(_go())
+
+
+def _load_label_row(row_id: int) -> LabelRow:
+    async def _go() -> LabelRow:
+        async with async_session_factory() as session:
+            return (await session.execute(
+                select(LabelRow).where(LabelRow.id == row_id)
+            )).scalar_one()
+
+    return asyncio.run(_go())
+
+
+def _load_scan(scan_id: int) -> LabelNoiseScan:
+    async def _go() -> LabelNoiseScan:
+        async with async_session_factory() as session:
+            return (await session.execute(
+                select(LabelNoiseScan).where(LabelNoiseScan.id == scan_id)
+            )).scalar_one()
+
+    return asyncio.run(_go())
+
+
+class ApplyEndpointTests(unittest.TestCase):
+
+    def test_404_when_scan_missing(self):
+        pid = _create_project()
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/99999/apply",
+            json={"actions": [{"label_row_id": 1, "action": "keep"}]},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_409_when_scan_not_succeeded(self):
+        # Applying against a still-running scan is confused — the top_k
+        # isn't authoritative until SUCCEEDED. 409 so the UI can keep
+        # the apply button disabled in this state.
+        pid = _create_project()
+        _seed_experiment(pid, output_dir=str(_make_checkpoint_dir()))
+        _, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"], rows=[("text", "A")],
+        )
+        scan_id = _seed_inflight_scan(pid, status=LabelNoiseScanStatus.RUNNING)
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids[0], "action": "keep"}]},
+        )
+        self.assertEqual(resp.status_code, 409)
+
+    def test_cross_project_scan_returns_404(self):
+        # Applying to a scan in another project must NOT succeed. We
+        # treat as 404 (not 403) so we don't leak existence of
+        # cross-project scan ids.
+        pid_a = _create_project()
+        pid_b = _create_project()
+        _, row_ids_a = _seed_classification_label_job_and_rows(
+            pid_a, allowed_labels=["A", "B"], rows=[("text", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid_a, top_k_rows=[(row_ids_a[0], 1, "A", "B")],
+        )
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid_b}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids_a[0], "action": "keep"}]},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_relabel_updates_label_payload(self):
+        # Relabel uses the scan's predicted_label as the new value.
+        # labeled_at stays — the row remains in the labeled pool with
+        # the corrected label.
+        pid = _create_project()
+        job_id, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"],
+            rows=[("clear B row", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid, top_k_rows=[(row_ids[0], job_id, "A", "B")],
+        )
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids[0], "action": "relabel"}]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["relabeled"], 1)
+        self.assertEqual(body["kept"], 0)
+        self.assertEqual(body["dropped"], 0)
+
+        row = _load_label_row(row_ids[0])
+        self.assertEqual(row.label_payload, {"label": "B"})
+        # labeled_at preserved — relabel doesn't put the row back in
+        # the unlabeled pool.
+        self.assertIsNotNone(row.labeled_at)
+
+    def test_drop_clears_label_payload_and_labeled_at(self):
+        # The loop closure: dropping returns the row to phase 3's
+        # unlabeled pool. The next post-training active-learning
+        # scoring picks it up there.
+        pid = _create_project()
+        job_id, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"],
+            rows=[("ambiguous row", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid, top_k_rows=[(row_ids[0], job_id, "A", "B")],
+        )
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids[0], "action": "drop"}]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["dropped"], 1)
+
+        row = _load_label_row(row_ids[0])
+        self.assertIsNone(row.label_payload)
+        self.assertIsNone(row.labeled_at)
+        self.assertIsNone(row.assigned_to)
+
+    def test_keep_records_audit_no_row_change(self):
+        # Keep doesn't change the row — but the audit log records the
+        # decision so the UI can show "previously kept" instead of
+        # re-suggesting the row.
+        pid = _create_project()
+        job_id, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"],
+            rows=[("genuine A row", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid, top_k_rows=[(row_ids[0], job_id, "A", "B")],
+        )
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids[0], "action": "keep"}]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kept"], 1)
+
+        row = _load_label_row(row_ids[0])
+        # Row unchanged.
+        self.assertEqual(row.label_payload, {"label": "A"})
+        self.assertIsNotNone(row.labeled_at)
+
+        # Audit log on the scan carries the decision.
+        scan = _load_scan(scan_id)
+        applied = scan.result_payload.get("applied_actions") or {}
+        self.assertEqual(applied[str(row_ids[0])]["action"], "keep")
+
+    def test_unknown_row_id_skipped_not_failed(self):
+        # An action against a row not in the scan's top_k is skipped
+        # rather than failing the whole batch. Defends against UI
+        # tampering / scan replacement races.
+        pid = _create_project()
+        job_id, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"],
+            rows=[("text", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid, top_k_rows=[(row_ids[0], job_id, "A", "B")],
+        )
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [
+                {"label_row_id": row_ids[0], "action": "keep"},
+                {"label_row_id": 999999, "action": "relabel"},
+            ]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kept"], 1)
+        self.assertEqual(body["relabeled"], 0)
+        skipped_ids = [s["label_row_id"] for s in body["skipped"]]
+        self.assertIn(999999, skipped_ids)
+        self.assertEqual(body["skipped"][0]["reason"], "not_in_scan_top_k")
+
+    def test_idempotent_reapply_overwrites_audit(self):
+        # Applying twice with different decisions: latest wins. The
+        # audit log shows the latest action per row, not a history.
+        pid = _create_project()
+        job_id, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"],
+            rows=[("borderline", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid, top_k_rows=[(row_ids[0], job_id, "A", "B")],
+        )
+
+        CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids[0], "action": "keep"}]},
+        )
+        # Reconsider — actually drop it.
+        resp2 = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [{"label_row_id": row_ids[0], "action": "drop"}]},
+        )
+        body = resp2.json()
+        self.assertEqual(body["dropped"], 1)
+
+        scan = _load_scan(scan_id)
+        applied = scan.result_payload.get("applied_actions") or {}
+        self.assertEqual(applied[str(row_ids[0])]["action"], "drop")
+
+    def test_bulk_apply_handles_mix(self):
+        # The slice 3 UI bulk-applies per (given→predicted) group.
+        # Verify the endpoint handles a mixed batch cleanly: 2
+        # relabels + 1 keep + 1 drop in a single call.
+        pid = _create_project()
+        job_id, row_ids = _seed_classification_label_job_and_rows(
+            pid, allowed_labels=["A", "B"],
+            rows=[("r0", "A"), ("r1", "A"), ("r2", "A"), ("r3", "A")],
+        )
+        scan_id = _seed_succeeded_scan_with_top_k(
+            pid,
+            top_k_rows=[
+                (row_ids[0], job_id, "A", "B"),
+                (row_ids[1], job_id, "A", "B"),
+                (row_ids[2], job_id, "A", "B"),
+                (row_ids[3], job_id, "A", "B"),
+            ],
+        )
+
+        resp = CLIENT.post(
+            f"/api/projects/{pid}/label-noise/scans/{scan_id}/apply",
+            json={"actions": [
+                {"label_row_id": row_ids[0], "action": "relabel"},
+                {"label_row_id": row_ids[1], "action": "relabel"},
+                {"label_row_id": row_ids[2], "action": "keep"},
+                {"label_row_id": row_ids[3], "action": "drop"},
+            ]},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["applied"], 4)
+        self.assertEqual(body["relabeled"], 2)
+        self.assertEqual(body["kept"], 1)
+        self.assertEqual(body["dropped"], 1)
+
+        # Verify each row's state matches the decision.
+        self.assertEqual(_load_label_row(row_ids[0]).label_payload, {"label": "B"})
+        self.assertEqual(_load_label_row(row_ids[1]).label_payload, {"label": "B"})
+        self.assertEqual(_load_label_row(row_ids[2]).label_payload, {"label": "A"})
+        dropped_row = _load_label_row(row_ids[3])
+        self.assertIsNone(dropped_row.labeled_at)
+
+
 if __name__ == "__main__":
     unittest.main()

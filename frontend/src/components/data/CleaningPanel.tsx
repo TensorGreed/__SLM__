@@ -3,9 +3,11 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import StepFooter from '../shared/StepFooter';
 import CoachStrip from '../coach/CoachStrip';
+import LabelNoiseReviewPanel from './LabelNoiseReviewPanel';
 import './CleaningPanel.css';
 
 interface CleaningPanelProps {
@@ -98,6 +100,17 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
     const [cleaningErrors, setCleaningErrors] = useState<CleaningBatchError[]>([]);
     const [isCleaning, setIsCleaning] = useState(false);
     const [cleaningStatus, setCleaningStatus] = useState('');
+
+    // Quality-Lift phase 4 slice 3 — Read the scan_id query param the
+    // Coach nudges (slice 2) deep-link to. When absent, the review
+    // panel falls back to /latest. ``auto_start_scan`` is forwarded
+    // from the scan-ready nudge — slice 3 doesn't auto-trigger yet
+    // (defer until the user clicks "Apply" UI feels natural), but we
+    // read it so the URL parses cleanly.
+    const [searchParams] = useSearchParams();
+    const scanIdParam = searchParams.get('scan_id');
+    const scanId = scanIdParam ? Number(scanIdParam) : null;
+    const scanIdForPanel = scanId !== null && Number.isFinite(scanId) ? scanId : null;
 
     const fetchDocs = useCallback(async () => {
         const res = await api.get(`/projects/${projectId}/ingestion/documents`);
@@ -264,6 +277,17 @@ export default function CleaningPanel({ projectId, onNextStep }: CleaningPanelPr
                     </div>
                 </div>
             )}
+
+            {/* Quality-Lift phase 4 slice 3 — Label-noise review surface.
+                Anchored at #label-noise-review so the Coach nudges + Data
+                Studio card click-throughs land here. The panel is
+                self-managing: it reads the optional ``scan_id`` query
+                param and falls back to /latest, renders its own empty /
+                clean / suspects states, and persists actions through the
+                slice 1 endpoint. */}
+            <div id="label-noise-review">
+                <LabelNoiseReviewPanel projectId={projectId} scanId={scanIdForPanel} />
+            </div>
 
             {onNextStep && (
                 <StepFooter
