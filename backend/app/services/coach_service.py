@@ -1915,6 +1915,89 @@ async def _missing_per_class_gates_nudge(
     }
 
 
+async def _behavioral_tests_without_gates_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Quality-Lift phase 5 slice 3 — Mirror Gap-#6's no-per-class-gates
+    nudge for behavioral tests. Fires when the active eval pack has
+    ``task_specs[].behavioral_tests`` defined but no gate references
+    them — the user wrote the tests but the ship decision still
+    ignores them.
+
+    Severity ``info`` — the tests are still running and surfacing in
+    the scorecard, but a failing INV or MFT won't block ship unless a
+    gate gates on it. The nudge points at the eval pack editor where
+    the user can add a ``behavioral.<test_id>.pass_rate`` gate.
+    Silences when there are no behavioral tests OR when at least one
+    behavioral gate already exists.
+
+    Returns None on any lookup failure — the eval-tab Coach must not
+    break when a pack reference goes stale or a plugin import errors.
+    """
+    from app.services.evaluation_gate_catalog import is_behavioral_metric_id
+    from app.services.evaluation_pack_service import (
+        resolve_project_evaluation_pack,
+    )
+
+    try:
+        resolved = await resolve_project_evaluation_pack(db, project_id)
+    except Exception:  # noqa: BLE001
+        return None
+    pack = resolved.get("pack") if isinstance(resolved, dict) else None
+    if not isinstance(pack, dict):
+        return None
+
+    task_specs = pack.get("task_specs") if isinstance(pack.get("task_specs"), list) else []
+    test_ids: list[str] = []
+    has_behavioral_gate = False
+    for spec in task_specs:
+        if not isinstance(spec, dict):
+            continue
+        for entry in spec.get("behavioral_tests") or []:
+            if isinstance(entry, dict):
+                test_id = str(entry.get("test_id") or "").strip()
+                if test_id:
+                    test_ids.append(test_id)
+        for gate in spec.get("gates") or []:
+            if not isinstance(gate, dict):
+                continue
+            metric_id = str(gate.get("metric_id") or "").strip().lower()
+            if metric_id and is_behavioral_metric_id(metric_id):
+                has_behavioral_gate = True
+
+    if not test_ids:
+        return None
+    if has_behavioral_gate:
+        return None
+
+    sample = ", ".join(f"`{t}`" for t in test_ids[:3])
+    more = f" and {len(test_ids) - 3} more" if len(test_ids) > 3 else ""
+    return {
+        "id": "eval:behavioral-tests-without-gates",
+        "title": (
+            f"You have {len(test_ids)} behavioral test{'s' if len(test_ids) != 1 else ''} "
+            "but no gates referencing them"
+        ),
+        "body": (
+            f"Behavioral tests {sample}{more} run on every eval and surface in the "
+            "scorecard, but a failing test won't block ship until you add a gate "
+            "on ``behavioral.<test_id>.pass_rate``. Without a gate, robustness "
+            "regressions are visible but not enforced."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open eval pack editor",
+            "params": {"target": "eval-pack-editor"},
+        },
+        "rule_id": "behavioral-tests.ungated",
+        "context": {
+            "behavioral_test_ids": list(test_ids),
+            "active_pack_id": resolved.get("active_pack_id"),
+        },
+    }
+
+
 async def _eval_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -2022,6 +2105,17 @@ async def _eval_stage_suggestions(
     )
     if per_class_nudge:
         suggestions.append(per_class_nudge)
+
+    # Quality-Lift phase 5 slice 3 — Parallel "you wrote behavioral
+    # tests but no gate references them" nudge. Independent of the
+    # pass-rate logic below because it fires regardless of how well
+    # the model is doing — un-gated tests means robustness regressions
+    # are visible but not enforced.
+    behavioral_nudge = await _behavioral_tests_without_gates_nudge(
+        db, project.id,
+    )
+    if behavioral_nudge:
+        suggestions.append(behavioral_nudge)
 
     if pass_rate is None or pass_rate >= EVAL_PASS_RATE_HEALTHY:
         return suggestions

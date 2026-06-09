@@ -279,6 +279,211 @@ describe('ScorecardPanel', () => {
     expect(screen.getByText(/dragged the worst-slice metric/i)).toBeInTheDocument();
   });
 
+  // ────────────────────────────────────────────────────────────────────
+  // Quality-Lift phase 5 slice 3 — Behavioral tests section
+  // ────────────────────────────────────────────────────────────────────
+
+  it('renders the dedicated Behavioral tests section with INV badge + drill-down', async () => {
+    const scorecard = {
+      experiment_id: 21,
+      is_ship: false,
+      decision: 'NO-SHIP',
+      reasons: ['Failed 1 mandatory gates.'],
+      failed_gates: ['typo_invariance_gate'],
+      missing_metrics: [],
+      gate_report: {
+        passed: false,
+        failed_gate_ids: ['typo_invariance_gate'],
+        missing_required_metrics: [],
+        checks: [
+          {
+            gate_id: 'min_f1',
+            metric_id: 'macro_f1',
+            operator: 'gte',
+            threshold: 0.8,
+            required: true,
+            actual: 0.85,
+            passed: true,
+            reason: 'ok',
+          },
+          {
+            gate_id: 'typo_invariance_gate',
+            metric_id: 'behavioral.typo_invariance.pass_rate',
+            operator: 'gte',
+            threshold: 0.85,
+            required: true,
+            actual: 0.72,
+            passed: false,
+            reason: 'below_threshold',
+            behavioral_test_id: 'typo_invariance',
+            behavioral_kind: 'INV',
+            behavioral_passed: 36,
+            behavioral_total: 50,
+            behavioral_failed_examples: [
+              {
+                original_input: 'great product',
+                perturbed_input: 'great pdroduct',
+                perturbation_name: 'typo',
+                original_label: 'positive',
+                perturbed_label: 'negative',
+              },
+              {
+                original_input: 'works as advertised',
+                perturbed_input: 'wokrs as advertised',
+                perturbation_name: 'typo',
+                original_label: 'positive',
+                perturbed_label: 'neutral',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    const user = userEvent.setup();
+    render(<ScorecardPanel projectId={1} experimentId={21} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+    });
+
+    // Quality gates section (top) renders min_f1 but NOT the
+    // behavioral gate (it lives in its own section to avoid mixing
+    // metric-id and behavioral-id rendering).
+    expect(screen.getByText('min_f1')).toBeInTheDocument();
+    // Quality gates section uses the metric_id, not the behavioral
+    // test_id, so 'macro_f1' surfaces there.
+    expect(screen.getByText('macro_f1')).toBeInTheDocument();
+
+    // INV badge with explainer tooltip.
+    const invBadge = screen.getByText('INV');
+    expect(invBadge).toBeInTheDocument();
+    expect(invBadge).toHaveAttribute('title', expect.stringContaining('Invariance'));
+
+    // Test id + counts (36/50).
+    expect(screen.getByText('typo_invariance')).toBeInTheDocument();
+    expect(screen.getByText(/\(36\/50\)/)).toBeInTheDocument();
+
+    // Pass rate rendered as a percentage in the behavioral row.
+    expect(screen.getByText('72.0%')).toBeInTheDocument();
+
+    // Drill-down not visible until click.
+    expect(screen.queryByText(/Failed examples/)).toBeNull();
+
+    // The behavioral row is clickable (failed_examples > 0).
+    const testIdCell = screen.getByText('typo_invariance');
+    const row = testIdCell.closest('tr')!;
+    await user.click(row);
+
+    expect(screen.getByText(/Failed examples/)).toBeInTheDocument();
+    // Both failed examples render.
+    expect(screen.getByText('great product')).toBeInTheDocument();
+    expect(screen.getByText('great pdroduct')).toBeInTheDocument();
+    expect(screen.getByText('wokrs as advertised')).toBeInTheDocument();
+    // Labels rendered for at least the original positive.
+    expect(screen.getAllByText('positive').length).toBeGreaterThan(0);
+  });
+
+  it('renders MFT drill-down with input / expected / predicted columns', async () => {
+    const scorecard = {
+      experiment_id: 22,
+      is_ship: false,
+      decision: 'NO-SHIP',
+      reasons: [],
+      failed_gates: [],
+      missing_metrics: [],
+      gate_report: {
+        passed: false,
+        failed_gate_ids: [],
+        missing_required_metrics: [],
+        checks: [
+          {
+            gate_id: 'mft_gate',
+            metric_id: 'behavioral.canonicals.pass_rate',
+            operator: 'gte',
+            threshold: 1.0,
+            required: true,
+            actual: 0.66,
+            passed: false,
+            reason: 'below_threshold',
+            behavioral_test_id: 'canonicals',
+            behavioral_kind: 'MFT',
+            behavioral_passed: 2,
+            behavioral_total: 3,
+            behavioral_failed_examples: [
+              {
+                input: 'pretty good',
+                expected_label: 'positive',
+                predicted_label: 'neutral',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    const user = userEvent.setup();
+    render(<ScorecardPanel projectId={1} experimentId={22} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+    });
+
+    // MFT-specific badge.
+    expect(screen.getByText('MFT')).toBeInTheDocument();
+    const row = screen.getByText('canonicals').closest('tr')!;
+    await user.click(row);
+
+    // MFT drill-down has Input / Expected / Predicted columns —
+    // distinct from INV/DIR's Original / Perturbed / labels.
+    expect(screen.getByText('pretty good')).toBeInTheDocument();
+    // Expected + predicted labels rendered in <code> tags.
+    expect(screen.getByText('positive')).toBeInTheDocument();
+    expect(screen.getByText('neutral')).toBeInTheDocument();
+  });
+
+  it('shows the capped flag when the runner hit the prediction budget', async () => {
+    const scorecard = {
+      experiment_id: 23,
+      is_ship: true,
+      decision: 'SHIP',
+      reasons: [],
+      failed_gates: [],
+      missing_metrics: [],
+      gate_report: {
+        passed: true,
+        failed_gate_ids: [],
+        missing_required_metrics: [],
+        checks: [
+          {
+            gate_id: 'huge_inv',
+            metric_id: 'behavioral.huge_test.pass_rate',
+            operator: 'gte',
+            threshold: 0.85,
+            required: true,
+            actual: 0.91,
+            passed: true,
+            reason: 'ok',
+            behavioral_test_id: 'huge_test',
+            behavioral_kind: 'INV',
+            behavioral_passed: 1820,
+            behavioral_total: 2000,
+            behavioral_failed_examples: [],
+            behavioral_capped_at_budget: 2000,
+          },
+        ],
+      },
+    };
+    apiMock.get.mockResolvedValueOnce({ data: scorecard });
+    render(<ScorecardPanel projectId={1} experimentId={23} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Behavioral tests/)).toBeInTheDocument();
+    });
+    // Capped indicator surfaces so the user knows trials were sampled.
+    expect(screen.getByText(/capped/)).toBeInTheDocument();
+  });
+
   it('skips the explainer note when the mean itself failed (not variance)', async () => {
     const scorecard = {
       ...SCORECARD_AGGREGATE_FAILING_VARIANCE,

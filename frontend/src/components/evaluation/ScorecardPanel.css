@@ -221,3 +221,70 @@
   font-style: normal;
   font-weight: 600;
 }
+
+/* Quality-Lift phase 5 slice 3 — Behavioral tests section. */
+.scorecard-behavioral-section {
+  margin-top: var(--space-lg);
+}
+
+.scorecard-behavioral-section h3 {
+  margin-bottom: var(--space-sm);
+}
+
+.scorecard-behavioral-table th:first-child {
+  width: 70px;
+}
+
+.scorecard-behavioral-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+.scorecard-behavioral-badge--inv {
+  background: var(--color-info-bg);
+  color: var(--color-info);
+}
+
+.scorecard-behavioral-badge--dir {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.scorecard-behavioral-badge--mft {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.scorecard-behavioral-counts {
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.scorecard-behavioral-capped {
+  color: var(--color-warning);
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.scorecard-behavioral-drilldown {
+  padding: var(--space-md);
+}
+
+.scorecard-behavioral-explainer {
+  color: var(--text-tertiary);
+  font-style: italic;
+  font-size: 0.85em;
+}
+
+.scorecard-behavioral-cell {
+  max-width: 360px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}

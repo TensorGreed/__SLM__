@@ -9,6 +9,7 @@ Evaluation Contract v2 adds task-aware specs:
 from __future__ import annotations
 
 import copy
+import re as _re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -1553,6 +1554,93 @@ def _flatten_behavioral_test_metrics(
                 )
 
 
+def _build_behavioral_index_for_checks(
+    latest_by_eval_type: dict[str, EvalResult],
+) -> dict[str, dict[str, Any]]:
+    """Quality-Lift phase 5 slice 3 — Build a ``{test_id: detail_dict}``
+    map by walking the latest EvalResult rows for a ``behavioral``
+    block. Used to enrich each behavioral gate response with the
+    test's failed_examples + kind so ScorecardPanel can drill down
+    without a second fetch.
+
+    When multiple EvalResults carry behavioral blocks (unusual —
+    behavioral tests run once per eval), the most-recently-created
+    row wins because ``_latest_eval_by_type`` already returns
+    descending-by-created_at ordering per eval_type.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for row in latest_by_eval_type.values():
+        metrics = row.metrics if isinstance(row.metrics, dict) else {}
+        behavioral = metrics.get("behavioral")
+        if not isinstance(behavioral, dict):
+            continue
+        for raw_test_id, test_metrics in behavioral.items():
+            if not isinstance(test_metrics, dict):
+                continue
+            test_id = _normalize_token(str(raw_test_id))
+            if not test_id:
+                continue
+            # First-wins so the most-recent eval (which arrives first
+            # via the descending iteration) is authoritative.
+            out.setdefault(test_id, {
+                "kind": test_metrics.get("kind"),
+                "pass_rate": test_metrics.get("pass_rate"),
+                "passed": test_metrics.get("passed"),
+                "total": test_metrics.get("total"),
+                "failed_examples": list(test_metrics.get("failed_examples") or []),
+                "capped_at_budget": test_metrics.get("capped_at_budget"),
+                "source_eval_result_id": int(row.id),
+                "source_eval_type": str(row.eval_type),
+                "source_dataset_name": str(row.dataset_name),
+            })
+    return out
+
+
+_BEHAVIORAL_TEST_ID_FROM_METRIC = _re.compile(
+    r"^behavioral\.([a-z][a-z0-9_]{0,63})\."
+)
+
+
+def _attach_behavioral_details(
+    check: dict[str, Any],
+    behavioral_index: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Extract the test_id from the gate's metric_id (matches both the
+    canonical ``behavioral.<id>.<metric>`` shape and the eval-type
+    scoped variant). When the gate is behavioral, merge the detail
+    block into the check response so the frontend can render
+    failed_examples + the kind badge.
+    """
+    metric_id = str(check.get("metric_id") or "")
+    if not metric_id:
+        return check
+    # Both ``behavioral.<id>.<metric>`` and
+    # ``<eval_type>.behavioral.<id>.<metric>`` should resolve to the
+    # same test_id. Strip a leading scope segment if present.
+    scoped_strip = metric_id.split(".behavioral.")
+    candidate = (
+        f"behavioral.{scoped_strip[1]}"
+        if len(scoped_strip) == 2
+        else metric_id
+    )
+    m = _BEHAVIORAL_TEST_ID_FROM_METRIC.match(candidate)
+    if not m:
+        return check
+    test_id = m.group(1)
+    details = behavioral_index.get(test_id)
+    if not details:
+        return check
+    enriched = dict(check)
+    enriched["behavioral_test_id"] = test_id
+    enriched["behavioral_kind"] = details.get("kind")
+    enriched["behavioral_failed_examples"] = details.get("failed_examples") or []
+    enriched["behavioral_passed"] = details.get("passed")
+    enriched["behavioral_total"] = details.get("total")
+    if details.get("capped_at_budget") is not None:
+        enriched["behavioral_capped_at_budget"] = details["capped_at_budget"]
+    return enriched
+
+
 def _metric_alias_candidates(metric_id: str, metric_schema: dict[str, Any] | None = None) -> list[str]:
     token = _normalize_token(metric_id)
     if not token:
@@ -2116,6 +2204,18 @@ async def evaluate_experiment_auto_gates(
         )
         for gate in gates
     ]
+    # Quality-Lift phase 5 slice 3 — Enrich behavioral gates with the
+    # raw per-test diagnostics so ScorecardPanel can render INV/DIR/MFT
+    # badges + a click-to-expand drill-down of failed_examples without
+    # a second round-trip. ``_evaluate_gate`` deliberately stays
+    # metric-only; this enrichment layer keeps that contract simple and
+    # only touches behavioral-shaped gates.
+    behavioral_index = _build_behavioral_index_for_checks(latest_by_type)
+    if behavioral_index:
+        checks = [
+            _attach_behavioral_details(check, behavioral_index)
+            for check in checks
+        ]
 
     failed_required = [
         str(item.get("gate_id") or "")

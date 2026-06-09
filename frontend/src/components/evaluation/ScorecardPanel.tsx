@@ -37,6 +37,26 @@ interface PerSliceValue {
   n?: number;
 }
 
+// Quality-Lift phase 5 slice 3 — behavioral test failure shape that
+// the backend's _attach_behavioral_details enricher merges into gate
+// responses whose metric_id matches behavioral.*. Mirrors the
+// runner's failed_examples shape — original_input vs perturbed_input
+// for INV/DIR, input vs expected vs predicted for MFT.
+interface BehavioralFailedExample {
+  // INV / DIR fields
+  original_input?: string;
+  perturbed_input?: string;
+  perturbation_name?: string;
+  original_label?: string | null;
+  perturbed_label?: string;
+  expectation_kind?: string;
+  target?: string | string[] | null;
+  // MFT fields
+  input?: string;
+  expected_label?: string;
+  predicted_label?: string;
+}
+
 interface GateCheck {
   gate_id: string;
   metric_id: string;
@@ -63,6 +83,15 @@ interface GateCheck {
   worst_slice_support?: number | null;
   per_slice_values?: PerSliceValue[];
   min_slice_support?: number;
+  // Phase 5 slice 3 — behavioral test enrichment. Present only on
+  // gates whose metric_id matches ``behavioral.<test_id>.<metric>``;
+  // emitted by the backend's _attach_behavioral_details helper.
+  behavioral_test_id?: string;
+  behavioral_kind?: 'INV' | 'DIR' | 'MFT';
+  behavioral_failed_examples?: BehavioralFailedExample[];
+  behavioral_passed?: number;
+  behavioral_total?: number;
+  behavioral_capped_at_budget?: number;
 }
 
 interface GateReport {
@@ -95,6 +124,24 @@ const isWorstSliceGate = (gate: GateCheck): boolean =>
 
 const isSingleSliceGate = (gate: GateCheck): boolean =>
   typeof gate.slice_name === 'string' && gate.slice_name.length > 0;
+
+const isBehavioralGate = (gate: GateCheck): boolean =>
+  typeof gate.behavioral_test_id === 'string' && gate.behavioral_test_id.length > 0;
+
+const BEHAVIORAL_KIND_COPY: Record<'INV' | 'DIR' | 'MFT', { label: string; explainer: string }> = {
+  INV: {
+    label: 'INV',
+    explainer: 'Invariance — perturbed inputs must yield the same prediction.',
+  },
+  DIR: {
+    label: 'DIR',
+    explainer: 'Directional — perturbed inputs must change prediction in a stated way.',
+  },
+  MFT: {
+    label: 'MFT',
+    explainer: 'Minimum functionality — hand-authored canonicals that must always pass.',
+  },
+};
 
 const formatStatusLabel = (gate: GateCheck, notMeasured: boolean): string => {
   if (notMeasured) {
@@ -199,7 +246,7 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
               </tr>
             </thead>
             <tbody>
-              {gate_report.checks.map((gate) => {
+              {gate_report.checks.filter((g) => !isBehavioralGate(g)).map((gate) => {
                 const notMeasured = gate.actual === null;
                 const aggregate = isAggregateCheck(gate);
                 const worstSlice = isWorstSliceGate(gate);
@@ -395,6 +442,149 @@ const ScorecardPanel: React.FC<ScorecardPanelProps> = ({ projectId, experimentId
             </tbody>
           </table>
         </div>
+
+        {gate_report.checks.some(isBehavioralGate) && (
+          <div className="scorecard-behavioral-section">
+            <h3>Behavioral tests</h3>
+            <table className="gates-table scorecard-behavioral-table">
+              <thead>
+                <tr>
+                  <th>Kind</th>
+                  <th><Term id="gate" /> ID</th>
+                  <th>Test</th>
+                  <th>Target</th>
+                  <th>Pass rate</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {gate_report.checks.filter(isBehavioralGate).map((gate) => {
+                  const notMeasured = gate.actual === null;
+                  const rowClass = notMeasured
+                    ? (gate.required ? 'failed' : 'warn')
+                    : (gate.passed ? 'passed' : gate.required ? 'failed' : 'warn');
+                  const statusLabel = formatStatusLabel(gate, notMeasured);
+                  const isExpanded = expandedGate === gate.gate_id;
+                  const failedExamples = gate.behavioral_failed_examples ?? [];
+                  const canExpand = failedExamples.length > 0;
+                  const kindCopy = gate.behavioral_kind ? BEHAVIORAL_KIND_COPY[gate.behavioral_kind] : undefined;
+                  return (
+                    <React.Fragment key={gate.gate_id}>
+                      <tr
+                        className={`${rowClass}${canExpand ? ' scorecard-row--expandable' : ''}`}
+                        onClick={canExpand ? () => setExpandedGate(isExpanded ? null : gate.gate_id) : undefined}
+                      >
+                        <td>
+                          {kindCopy ? (
+                            <span
+                              className={`scorecard-behavioral-badge scorecard-behavioral-badge--${gate.behavioral_kind!.toLowerCase()}`}
+                              title={kindCopy.explainer}
+                            >
+                              {kindCopy.label}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td>{gate.gate_id}</td>
+                        <td>
+                          <code>{gate.behavioral_test_id}</code>
+                          {typeof gate.behavioral_passed === 'number' && typeof gate.behavioral_total === 'number' && (
+                            <span className="scorecard-behavioral-counts">
+                              {' '}({gate.behavioral_passed}/{gate.behavioral_total})
+                            </span>
+                          )}
+                          {typeof gate.behavioral_capped_at_budget === 'number' && (
+                            <span
+                              className="scorecard-behavioral-capped"
+                              title={`Capped at ${gate.behavioral_capped_at_budget} trials per budget`}
+                            >
+                              {' '}· capped
+                            </span>
+                          )}
+                        </td>
+                        <td>{gate.operator} {gate.threshold}</td>
+                        <td>
+                          {notMeasured ? 'N/A' : (gate.actual! * 100).toFixed(1) + '%'}
+                        </td>
+                        <td>
+                          {statusLabel}
+                          {canExpand && (
+                            <span className="scorecard-expand-caret" aria-label={isExpanded ? 'collapse' : 'expand'}>
+                              {' '}{isExpanded ? '▾' : '▸'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                      {canExpand && isExpanded && (
+                        <tr className="scorecard-drilldown-row">
+                          <td colSpan={6}>
+                            <div className="scorecard-behavioral-drilldown">
+                              <div className="scorecard-drilldown-header">
+                                Failed examples
+                                {kindCopy && (
+                                  <span className="scorecard-behavioral-explainer">
+                                    {' · '}{kindCopy.explainer}
+                                  </span>
+                                )}
+                              </div>
+                              <table className="scorecard-drilldown-table">
+                                <thead>
+                                  {gate.behavioral_kind === 'MFT' ? (
+                                    <tr>
+                                      <th>Input</th>
+                                      <th>Expected</th>
+                                      <th>Predicted</th>
+                                    </tr>
+                                  ) : (
+                                    <tr>
+                                      <th>Original</th>
+                                      <th>Perturbed</th>
+                                      <th>Original label</th>
+                                      <th>Perturbed label</th>
+                                      {gate.behavioral_kind === 'DIR' && <th>Expected</th>}
+                                    </tr>
+                                  )}
+                                </thead>
+                                <tbody>
+                                  {failedExamples.map((ex, idx) => (
+                                    <tr key={`${gate.gate_id}-fail-${idx}`}>
+                                      {gate.behavioral_kind === 'MFT' ? (
+                                        <>
+                                          <td className="scorecard-behavioral-cell">{ex.input}</td>
+                                          <td><code>{ex.expected_label}</code></td>
+                                          <td><code>{ex.predicted_label}</code></td>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <td className="scorecard-behavioral-cell">{ex.original_input}</td>
+                                          <td className="scorecard-behavioral-cell">{ex.perturbed_input}</td>
+                                          <td><code>{ex.original_label ?? '—'}</code></td>
+                                          <td><code>{ex.perturbed_label}</code></td>
+                                          {gate.behavioral_kind === 'DIR' && (
+                                            <td>
+                                              <code>{
+                                                Array.isArray(ex.target)
+                                                  ? ex.target.join(' | ')
+                                                  : (ex.target ?? 'any change')
+                                              }</code>
+                                            </td>
+                                          )}
+                                        </>
+                                      )}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {gate_report.missing_required_metrics.length > 0 && (
           <div className="missing-metrics-section">

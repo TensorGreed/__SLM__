@@ -546,5 +546,119 @@ class FlattenAndGateEndToEndTests(unittest.TestCase):
         self.assertEqual(result["reason"], "missing_metric_required")
 
 
+
+# ────────────────────────────────────────────────────────────────────────
+# Slice 3 — Gate-response enrichment + Coach nudge
+# ────────────────────────────────────────────────────────────────────────
+
+
+class GateResponseEnrichmentTests(unittest.TestCase):
+    """Quality-Lift phase 5 slice 3 — verify
+    ``_attach_behavioral_details`` merges behavioral failed_examples +
+    kind into the gate response so ScorecardPanel can render the
+    drill-down without a second fetch."""
+
+    def _build_index_and_check(
+        self,
+        *,
+        metric_id: str,
+        behavioral_block: dict | None = None,
+    ):
+        from app.services.evaluation_pack_service import (
+            _attach_behavioral_details,
+            _build_behavioral_index_for_checks,
+        )
+
+        if behavioral_block is None:
+            behavioral_block = {
+                "typo_invariance": {
+                    "kind": "INV",
+                    "pass_rate": 0.72,
+                    "passed": 36,
+                    "total": 50,
+                    "failed_examples": [
+                        {
+                            "original_input": "great product",
+                            "perturbed_input": "great pdroduct",
+                            "perturbation_name": "typo",
+                            "original_label": "positive",
+                            "perturbed_label": "negative",
+                        },
+                    ],
+                },
+            }
+        row = _mock_eval_result(metrics={"behavioral": behavioral_block})
+        index = _build_behavioral_index_for_checks({"classification": row})
+        check = {
+            "gate_id": "typo_invariance_gate",
+            "metric_id": metric_id,
+            "operator": "gte",
+            "threshold": 0.85,
+            "required": True,
+            "actual": 0.72,
+            "passed": False,
+            "reason": "below_threshold",
+        }
+        return _attach_behavioral_details(check, index)
+
+    def test_enriches_canonical_dot_path_metric_id(self):
+        enriched = self._build_index_and_check(
+            metric_id="behavioral.typo_invariance.pass_rate",
+        )
+        self.assertEqual(enriched["behavioral_test_id"], "typo_invariance")
+        self.assertEqual(enriched["behavioral_kind"], "INV")
+        self.assertEqual(enriched["behavioral_passed"], 36)
+        self.assertEqual(enriched["behavioral_total"], 50)
+        # Failed examples plumbed through so ScorecardPanel can render
+        # original vs perturbed without re-fetching the EvalResult.
+        self.assertEqual(len(enriched["behavioral_failed_examples"]), 1)
+        self.assertEqual(
+            enriched["behavioral_failed_examples"][0]["perturbed_input"],
+            "great pdroduct",
+        )
+
+    def test_enriches_eval_type_scoped_metric_id(self):
+        # ``classification.behavioral.<test>.pass_rate`` is the scoped
+        # variant — must also resolve to the same test_id.
+        enriched = self._build_index_and_check(
+            metric_id="classification.behavioral.typo_invariance.pass_rate",
+        )
+        self.assertEqual(enriched["behavioral_test_id"], "typo_invariance")
+
+    def test_non_behavioral_gate_passes_through_unchanged(self):
+        # Regular metric_id (macro_f1) — no behavioral fields added.
+        enriched = self._build_index_and_check(metric_id="macro_f1")
+        self.assertNotIn("behavioral_test_id", enriched)
+        self.assertNotIn("behavioral_kind", enriched)
+
+    def test_capped_at_budget_flag_plumbs_through(self):
+        # Slice 2's runner stamps capped_at_budget when trials exceed
+        # PER_TEST_PREDICTION_BUDGET — the UI surfaces this so the user
+        # sees "tested N of M" rather than silently truncated counts.
+        enriched = self._build_index_and_check(
+            metric_id="behavioral.huge_test.pass_rate",
+            behavioral_block={
+                "huge_test": {
+                    "kind": "INV",
+                    "pass_rate": 0.5,
+                    "passed": 1000,
+                    "total": 2000,
+                    "failed_examples": [],
+                    "capped_at_budget": 2000,
+                },
+            },
+        )
+        self.assertEqual(enriched["behavioral_capped_at_budget"], 2000)
+
+    def test_test_id_not_in_index_passes_through_unchanged(self):
+        # Gate references a test that's not in the latest EvalResult
+        # (recent pack edit, scan hasn't re-run). Don't merge anything.
+        enriched = self._build_index_and_check(
+            metric_id="behavioral.future_test.pass_rate",
+        )
+        # The test wasn't in the behavioral block, so no enrichment.
+        self.assertNotIn("behavioral_test_id", enriched)
+
+
 if __name__ == "__main__":
     unittest.main()
