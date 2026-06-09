@@ -212,6 +212,28 @@ const NAVIGATE_TARGET_URLS: Record<
     // each cell missed the gate rather than promoting a sub-gate model.
     'failure-clusters-panel': (projectId) =>
         `/project/${projectId}/observability#failure-clusters`,
+    // Quality-Lift phase 3 slice 2 — active-learning Coach nudge sends
+    // the user to the labeler with the assignment strategy pre-set to
+    // ``active``. The nudge stamps the dominant ``label_job_id`` from
+    // the snapshot so the deep-link lands on the right job without an
+    // extra picker step. We pre-set ``localStorage.slm_annotate_strategy``
+    // because ProjectAnnotatePage reads it on mount (see
+    // ProjectAnnotatePage.tsx:370-373); a future polish could plumb the
+    // strategy via URL query, but localStorage works today with zero
+    // page-level changes.
+    'active-labeling-queue': (projectId, params) => {
+        try {
+            window.localStorage.setItem('slm_annotate_strategy', 'active');
+        } catch {
+            // Private mode / quota — fall through; user can still
+            // toggle the radio button on the labeler page itself.
+        }
+        const jobId = params['label_job_id'];
+        if (typeof jobId === 'number' && Number.isFinite(jobId)) {
+            return `/project/${projectId}/annotate/${jobId}`;
+        }
+        return `/project/${projectId}/annotate`;
+    },
 };
 
 export default function CoachSuggestionCard({

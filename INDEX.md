@@ -18,6 +18,7 @@ session-start guidance.
 
 ## Backend · API routes
 
+- `backend/app/api/active_learning.py` — Quality-Lift phase 3 slice 2 — Active-learning snapshot read endpoint.
 - `backend/app/api/adapter_studio.py` — API routes for Dataset Structure Explorer + Adapter Studio.
 - `backend/app/api/admin.py` — Admin API surface (USER-SUCCESS Epic 1, T5).
 - `backend/app/api/annotation.py` — Annotation foundation API (Story 1.1).
@@ -585,6 +586,7 @@ session-start guidance.
 
 - `backend/tests/conftest.py` — Pytest session-scoped safety pin — force every test to write to /tmp.
 - `backend/tests/test_active_learning_service.py` — Tests for the active-learning recommender (Theme 8 Epic 2).
+- `backend/tests/test_active_learning_slice2.py` — Quality-Lift phase 3 slice 2 — Active-learning snapshot read endpoint
 - `backend/tests/test_adapter_handler_prompt_sweep.py` — Permanent regression guard for β-shape prompt-format gaps
 - `backend/tests/test_adapter_subtask_resolver.py` — Tests for the shared subtask-propagation infrastructure.
 - `backend/tests/test_annotation_active_learning.py` — Epic F Phase 1 — active-learning row ranker for label-jobs.

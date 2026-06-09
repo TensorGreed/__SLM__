@@ -938,6 +938,107 @@ def _curriculum_training_suggestion(
     }
 
 
+async def _active_learning_ready_nudge(
+    db: AsyncSession, project_id: int,
+) -> dict[str, Any] | None:
+    """Quality-Lift phase 3 slice 2 — Training-stage Coach nudge:
+    "Label N uncertain rows before the next train."
+
+    Fires when the most recent COMPLETED experiment has a non-empty
+    active-learning snapshot (slice 1) AND fewer than
+    ``STALENESS_THRESHOLD`` (0.80) of the snapshot's rows have been
+    labeled since. Silences automatically when:
+
+      - No COMPLETED experiment has a snapshot yet (fresh project).
+      - The snapshot is empty (skipped_reason set — non-classification
+        task, empty pool, scoring failed; the Data Studio card in
+        slice 3 surfaces the reason).
+      - ≥80% of the snapshot's rows have been labeled — the user
+        worked through the queue.
+
+    Returns the suggestion dict matching the locked Coach contract,
+    or ``None`` to skip. The endpoint
+    ``GET /api/projects/{id}/active-learning/latest`` shares the same
+    snapshot-read + labeled-count logic; we duplicate it here rather
+    than call the endpoint to avoid an HTTP round-trip from Coach.
+    """
+    from app.api.active_learning import (
+        STALENESS_THRESHOLD,
+        _count_labeled_rows,
+        _latest_completed_experiment_with_snapshot,
+    )
+
+    exp = await _latest_completed_experiment_with_snapshot(db, project_id)
+    if exp is None:
+        return None
+
+    cfg = exp.config if isinstance(exp.config, dict) else {}
+    runtime = cfg.get("_runtime") if isinstance(cfg.get("_runtime"), dict) else {}
+    snapshot = runtime.get("active_learning") if isinstance(runtime, dict) else None
+    if not isinstance(snapshot, dict):
+        return None
+    top_k_entries = list(snapshot.get("top_k") or [])
+    top_k_size = len(top_k_entries)
+    if top_k_size == 0:
+        return None
+
+    row_ids = [
+        int(entry["label_row_id"])
+        for entry in top_k_entries
+        if isinstance(entry, dict) and isinstance(entry.get("label_row_id"), int)
+    ]
+    labeled_count = await _count_labeled_rows(db, row_ids)
+    staleness_ratio = labeled_count / top_k_size if top_k_size else 0.0
+    if staleness_ratio >= STALENESS_THRESHOLD:
+        return None  # snapshot worked through; silence
+
+    unlabeled_count = max(0, top_k_size - labeled_count)
+    # Use the dominant job_id from the top_k entries so the deep-link
+    # lands the labeler directly on the right job. Top-K usually all
+    # come from one classification job, but in the rare cross-job
+    # case we route to the first one and the user can switch jobs in
+    # the labeler.
+    dominant_job_id: int | None = None
+    for entry in top_k_entries:
+        if isinstance(entry, dict) and isinstance(entry.get("label_job_id"), int):
+            dominant_job_id = int(entry["label_job_id"])
+            break
+
+    uncertainty_metric = str(snapshot.get("uncertainty_metric") or "entropy")
+
+    return {
+        "id": "training:active-learning-ready",
+        "title": (
+            f"Label {unlabeled_count} uncertain rows before the next train"
+        ),
+        "body": (
+            f"Experiment #{int(exp.id)} scored your unlabeled pool by "
+            f"{uncertainty_metric}; the top {top_k_size} most-uncertain "
+            f"rows are queued and {labeled_count} of them are already "
+            "labeled. Working through the rest now maximizes the lift "
+            "on the next training run."
+        ),
+        "severity": "info",
+        "action": {
+            "kind": "navigate",
+            "label": "Open label queue",
+            "params": {
+                "target": "active-labeling-queue",
+                "label_job_id": dominant_job_id,
+            },
+        },
+        "rule_id": "active-learning-ready.snapshot-fresh",
+        "context": {
+            "experiment_id": int(exp.id),
+            "snapshot_size": top_k_size,
+            "labeled_count": labeled_count,
+            "unlabeled_count": unlabeled_count,
+            "staleness_ratio": round(staleness_ratio, 4),
+            "uncertainty_metric": uncertainty_metric,
+        },
+    }
+
+
 async def _training_stage_suggestions(
     db: AsyncSession, project: Project
 ) -> list[dict[str, Any]]:
@@ -993,6 +1094,18 @@ async def _training_stage_suggestions(
     curriculum_nudge = _curriculum_training_suggestion(project.id, recipe_id)
     if curriculum_nudge:
         suggestions.append(curriculum_nudge)
+
+    # Quality-Lift phase 3 slice 2 — active-learning nudge fires
+    # independently of the forecast logic too. The slice 1 post-training
+    # hook stamped a snapshot of the most-uncertain unlabeled rows onto
+    # ``_runtime["active_learning"]``; this surfaces it as a Coach
+    # suggestion that links to the existing label queue with
+    # assign_strategy=active. Silences automatically when ≥ 80% of the
+    # snapshot has been labeled, so users who already worked through
+    # the queue don't see a stale suggestion.
+    active_learning_nudge = await _active_learning_ready_nudge(db, project.id)
+    if active_learning_nudge:
+        suggestions.append(active_learning_nudge)
 
     # Phase 8c — archetype-drift nudge runs alongside the curriculum
     # nudge and BEFORE the forecast logic (so it surfaces even when
