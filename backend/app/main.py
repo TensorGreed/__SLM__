@@ -40,6 +40,7 @@ from app.api.archetypes import router as archetypes_router
 from app.api.auto_rag import router as auto_rag_router
 from app.api.active_learning import router as active_learning_router
 from app.api.label_noise import router as label_noise_router
+from app.api.behavioral_tests import router as behavioral_tests_router
 from app.api.annotation import router as annotation_router
 from app.api.dataset_import import (
     catalog_router as dataset_import_catalog_router,
@@ -381,6 +382,7 @@ app.include_router(archetypes_router, prefix="/api", dependencies=API_DEPENDENCI
 app.include_router(auto_rag_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(active_learning_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(label_noise_router, prefix="/api", dependencies=API_DEPENDENCIES)
+app.include_router(behavioral_tests_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(annotation_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_catalog_router, prefix="/api", dependencies=API_DEPENDENCIES)
 app.include_router(dataset_import_project_router, prefix="/api", dependencies=API_DEPENDENCIES)

@@ -1,0 +1,205 @@
+/* Quality-Lift phase 7 slice 2 — BehavioralTestsSection styles. */
+
+.bt-section {
+    margin-bottom: var(--space-lg);
+}
+
+.bt-section--loading,
+.bt-section--error {
+    padding: var(--space-md);
+    color: var(--text-tertiary);
+    text-align: center;
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-default);
+    border-radius: 6px;
+}
+
+.bt-section--error {
+    color: var(--color-error);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-md);
+}
+
+.bt-section__form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.bt-section__form-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: var(--space-md);
+}
+
+.bt-section__label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.bt-section__field-error {
+    color: var(--color-error);
+    font-size: 0.75rem;
+}
+
+.bt-section__subgroup {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+}
+
+.bt-section__subgroup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.bt-section__seed-row,
+.bt-section__mft-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 30px;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.bt-section__example-input,
+.bt-section__example-label {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 4px 8px;
+}
+
+.bt-section__pert {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.bt-section__pert-kind {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.bt-section__pert-param {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.bt-section__pert-param input,
+.bt-section__pert-param select {
+    font-size: 0.85rem;
+    padding: 4px 6px;
+    font-family: var(--font-mono);
+    max-width: 140px;
+}
+
+.bt-section__dir-expectation {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.bt-section__dir-expectation select,
+.bt-section__dir-expectation input {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.bt-section__gate-button {
+    color: var(--color-info);
+    font-size: 0.75rem;
+}
+
+/* Gate-this-test modal — reuses the slices modal styling intent. */
+.bt-section__modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bt-section__modal {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    padding: var(--space-lg);
+    max-width: 560px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.bt-section__modal h4 {
+    margin: 0;
+}
+
+.bt-section__modal p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.bt-section__modal-section-title {
+    margin-top: var(--space-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.bt-section__modal-metric-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+}
+
+.bt-section__modal-metric {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.bt-section__modal-help {
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+    font-style: italic;
+}
+
+.bt-section__modal-slice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.bt-section__modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}

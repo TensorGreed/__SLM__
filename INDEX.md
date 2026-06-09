@@ -28,6 +28,7 @@ session-start guidance.
 - `backend/app/api/auth.py` — Authentication, user management, and project membership routes.
 - `backend/app/api/auto_rag.py` — Auto-RAG API routes (USER-SUCCESS Epic 9 Phase 9a).
 - `backend/app/api/autopilot.py` — Autopilot API — decision-log query + rollback + repair preview/apply surface.
+- `backend/app/api/behavioral_tests.py` — Quality-Lift phase 7 slice 2 — Behavioral tests CRUD scoped to the
 - `backend/app/api/cleaning.py` — Data Cleaning API routes.
 - `backend/app/api/coach.py` — Coach Mode API routes (USER-SUCCESS Epic 4 Phase 1).
 - `backend/app/api/comparison.py` — Comparison API for experiments.
@@ -385,6 +386,7 @@ session-start guidance.
 - `frontend/src/api/activeLearning.ts` — Typed wrapper for the Theme 8 Epic 2 active-learning recommender.
 - `frontend/src/api/annotation.ts` — Typed wrappers around the Story 1.1 annotation API.
 - `frontend/src/api/archetypeComparison.ts` — Typed client for the per-project archetype comparison
+- `frontend/src/api/behavioralTests.ts` — Behavioral tests CRUD client (Quality-Lift phase 7 slice 2).
 - `frontend/src/api/blueprintAnalyze.ts` — Typed wrapper for the brief-analysis endpoint
 - `frontend/src/api/client.ts` — Axios HTTP client configured with /api base URL and auth-token interceptor that redirects on 401.
 - `frontend/src/api/coach.ts` — Coach suggestion types + async fetcher for stage-specific coaching recommendations.
@@ -504,6 +506,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
+- `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.tsx` — DriftReviewQueuePanel — UI for E4's drift-triggered hallucination
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.tsx` — EvalPackScaffoldPanel — recipe-aware draft eval-pack with inline
@@ -617,6 +620,7 @@ session-start guidance.
 - `backend/tests/test_behavioral_per_slice_coach_nudge_slice3.py` — Quality-Lift phase 6 slice 3 — Coach nudge:
 - `backend/tests/test_behavioral_test_runner_slice2.py` — Quality-Lift phase 5 slice 2 — Behavioral test runner + flattener.
 - `backend/tests/test_behavioral_test_schema_slice1.py` — Quality-Lift phase 5 slice 1 — Behavioral test pack schema validator.
+- `backend/tests/test_behavioral_tests_endpoint_slice2.py` — Quality-Lift phase 7 slice 2 — behavioral_tests focused CRUD endpoint.
 - `backend/tests/test_bell_live_metrics.py` — Tests for the bell live-loss sparkline backend
 - `backend/tests/test_chat_template_rewrap.py` — Tests for the opt-in chat-template re-wrap pass
 - `backend/tests/test_checkpoint_registry.py` — Unit tests for the warm-start checkpoint registry (Track 1, Epic B).
@@ -878,6 +882,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
+- `frontend/src/components/evaluation/BehavioralTestsSection.test.tsx` — Quality-Lift phase 7 slice 2 — BehavioralTestsSection tests.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/DriftReviewQueuePanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/EvalPackScaffoldPanel.test.tsx` — _(no docstring)_

@@ -32,9 +32,14 @@ import {
     PLATFORM_FIELDS,
     saveSliceDefinitions,
     SLICE_OPERATORS,
-    SliceDefinition,
-    SliceClause,
 } from '../../api/sliceDefinitions';
+// Vite + esbuild serves the dev module with all named imports as
+// runtime references — TypeScript-only types (``SliceDefinition`` /
+// ``SliceClause`` are erased at compile time) must be brought in via
+// ``import type`` or the browser blows up with "'SliceDefinition' is
+// not exported". This bit dev-server loading after slice 1 — fix
+// applied so the page renders.
+import type { SliceDefinition, SliceClause } from '../../api/sliceDefinitions';
 import './SlicesSection.css';
 
 // Slice ID grammar mirrors the backend regex in

@@ -34,6 +34,7 @@ import {
 } from '../../api/evalPackScaffold';
 import { toast } from '../../stores/toastStore';
 import SlicesSection from './SlicesSection';
+import BehavioralTestsSection from './BehavioralTestsSection';
 import './EvalPackScaffoldPanel.css';
 
 
@@ -368,11 +369,17 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
             )}
 
             {/* Quality-Lift phase 7 slice 1 — Slices editor renders
-                above the gates section. Phase 7 slice 2 will add the
-                behavioral tests editor here too; both compose with the
-                pack contract the gates section already edits, so
-                surfacing them together is the natural place. */}
+                above the gates section. Both compose with the pack
+                contract the gates section already edits, so surfacing
+                them together is the natural place. */}
             <SlicesSection projectId={projectId} />
+
+            {/* Quality-Lift phase 7 slice 2 — Behavioral tests editor
+                renders below slices + above the gates loop. Saves
+                round-trip via the focused /behavioral-tests endpoint
+                that mutates JUST task_specs[].behavioral_tests on the
+                scaffolded pack. */}
+            <BehavioralTestsSection projectId={projectId} />
 
             {draft.task_specs.map((spec, taskIdx) => (
                 <div
