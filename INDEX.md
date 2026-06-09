@@ -404,6 +404,7 @@ session-start guidance.
 - `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
+- `frontend/src/api/sliceDefinitions.ts` — Slice-definitions CRUD client.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
 - `frontend/src/api/studentTeacherComparison.ts` — Typed wrapper for the Track 1 Epic A slice 3 student-vs-teacher comparison.
 - `frontend/src/api/synthPlaybook.ts` — Typed API wrapper for the synth playbook framework
@@ -510,9 +511,11 @@ session-start guidance.
 - `frontend/src/components/evaluation/FailureClustersPanel.tsx` — Failure pattern grouper with cluster explanation and augmentation recommendations.
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
+- `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
+- `frontend/src/components/evaluation/SlicesSection.tsx` — Quality-Lift phase 7 slice 1 — Slices editor section.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.tsx` — Student-vs-teacher distillation comparison panel (Track 1, Epic A, slice 3).
 - `frontend/src/components/export/ExportPanel.tsx` — Model export orchestrator supporting format conversion and deployment-target provisioning.
 - `frontend/src/components/extensions/ExtensionKindList.tsx` — ExtensionKindList — left column of the Extension Studio page
@@ -887,9 +890,11 @@ session-start guidance.
 - `frontend/src/components/evaluation/FailureClustersPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/FrontierComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/SlicesSection.test.tsx` — Quality-Lift phase 7 slice 1 — SlicesSection tests.
 - `frontend/src/components/evaluation/StudentTeacherComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/export/ExportPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/gamification/AchievementToast.test.tsx` — CRT achievement toast contract.

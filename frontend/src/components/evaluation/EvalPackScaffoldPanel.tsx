@@ -33,6 +33,7 @@ import {
     savePackScaffold,
 } from '../../api/evalPackScaffold';
 import { toast } from '../../stores/toastStore';
+import SlicesSection from './SlicesSection';
 import './EvalPackScaffoldPanel.css';
 
 
@@ -365,6 +366,13 @@ export default function EvalPackScaffoldPanel({ projectId, onSaved }: Props) {
                     ⚠️ Save rejected: <code>{inlineError}</code>
                 </p>
             )}
+
+            {/* Quality-Lift phase 7 slice 1 — Slices editor renders
+                above the gates section. Phase 7 slice 2 will add the
+                behavioral tests editor here too; both compose with the
+                pack contract the gates section already edits, so
+                surfacing them together is the natural place. */}
+            <SlicesSection projectId={projectId} />
 
             {draft.task_specs.map((spec, taskIdx) => (
                 <div
