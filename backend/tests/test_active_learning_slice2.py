@@ -299,9 +299,11 @@ class LatestEndpointTests(unittest.TestCase):
         self.assertEqual(body["top_k_size"], 0)
         self.assertEqual(body["no_snapshot_reason"], "unsupported_task_type")
 
-    def test_snapshot_returned_verbatim(self):
-        # Slice 3's Data Studio card renders the snapshot directly —
-        # any reshape would break it. Pin the round-trip exactly.
+    def test_snapshot_returned_with_slice1_fields_preserved(self):
+        # Slice 3 enriches each top_k entry with text_preview + labeled,
+        # but the slice 1 fields (label_row_id, label_job_id,
+        # uncertainty_score) must round-trip unchanged so the Coach
+        # nudge + Data Studio card both read the same underlying ranking.
         pid = _create_project()
         job_id, row_ids = _seed_label_rows(pid, n=2)
         snapshot = _build_snapshot(
@@ -310,8 +312,15 @@ class LatestEndpointTests(unittest.TestCase):
         )
         _seed_completed_experiment(pid, snapshot=snapshot)
         body = CLIENT.get(f"/api/projects/{pid}/active-learning/latest").json()
-        # The full snapshot is echoed back; downstream surfaces parse it.
-        self.assertEqual(body["snapshot"]["top_k"], snapshot["top_k"])
+        # Slice 1 contract preserved per entry.
+        for i, entry in enumerate(body["snapshot"]["top_k"]):
+            self.assertEqual(entry["label_row_id"], snapshot["top_k"][i]["label_row_id"])
+            self.assertEqual(entry["label_job_id"], snapshot["top_k"][i]["label_job_id"])
+            self.assertEqual(
+                entry["uncertainty_score"],
+                snapshot["top_k"][i]["uncertainty_score"],
+            )
+        # Top-level fields untouched by enrichment.
         self.assertEqual(body["snapshot"]["uncertainty_metric"], "entropy")
 
 
@@ -427,6 +436,109 @@ class ActiveLearningCoachNudgeTests(unittest.TestCase):
         # Title surfaces unlabeled count, not total — "Label 2 ..." not
         # "Label 5 ...".
         self.assertIn("2 uncertain", nudge["title"])
+
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Slice 3 — endpoint enrichment for Data Studio card
+# ────────────────────────────────────────────────────────────────────────
+
+
+class LatestEndpointSlice3EnrichmentTests(unittest.TestCase):
+    """Slice 3 added text_preview + labeled flag per top_k entry, plus
+    dominant_label_job_id at the top level. These pins guard against
+    accidental drift in the contract the Data Studio card depends on."""
+
+    def test_top_k_entries_carry_text_preview_from_raw_payload(self):
+        pid = _create_project()
+        job_id, row_ids = _seed_label_rows(pid, n=3)
+        # Override one row's raw_payload to make the preview check
+        # unambiguous (the seeder uses ``text``; this confirms the
+        # extractor walks the same field list).
+        async def _override_text() -> None:
+            async with async_session_factory() as session:
+                row = (await session.execute(
+                    select(LabelRow).where(LabelRow.id == row_ids[0])
+                )).scalar_one()
+                row.raw_payload = {"text": "this is a clear uncertain example"}
+                await session.commit()
+        asyncio.run(_override_text())
+
+        snapshot = _build_snapshot(
+            model_experiment_id=0,
+            top_k_rows=[(row_ids[i], job_id, 1.0 - i * 0.1) for i in range(3)],
+        )
+        _seed_completed_experiment(pid, snapshot=snapshot)
+        body = CLIENT.get(f"/api/projects/{pid}/active-learning/latest").json()
+        entries = body["snapshot"]["top_k"]
+        # All three entries have text_preview keys (None or string).
+        for entry in entries:
+            self.assertIn("text_preview", entry)
+        # The overridden row's preview matches verbatim.
+        first = next(e for e in entries if e["label_row_id"] == row_ids[0])
+        self.assertEqual(first["text_preview"], "this is a clear uncertain example")
+
+    def test_long_text_preview_truncated_with_ellipsis(self):
+        pid = _create_project()
+        job_id, row_ids = _seed_label_rows(pid, n=1)
+        # 500-char text; preview should clip near the 140-char ceiling
+        # and end with an ellipsis so the user sees "this was cut."
+        async def _override_text() -> None:
+            async with async_session_factory() as session:
+                row = (await session.execute(
+                    select(LabelRow).where(LabelRow.id == row_ids[0])
+                )).scalar_one()
+                row.raw_payload = {"text": "a" * 500}
+                await session.commit()
+        asyncio.run(_override_text())
+
+        snapshot = _build_snapshot(
+            model_experiment_id=0,
+            top_k_rows=[(row_ids[0], job_id, 0.9)],
+        )
+        _seed_completed_experiment(pid, snapshot=snapshot)
+        body = CLIENT.get(f"/api/projects/{pid}/active-learning/latest").json()
+        preview = body["snapshot"]["top_k"][0]["text_preview"]
+        self.assertLessEqual(len(preview), 140)
+        self.assertTrue(preview.endswith("…"))
+
+    def test_labeled_flag_set_for_labeled_rows(self):
+        pid = _create_project()
+        job_id, row_ids = _seed_label_rows(pid, n=3)
+        # Label one of the three.
+        _mark_labeled([row_ids[1]])
+
+        snapshot = _build_snapshot(
+            model_experiment_id=0,
+            top_k_rows=[(row_ids[i], job_id, 1.0 - i * 0.1) for i in range(3)],
+        )
+        _seed_completed_experiment(pid, snapshot=snapshot)
+        body = CLIENT.get(f"/api/projects/{pid}/active-learning/latest").json()
+        labeled_flags = {
+            entry["label_row_id"]: entry["labeled"]
+            for entry in body["snapshot"]["top_k"]
+        }
+        self.assertFalse(labeled_flags[row_ids[0]])
+        self.assertTrue(labeled_flags[row_ids[1]])
+        self.assertFalse(labeled_flags[row_ids[2]])
+
+    def test_dominant_label_job_id_surfaced(self):
+        # Data Studio's "Open label queue" button uses this to deep-link
+        # straight to the right job without an extra picker step.
+        pid = _create_project()
+        job_id, row_ids = _seed_label_rows(pid, n=2)
+        snapshot = _build_snapshot(
+            model_experiment_id=0,
+            top_k_rows=[(rid, job_id, 0.5) for rid in row_ids],
+        )
+        _seed_completed_experiment(pid, snapshot=snapshot)
+        body = CLIENT.get(f"/api/projects/{pid}/active-learning/latest").json()
+        self.assertEqual(body["dominant_label_job_id"], job_id)
+
+    def test_dominant_label_job_id_none_when_no_snapshot(self):
+        pid = _create_project()
+        body = CLIENT.get(f"/api/projects/{pid}/active-learning/latest").json()
+        self.assertIsNone(body["dominant_label_job_id"])
 
 
 if __name__ == "__main__":

@@ -406,3 +406,117 @@
         justify-self: flex-start;
     }
 }
+
+/* Quality-Lift phase 3 slice 3 — Active-learning queue card. */
+.data-studio-review__al-card {
+    border: 1px solid var(--border-default);
+    border-left: 3px solid var(--color-info);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.data-studio-review__al-card--stale {
+    border-left-color: var(--color-warning);
+}
+
+.data-studio-review__al-card--empty {
+    border-left-color: var(--border-default);
+}
+
+.data-studio-review__al-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+}
+
+.data-studio-review__al-head > div {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.data-studio-review__al-head small {
+    color: var(--text-tertiary);
+    font-size: 0.85em;
+}
+
+.data-studio-review__al-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 1.05rem;
+}
+
+.data-studio-review__al-count small {
+    color: var(--text-tertiary);
+    font-weight: 400;
+    font-size: 0.85em;
+}
+
+.data-studio-review__al-meta {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+.data-studio-review__al-empty {
+    color: var(--text-tertiary);
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+.data-studio-review__al-stale {
+    margin: 0;
+    padding: var(--space-sm);
+    background: var(--color-warning-bg);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+.data-studio-review__al-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-studio-review__al-table th,
+.data-studio-review__al-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-default);
+    font-variant-numeric: tabular-nums;
+    vertical-align: top;
+}
+
+.data-studio-review__al-table th {
+    color: var(--text-tertiary);
+    font-weight: 500;
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.data-studio-review__al-row--labeled {
+    opacity: 0.55;
+}
+
+.data-studio-review__al-labeled-tag {
+    color: var(--color-success);
+    font-weight: 600;
+}
+
+.data-studio-review__al-preview {
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.data-studio-review__al-preview--missing {
+    color: var(--text-tertiary);
+    font-style: italic;
+}

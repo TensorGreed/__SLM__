@@ -1,5 +1,11 @@
 /**
  * Panel tracking review work queues across synthetic, Gold Set, and annotation workflows.
+ *
+ * Quality-Lift phase 3 slice 3 — Active-learning card surfaces the most
+ * recent training run's top-K most-uncertain unlabeled rows. The card
+ * reads ``GET /api/projects/{id}/active-learning/latest`` and renders a
+ * top-5 row table with text previews and a click-through to the
+ * existing labeler with assign_strategy pre-set to ``active``.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -11,9 +17,11 @@ import {
     ListChecks,
     RefreshCw,
     ShieldCheck,
+    Sparkles,
     UserCheck,
 } from 'lucide-react';
 
+import api from '../../api/client';
 import {
     getDataStudioReviewQueue,
 } from '../../api/dataStudio';
@@ -22,6 +30,45 @@ import type {
     DataStudioReviewQueueTriageItem,
 } from '../../api/dataStudio';
 import './DataStudioReviewQueuePanel.css';
+
+// Quality-Lift phase 3 slice 3 — Active-learning snapshot shape.
+// Mirrors the backend response from /api/projects/{id}/active-learning/latest;
+// kept local to this panel because the snapshot is a per-component
+// concern (the Coach nudge already reads it server-side and emits a
+// CoachSuggestion). If a second consumer lands later, lift to api/.
+interface ActiveLearningTopKEntry {
+    label_row_id: number;
+    label_job_id: number;
+    uncertainty_score: number;
+    text_preview: string | null;
+    labeled: boolean;
+}
+
+interface ActiveLearningSnapshot {
+    scored_at: string;
+    model_experiment_id: number;
+    task_type: string | null;
+    uncertainty_metric: string;
+    pool_size_total: number;
+    pool_size_scored: number;
+    top_k: ActiveLearningTopKEntry[];
+    skipped_reason: string | null;
+}
+
+interface ActiveLearningLatestResponse {
+    project_id: number;
+    snapshot: ActiveLearningSnapshot | null;
+    experiment_id: number | null;
+    experiment_name: string | null;
+    top_k_size: number;
+    labeled_count: number;
+    unlabeled_count: number;
+    staleness_ratio: number;
+    is_stale: boolean;
+    no_snapshot_reason: string | null;
+    staleness_threshold: number;
+    dominant_label_job_id: number | null;
+}
 
 interface DataStudioReviewQueuePanelProps {
     projectId: number;
@@ -107,6 +154,137 @@ function TriageCard({
     );
 }
 
+function formatNoSnapshotReason(reason: string | null | undefined): string {
+    // Slice 1 stamps these reasons onto an empty snapshot so this card
+    // can stay informative rather than disappearing. Mapping to
+    // user-facing copy here so the backend stays terse + the panel
+    // stays self-contained.
+    switch (reason) {
+        case 'no_completed_experiment_with_snapshot':
+            return 'No completed training run has scored the unlabeled pool yet.';
+        case 'unsupported_task_type':
+            return 'Scoring is classification-only today; this project trains a different task type.';
+        case 'empty_pool':
+            return 'No unlabeled rows in the project pool to score.';
+        case 'no_label_space_configured':
+            return 'No classification label_job is configured for this project.';
+        case 'checkpoint_path_missing':
+            return 'The last training run did not save a checkpoint we could score against.';
+        case 'scoring_failed':
+            return 'Scoring failed during the last training run; check the experiment runtime for details.';
+        case 'snapshot_empty':
+            return 'The last run produced an empty snapshot.';
+        default:
+            return reason ? `Scoring skipped: ${labelForToken(reason)}.` : '';
+    }
+}
+
+function ActiveLearningCard({
+    snapshot,
+    onOpenLabelQueue,
+}: {
+    snapshot: ActiveLearningLatestResponse;
+    onOpenLabelQueue: (jobId: number | null) => void;
+}) {
+    // No snapshot AT ALL (fresh project, no completed run with
+    // scoring) — render a quiet placeholder so the user understands
+    // the surface is here but not yet populated.
+    if (snapshot.snapshot === null || snapshot.top_k_size === 0) {
+        const message = formatNoSnapshotReason(snapshot.no_snapshot_reason);
+        if (!message) {
+            return null;
+        }
+        return (
+            <article className="data-studio-review__al-card data-studio-review__al-card--empty">
+                <div className="data-studio-review__al-head">
+                    <div>
+                        <Sparkles size={16} aria-hidden="true" />
+                        <strong>Active-learning queue</strong>
+                    </div>
+                </div>
+                <p className="data-studio-review__al-empty">{message}</p>
+            </article>
+        );
+    }
+
+    const top5 = snapshot.snapshot.top_k.slice(0, 5);
+    const samplePct = snapshot.snapshot.pool_size_total > 0
+        ? Math.round(
+            (snapshot.snapshot.pool_size_scored / snapshot.snapshot.pool_size_total) * 100,
+        )
+        : 0;
+    const stalePct = Math.round(snapshot.staleness_ratio * 100);
+
+    return (
+        <article className={`data-studio-review__al-card ${snapshot.is_stale ? 'data-studio-review__al-card--stale' : ''}`}>
+            <div className="data-studio-review__al-head">
+                <div>
+                    <Sparkles size={16} aria-hidden="true" />
+                    <strong>Active-learning queue</strong>
+                    <small>
+                        scored by exp #{snapshot.experiment_id}
+                        {snapshot.experiment_name ? ` — ${snapshot.experiment_name}` : ''}
+                    </small>
+                </div>
+                <span className="data-studio-review__al-count">
+                    {snapshot.unlabeled_count} <small>/ {snapshot.top_k_size} unlabeled</small>
+                </span>
+            </div>
+            <p className="data-studio-review__al-meta">
+                {snapshot.snapshot.uncertainty_metric} · sampled {snapshot.snapshot.pool_size_scored} of {snapshot.snapshot.pool_size_total} unlabeled rows ({samplePct}%)
+                {snapshot.top_k_size > 0 ? ` · ${stalePct}% labeled` : ''}
+            </p>
+            {snapshot.is_stale && (
+                <p className="data-studio-review__al-stale">
+                    You've worked through most of this snapshot — consider re-training to score a fresh batch.
+                </p>
+            )}
+            <table className="data-studio-review__al-table">
+                <thead>
+                    <tr>
+                        <th>Row</th>
+                        <th>Score</th>
+                        <th>Preview</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {top5.map((entry) => (
+                        <tr
+                            key={entry.label_row_id}
+                            className={entry.labeled ? 'data-studio-review__al-row--labeled' : ''}
+                        >
+                            <td>
+                                <code>#{entry.label_row_id}</code>
+                                {entry.labeled && (
+                                    <span className="data-studio-review__al-labeled-tag" title="already labeled">
+                                        {' '}✓
+                                    </span>
+                                )}
+                            </td>
+                            <td>{entry.uncertainty_score.toFixed(3)}</td>
+                            <td>
+                                {entry.text_preview ? (
+                                    <span className="data-studio-review__al-preview">{entry.text_preview}</span>
+                                ) : (
+                                    <em className="data-studio-review__al-preview--missing">(no text)</em>
+                                )}
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+            <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onOpenLabelQueue(snapshot.dominant_label_job_id)}
+            >
+                <ExternalLink size={15} aria-hidden="true" />
+                Open label queue
+            </button>
+        </article>
+    );
+}
+
 export default function DataStudioReviewQueuePanel({
     projectId,
     onOpenTarget,
@@ -114,6 +292,10 @@ export default function DataStudioReviewQueuePanel({
     const [queue, setQueue] = useState<DataStudioReviewQueue | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Slice 3 — Active-learning card state. Separate fetch + state from
+    // the main review queue so an AL endpoint failure (network blip,
+    // first-time project) doesn't pull down the rest of the panel.
+    const [alSnapshot, setAlSnapshot] = useState<ActiveLearningLatestResponse | null>(null);
 
     const loadQueue = async () => {
         setLoading(true);
@@ -128,10 +310,41 @@ export default function DataStudioReviewQueuePanel({
         }
     };
 
+    const loadActiveLearning = async () => {
+        try {
+            const resp = await api.get<ActiveLearningLatestResponse>(
+                `/projects/${projectId}/active-learning/latest`,
+            );
+            setAlSnapshot(resp.data);
+        } catch {
+            // Best-effort — leave card hidden if the read fails. The
+            // Coach nudge already independently reads this snapshot;
+            // a panel-level read failure shouldn't take down the
+            // whole review queue surface.
+            setAlSnapshot(null);
+        }
+    };
+
     useEffect(() => {
         void loadQueue();
+        void loadActiveLearning();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId]);
+
+    const handleOpenLabelQueue = (jobId: number | null) => {
+        // Mirror CoachSuggestion's ``active-labeling-queue`` target —
+        // pre-set localStorage so ProjectAnnotatePage honors the active
+        // strategy on mount, then route to the dominant job.
+        try {
+            window.localStorage.setItem('slm_annotate_strategy', 'active');
+        } catch {
+            // Private mode / quota — user can still toggle the radio.
+        }
+        const url = jobId != null
+            ? `/project/${projectId}/annotate/${jobId}`
+            : `/project/${projectId}/annotate`;
+        window.location.assign(url);
+    };
 
     const topIssues = useMemo(
         () => queue?.issues.slice(0, 4) ?? [],
@@ -308,6 +521,13 @@ export default function DataStudioReviewQueuePanel({
                     </div>
                 </div>
             </div>
+
+            {alSnapshot ? (
+                <ActiveLearningCard
+                    snapshot={alSnapshot}
+                    onOpenLabelQueue={handleOpenLabelQueue}
+                />
+            ) : null}
 
             {topIssues.length > 0 ? (
                 <ul className="data-studio-review__issues">

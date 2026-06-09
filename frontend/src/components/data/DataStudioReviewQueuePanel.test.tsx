@@ -285,4 +285,114 @@ describe('DataStudioReviewQueuePanel', () => {
         fireEvent.click(screen.getAllByRole('button', { name: /^Open Synthetic$/i })[0]);
         expect(onOpenTarget).toHaveBeenCalledWith('synthetic');
     });
+
+    // ────────────────────────────────────────────────────────────────────
+    // Quality-Lift phase 3 slice 3 — Active-learning card
+    // ────────────────────────────────────────────────────────────────────
+
+    const buildAlSnapshot = (overrides: Record<string, unknown> = {}) => ({
+        project_id: 1,
+        snapshot: {
+            scored_at: '2026-06-09T12:00:00Z',
+            model_experiment_id: 42,
+            task_type: 'classification',
+            uncertainty_metric: 'entropy',
+            pool_size_total: 2000,
+            pool_size_scored: 500,
+            skipped_reason: null,
+            top_k: [
+                { label_row_id: 101, label_job_id: 7, uncertainty_score: 1.32, text_preview: 'is this a benign or attack?', labeled: false },
+                { label_row_id: 102, label_job_id: 7, uncertainty_score: 1.28, text_preview: 'classify the following …', labeled: false },
+                { label_row_id: 103, label_job_id: 7, uncertainty_score: 1.10, text_preview: 'previously-labeled row', labeled: true },
+                { label_row_id: 104, label_job_id: 7, uncertainty_score: 0.95, text_preview: null, labeled: false },
+                { label_row_id: 105, label_job_id: 7, uncertainty_score: 0.90, text_preview: 'last visible preview', labeled: false },
+            ],
+        },
+        experiment_id: 42,
+        experiment_name: 'exp-42',
+        top_k_size: 5,
+        labeled_count: 1,
+        unlabeled_count: 4,
+        staleness_ratio: 0.2,
+        is_stale: false,
+        no_snapshot_reason: null,
+        staleness_threshold: 0.8,
+        dominant_label_job_id: 7,
+        ...overrides,
+    });
+
+    it('renders the active-learning card with top-K rows + provenance + sample fraction', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ data: reviewQueuePayload })
+            .mockResolvedValueOnce({ data: buildAlSnapshot() });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Active-learning queue/)).toBeInTheDocument();
+        });
+        // Provenance: experiment id surfaced so user can correlate.
+        expect(screen.getByText(/scored by exp #42/)).toBeInTheDocument();
+        // Sample fraction: 500 of 2000 = 25%.
+        expect(screen.getByText(/sampled 500 of 2000/)).toBeInTheDocument();
+        expect(screen.getByText(/25%/)).toBeInTheDocument();
+        // First two rows visible by preview text.
+        expect(screen.getByText(/is this a benign or attack/)).toBeInTheDocument();
+        expect(screen.getByText(/classify the following/)).toBeInTheDocument();
+        // Missing-text row falls back to "(no text)".
+        expect(screen.getByText(/no text/)).toBeInTheDocument();
+        // Open label queue button surfaces.
+        expect(screen.getByRole('button', { name: /Open label queue/i })).toBeInTheDocument();
+        // Confirms the two fetches.
+        expect(apiMock.get).toHaveBeenCalledWith('/projects/1/active-learning/latest');
+    });
+
+    it('renders a quiet empty state when no snapshot exists', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ data: reviewQueuePayload })
+            .mockResolvedValueOnce({
+                data: buildAlSnapshot({
+                    snapshot: null,
+                    top_k_size: 0,
+                    experiment_id: null,
+                    experiment_name: null,
+                    dominant_label_job_id: null,
+                    no_snapshot_reason: 'no_completed_experiment_with_snapshot',
+                }),
+            });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Active-learning queue/)).toBeInTheDocument();
+        });
+        // Friendly explainer instead of the row table.
+        expect(
+            screen.getByText(/No completed training run has scored/i),
+        ).toBeInTheDocument();
+        // The row table should not render. Match the AL-card-specific
+        // ``sampled N of M`` string rather than a loose ``sampled``
+        // regex that would match anywhere in the panel.
+        expect(screen.queryByText(/sampled \d+ of \d+/)).toBeNull();
+        expect(screen.queryByRole('button', { name: /Open label queue/i })).toBeNull();
+    });
+
+    it('renders the stale state advisory when ≥80% of the snapshot is labeled', async () => {
+        apiMock.get
+            .mockResolvedValueOnce({ data: reviewQueuePayload })
+            .mockResolvedValueOnce({
+                data: buildAlSnapshot({
+                    labeled_count: 4,
+                    unlabeled_count: 1,
+                    staleness_ratio: 0.8,
+                    is_stale: true,
+                }),
+            });
+        render(<DataStudioReviewQueuePanel projectId={1} onOpenTarget={vi.fn()} />);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Active-learning queue/)).toBeInTheDocument();
+        });
+        expect(
+            screen.getByText(/consider re-training to score a fresh batch/i),
+        ).toBeInTheDocument();
+    });
 });
