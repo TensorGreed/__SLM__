@@ -608,6 +608,7 @@ session-start guidance.
 - `backend/tests/test_auto_rag_phase9b.py` — Tests for the Phase 9b inference + training-completion wiring.
 - `backend/tests/test_auto_rag_phase9d.py` — Tests for Phase 9d — auto-RAG default-on heuristic + target
 - `backend/tests/test_auto_rag_service.py` — Tests for the auto-RAG BM25 service (USER-SUCCESS Epic 9 Phase 9a).
+- `backend/tests/test_behavioral_by_slice_phase6_slice1.py` — Quality-Lift phase 6 slice 1 — Per-slice behavioral test scoring.
 - `backend/tests/test_behavioral_coach_nudge_slice3.py` — Quality-Lift phase 5 slice 3 — Coach nudge:
 - `backend/tests/test_behavioral_test_runner_slice2.py` — Quality-Lift phase 5 slice 2 — Behavioral test runner + flattener.
 - `backend/tests/test_behavioral_test_schema_slice1.py` — Quality-Lift phase 5 slice 1 — Behavioral test pack schema validator.

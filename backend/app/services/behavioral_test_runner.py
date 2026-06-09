@@ -46,6 +46,11 @@ from typing import Any, Callable, Sequence
 
 PER_TEST_PREDICTION_BUDGET = 2000
 FAILED_EXAMPLES_CAP = 10
+# Per-slice failed_examples cap mirrors the top-level cap — a many-slice
+# pack would otherwise blow the EvalResult.metrics JSON budget with
+# duplicated examples (slices can overlap; the same failing row may
+# land in 3 slice buckets).
+PER_SLICE_FAILED_EXAMPLES_CAP = 10
 
 
 PredictFn = Callable[[Sequence[str]], list[str]]
@@ -370,10 +375,165 @@ def _score_mft_test(
 # ────────────────────────────────────────────────────────────────────────
 
 
+def _bucket_seed_indices_by_slice(
+    seed_examples: list[dict[str, Any]],
+    slice_definitions: list[dict[str, Any]] | None,
+) -> dict[str, set[int]]:
+    """Quality-Lift phase 6 slice 1 — Return ``{slice_id: set[seed_index]}``
+    by running the project's slice predicates against each seed
+    example. Reuses phase 2's ``apply_slices`` so the predicate
+    grammar can't drift — the same closed op set evaluates both at
+    eval-row time and at behavioral-seed time.
+
+    Empty / None ``slice_definitions`` returns ``{}``; the runner
+    fast-paths through to the unsliced scoring branch in that case.
+
+    Important: slice membership is anchored to the SEED EXAMPLE, not
+    the perturbed input. Otherwise a typo perturbation could
+    silently shift a row from ``short_input`` into ``long_input``
+    and the per-slice math would be incoherent.
+    """
+    if not slice_definitions or not seed_examples:
+        return {}
+    from app.services.slice_evaluator_service import apply_slices
+
+    buckets = apply_slices(seed_examples, slice_definitions)
+    out: dict[str, set[int]] = {}
+    for slice_id, rows in buckets.items():
+        out[slice_id] = {
+            int(r["_dataset_index"])
+            for r in rows
+            if isinstance(r, dict) and isinstance(r.get("_dataset_index"), int)
+        }
+    return out
+
+
+def _bucket_example_indices_by_slice(
+    examples: list[dict[str, Any]],
+    slice_definitions: list[dict[str, Any]] | None,
+) -> dict[str, set[int]]:
+    """MFT analogue of _bucket_seed_indices_by_slice. MFT examples
+    carry ``expected_label`` rather than ``given_label`` but the
+    predicate engine only reads the input + platform-computed fields,
+    so bucketing is structurally identical."""
+    if not slice_definitions or not examples:
+        return {}
+    from app.services.slice_evaluator_service import apply_slices
+
+    buckets = apply_slices(examples, slice_definitions)
+    out: dict[str, set[int]] = {}
+    for slice_id, rows in buckets.items():
+        out[slice_id] = {
+            int(r["_dataset_index"])
+            for r in rows
+            if isinstance(r, dict) and isinstance(r.get("_dataset_index"), int)
+        }
+    return out
+
+
+def _per_slice_inv_or_dir_block(
+    test: dict[str, Any],
+    trials: list[dict[str, Any]],
+    perturbed_preds: list[str],
+    predicted_originals_by_seed_idx: dict[int, str],
+    seed_bucket: dict[str, set[int]],
+    kind: str,
+) -> dict[str, dict[str, Any]]:
+    """Build the per-slice scoring block for INV/DIR tests by reusing
+    the existing top-level scorers on the trial subset for each slice.
+
+    Trials whose seed_index isn't in a slice's bucket are excluded
+    from that slice's pass/fail math. Slices can overlap (the same
+    seed can match multiple slice predicates); each bucket scores
+    independently. Slices with zero matching trials emit total=0
+    rather than being omitted — the consumer needs to know a slice
+    matched no seed examples so it doesn't think the test silently
+    skipped the slice.
+    """
+    per_slice: dict[str, dict[str, Any]] = {}
+    for slice_id, seed_idx_set in seed_bucket.items():
+        if not seed_idx_set:
+            per_slice[slice_id] = {
+                "kind": kind,
+                "passed": 0,
+                "total": 0,
+                "pass_rate": 0.0,
+                "failed_examples": [],
+            }
+            continue
+        subset_trials = [t for t in trials if t["seed_index"] in seed_idx_set]
+        subset_indices = [
+            i for i, t in enumerate(trials) if t["seed_index"] in seed_idx_set
+        ]
+        subset_preds = [perturbed_preds[i] for i in subset_indices]
+        if not subset_trials:
+            per_slice[slice_id] = {
+                "kind": kind,
+                "passed": 0,
+                "total": 0,
+                "pass_rate": 0.0,
+                "failed_examples": [],
+            }
+            continue
+        scorer = _score_inv_test if kind == "INV" else _score_dir_test
+        block = scorer(
+            test, subset_trials, predicted_originals_by_seed_idx, subset_preds,
+        )
+        # Trim failed_examples to the per-slice cap (the scorer's own
+        # cap is the top-level one; per-slice rendering wants its own
+        # bound).
+        block["failed_examples"] = block["failed_examples"][:PER_SLICE_FAILED_EXAMPLES_CAP]
+        per_slice[slice_id] = block
+    return per_slice
+
+
+def _per_slice_mft_block(
+    test: dict[str, Any],
+    trials: list[dict[str, Any]],
+    predictions: list[str],
+    example_bucket: dict[str, set[int]],
+) -> dict[str, dict[str, Any]]:
+    """MFT per-slice block. Mirrors the INV/DIR helper but routes
+    through _score_mft_test."""
+    per_slice: dict[str, dict[str, Any]] = {}
+    for slice_id, example_idx_set in example_bucket.items():
+        if not example_idx_set:
+            per_slice[slice_id] = {
+                "kind": "MFT",
+                "passed": 0,
+                "total": 0,
+                "pass_rate": 0.0,
+                "failed_examples": [],
+            }
+            continue
+        subset_trials = [
+            t for t in trials if t.get("example_index") in example_idx_set
+        ]
+        subset_indices = [
+            i for i, t in enumerate(trials)
+            if t.get("example_index") in example_idx_set
+        ]
+        subset_preds = [predictions[i] for i in subset_indices]
+        if not subset_trials:
+            per_slice[slice_id] = {
+                "kind": "MFT",
+                "passed": 0,
+                "total": 0,
+                "pass_rate": 0.0,
+                "failed_examples": [],
+            }
+            continue
+        block = _score_mft_test(test, subset_trials, subset_preds)
+        block["failed_examples"] = block["failed_examples"][:PER_SLICE_FAILED_EXAMPLES_CAP]
+        per_slice[slice_id] = block
+    return per_slice
+
+
 def run_behavioral_tests(
     behavioral_tests: list[dict[str, Any]],
     *,
     predict_fn: PredictFn,
+    slice_definitions: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Run every test in ``behavioral_tests`` against the model
     provided by ``predict_fn`` (signature: ``list[str] -> list[str]``,
@@ -387,6 +547,15 @@ def run_behavioral_tests(
     Empty / None ``behavioral_tests`` → ``{}`` (no behavioral metric
     in EvalResult.metrics; gates referencing behavioral keys then
     resolve as missing_metric_*, same as today's missing-eval flow).
+
+    Quality-Lift phase 6 slice 1 — when ``slice_definitions`` is set
+    (the project's phase 2 slice_definitions), each test ALSO emits
+    a ``per_slice`` block mapping slice_id → per-slice scoring. Phase
+    6 slice 2 will flatten those into gateable keys
+    (``behavioral.<test_id>.per_slice.<slice_id>.pass_rate``); slice 3
+    surfaces them in ScorecardPanel. Slice membership is anchored to
+    the seed example (not the perturbed input), so a typo
+    perturbation can't silently shift a row across slices.
     """
     if not behavioral_tests:
         return {}
@@ -408,6 +577,18 @@ def run_behavioral_tests(
             inputs = [t["input"] for t in trials]
             predictions = list(predict_fn(inputs))
             result = _score_mft_test(test, trials, predictions)
+            # Per-slice MFT (phase 6 slice 1) — bucket the ORIGINAL
+            # examples list by slice predicate, then score each
+            # bucket independently. Examples that don't match any
+            # slice contribute to the top-level metric only.
+            example_bucket = _bucket_example_indices_by_slice(
+                test.get("examples") or [],
+                slice_definitions,
+            )
+            if example_bucket:
+                result["per_slice"] = _per_slice_mft_block(
+                    test, trials, predictions, example_bucket,
+                )
         else:  # INV or DIR
             trials = _generate_inv_dir_trials(test)
             if not trials:
@@ -442,6 +623,18 @@ def run_behavioral_tests(
             else:
                 result = _score_dir_test(
                     test, trials, predicted_originals_by_seed_idx, perturbed_preds,
+                )
+            # Per-slice INV/DIR (phase 6 slice 1) — bucket by the
+            # ORIGINAL seed_examples list (not perturbed inputs), then
+            # filter the trial+prediction lists by seed_index match.
+            seed_bucket = _bucket_seed_indices_by_slice(
+                test.get("seed_examples") or [],
+                slice_definitions,
+            )
+            if seed_bucket:
+                result["per_slice"] = _per_slice_inv_or_dir_block(
+                    test, trials, perturbed_preds,
+                    predicted_originals_by_seed_idx, seed_bucket, kind,
                 )
 
         if capped:

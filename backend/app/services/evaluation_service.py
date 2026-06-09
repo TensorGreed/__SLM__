@@ -443,9 +443,25 @@ async def _safe_run_behavioral_tests(
             model_path=ckpt_path,
             label_space=list(label_space),
         )
+        # Quality-Lift phase 6 slice 1 — Pass the project's slice
+        # predicates through so each test ALSO emits a per_slice block
+        # bucketed by slice membership. Backward-compatible: when no
+        # slices configured, slice_defs is None and the runner
+        # short-circuits the per-slice path.
+        slice_defs: list[dict[str, Any]] | None = None
+        project_row = await db.execute(
+            select(Project).where(Project.id == project_id)
+        )
+        project = project_row.scalar_one_or_none()
+        if project is not None and isinstance(project.slice_definitions, dict):
+            raw = project.slice_definitions.get("slices")
+            if isinstance(raw, list) and raw:
+                slice_defs = raw
+
         return run_behavioral_tests(
             list(behavioral_tests),
             predict_fn=predict_fn,
+            slice_definitions=slice_defs,
         )
     except Exception as exc:  # noqa: BLE001 — never block eval completion
         print(
