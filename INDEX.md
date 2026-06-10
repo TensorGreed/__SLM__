@@ -517,6 +517,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/FrontierComparisonPanel.tsx` — FrontierComparisonPanel — Track 1, Epic D.
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.tsx` — Interactive Q&A pair editor for gold-set curation and quality annotation.
 - `frontend/src/components/evaluation/PackSectionEditor.tsx` — Quality-Lift phase 7 slice 1 — Generic pack section editor.
+- `frontend/src/components/evaluation/PerSliceMetricsTable.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.tsx` — RerouteRecommendationPanel — USER-SUCCESS Epic 7 Phase 7c.
 - `frontend/src/components/evaluation/ScorecardPanel.tsx` — Quality gate reporter showing pass/fail decisions with missing-metric detection.
 - `frontend/src/components/evaluation/SftLiftPanel.tsx` — "Did SFT help?" lift summary panel (Theme 8 Epic 4).
@@ -901,6 +902,7 @@ session-start guidance.
 - `frontend/src/components/evaluation/FrontierComparisonPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/GoldSetWorkbenchPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/PackSectionEditor.test.tsx` — Quality-Lift phase 7 slice 1 — Generic PackSectionEditor tests.
+- `frontend/src/components/evaluation/PerSliceMetricsTable.test.tsx` — Quality-Lift phase 8 slice 2 — PerSliceMetricsTable tests.
 - `frontend/src/components/evaluation/RerouteRecommendationPanel.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ScorecardPanel.test.tsx` — Quality-Lift phase 1, slice 3 — ScorecardPanel variance + drill-down.
 - `frontend/src/components/evaluation/SftLiftPanel.test.tsx` — _(no docstring)_

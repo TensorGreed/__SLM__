@@ -15,6 +15,7 @@ import ClassificationChartsPanel from './ClassificationChartsPanel';
 import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
 import AggregateRunBadge from './AggregateRunBadge';
+import PerSliceMetricsTable from './PerSliceMetricsTable';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import EvalPackScaffoldPanel from './EvalPackScaffoldPanel';
 import DriftReviewQueuePanel from './DriftReviewQueuePanel';
@@ -1742,6 +1743,29 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                         datasetName={r.dataset_name}
                         evalType={r.eval_type}
                         metrics={r.metrics as Record<string, unknown>}
+                    />
+                ))}
+
+            {/* Quality-Lift phase 8 slice 2 — per-slice metrics table.
+                Reads ``metrics["per_slice"]`` off each EvalResult and
+                cross-references the live gate report so failing cells
+                light up red — only against the user's actual gate
+                thresholds (honest gates only, never an invented bar).
+                One table per EvalResult that carries per_slice data;
+                silent when neither slice_definitions nor per_slice
+                payload exist (caller flips ``showEmptyStateWhenNoSlices``
+                if they want a nudge). */}
+            {evalResults
+                .filter((r) => {
+                    const ps = (r.metrics as Record<string, unknown>)?.['per_slice'];
+                    return typeof ps === 'object' && ps !== null;
+                })
+                .map((r) => (
+                    <PerSliceMetricsTable
+                        key={`ps-${r.id}`}
+                        projectId={projectId}
+                        metrics={r.metrics as Record<string, unknown>}
+                        gateChecks={gateReport?.checks ?? []}
                     />
                 ))}
 

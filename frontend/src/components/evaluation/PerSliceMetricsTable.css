@@ -1,0 +1,109 @@
+/* Quality-Lift phase 8 slice 2 — PerSliceMetricsTable styles. */
+
+.per-slice-table {
+    margin-bottom: var(--space-md);
+    padding: var(--space-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+}
+
+.per-slice-table__header {
+    margin-bottom: var(--space-sm);
+}
+
+.per-slice-table__header h4 {
+    margin: 0 0 4px;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.per-slice-table__hint {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+}
+
+.per-slice-table__warning {
+    margin-bottom: var(--space-sm);
+    color: var(--color-warning);
+    font-size: 0.85rem;
+}
+
+.per-slice-table__empty {
+    padding: var(--space-md);
+    text-align: center;
+    color: var(--text-tertiary);
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-default);
+    border-radius: 4px;
+    margin-bottom: var(--space-md);
+}
+
+.per-slice-table__scroll {
+    overflow-x: auto;
+}
+
+.per-slice-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.per-slice-table th,
+.per-slice-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-default);
+    white-space: nowrap;
+}
+
+.per-slice-table thead th {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.per-slice-table tbody th {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-weight: 500;
+    text-align: left;
+}
+
+.per-slice-table__slice-name {
+    margin-right: var(--space-xs);
+}
+
+.per-slice-table__orphan-tag,
+.per-slice-table__zero-tag {
+    display: inline-block;
+    margin-left: var(--space-xs);
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.per-slice-table__orphan-tag {
+    background: var(--color-warning-bg, rgba(250, 173, 20, 0.15));
+    color: var(--color-warning);
+}
+
+.per-slice-table__zero-tag {
+    background: var(--bg-tertiary);
+    color: var(--text-tertiary);
+}
+
+.per-slice-table__row--empty td {
+    color: var(--text-tertiary);
+}
+
+.per-slice-table__cell--failed {
+    background: var(--color-error-bg, rgba(245, 34, 45, 0.12));
+    color: var(--color-error);
+    font-weight: 600;
+}
