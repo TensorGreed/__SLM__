@@ -14,6 +14,8 @@ from app.schemas.evaluation import (
     LLMJudgeRequest,
     RemediationPlanGenerateRequest,
     RemediationPlanIndexResponse,
+    SeedGroupChildEvalResult,
+    SeedGroupDrillDownResponse,
 )
 from app.services.evaluation_pack_service import (
     DEFAULT_EVALUATION_PACK_ID,
@@ -654,6 +656,123 @@ async def get_results(
         return [EvalResultResponse.model_validate(r) for r in results]
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.get(
+    "/seed-group/{seed_group_id}",
+    response_model=SeedGroupDrillDownResponse,
+)
+async def get_seed_group_drilldown(
+    project_id: int,
+    seed_group_id: str,
+    dataset_name: str | None = None,
+    eval_type: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Quality-Lift phase 8 slice 1 — per-seed drill-down for an
+    aggregate EvalResult.
+
+    The EvalPanel renders an AggregateRunBadge in the result header
+    when the row is ``is_aggregate=True``. This endpoint surfaces the
+    underlying per-seed scalars so the user can verify the mean ± std
+    against the individual seeds that produced it (picked-data-
+    provenance rule).
+
+    ``dataset_name`` + ``eval_type`` are optional filters. When the
+    leader has multiple aggregate rows (e.g. one per eval pack), the
+    caller passes the pair to scope the drill-down to the same row
+    the badge surfaced. When omitted we return every child's scalar
+    rows unfiltered.
+    """
+    from app.models.experiment import EvalResult, Experiment
+    from app.services.experiment_aggregation_service import (
+        _find_leader,
+        _siblings_for_group,
+    )
+
+    # Project-scope guard: refuse to leak siblings across projects
+    # even though the seed_group_id is unique in practice.
+    project = await db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+
+    leader = await _find_leader(db, seed_group_id)
+    if leader is None or leader.project_id != project_id:
+        raise HTTPException(
+            404, f"No seed group {seed_group_id!r} in project {project_id}"
+        )
+
+    children = await _siblings_for_group(db, seed_group_id)
+
+    # Pull the leader's aggregate EvalResult that matches the
+    # dataset/eval_type the badge clicked from. None when filters
+    # aren't supplied OR when the aggregate hasn't been written yet
+    # (children still in flight) — the response shape stays the
+    # same so the frontend can render a "pending" hint.
+    aggregate_eval_result_id: int | None = None
+    if dataset_name is not None and eval_type is not None:
+        agg = (await db.execute(
+            select(EvalResult).where(
+                EvalResult.experiment_id == leader.id,
+                EvalResult.seed_group_id == seed_group_id,
+                EvalResult.is_aggregate.is_(True),
+                EvalResult.dataset_name == dataset_name,
+                EvalResult.eval_type == eval_type,
+            ).order_by(EvalResult.created_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if agg is not None:
+            aggregate_eval_result_id = int(agg.id)
+
+    rows: list[SeedGroupChildEvalResult] = []
+    for child in children:
+        child_results = (await db.execute(
+            select(EvalResult).where(
+                EvalResult.experiment_id == child.id,
+                EvalResult.is_aggregate.is_(False),
+                *(
+                    [EvalResult.dataset_name == dataset_name]
+                    if dataset_name is not None else []
+                ),
+                *(
+                    [EvalResult.eval_type == eval_type]
+                    if eval_type is not None else []
+                ),
+            ).order_by(EvalResult.created_at.desc())
+        )).scalars().all()
+        if not child_results:
+            # Picked-data-provenance rule — still surface the child
+            # so the user can see WHY a seed is missing from the
+            # mean (eval may have failed even though training
+            # completed). Empty metrics dict signals "no eval yet".
+            rows.append(SeedGroupChildEvalResult(
+                eval_result_id=-1,
+                experiment_id=int(child.id),
+                seed_value=child.seed_value,
+                experiment_status=str(child.status.value),
+                metrics={},
+                pass_rate=None,
+            ))
+            continue
+        for er in child_results:
+            rows.append(SeedGroupChildEvalResult(
+                eval_result_id=int(er.id),
+                experiment_id=int(child.id),
+                seed_value=child.seed_value,
+                experiment_status=str(child.status.value),
+                metrics=dict(er.metrics or {}),
+                pass_rate=er.pass_rate,
+            ))
+
+    rows.sort(key=lambda r: (r.seed_value if r.seed_value is not None else 0))
+
+    return SeedGroupDrillDownResponse(
+        seed_group_id=seed_group_id,
+        dataset_name=dataset_name or "",
+        eval_type=eval_type or "",
+        aggregate_eval_result_id=aggregate_eval_result_id,
+        leader_experiment_id=int(leader.id),
+        children=rows,
+    )
 
 
 @router.get("/safety-scorecard/{experiment_id}")

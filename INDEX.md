@@ -405,6 +405,7 @@ session-start guidance.
 - `frontend/src/api/recipes.ts` — Typed wrappers around the Theme 2 recipe registry + shape sniffer.
 - `frontend/src/api/remediation.ts` — Typed wrapper for the remediation tracking API (E2).
 - `frontend/src/api/rerouteAnalysis.ts` — USER-SUCCESS Epic 7 Phase 7c — typed client for the post-eval
+- `frontend/src/api/seedGroupDrillDown.ts` — Quality-Lift phase 8 slice 1 — seed-group drill-down client.
 - `frontend/src/api/sftLift.ts` — Typed wrapper for the Theme 8 Epic 4 "Did SFT help?" lift summary.
 - `frontend/src/api/sliceDefinitions.ts` — Slice-definitions CRUD client.
 - `frontend/src/api/smokeTest.ts` — Typed client for the project smoke-test endpoint (Diagnostics
@@ -505,6 +506,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainPackManager.tsx` — Editor for policy bundles including normalizer, validator, and evaluator hook selection.
 - `frontend/src/components/domain/DomainProfileManager.tsx` — CRUD interface for task schemas with quality checks, split rules, and normalization config.
 - `frontend/src/components/evaluation/ActiveLearningPanel.tsx` — Active-learning recommender panel (Theme 8 Epic 2).
+- `frontend/src/components/evaluation/AggregateRunBadge.tsx` — Quality-Lift phase 8 slice 1 — AggregateRunBadge.
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.tsx` — AutoRagComparisonPanel — USER-SUCCESS Epic 9 Phase 9d.
 - `frontend/src/components/evaluation/BehavioralTestsSection.tsx` — Quality-Lift phase 7 slice 2 — Behavioral tests editor section.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.tsx` — ClassificationChartsPanel — V1 of the ML-native visualisations arc.
@@ -807,6 +809,7 @@ session-start guidance.
 - `backend/tests/test_recipe_apply_service.py` — Tests for recipe_apply_service — applying a Theme 2 recipe pick
 - `backend/tests/test_recipe_service.py` — Tests for the task-shape recipe registry + header-based shape sniffer.
 - `backend/tests/test_remediation_tracking.py` — Tests for the remediation tracking service + API (E2).
+- `backend/tests/test_seed_group_drilldown_endpoint.py` — Quality-Lift phase 8 slice 1 — seed-group drill-down endpoint.
 - `backend/tests/test_seq2seq_adapter_prompt_wrap.py` — θ-fix tests — seq2seq-pair adapter writes the production
 - `backend/tests/test_sft_lift_summary_service.py` — Tests for the "Did SFT help?" lift summary (Theme 8 Epic 4).
 - `backend/tests/test_slice_definitions_slice1.py` — Quality-Lift phase 2, slice 1 — slice_definitions schema + endpoints.
@@ -882,6 +885,7 @@ session-start guidance.
 - `frontend/src/components/domain/DomainPackManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/domain/DomainProfileManager.test.tsx` — _(no docstring)_
 - `frontend/src/components/evaluation/ActiveLearningPanel.test.tsx` — _(no docstring)_
+- `frontend/src/components/evaluation/AggregateRunBadge.test.tsx` — Quality-Lift phase 8 slice 1 — AggregateRunBadge tests.
 - `frontend/src/components/evaluation/AutoRagComparisonPanel.test.tsx` — AutoRagComparisonPanel — Hardening tests for the "Run comparison"
 - `frontend/src/components/evaluation/BehavioralTestsSection.test.tsx` — Quality-Lift phase 7 slice 2 — BehavioralTestsSection tests.
 - `frontend/src/components/evaluation/ClassificationChartsPanel.test.tsx` — _(no docstring)_

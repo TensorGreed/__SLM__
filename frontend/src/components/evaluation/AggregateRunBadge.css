@@ -1,0 +1,125 @@
+/* Quality-Lift phase 8 slice 1 — AggregateRunBadge styles. */
+
+.agg-run-badge {
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: var(--space-md);
+    background: var(--bg-secondary);
+    border-left: 3px solid var(--color-info);
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.agg-run-badge__header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.agg-run-badge__toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 0;
+}
+
+.agg-run-badge__title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.agg-run-badge__count {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.agg-run-badge__group-id {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+.agg-run-badge__headline-list {
+    list-style: none;
+    margin: var(--space-xs) 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+}
+
+.agg-run-badge__headline-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-xs);
+}
+
+.agg-run-badge__metric-name {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.agg-run-badge__metric-value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.agg-run-badge__metric-range {
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+.agg-run-badge__drill {
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px dashed var(--border-default);
+}
+
+.agg-run-badge__loading,
+.agg-run-badge__error {
+    padding: var(--space-sm) 0;
+    color: var(--text-tertiary);
+    font-size: 0.85rem;
+}
+
+.agg-run-badge__error {
+    color: var(--color-error);
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.agg-run-badge__table {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    border-collapse: collapse;
+}
+
+.agg-run-badge__table th,
+.agg-run-badge__table td {
+    padding: 4px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-default);
+}
+
+.agg-run-badge__table th {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.agg-run-badge__row--failed {
+    color: var(--color-error);
+    opacity: 0.85;
+}

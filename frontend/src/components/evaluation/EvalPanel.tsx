@@ -14,6 +14,7 @@ import { Term } from '../shared/Term';
 import ClassificationChartsPanel from './ClassificationChartsPanel';
 import './ClassificationChartsPanel.css';
 import ScorecardPanel from './ScorecardPanel';
+import AggregateRunBadge from './AggregateRunBadge';
 import GoldSetWorkbenchPanel from './GoldSetWorkbenchPanel';
 import EvalPackScaffoldPanel from './EvalPackScaffoldPanel';
 import DriftReviewQueuePanel from './DriftReviewQueuePanel';
@@ -182,6 +183,13 @@ interface EvalResult {
         predictions_preview?: PredictionPreviewRow[];
         [key: string]: unknown;
     } | null;
+    // Quality-Lift phase 8 slice 1 — multi-seed surfacing. The
+    // EvalResultResponse schema started carrying these fields in
+    // slice 1; the AggregateRunBadge in the result header reads
+    // them to decide whether to render at all + which seed_group_id
+    // to drill into.
+    is_aggregate?: boolean;
+    seed_group_id?: string | null;
 }
 
 interface SafetyScorecard {
@@ -1715,6 +1723,27 @@ export default function EvalPanel({ projectId, onNextStep }: EvalPanelProps) {
                     </div>
                 </div>
             )}
+
+            {/* Quality-Lift phase 8 slice 1 — render the
+                AggregateRunBadge above the scorecard for every
+                multi-seed aggregate EvalResult so the user sees
+                ``F1: 0.83 ± 0.04 (n=3)`` before any scalar metric.
+                The scorecard's gate rows still surface their own
+                per-seed breakdown; this is the result-header
+                surface (phase 1's mean ± std promise visible at a
+                glance, not just inside failing gates). */}
+            {evalResults
+                .filter((r) => r.is_aggregate && r.seed_group_id)
+                .map((r) => (
+                    <AggregateRunBadge
+                        key={`agg-${r.id}`}
+                        projectId={projectId}
+                        seedGroupId={r.seed_group_id as string}
+                        datasetName={r.dataset_name}
+                        evalType={r.eval_type}
+                        metrics={r.metrics as Record<string, unknown>}
+                    />
+                ))}
 
             {selectedExp && (
                 <ScorecardPanel projectId={projectId} experimentId={selectedExp} />

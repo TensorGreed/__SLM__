@@ -40,8 +40,44 @@ class EvalResultResponse(BaseModel):
     risk_severity: str | None
     details: dict | None = None
     created_at: datetime
+    # Quality-Lift phase 8 slice 1 — surface the multi-seed aggregate
+    # flags so the EvalPanel header can render an AggregateRunBadge
+    # ("F1: 0.83 ± 0.04 from 3 seeds") + offer drill-down. The
+    # ORM model has carried these since phase 1; they were just
+    # never plumbed through the response schema. Default to False /
+    # None keeps the contract backward-compatible for existing
+    # rows whose serializer path bypassed ``model_validate``.
+    is_aggregate: bool = False
+    seed_group_id: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class SeedGroupChildEvalResult(BaseModel):
+    """One row in the per-seed drill-down — the scalar EvalResult
+    belonging to a single child experiment in the seed group."""
+
+    eval_result_id: int
+    experiment_id: int
+    seed_value: int | None
+    experiment_status: str
+    metrics: dict
+    pass_rate: float | None
+
+
+class SeedGroupDrillDownResponse(BaseModel):
+    """Drill-down payload for one seed-group: the leader's aggregate
+    EvalResult key + every child experiment's matching scalar
+    EvalResult. Picked-data-provenance rule — every per-seed value
+    the badge claims is verifiable by clicking through to the child
+    experiment that produced it."""
+
+    seed_group_id: str
+    dataset_name: str
+    eval_type: str
+    aggregate_eval_result_id: int | None
+    leader_experiment_id: int | None
+    children: list[SeedGroupChildEvalResult]
 
 
 class SafetyScorecardResponse(BaseModel):
